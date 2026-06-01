@@ -1,7 +1,5 @@
 package cn.lypi.agent;
 
-import cn.lypi.contracts.context.ContextSnapshot;
-
 public interface ContextAssembler {
     /*
     * @status : 未完成
@@ -10,6 +8,5 @@ public interface ContextAssembler {
     *
     *
                               */
-    ContextSnapshot build(String leafId);
+    ContextAssembly build(ContextBuildRequest request);
 }
-
