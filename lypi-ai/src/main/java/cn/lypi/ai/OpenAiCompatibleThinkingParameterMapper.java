@@ -4,11 +4,11 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import java.util.Map;
 import java.util.Objects;
 
-public final class ThinkingParameterMapper {
-    private ThinkingParameterMapper() {
+public final class OpenAiCompatibleThinkingParameterMapper {
+    private OpenAiCompatibleThinkingParameterMapper() {
     }
 
-    public static Map<String, Object> openAiCompatible(ThinkingLevel level) {
+    public static Map<String, Object> map(ThinkingLevel level) {
         Objects.requireNonNull(level, "level");
         return switch (level) {
             case OFF -> Map.of();
@@ -16,8 +16,7 @@ public final class ThinkingParameterMapper {
             case LOW -> reasoningEffort("low");
             case MEDIUM -> reasoningEffort("medium");
             case HIGH -> reasoningEffort("high");
-            case XHIGH -> reasoningEffort("xhigh");
-            case MAX -> reasoningEffort("max");
+            case XHIGH, MAX -> reasoningEffort("xhigh");
         };
     }
 
