@@ -70,7 +70,7 @@ public final class SessionEngineImpl implements SessionEngine {
         if (!sessionId.equals(request.sourceSessionId())) {
             throw new SessionEngineException("Fork source session does not match open session: " + request.sourceSessionId());
         }
-        return new ForkService(store, clock).fork(request, index);
+        return new ForkService(clock).fork(request, index);
     }
 
     private SessionHandle handle() {

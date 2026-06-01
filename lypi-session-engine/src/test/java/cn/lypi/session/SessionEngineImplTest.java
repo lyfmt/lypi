@@ -52,6 +52,17 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void openOrCreateRejectsSessionIdsThatEscapeSessionDirectory() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate("../escape"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Invalid session id");
+
+        assertThat(tempDir.resolve(".lypi").resolve("escape.jsonl")).doesNotExist();
+    }
+
+    @Test
     void appendRejectsDuplicateIdsToPreserveAppendOnlyHistory() {
         SessionEngine engine = new SessionEngineImpl(tempDir);
         engine.openOrCreate("ses_main");
@@ -129,18 +140,25 @@ class SessionEngineImplTest {
     }
 
     @Test
-    void forkCopiesPathToForkPointIntoNewSingleBranchSession() throws Exception {
+    void forkCopiesPathToForkPointIntoTargetCwdSessionStore() throws Exception {
         SessionEngine engine = new SessionEngineImpl(tempDir);
         engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
         engine.append(new CustomMessageEntry("right", "root", "right", Instant.parse("2026-06-01T00:02:00Z")));
+        Path targetCwd = tempDir.resolve("fork-cwd");
 
-        SessionHandle forked = engine.fork(new ForkRequest("ses_main", "left", tempDir.resolve("fork-cwd"), "explore"));
+        SessionHandle forked = engine.fork(new ForkRequest("ses_main", "left", targetCwd, "explore"));
 
         assertThat(forked.sessionId()).isNotEqualTo("ses_main");
+        assertThat(forked.sessionFile()).startsWith(targetCwd.resolve(".lypi").resolve("sessions"));
         assertThat(forked.leafId()).isEqualTo("left");
         assertThat(forked.byId()).containsOnlyKeys("root", "left");
         assertThat(Files.readString(forked.sessionFile())).contains("\"parentSessionId\":\"ses_main\"");
+
+        SessionEngine targetEngine = new SessionEngineImpl(targetCwd);
+        SessionHandle reopened = targetEngine.openOrCreate(forked.sessionId());
+        assertThat(reopened.leafId()).isEqualTo("left");
+        assertThat(reopened.byId()).containsOnlyKeys("root", "left");
     }
 }

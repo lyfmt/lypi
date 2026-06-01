@@ -19,12 +19,16 @@ final class JsonlSessionStore {
     }
 
     JsonlSessionStore(Path sessionsDir, SessionJsonMapper mapper) {
-        this.sessionsDir = sessionsDir;
+        this.sessionsDir = sessionsDir.toAbsolutePath().normalize();
         this.mapper = mapper;
     }
 
     Path sessionFile(String sessionId) {
-        return sessionsDir.resolve(sessionId + ".jsonl");
+        Path file = sessionsDir.resolve(sessionId + ".jsonl").normalize();
+        if (!file.startsWith(sessionsDir)) {
+            throw new SessionEngineException("Invalid session id: " + sessionId);
+        }
+        return file;
     }
 
     boolean exists(String sessionId) {

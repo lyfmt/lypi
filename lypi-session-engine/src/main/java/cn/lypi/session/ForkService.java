@@ -13,11 +13,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 final class ForkService {
-    private final JsonlSessionStore store;
     private final Clock clock;
 
-    ForkService(JsonlSessionStore store, Clock clock) {
-        this.store = store;
+    ForkService(Clock clock) {
         this.clock = clock;
     }
 
@@ -33,15 +31,16 @@ final class ForkService {
             Optional.of(request.sourceSessionId()),
             Instant.now(clock)
         );
-        store.create(header);
+        JsonlSessionStore targetStore = new JsonlSessionStore(request.targetCwd());
+        targetStore.create(header);
         EntryTreeIndex forkIndex = new EntryTreeIndex(List.of());
         for (SessionEntry entry : path) {
             forkIndex.add(entry);
-            store.append(forkSessionId, entry);
+            targetStore.append(forkSessionId, entry);
         }
         return new SessionHandle(
             forkSessionId,
-            store.sessionFile(forkSessionId),
+            targetStore.sessionFile(forkSessionId),
             forkIndex.leafId(),
             forkIndex.byId()
         );
