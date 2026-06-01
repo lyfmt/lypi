@@ -10,6 +10,5 @@ public interface MemoryExtractionWorker {
     *
     *
                               */
-    void extractAfterTurn(TurnState state);
+    MemoryExtractionResult extractAfterTurn(TurnState state);
 }
-

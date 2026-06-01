@@ -10,6 +10,5 @@ public interface CompactionCoordinator {
     *
     *
                               */
-    ContextSnapshot preflight(ContextSnapshot context);
+    CompactionDecision preflight(ContextSnapshot context);
 }
-
