@@ -9,10 +9,13 @@ import cn.lypi.contracts.boundary.BoundaryRuleLevel;
 import cn.lypi.contracts.boundary.BoundaryRuleResult;
 import cn.lypi.contracts.boundary.FinalBoundaryRule;
 import cn.lypi.contracts.common.IdGenerator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class CommonContractTest {
+    private final ObjectMapper mapper = new ObjectMapper();
+
     @Test
     void generatedIdsUseDocumentedPrefixes() {
         IdGenerator generator = IdGenerator.random();
@@ -42,5 +45,26 @@ class CommonContractTest {
 
         assertEquals(true, new BoundaryCheckReport(List.of(passed)).passed());
         assertEquals(false, new BoundaryCheckReport(List.of(passed, failed)).passed());
+    }
+
+    @Test
+    void boundaryReportIgnoresInputPassStatusAndDerivesItFromResults() throws Exception {
+        String json = """
+            {
+              "results": [
+                {
+                  "ruleId": "session-append-only",
+                  "passed": true,
+                  "evidence": "append API only"
+                }
+              ],
+              "passed": false
+            }
+            """;
+
+        BoundaryCheckReport restored = mapper.readValue(json, BoundaryCheckReport.class);
+
+        assertTrue(restored.passed());
+        assertTrue(mapper.writeValueAsString(restored).contains("\"passed\":true"));
     }
 }

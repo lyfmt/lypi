@@ -1,10 +1,17 @@
 package cn.lypi.contracts.context;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import java.util.Map;
 
-@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
+@JsonIgnoreProperties(ignoreUnknown = true)
+@JsonTypeInfo(
+    use = JsonTypeInfo.Id.NAME,
+    include = JsonTypeInfo.As.PROPERTY,
+    property = "type",
+    defaultImpl = LegacyContentBlock.class
+)
 @JsonSubTypes({
     @JsonSubTypes.Type(value = TextContentBlock.class, name = "text"),
     @JsonSubTypes.Type(value = ThinkingContentBlock.class, name = "thinking"),
@@ -19,7 +26,8 @@ public sealed interface ContentBlock permits
     ToolCallContentBlock,
     ToolResultContentBlock,
     ErrorContentBlock,
-    AttachmentContentBlock {
+    AttachmentContentBlock,
+    LegacyContentBlock {
     ContentBlockKind kind();
 
     String text();

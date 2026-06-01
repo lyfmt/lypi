@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ContentBlock;
+import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ErrorContentBlock;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ThinkingContentBlock;
@@ -95,6 +96,25 @@ class ContractSerializationTest {
             AttachmentContentBlock.class,
             "attachment"
         );
+    }
+
+    @Test
+    void contentBlockCanReadLegacyKindBasedJson() throws Exception {
+        String json = """
+            {
+              "kind": "TEXT",
+              "text": "legacy text",
+              "metadata": {
+                "source": "old-session"
+              }
+            }
+            """;
+
+        ContentBlock restored = mapper.readValue(json, ContentBlock.class);
+
+        assertEquals(ContentBlockKind.TEXT, restored.kind());
+        assertEquals("legacy text", restored.text());
+        assertEquals("old-session", restored.metadata().get("source"));
     }
 
     @Test
