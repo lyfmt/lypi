@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>4.0.0</version>
+		<relativePath/>
+	</parent>
+
+	<groupId>cn.lypi</groupId>
+	<artifactId>ly-pi</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>pom</packaging>
+	<name>ly-pi</name>
+	<description>ly-pi coding agent framework</description>
+
+	<modules>
+		<module>lypi-contracts</module>
+		<module>lypi-session-engine</module>
+		<module>lypi-agent-core</module>
+		<module>lypi-ai</module>
+		<module>lypi-tool</module>
+		<module>lypi-security</module>
+		<module>lypi-resource</module>
+		<module>lypi-transport-headless</module>
+		<module>lypi-transport-tui</module>
+		<module>lypi-boot</module>
+	</modules>
+
+	<properties>
+		<java.version>21</java.version>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+	</properties>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-contracts</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-session-engine</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-agent-core</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-ai</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-tool</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-security</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-resource</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-transport-headless</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-transport-tui</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
+</project>
+
