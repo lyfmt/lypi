@@ -161,6 +161,31 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
+    void decideDeniesCompactBashRedirectsInBypassMode() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision compactRedirect = engine.decide(
+            request("bash", Map.of("command", "echo hi>notes/output.txt")),
+            context(PermissionMode.BYPASS)
+        );
+        PermissionDecision compactAppendRedirect = engine.decide(
+            request("bash", Map.of("command", "printf hi>>notes/output.txt")),
+            context(PermissionMode.BYPASS)
+        );
+        PermissionDecision compactFdRedirect = engine.decide(
+            request("bash", Map.of("command", "echo hi 1>notes/output.txt")),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(compactRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(compactRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(compactAppendRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(compactAppendRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(compactFdRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(compactFdRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
+    @Test
     void decideAsksForBashProcessSubstitutionRiskInBypassMode() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 

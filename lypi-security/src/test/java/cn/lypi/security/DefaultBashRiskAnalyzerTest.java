@@ -68,6 +68,17 @@ class DefaultBashRiskAnalyzerTest {
     }
 
     @Test
+    void analyzeCollectsRedirectTargetsWithoutLeadingWhitespace() {
+        BashRiskAnalysis compactRedirect = analyzer.analyze("echo hi>notes/output.txt");
+        BashRiskAnalysis compactAppendRedirect = analyzer.analyze("printf hi>>notes/output.txt");
+        BashRiskAnalysis compactFdRedirect = analyzer.analyze("echo hi 1>notes/output.txt");
+
+        assertThat(compactRedirect.redirectTargets()).extracting(Object::toString).containsExactly("notes/output.txt");
+        assertThat(compactAppendRedirect.redirectTargets()).extracting(Object::toString).containsExactly("notes/output.txt");
+        assertThat(compactFdRedirect.redirectTargets()).extracting(Object::toString).containsExactly("notes/output.txt");
+    }
+
+    @Test
     void analyzeMarksProcessSubstitutionAsUnknown() {
         BashRiskAnalysis analysis = analyzer.analyze("cat <(rm -rf target)");
 
