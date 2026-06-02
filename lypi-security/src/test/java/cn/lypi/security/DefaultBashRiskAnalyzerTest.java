@@ -39,6 +39,59 @@ class DefaultBashRiskAnalyzerTest {
     }
 
     @Test
+    void analyzeClassifiesNewlineSeparatedCommandsIndependently() {
+        BashRiskAnalysis analysis = analyzer.analyze("git status\nrm -rf target");
+
+        assertThat(analysis.parsedCommands()).containsExactly("git status", "rm -rf target");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
+    void analyzeClassifiesBackgroundOperatorSegmentsIndependently() {
+        BashRiskAnalysis analysis = analyzer.analyze("git status & rm -rf target");
+
+        assertThat(analysis.parsedCommands()).containsExactly("git status", "rm -rf target");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
+    void analyzeStripsSafeWrappersBeforeClassifyingCommandRisk() {
+        BashRiskAnalysis analysis = analyzer.analyze("FOO=bar timeout 5 nice git status --short");
+
+        assertThat(analysis.normalizedCommand()).isEqualTo("timeout 5 nice git status --short");
+        assertThat(analysis.parsedCommands()).containsExactly("git status");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.LOW);
+    }
+
+    @Test
+    void analyzeStillFindsDestructiveCommandBehindSafeWrappers() {
+        BashRiskAnalysis analysis = analyzer.analyze("timeout 10 env FOO=bar rm -rf target");
+
+        assertThat(analysis.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
+    void analyzeStillFindsDestructiveCommandBehindWrapperOptions() {
+        BashRiskAnalysis nice = analyzer.analyze("nice -n 10 rm -rf target");
+        BashRiskAnalysis env = analyzer.analyze("env -i rm -rf target");
+        BashRiskAnalysis time = analyzer.analyze("time -p rm -rf target");
+        BashRiskAnalysis envChdir = analyzer.analyze("env -C /tmp rm -rf target");
+        BashRiskAnalysis envSplitString = analyzer.analyze("env -S ignored rm -rf target");
+
+        assertThat(nice.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(nice.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(env.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(env.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(time.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(time.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(envChdir.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(envChdir.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(envSplitString.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(envSplitString.staticallyKnown()).isFalse();
+    }
+
+    @Test
     void analyzeMarksDynamicShellFeaturesAsUnknown() {
         BashRiskAnalysis analysis = analyzer.analyze("bash -c \"$(cat script.sh)\"");
 
@@ -54,6 +107,30 @@ class DefaultBashRiskAnalyzerTest {
         assertThat(analysis.redirectTargets()).extracting(Object::toString).containsExactly("notes/output.txt");
         assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.MEDIUM);
         assertThat(analysis.reasons()).contains("包含输出重定向");
+    }
+
+    @Test
+    void analyzeMarksHeredocAsUnknownWhenItCanFeedShellContent() {
+        BashRiskAnalysis analysis = analyzer.analyze("cat <<EOF | sh\nrm -rf target\nEOF");
+
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(analysis.staticallyKnown()).isFalse();
+    }
+
+    @Test
+    void analyzeDetectsRedirectTargetEvenWhenCommandContainsWrapper() {
+        BashRiskAnalysis analysis = analyzer.analyze("timeout 5 echo hi > notes/output.txt");
+
+        assertThat(analysis.redirectTargets()).extracting(Object::toString).containsExactly("notes/output.txt");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.MEDIUM);
+    }
+
+    @Test
+    void analyzeMarksControlFlowAsUnknown() {
+        BashRiskAnalysis analysis = analyzer.analyze("for file in *; do rm -rf \"$file\"; done");
+
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(analysis.staticallyKnown()).isFalse();
     }
 
     @Test
@@ -85,6 +162,45 @@ class DefaultBashRiskAnalyzerTest {
         assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
         assertThat(analysis.staticallyKnown()).isFalse();
         assertThat(analysis.reasons()).contains("包含动态 shell 结构");
+    }
+
+    @Test
+    void analyzeMarksQuotedOrEscapedCommandNamesAsUnknown() {
+        BashRiskAnalysis singleQuoted = analyzer.analyze("'rm' -rf target");
+        BashRiskAnalysis splitQuoted = analyzer.analyze("r''m -rf target");
+        BashRiskAnalysis backslashEscaped = analyzer.analyze("r\\m -rf target");
+        BashRiskAnalysis parameterExpanded = analyzer.analyze("r${PATH:+}m -rf target");
+
+        assertThat(singleQuoted.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(singleQuoted.staticallyKnown()).isFalse();
+        assertThat(splitQuoted.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(splitQuoted.staticallyKnown()).isFalse();
+        assertThat(backslashEscaped.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(backslashEscaped.staticallyKnown()).isFalse();
+        assertThat(parameterExpanded.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(parameterExpanded.staticallyKnown()).isFalse();
+    }
+
+    @Test
+    void analyzeMarksSubshellAndBraceGroupsAsUnknown() {
+        BashRiskAnalysis subshell = analyzer.analyze("(rm -rf target)");
+        BashRiskAnalysis braceGroup = analyzer.analyze("{ rm -rf target; }");
+
+        assertThat(subshell.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(subshell.staticallyKnown()).isFalse();
+        assertThat(braceGroup.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(braceGroup.staticallyKnown()).isFalse();
+    }
+
+    @Test
+    void analyzeMarksEnvSplitStringAsUnknownWhenCommandIsHiddenInsideArgument() {
+        BashRiskAnalysis shortOption = analyzer.analyze("env -S 'rm -rf target'");
+        BashRiskAnalysis longOption = analyzer.analyze("env --split-string='rm -rf target'");
+
+        assertThat(shortOption.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(shortOption.staticallyKnown()).isFalse();
+        assertThat(longOption.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(longOption.staticallyKnown()).isFalse();
     }
 
     @Test

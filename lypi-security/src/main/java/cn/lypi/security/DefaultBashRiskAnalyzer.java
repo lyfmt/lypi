@@ -11,7 +11,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
-    private static final Pattern LEADING_ENV_ASSIGNMENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*=[^\\s]+\\s+");
     private static final Pattern REDIRECT_TARGET = Pattern.compile("(?<!<)(?:(?:\\d+)?>>?|&>)\\s*([^\\s;&|()]+)");
     private static final Set<String> LOW_RISK_COMMANDS = Set.of(
         "cat",
@@ -54,15 +53,24 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         "shred"
     );
     private static final Set<String> SHELL_COMMANDS = Set.of("bash", "sh", "zsh");
+    private final BashCommandNormalizer normalizer;
+
+    public DefaultBashRiskAnalyzer() {
+        this(new BashCommandNormalizer());
+    }
+
+    DefaultBashRiskAnalyzer(BashCommandNormalizer normalizer) {
+        this.normalizer = normalizer;
+    }
 
     @Override
     public BashRiskAnalysis analyze(String rawCommand) {
-        String normalized = normalize(rawCommand);
+        String normalized = normalizer.normalizeRaw(rawCommand);
         List<String> parsedCommands = parseCommands(normalized);
         List<Path> redirectTargets = redirectTargets(normalized);
         List<String> reasons = new ArrayList<>();
 
-        if (containsDynamicShell(normalized)) {
+        if (containsDynamicShell(normalized) || containsAmbiguousShellSyntax(normalized, parsedCommands)) {
             reasons.add("包含动态 shell 结构");
             return analysis(normalized, parsedCommands, redirectTargets, BashRiskLevel.UNKNOWN, reasons, false);
         }
@@ -117,22 +125,9 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         );
     }
 
-    private String normalize(String rawCommand) {
-        String normalized = rawCommand == null ? "" : rawCommand.trim().replaceAll("\\s+", " ");
-        Matcher matcher = LEADING_ENV_ASSIGNMENT.matcher(normalized);
-        while (matcher.find()) {
-            normalized = matcher.replaceFirst("");
-            matcher = LEADING_ENV_ASSIGNMENT.matcher(normalized);
-        }
-        return normalized;
-    }
-
     private List<String> parseCommands(String normalizedCommand) {
-        if (normalizedCommand.isBlank()) {
-            return List.of();
-        }
         List<String> commands = new ArrayList<>();
-        for (String part : normalizedCommand.split("\\s*(?:&&|\\|\\||;|(?<!\\|)\\|(?!\\|))\\s*")) {
+        for (String part : normalizer.splitCommandSegments(normalizedCommand)) {
             String command = part.trim();
             if (!command.isBlank()) {
                 commands.add(displayCommand(command));
@@ -166,7 +161,56 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
             || command.contains("`")
             || command.contains("<(")
             || command.contains(">(")
+            || command.matches(".*\\s<<-?\\s*\\S+.*")
+            || command.matches(".*\\bfor\\b.*\\bdo\\b.*")
+            || command.matches(".*\\bwhile\\b.*\\bdo\\b.*")
+            || command.matches(".*\\bcase\\b.*\\bin\\b.*")
+            || command.matches(".*\\bif\\b.*\\bthen\\b.*")
             || command.matches(".*\\b(?:bash|sh|zsh)\\s+-c\\b.*");
+    }
+
+    private boolean containsAmbiguousShellSyntax(String normalizedCommand, List<String> parsedCommands) {
+        if (containsEnvSplitString(normalizedCommand)) {
+            return true;
+        }
+        for (String parsedCommand : parsedCommands) {
+            if (isSubshellOrGroupCommand(parsedCommand) || hasQuotedOrEscapedCommandWord(parsedCommand)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsEnvSplitString(String command) {
+        return command.matches("(^|.*[;&|\\s])env(?:\\s+[^;&|]*)?\\s-(?:[^;&|\\s]*S[^;&|\\s]*)(?:\\s|=).*")
+            || command.matches("(^|.*[;&|\\s])env(?:\\s+[^;&|]*)?\\s--split-string(?:\\s|=).*");
+    }
+
+    private boolean isSubshellOrGroupCommand(String command) {
+        String trimmed = command.trim();
+        return trimmed.startsWith("(") || trimmed.startsWith("{");
+    }
+
+    private boolean hasQuotedOrEscapedCommandWord(String command) {
+        String trimmed = command.trim();
+        if (trimmed.isBlank()) {
+            return false;
+        }
+        int firstWhitespace = firstWhitespace(trimmed);
+        String commandWord = firstWhitespace < 0 ? trimmed : trimmed.substring(0, firstWhitespace);
+        return commandWord.indexOf('\'') >= 0
+            || commandWord.indexOf('"') >= 0
+            || commandWord.indexOf('\\') >= 0
+            || commandWord.indexOf('$') >= 0;
+    }
+
+    private int firstWhitespace(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            if (Character.isWhitespace(value.charAt(index))) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     private String commandKey(String command) {
