@@ -50,12 +50,18 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             return pathSafety.get();
         }
 
-        Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, permissionMode(context));
+        PermissionMode mode = permissionMode(context);
+        BashRiskAnalysis bashRisk = bashRisk(request);
+        Optional<PermissionDecision> bashRedirectPathSafety = bashRedirectPathSafetyDecision(request, context, mode, bashRisk);
+        if (bashRedirectPathSafety.isPresent()) {
+            return bashRedirectPathSafety.get();
+        }
+
+        Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, mode, bashRisk);
         if (bashRiskDecision.isPresent()) {
             return bashRiskDecision.get();
         }
 
-        PermissionMode mode = permissionMode(context);
         if (mode == PermissionMode.PLAN && isWriteTool(request.toolName())) {
             return decision(
                 PermissionBehavior.DENY,
@@ -127,11 +133,38 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         return Optional.empty();
     }
 
-    private Optional<PermissionDecision> bashRiskDecision(ToolUseRequest request, PermissionMode mode) {
+    private Optional<PermissionDecision> bashRedirectPathSafetyDecision(
+        ToolUseRequest request,
+        ToolUseContext context,
+        PermissionMode mode,
+        BashRiskAnalysis bashRisk
+    ) {
+        if (!isBashTool(request.toolName()) || bashRisk == null || mode == PermissionMode.BYPASS) {
+            return Optional.empty();
+        }
+        Path cwd = context.cwd().toAbsolutePath().normalize();
+        for (Path redirectTarget : bashRisk.redirectTargets()) {
+            Path target = cwd.resolve(redirectTarget).normalize();
+            if (!target.startsWith(cwd)) {
+                return Optional.of(decision(
+                    PermissionBehavior.ASK,
+                    PermissionDecisionReason.PATH_SAFETY,
+                    "Bash 重定向目标越过当前工作目录，需要用户确认: " + redirectTarget,
+                    Map.of("path", redirectTarget.toString(), "bashRisk", bashRisk)
+                ));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<PermissionDecision> bashRiskDecision(
+        ToolUseRequest request,
+        PermissionMode mode,
+        BashRiskAnalysis bashRisk
+    ) {
         if (!isBashTool(request.toolName())) {
             return Optional.empty();
         }
-        BashRiskAnalysis bashRisk = bashRiskAnalyzer.analyze(commandInput(request));
         if (!bashRisk.staticallyKnown() || bashRisk.riskLevel() == BashRiskLevel.UNKNOWN) {
             return Optional.of(decision(
                 PermissionBehavior.ASK,
@@ -157,6 +190,13 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             ));
         }
         return Optional.empty();
+    }
+
+    private BashRiskAnalysis bashRisk(ToolUseRequest request) {
+        if (!isBashTool(request.toolName())) {
+            return null;
+        }
+        return bashRiskAnalyzer.analyze(commandInput(request));
     }
 
     private List<PermissionRule> effectiveRules(ToolUseContext context) {

@@ -55,4 +55,19 @@ class DefaultBashRiskAnalyzerTest {
         assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.MEDIUM);
         assertThat(analysis.reasons()).contains("包含输出重定向");
     }
+
+    @Test
+    void analyzeClassifiesEveryPipelineSegment() {
+        BashRiskAnalysis shellPipe = analyzer.analyze("cat script.sh | sh");
+        BashRiskAnalysis destructivePipe = analyzer.analyze("cat README.md | rm -rf target");
+
+        assertThat(shellPipe.parsedCommands()).containsExactly("cat script.sh", "sh");
+        assertThat(shellPipe.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(shellPipe.staticallyKnown()).isFalse();
+        assertThat(shellPipe.reasons()).contains("管道包含 shell 执行段");
+
+        assertThat(destructivePipe.parsedCommands()).containsExactly("cat README.md", "rm -rf target");
+        assertThat(destructivePipe.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(destructivePipe.reasons()).contains("包含破坏性命令");
+    }
 }

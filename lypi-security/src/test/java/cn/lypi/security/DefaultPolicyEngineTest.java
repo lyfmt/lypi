@@ -108,6 +108,50 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
+    void decideAsksForBashPipelineRiskInDefaultExecuteMode() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "cat script.sh | sh")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+    }
+
+    @Test
+    void decideAsksForBashRedirectTargetsOutsideCwdUnlessBypass() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision defaultExecuteDecision = engine.decide(
+            request("bash", Map.of("command", "echo ok > ../secret.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+        PermissionDecision dontAskDecision = engine.decide(
+            request("bash", Map.of("command", "echo ok > ../secret.txt")),
+            context(PermissionMode.DONT_ASK)
+        );
+        PermissionDecision acceptEditsDecision = engine.decide(
+            request("bash", Map.of("command", "echo ok > ../secret.txt")),
+            context(PermissionMode.ACCEPT_EDITS)
+        );
+        PermissionDecision bypassDecision = engine.decide(
+            request("bash", Map.of("command", "echo ok > ../secret.txt")),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(defaultExecuteDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(defaultExecuteDecision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(dontAskDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(dontAskDecision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(acceptEditsDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(acceptEditsDecision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(bypassDecision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(bypassDecision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
     void decideAllowsReadOnlyToolsByDefaultExecuteMode() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 

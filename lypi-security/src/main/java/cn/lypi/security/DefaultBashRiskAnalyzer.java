@@ -53,6 +53,7 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         "rmdir",
         "shred"
     );
+    private static final Set<String> SHELL_COMMANDS = Set.of("bash", "sh", "zsh");
 
     @Override
     public BashRiskAnalysis analyze(String rawCommand) {
@@ -74,7 +75,10 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
 
         for (String parsedCommand : parsedCommands) {
             String commandKey = commandKey(parsedCommand);
-            if (matchesAny(commandKey, DESTRUCTIVE_COMMANDS)) {
+            if (matchesAny(commandKey, SHELL_COMMANDS)) {
+                riskLevel = max(riskLevel, BashRiskLevel.UNKNOWN);
+                addIfMissing(reasons, "管道包含 shell 执行段");
+            } else if (matchesAny(commandKey, DESTRUCTIVE_COMMANDS)) {
                 riskLevel = max(riskLevel, BashRiskLevel.DESTRUCTIVE);
                 addIfMissing(reasons, "包含破坏性命令");
             } else if (matchesAny(commandKey, HIGH_RISK_COMMANDS)) {
@@ -92,7 +96,7 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         if (reasons.isEmpty()) {
             reasons.add("未发现写入、网络、提权或破坏性结构");
         }
-        return analysis(normalized, parsedCommands, redirectTargets, riskLevel, reasons, true);
+        return analysis(normalized, parsedCommands, redirectTargets, riskLevel, reasons, riskLevel != BashRiskLevel.UNKNOWN);
     }
 
     private BashRiskAnalysis analysis(
@@ -128,7 +132,7 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
             return List.of();
         }
         List<String> commands = new ArrayList<>();
-        for (String part : normalizedCommand.split("\\s*(?:&&|\\|\\||;)\\s*")) {
+        for (String part : normalizedCommand.split("\\s*(?:&&|\\|\\||;|(?<!\\|)\\|(?!\\|))\\s*")) {
             String command = part.trim();
             if (!command.isBlank()) {
                 commands.add(displayCommand(command));
