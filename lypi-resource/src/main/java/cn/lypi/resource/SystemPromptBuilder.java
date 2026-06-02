@@ -5,10 +5,9 @@ import cn.lypi.contracts.resource.ResourceSnapshot;
 
 public interface SystemPromptBuilder {
     /**
-     * TODO: 根据资源快照构建 system prompt。
+     * 根据资源快照构建 system prompt。
      *
-     * 构建过程只消费 ResourceSnapshot，不直接读取文件系统。
+     * NOTE: 构建过程只消费 ResourceSnapshot，不直接读取文件系统。
      */
     SystemPrompt build(ResourceSnapshot resources);
 }
-

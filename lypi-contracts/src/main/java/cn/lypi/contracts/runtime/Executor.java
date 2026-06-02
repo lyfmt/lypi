@@ -5,17 +5,16 @@ import cn.lypi.contracts.common.ProgressSink;
 
 public interface Executor {
     /**
-     * TODO: 返回执行器名称。
+     * 返回执行器名称。
      *
      * 用于区分 Host、Docker、SSH 或其他沙盒执行器。
      */
     String name();
 
     /**
-     * TODO: 执行一次受策略约束的命令。
+     * 执行一次受策略约束的命令。
      *
-     * 执行前必须由权限和沙盒策略完成决策，执行期间通过进度与中断接口协作。
+     * NOTE: 执行前必须由权限和沙盒策略完成决策，执行期间通过进度与中断接口协作。
      */
     ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal);
 }
-
