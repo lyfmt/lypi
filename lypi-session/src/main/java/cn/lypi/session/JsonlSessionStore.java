@@ -66,13 +66,13 @@ final class JsonlSessionStore {
         if (lines.isEmpty()) {
             throw new SessionEngineException("Session file is empty: " + file);
         }
-        SessionHeader header = mapper.readHeader(mapper.readEnvelope(lines.get(0)));
+        SessionHeader header = readHeaderLine(file, lines.get(0));
         validateHeader(header);
         List<SessionEntry> entries = new ArrayList<>();
         for (int i = 1; i < lines.size(); i++) {
             String line = lines.get(i);
             if (!line.isBlank()) {
-                entries.add(mapper.readEntry(mapper.readEnvelope(line)));
+                entries.add(readEntryLine(file, line, i + 1));
             }
         }
         return new SessionFile(header, List.copyOf(entries));
@@ -89,6 +89,25 @@ final class JsonlSessionStore {
             );
         } catch (IOException e) {
             throw new SessionEngineException("Failed to append session entry: " + entry.id(), e);
+        }
+    }
+
+    private SessionHeader readHeaderLine(Path file, String line) {
+        try {
+            return mapper.readHeader(mapper.readEnvelope(line));
+        } catch (SessionEngineException e) {
+            throw new SessionEngineException("Failed to read session JSONL line 1 from " + file + ": " + e.getMessage(), e);
+        }
+    }
+
+    private SessionEntry readEntryLine(Path file, String line, int lineNumber) {
+        try {
+            return mapper.readEntry(mapper.readEnvelope(line));
+        } catch (SessionEngineException e) {
+            throw new SessionEngineException(
+                "Failed to read session JSONL line " + lineNumber + " from " + file + ": " + e.getMessage(),
+                e
+            );
         }
     }
 

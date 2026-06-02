@@ -136,6 +136,24 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void openOrCreateReportsLineNumberForMalformedJsonlEntry() throws Exception {
+        Path sessionFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_main.jsonl");
+        Files.createDirectories(sessionFile.getParent());
+        Files.writeString(
+            sessionFile,
+            """
+            {"type":"session","version":1,"id":"ses_main","cwd":"%s","parentSessionId":null,"timestamp":"2026-06-01T00:00:00Z"}
+            not-json
+            """.formatted(tempDir.toString())
+        );
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("line 2");
+    }
+
+    @Test
     void appendRejectsDuplicateIdsToPreserveAppendOnlyHistory() {
         SessionEngine engine = new SessionEngineImpl(tempDir);
         engine.openOrCreate("ses_main");
