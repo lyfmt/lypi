@@ -9,94 +9,93 @@ import java.util.List;
 
 public interface Tool<I, O> {
     /**
-     * TODO: 返回工具主名称。
+     * 返回工具主名称。
      *
      * 工具名用于模型 tool call、注册表查找和审计关联。
      */
     String name();
 
     /**
-     * TODO: 返回工具别名。
+     * 返回工具别名。
      *
-     * 别名只用于解析，不应替代审计中的主工具名。
+     * NOTE: 别名只用于解析，不应替代审计中的主工具名。
      */
     List<String> aliases();
 
     /**
-     * TODO: 返回工具输入 JSON Schema。
+     * 返回工具输入 JSON Schema。
      *
      * 模型调用工具前，ToolOrchestrator 使用该 schema 进行基础入参校验。
      */
     JsonSchema inputSchema();
 
     /**
-     * TODO: 校验工具输入。
+     * 校验工具输入。
      *
-     * 负责 schema 之外的语义校验，校验失败应回灌为 tool result error。
+     * NOTE: 负责 schema 之外的语义校验，校验失败应回灌为 tool result error。
      */
     ValidationResult validateInput(I input, ToolUseContext context);
 
     /**
-     * TODO: 执行工具级权限检查。
+     * 执行工具级权限检查。
      *
-     * 权限决策必须可解释，并与全局 PolicyEngine 决策合并。
+     * NOTE: 权限决策必须可解释，并与全局 PolicyEngine 决策合并。
      */
     PermissionDecision checkPermissions(I input, ToolUseContext context);
 
     /**
-     * TODO: 执行工具。
+     * 执行工具。
      *
-     * 工具执行不得直接写 session，结果由运行时统一转换为事件和 entry。
+     * NOTE: 工具执行不得直接写 session，结果由运行时统一转换为事件和 entry。
      */
     ToolResult<O> execute(I input, ToolUseContext context, ProgressSink progress);
 
     /**
-     * TODO: 返回工具中断行为。
+     * 返回工具中断行为。
      *
      * 用于区分可取消工具和必须阻塞等待完成的工具。
      */
     InterruptBehavior interruptBehavior();
 
     /**
-     * TODO: 判断工具调用是否只读。
+     * 判断工具调用是否只读。
      *
      * 只读结果可用于并发计划和权限默认策略。
      */
     boolean isReadOnly(I input);
 
     /**
-     * TODO: 判断工具调用是否可安全并发。
+     * 判断工具调用是否可安全并发。
      *
-     * 可并发只表示运行时调度许可，不表示绕过权限或审计。
+     * NOTE: 可并发只表示运行时调度许可，不表示绕过权限或审计。
      */
     boolean isConcurrencySafe(I input);
 
     /**
-     * TODO: 判断工具调用是否具有破坏性。
+     * 判断工具调用是否具有破坏性。
      *
      * 用于权限提示、风险展示和执行排序。
      */
     boolean isDestructive(I input);
 
     /**
-     * TODO: 返回工具结果最大上下文预算。
+     * 返回工具结果最大上下文预算。
      *
-     * 超出预算的结果应持久化并用预览替换。
+     * NOTE: 超出预算的结果应持久化并用预览替换。
      */
     int maxResultSize();
 
     /**
-     * TODO: 渲染给用户查看的工具调用摘要。
+     * 渲染给用户查看的工具调用摘要。
      *
-     * 该文本用于 TUI 或 headless 展示，不等同于模型上下文序列化。
+     * NOTE: 该文本用于 TUI 或 headless 展示，不等同于模型上下文序列化。
      */
     String renderForUser(I input);
 
     /**
-     * TODO: 将工具输出序列化为模型上下文消息。
+     * 将工具输出序列化为模型上下文消息。
      *
-     * 输出应遵守预算、脱敏和 tool result 语义。
+     * NOTE: 输出应遵守预算、脱敏和 tool result 语义。
      */
     AgentMessage serializeForContext(O output);
 }
-

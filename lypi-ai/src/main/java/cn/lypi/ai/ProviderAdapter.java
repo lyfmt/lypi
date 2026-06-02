@@ -8,16 +8,16 @@ import java.util.stream.Stream;
 
 public interface ProviderAdapter {
     /**
-     * TODO: 返回该 adapter 负责的 provider 名称。
+     * 返回该 adapter 负责的 provider 名称。
      *
-     * 名称必须与 ModelDescriptor.provider 保持一致，用于 ModelPort 路由模型调用。
+     * NOTE: 名称必须与 ModelDescriptor.provider 保持一致，用于 ModelPort 路由模型调用。
      */
     String provider();
 
     /**
-     * TODO: 发起 provider 流式调用并标准化输出。
+     * 发起 provider 流式调用并标准化输出。
      *
-     * 具体 provider 协议、thinking 参数和原始 SSE 必须在 adapter 内转换，不得泄漏到上层。
+     * NOTE: 具体 provider 协议、thinking 参数和原始 SSE 必须在 adapter 内转换，不得泄漏到上层。
      */
     Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal);
 }

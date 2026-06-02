@@ -4,7 +4,7 @@ import cn.lypi.contracts.context.ContextSnapshot;
 
 public interface CompactionCoordinator {
     /**
-     * TODO: 执行上下文压缩预检查。
+     * 执行上下文压缩预检查。
      *
      * 当上下文超预算时生成压缩计划和摘要；失败时回退到未压缩上下文。
      */
