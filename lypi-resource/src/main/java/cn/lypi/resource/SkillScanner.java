@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -83,13 +84,15 @@ class SkillScanner {
             String name = ResourceMetadata.stringValue(document.metadata(), "name")
                 .orElseGet(() -> file.getParent().getFileName().toString());
             String description = ResourceMetadata.stringValue(document.metadata(), "description").orElse("");
+            validateName(name, file, diagnostics, skillDiagnostics);
+            validateDescription(description, file, diagnostics, skillDiagnostics);
             skills.add(new SkillDescriptor(
                 name,
                 description,
                 skillSource(location.layer()),
                 file,
                 ResourceMetadata.stringList(document.metadata().get("paths")),
-                ResourceMetadata.stringList(document.metadata().get("allowed_tools")),
+                allowedTools(document.metadata()),
                 Hashing.sha256(content)
             ));
         } catch (IOException exception) {
@@ -100,6 +103,63 @@ class SkillScanner {
             diagnostics.add(diagnostic);
             skillDiagnostics.add(diagnostic);
         }
+    }
+
+    private List<String> allowedTools(Map<String, Object> metadata) {
+        LinkedHashSet<String> tools = new LinkedHashSet<>();
+        tools.addAll(ResourceMetadata.stringList(metadata.get("allowed_tools")));
+        tools.addAll(ResourceMetadata.stringList(metadata.get("allowed-tools")));
+        return List.copyOf(tools);
+    }
+
+    private void validateName(
+        String name,
+        Path file,
+        List<ResourceDiagnostic> diagnostics,
+        List<ResourceDiagnostic> skillDiagnostics
+    ) {
+        if (name == null || name.isBlank()) {
+            addSkillDiagnostic("skill name is required", file, diagnostics, skillDiagnostics);
+            return;
+        }
+        if (name.length() > 64) {
+            addSkillDiagnostic("skill name exceeds 64 characters: " + name, file, diagnostics, skillDiagnostics);
+        }
+        if (!name.matches("[a-z0-9-]+")) {
+            addSkillDiagnostic("skill name contains invalid characters: " + name, file, diagnostics, skillDiagnostics);
+        }
+        if (name.startsWith("-") || name.endsWith("-")) {
+            addSkillDiagnostic("skill name must not start or end with hyphen: " + name, file, diagnostics, skillDiagnostics);
+        }
+        if (name.contains("--")) {
+            addSkillDiagnostic("skill name must not contain consecutive hyphens: " + name, file, diagnostics, skillDiagnostics);
+        }
+    }
+
+    private void validateDescription(
+        String description,
+        Path file,
+        List<ResourceDiagnostic> diagnostics,
+        List<ResourceDiagnostic> skillDiagnostics
+    ) {
+        if (description == null || description.isBlank()) {
+            addSkillDiagnostic("skill description is required", file, diagnostics, skillDiagnostics);
+            return;
+        }
+        if (description.length() > 1024) {
+            addSkillDiagnostic("skill description exceeds 1024 characters", file, diagnostics, skillDiagnostics);
+        }
+    }
+
+    private void addSkillDiagnostic(
+        String message,
+        Path file,
+        List<ResourceDiagnostic> diagnostics,
+        List<ResourceDiagnostic> skillDiagnostics
+    ) {
+        ResourceDiagnostic diagnostic = ResourceDiagnostics.warning(message, file);
+        diagnostics.add(diagnostic);
+        skillDiagnostics.add(diagnostic);
     }
 
     private void reportDuplicateNames(
