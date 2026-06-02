@@ -6,6 +6,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 维护 session entry tree 的内存索引。
+ *
+ * NOTE: leaf 是内存状态；历史 entry 只通过 append 加入，不原地修改。
+ */
 final class EntryTreeIndex {
     private final Map<String, SessionEntry> byId = new LinkedHashMap<>();
     private String leafId;
@@ -28,12 +33,18 @@ final class EntryTreeIndex {
         return leafId;
     }
 
+    /**
+     * 添加 entry 并将其设为当前 leaf。
+     */
     void add(SessionEntry entry) {
         validateAppend(entry);
         byId.put(entry.id(), entry);
         leafId = entry.id();
     }
 
+    /**
+     * 切换当前 leaf。
+     */
     void switchLeaf(String leafId) {
         if (leafId != null && !byId.containsKey(leafId)) {
             throw new SessionEngineException("Session entry does not exist: " + leafId);
@@ -41,6 +52,9 @@ final class EntryTreeIndex {
         this.leafId = leafId;
     }
 
+    /**
+     * 校验追加 entry 是否满足 tree 约束。
+     */
     void validateAppend(SessionEntry entry) {
         if (byId.containsKey(entry.id())) {
             throw new SessionEngineException("Session entry already exists: " + entry.id());
@@ -51,6 +65,9 @@ final class EntryTreeIndex {
         }
     }
 
+    /**
+     * 返回从 leaf 到 root 的路径。
+     */
     List<SessionEntry> pathToRoot(String leafId) {
         List<SessionEntry> path = new ArrayList<>();
         String currentId = leafId;

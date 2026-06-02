@@ -14,6 +14,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * 检查工具输入中的路径硬安全线。
+ *
+ * NOTE: 该检查覆盖词法路径、符号链接链和受保护路径，不能被 BYPASS 越过。
+ */
 final class PathSafetyChecker {
     private static final List<String> PATH_FIELDS = List.of(
         "path",
@@ -34,6 +39,9 @@ final class PathSafetyChecker {
         ".profile"
     );
 
+    /**
+     * 检查工具请求中的常见路径字段。
+     */
     Optional<PermissionDecision> check(ToolUseRequest request, ToolUseContext context) {
         for (String fieldName : PATH_FIELDS) {
             Object rawPath = request.input().get(fieldName);

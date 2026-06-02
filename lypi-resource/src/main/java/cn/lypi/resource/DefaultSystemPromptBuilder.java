@@ -9,6 +9,11 @@ import cn.lypi.contracts.skill.SkillDescriptor;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 默认 system prompt 构建器。
+ *
+ * NOTE: ContextFile 正文会进入 prompt，Skill 和 Prompt Template 只披露索引信息。
+ */
 public class DefaultSystemPromptBuilder implements SystemPromptBuilder {
     @Override
     public SystemPrompt build(ResourceSnapshot resources) {

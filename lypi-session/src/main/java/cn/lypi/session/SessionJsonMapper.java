@@ -23,6 +23,11 @@ import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.util.Map;
 
+/**
+ * 映射 session JSONL envelope 和 entry 类型。
+ *
+ * NOTE: 第一行必须是 session header，后续行必须是已登记的 SessionEntry 类型。
+ */
 final class SessionJsonMapper {
     private static final String HEADER_TYPE = "session";
     private final ObjectMapper objectMapper;
@@ -63,10 +68,16 @@ final class SessionJsonMapper {
         objectMapper.registerModule(new JavaTimeModule());
     }
 
+    /**
+     * 将 session header 写成 JSONL envelope。
+     */
     String writeHeader(SessionHeader header) {
         return writeEnvelope(HEADER_TYPE, header);
     }
 
+    /**
+     * 将 session entry 写成 JSONL envelope。
+     */
     String writeEntry(SessionEntry entry) {
         String type = typeNames.get(entry.getClass());
         if (type == null) {
@@ -75,6 +86,9 @@ final class SessionJsonMapper {
         return writeEnvelope(type, entry);
     }
 
+    /**
+     * 读取 JSONL 行中的 type 和 payload。
+     */
     EntryEnvelope readEnvelope(String line) {
         try {
             JsonNode node = objectMapper.readTree(line);

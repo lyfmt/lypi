@@ -10,6 +10,11 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * 默认 Bash 风险分析器。
+ *
+ * NOTE: 该实现不是完整 shell parser；遇到动态结构时按 UNKNOWN 处理。
+ */
 public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
     private static final Pattern REDIRECT_TARGET = Pattern.compile("(?<!<)(?:(?:\\d+)?>>?|&>)\\s*([^\\s;&|()]+)");
     private static final Set<String> LOW_RISK_COMMANDS = Set.of(
@@ -63,6 +68,9 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         this.normalizer = normalizer;
     }
 
+    /**
+     * 分析原始 Bash 命令并返回归一化命令、命令段、重定向目标和风险等级。
+     */
     @Override
     public BashRiskAnalysis analyze(String rawCommand) {
         String normalized = normalizer.normalizeRaw(rawCommand);

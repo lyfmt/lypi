@@ -2,6 +2,9 @@ package cn.lypi.resource;
 
 import cn.lypi.contracts.skill.SkillDescriptor;
 
+/**
+ * 按需加载 Skill 正文并生成激活记录。
+ */
 public interface SkillActivationService {
     /**
      * 激活 Skill 并读取正文。

@@ -11,9 +11,17 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 扫描 Prompt Template 定义。
+ *
+ * NOTE: 同名模板按资源优先级覆盖，并通过 diagnostics 暴露覆盖关系。
+ */
 class PromptTemplateScanner {
     private final FrontmatterParser frontmatterParser = new FrontmatterParser();
 
+    /**
+     * 从资源位置中扫描 Markdown Prompt Template。
+     */
     List<PromptTemplate> scan(List<ResourceLocation> locations, List<ResourceDiagnostic> diagnostics) {
         Map<String, PrioritizedResource<PromptTemplate>> selected = new LinkedHashMap<>();
         for (ResourceLocation location : orderedLocations(locations)) {

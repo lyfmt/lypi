@@ -5,9 +5,17 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * 归一化 Bash 命令以支持风险分析和规则匹配。
+ *
+ * NOTE: 只剥离语义上安全的前置环境变量和 wrapper，无法确认时保留原命令。
+ */
 final class BashCommandNormalizer {
     private static final Pattern LEADING_ENV_ASSIGNMENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*=[^\\s]+\\s+");
 
+    /**
+     * 规范化原始命令字符串。
+     */
     String normalizeRaw(String rawCommand) {
         String normalized = rawCommand == null ? "" : rawCommand.trim();
         normalized = normalized.replaceAll("[ \\t\\x0B\\f\\r]+", " ");
@@ -24,6 +32,9 @@ final class BashCommandNormalizer {
         return normalized;
     }
 
+    /**
+     * 剥离前置安全 wrapper。
+     */
     String stripSafeWrappers(String command) {
         List<String> words = words(command);
         int index = 0;
@@ -59,6 +70,9 @@ final class BashCommandNormalizer {
         return String.join(" ", words.subList(index, words.size()));
     }
 
+    /**
+     * 拆分复合命令段。
+     */
     List<String> splitCommandSegments(String normalizedCommand) {
         if (normalizedCommand.isBlank()) {
             return List.of();

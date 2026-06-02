@@ -16,6 +16,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
+/**
+ * 默认权限策略引擎。
+ *
+ * NOTE: 判定顺序为显式 DENY、硬安全线、Bash 风险、模式默认和显式 ASK / ALLOW。
+ */
 public final class DefaultPolicyEngine implements PolicyEngine {
     private static final String METADATA_PERMISSION_MODE = "permissionMode";
     private static final String METADATA_PERMISSION_RULES = "permissionRules";
@@ -40,6 +45,11 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         this.bashRuleMatcher = new BashRuleMatcher(new BashCommandNormalizer());
     }
 
+    /**
+     * 根据工具请求和上下文返回权限决策。
+     *
+     * NOTE: BYPASS 不能越过路径安全、Bash 重定向和未知 Bash 风险。
+     */
     @Override
     public PermissionDecision decide(ToolUseRequest request, ToolUseContext context) {
         BashRiskAnalysis bashRisk = bashRisk(request);

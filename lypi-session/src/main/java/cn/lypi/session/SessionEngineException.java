@@ -3,6 +3,9 @@ package cn.lypi.session;
 import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.LyPiException;
 
+/**
+ * Session 引擎异常。
+ */
 public final class SessionEngineException extends LyPiException {
     public SessionEngineException(String message) {
         super("SESSION_ENGINE_ERROR", ErrorSeverity.ERROR, false, message);

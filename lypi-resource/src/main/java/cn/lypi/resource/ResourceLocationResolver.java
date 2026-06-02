@@ -6,6 +6,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 解析资源发现位置和优先级。
+ *
+ * NOTE: 只保留已存在的用户目录和显式目录，避免后续扫描产生无意义诊断。
+ */
 class ResourceLocationResolver {
     private final List<Path> userRoots;
     private final List<Path> explicitRoots;
@@ -19,6 +24,9 @@ class ResourceLocationResolver {
         this.explicitRoots = normalizeExistingRoots(explicitRoots);
     }
 
+    /**
+     * 根据项目根和当前目录生成资源发现计划。
+     */
     ResourceDiscoveryPlan resolve(Path projectRoot, Path cwd) {
         Path normalizedProjectRoot = projectRoot.toAbsolutePath().normalize();
         Path normalizedCwd = cwd.toAbsolutePath().normalize();

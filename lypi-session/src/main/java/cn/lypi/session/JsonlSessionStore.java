@@ -11,6 +11,11 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 读写 append-only session JSONL 文件。
+ *
+ * NOTE: store 只处理文件格式和版本校验，不维护 entry tree 语义。
+ */
 final class JsonlSessionStore {
     private static final int SUPPORTED_SESSION_VERSION = 1;
     private final Path sessionsDir;
@@ -25,6 +30,9 @@ final class JsonlSessionStore {
         this.mapper = mapper;
     }
 
+    /**
+     * 返回 session id 对应的 JSONL 文件路径。
+     */
     Path sessionFile(String sessionId) {
         SessionIdValidator.validate(sessionId);
         Path file = sessionsDir.resolve(sessionId + ".jsonl").normalize();
@@ -38,6 +46,9 @@ final class JsonlSessionStore {
         return Files.exists(sessionFile(sessionId));
     }
 
+    /**
+     * 创建新的 session 文件并写入 header。
+     */
     void create(SessionHeader header) {
         Path file = sessionFile(header.id());
         try {
@@ -55,6 +66,9 @@ final class JsonlSessionStore {
         }
     }
 
+    /**
+     * 读取 session 文件并解析 header 与 entries。
+     */
     SessionFile read(String sessionId) {
         Path file = sessionFile(sessionId);
         List<String> lines;
@@ -78,6 +92,9 @@ final class JsonlSessionStore {
         return new SessionFile(header, List.copyOf(entries));
     }
 
+    /**
+     * 追加一条 entry JSONL 行。
+     */
     void append(String sessionId, SessionEntry entry) {
         Path file = sessionFile(sessionId);
         try {

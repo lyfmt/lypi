@@ -12,6 +12,11 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * SessionEngine 的默认实现。
+ *
+ * NOTE: 该实现编排 JSONL store、entry tree 和 fork 服务，不处理模型或工具执行。
+ */
 public final class SessionEngineImpl implements SessionEngine {
     private final Path cwd;
     private final JsonlSessionStore store;
@@ -29,6 +34,9 @@ public final class SessionEngineImpl implements SessionEngine {
         this.store = new JsonlSessionStore(cwd);
     }
 
+    /**
+     * 打开已有 session 或创建新 session。
+     */
     @Override
     public SessionHandle openOrCreate(String sessionId) {
         this.sessionId = sessionId;
@@ -40,6 +48,9 @@ public final class SessionEngineImpl implements SessionEngine {
         return handle();
     }
 
+    /**
+     * 追加 entry 并移动当前 leaf。
+     */
     @Override
     public SessionHandle append(SessionEntry entry) {
         ensureOpen();
@@ -49,6 +60,9 @@ public final class SessionEngineImpl implements SessionEngine {
         return handle();
     }
 
+    /**
+     * 切换当前 leaf。
+     */
     @Override
     public SessionHandle switchLeaf(String leafId) {
         ensureOpen();
@@ -56,12 +70,18 @@ public final class SessionEngineImpl implements SessionEngine {
         return handle();
     }
 
+    /**
+     * 查询指定 leaf 到 root 的路径。
+     */
     @Override
     public List<SessionEntry> pathToRoot(String leafId) {
         ensureOpen();
         return index.pathToRoot(leafId);
     }
 
+    /**
+     * 追加消息 entry。
+     */
     @Override
     public SessionHandle appendMessage(AgentMessage message) {
         ensureOpen();
@@ -70,6 +90,9 @@ public final class SessionEngineImpl implements SessionEngine {
         return append(entry);
     }
 
+    /**
+     * 基于当前 session 创建 fork session。
+     */
     @Override
     public SessionHandle fork(ForkRequest request) {
         ensureOpen();

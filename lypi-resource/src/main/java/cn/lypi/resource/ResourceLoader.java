@@ -3,6 +3,9 @@ package cn.lypi.resource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import java.nio.file.Path;
 
+/**
+ * 加载当前工作区可见的资源快照。
+ */
 public interface ResourceLoader {
     /**
      * 加载项目资源快照。
