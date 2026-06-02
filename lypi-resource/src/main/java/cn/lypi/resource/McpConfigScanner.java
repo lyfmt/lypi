@@ -69,9 +69,9 @@ class McpConfigScanner {
     ) {
         try {
             JsonNode root = jsonMapper.readTree(file.toFile());
-            JsonNode serversNode = root.path("servers");
+            JsonNode serversNode = serversNode(root);
             if (!serversNode.isObject()) {
-                diagnostics.add(ResourceDiagnostics.warning("mcp config does not contain servers object", file));
+                diagnostics.add(ResourceDiagnostics.warning("mcp config does not contain servers or mcpServers object", file));
                 return;
             }
             serversNode.properties().forEach(entry ->
@@ -80,6 +80,14 @@ class McpConfigScanner {
         } catch (RuntimeException | IOException exception) {
             diagnostics.add(ResourceDiagnostics.warning("Failed to parse mcp config: " + exception.getMessage(), file));
         }
+    }
+
+    private JsonNode serversNode(JsonNode root) {
+        JsonNode mcpServers = root.path("mcpServers");
+        if (mcpServers.isObject()) {
+            return mcpServers;
+        }
+        return root.path("servers");
     }
 
     private void mergeServer(
@@ -106,7 +114,13 @@ class McpConfigScanner {
     private McpServerConfig toMcpServer(String name, JsonNode node) {
         McpTransport transport = McpTransport.valueOf(node.path("transport").asText("STDIO").toUpperCase());
         List<String> command = new ArrayList<>();
-        node.path("command").forEach(part -> command.add(part.asText()));
+        JsonNode commandNode = node.path("command");
+        if (commandNode.isTextual()) {
+            command.add(commandNode.asText());
+        } else if (commandNode.isArray()) {
+            commandNode.forEach(part -> command.add(part.asText()));
+        }
+        node.path("args").forEach(part -> command.add(part.asText()));
         Map<String, String> env = new LinkedHashMap<>();
         node.path("env").properties().forEach(entry -> env.put(entry.getKey(), entry.getValue().asText()));
         return new McpServerConfig(

@@ -34,6 +34,36 @@ class McpConfigPrecedenceTest {
         assertThat(diagnostics).anySatisfy(diagnostic -> assertThat(diagnostic.message()).contains("mcp server override").contains("filesystem"));
     }
 
+    @Test
+    void scanSupportsCommonMcpServersConfigWithCommandStringAndArgs() throws Exception {
+        Path project = Files.createDirectories(tempDir.resolve("repo"));
+        Path config = project.resolve(".ly-pi/mcp.json");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, """
+            {
+              "mcpServers": {
+                "filesystem": {
+                  "command": "npx",
+                  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+                  "env": {"ROOT": "/tmp"}
+                }
+              }
+            }
+            """);
+        List<ResourceDiagnostic> diagnostics = new ArrayList<>();
+
+        var servers = new McpConfigScanner().scan(List.of(
+            new ResourceLocation(ResourceLayer.PROJECT, project, 200, "project")
+        ), diagnostics);
+
+        assertThat(servers).singleElement().satisfies(server -> {
+            assertThat(server.name()).isEqualTo("filesystem");
+            assertThat(server.command()).containsExactly("npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp");
+            assertThat(server.env()).containsEntry("ROOT", "/tmp");
+        });
+        assertThat(diagnostics).isEmpty();
+    }
+
     private void writeMcp(Path file, String command, String argument) throws Exception {
         Files.createDirectories(file.getParent());
         Files.writeString(file, """
