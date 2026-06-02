@@ -22,6 +22,7 @@ final class ForkService {
     }
 
     SessionHandle fork(ForkRequest request, EntryTreeIndex sourceIndex) {
+        validateRequest(request);
         List<SessionEntry> path = new ArrayList<>(sourceIndex.pathToRoot(request.forkPointEntryId()));
         Collections.reverse(path);
         String forkSessionId = "ses_" + UUID.randomUUID().toString().replace("-", "");
@@ -61,5 +62,20 @@ final class ForkService {
             forkIndex.leafId(),
             forkIndex.byId()
         );
+    }
+
+    private void validateRequest(ForkRequest request) {
+        if (request.sourceSessionId() == null || request.sourceSessionId().isBlank()) {
+            throw new SessionEngineException("Fork source session id is required");
+        }
+        if (request.forkPointEntryId() == null || request.forkPointEntryId().isBlank()) {
+            throw new SessionEngineException("Fork point entry id is required");
+        }
+        if (request.targetCwd() == null) {
+            throw new SessionEngineException("Fork target cwd is required");
+        }
+        if (request.reason() == null || request.reason().isBlank()) {
+            throw new SessionEngineException("Fork reason is required");
+        }
     }
 }

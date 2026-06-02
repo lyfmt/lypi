@@ -150,7 +150,8 @@ class SessionEngineImplTest {
 
         assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
             .isInstanceOf(SessionEngineException.class)
-            .hasMessageContaining("line 2");
+            .hasMessageContaining("line 2")
+            .hasMessageContaining("Unrecognized token");
     }
 
     @Test
@@ -341,6 +342,56 @@ class SessionEngineImplTest {
                     .containsEntry("sourceSessionId", "ses_main")
                     .containsEntry("forkPointEntryId", "left");
             });
+    }
+
+    @Test
+    void appendAfterForkUsesForkInfoAsParent() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
+        Path targetCwd = tempDir.resolve("fork-cwd");
+
+        SessionHandle forked = engine.fork(new ForkRequest("ses_main", "left", targetCwd, "explore branch"));
+        SessionEngine targetEngine = new SessionEngineImpl(targetCwd);
+        targetEngine.openOrCreate(forked.sessionId());
+
+        SessionHandle afterMessage = targetEngine.appendMessage(textMessage("msg_after_fork", "continue"));
+
+        assertThat(targetEngine.pathToRoot(afterMessage.leafId()))
+            .extracting(SessionEntry::id)
+            .containsExactly(afterMessage.leafId(), forked.leafId(), "left", "root");
+    }
+
+    @Test
+    void forkRejectsBlankReasonWithSessionEngineException() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+
+        assertThatThrownBy(() -> engine.fork(new ForkRequest("ses_main", "root", tempDir.resolve("fork-cwd"), null)))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork reason is required");
+        assertThatThrownBy(() -> engine.fork(new ForkRequest("ses_main", "root", tempDir.resolve("fork-cwd"), " ")))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork reason is required");
+    }
+
+    @Test
+    void forkRejectsMissingRequestFieldsWithSessionEngineException() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+
+        assertThatThrownBy(() -> engine.fork(new ForkRequest("ses_main", null, tempDir.resolve("fork-cwd"), "explore")))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork point entry id is required");
+        assertThatThrownBy(() -> engine.fork(new ForkRequest("ses_main", "root", null, "explore")))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork target cwd is required");
+        assertThatThrownBy(() -> engine.fork(new ForkRequest(null, "root", tempDir.resolve("fork-cwd"), "explore")))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork source session id is required");
     }
 
     @Test

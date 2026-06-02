@@ -73,6 +73,9 @@ public final class SessionEngineImpl implements SessionEngine {
     @Override
     public SessionHandle fork(ForkRequest request) {
         ensureOpen();
+        if (request.sourceSessionId() == null || request.sourceSessionId().isBlank()) {
+            throw new SessionEngineException("Fork source session id is required");
+        }
         if (!sessionId.equals(request.sourceSessionId())) {
             throw new SessionEngineException("Fork source session does not match open session: " + request.sourceSessionId());
         }

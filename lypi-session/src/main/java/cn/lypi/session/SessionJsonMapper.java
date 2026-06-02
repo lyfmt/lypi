@@ -84,7 +84,7 @@ final class SessionJsonMapper {
             }
             return new EntryEnvelope(typeNode.asText(), node);
         } catch (JsonProcessingException e) {
-            throw new SessionEngineException("Failed to parse session JSONL line", e);
+            throw new SessionEngineException("Failed to parse session JSONL line: " + e.getOriginalMessage(), e);
         }
     }
 
