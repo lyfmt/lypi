@@ -9,8 +9,8 @@
 		<version>0.0.1-SNAPSHOT</version>
 	</parent>
 
-	<artifactId>lypi-session-engine</artifactId>
-	<name>lypi-session-engine</name>
+	<artifactId>lypi-session</artifactId>
+	<name>lypi-session</name>
 
 	<dependencies>
 		<dependency>

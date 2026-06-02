@@ -19,7 +19,7 @@
 
 	<modules>
 		<module>lypi-contracts</module>
-		<module>lypi-session-engine</module>
+		<module>lypi-session</module>
 		<module>lypi-agent-core</module>
 		<module>lypi-ai</module>
 		<module>lypi-tool</module>
@@ -45,7 +45,7 @@
 			</dependency>
 			<dependency>
 				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-session-engine</artifactId>
+				<artifactId>lypi-session</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
@@ -87,4 +87,3 @@
 	</dependencyManagement>
 
 </project>
-
