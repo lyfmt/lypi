@@ -108,6 +108,31 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
+    void decideAllowsHighRiskBashInDontAskModeWhenRiskIsStaticallyKnown() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "git push origin feature/security")),
+            context(PermissionMode.DONT_ASK)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+    }
+
+    @Test
+    void decideStillAsksForUnknownBashInBypassMode() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "bash -c \"$(cat script.sh)\"")),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+    }
+
+    @Test
     void decideAsksForBashPipelineRiskInDefaultExecuteMode() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 

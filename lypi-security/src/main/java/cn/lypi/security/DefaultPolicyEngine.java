@@ -140,6 +140,7 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         PermissionMode mode,
         BashRiskAnalysis bashRisk
     ) {
+        // NOTE: DONT_ASK 和 BYPASS 仍不能越过未知 Bash；DEFAULT_EXECUTE 对非低风险 Bash 更保守。
         if (!isBashTool(request.toolName())) {
             return Optional.empty();
         }
