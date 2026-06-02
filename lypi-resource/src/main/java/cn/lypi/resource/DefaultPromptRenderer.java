@@ -10,9 +10,13 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class DefaultPromptRenderer implements PromptRenderer {
+    private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{([A-Za-z0-9_.-]+)}}");
+
     @Override
     public PromptRenderResult render(PromptTemplate template, PromptRenderRequest request) {
         ArrayList<ResourceDiagnostic> diagnostics = new ArrayList<>();
@@ -46,14 +50,21 @@ public class DefaultPromptRenderer implements PromptRenderer {
             return new PromptRenderResult("", diagnostics);
         }
 
-        String content = template.templateBody();
-        for (Map.Entry<String, String> entry : values.entrySet()) {
-            content = content.replace("{{" + entry.getKey() + "}}", entry.getValue());
-        }
-        return new PromptRenderResult(content, diagnostics);
+        return new PromptRenderResult(renderTemplate(template.templateBody(), values), diagnostics);
     }
 
     private ResourceDiagnostic warning(String message) {
         return new ResourceDiagnostic(ResourceDiagnosticLevel.WARNING, message, Optional.empty());
+    }
+
+    private String renderTemplate(String templateBody, Map<String, String> values) {
+        Matcher matcher = PLACEHOLDER_PATTERN.matcher(templateBody);
+        StringBuilder rendered = new StringBuilder();
+        while (matcher.find()) {
+            String replacement = values.getOrDefault(matcher.group(1), matcher.group());
+            matcher.appendReplacement(rendered, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(rendered);
+        return rendered.toString();
     }
 }

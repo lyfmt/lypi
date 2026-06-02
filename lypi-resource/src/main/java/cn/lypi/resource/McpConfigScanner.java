@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 class McpConfigScanner {
@@ -151,7 +152,7 @@ class McpConfigScanner {
         Path file,
         List<ResourceDiagnostic> diagnostics
     ) {
-        String transportName = node.path("transport").asText("STDIO").toUpperCase();
+        String transportName = node.path("transport").asText("STDIO").toUpperCase(Locale.ROOT);
         try {
             return McpTransport.valueOf(transportName);
         } catch (IllegalArgumentException exception) {
@@ -168,7 +169,7 @@ class McpConfigScanner {
         Path file,
         List<ResourceDiagnostic> diagnostics
     ) {
-        if (transport == McpTransport.STDIO && command.isEmpty()) {
+        if (transport == McpTransport.STDIO && (command.isEmpty() || command.getFirst().isBlank())) {
             diagnostics.add(ResourceDiagnostics.warning("mcp server command is empty: " + name, file));
         }
         if (transport == McpTransport.HTTP && node.path("url").asText("").isBlank()) {

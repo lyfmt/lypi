@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -77,5 +78,57 @@ class McpConfigValidationTest {
         assertThat(servers).singleElement().satisfies(server -> assertThat(server.name()).isEqualTo("remote"));
         assertThat(diagnostics)
             .anySatisfy(diagnostic -> assertThat(diagnostic.message()).contains("HTTP").contains("url").contains("remote"));
+    }
+
+    @Test
+    void scanReportsBlankStdioCommand() throws Exception {
+        Path project = Files.createDirectories(tempDir.resolve("repo"));
+        Path config = project.resolve(".ly-pi/mcp.json");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, """
+            {
+              "mcpServers": {
+                "blankString": {"command": "   "},
+                "blankArray": {"command": ["  ", "server.js"]}
+              }
+            }
+            """);
+        List<ResourceDiagnostic> diagnostics = new ArrayList<>();
+
+        new McpConfigScanner().scan(List.of(
+            new ResourceLocation(ResourceLayer.PROJECT, project, 200, "project")
+        ), diagnostics);
+
+        assertThat(diagnostics)
+            .anySatisfy(diagnostic -> assertThat(diagnostic.message()).contains("mcp server command is empty").contains("blankString"))
+            .anySatisfy(diagnostic -> assertThat(diagnostic.message()).contains("mcp server command is empty").contains("blankArray"));
+    }
+
+    @Test
+    void scanParsesLowercaseTransportWithLocaleIndependentRules() throws Exception {
+        Locale previous = Locale.getDefault();
+        Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+        try {
+            Path project = Files.createDirectories(tempDir.resolve("repo"));
+            Path config = project.resolve(".ly-pi/mcp.json");
+            Files.createDirectories(config.getParent());
+            Files.writeString(config, """
+                {
+                  "mcpServers": {
+                    "filesystem": {"transport": "stdio", "command": "npx"}
+                  }
+                }
+                """);
+            List<ResourceDiagnostic> diagnostics = new ArrayList<>();
+
+            var servers = new McpConfigScanner().scan(List.of(
+                new ResourceLocation(ResourceLayer.PROJECT, project, 200, "project")
+            ), diagnostics);
+
+            assertThat(servers).singleElement().satisfies(server -> assertThat(server.name()).isEqualTo("filesystem"));
+            assertThat(diagnostics).noneSatisfy(diagnostic -> assertThat(diagnostic.message()).contains("unsupported mcp transport"));
+        } finally {
+            Locale.setDefault(previous);
+        }
     }
 }

@@ -73,4 +73,29 @@ class DefaultPromptRendererTest {
             .anySatisfy(diagnostic -> assertThat(diagnostic.message()).contains("template name mismatch"))
             .anySatisfy(diagnostic -> assertThat(diagnostic.message()).contains("unknown prompt parameter").contains("extra"));
     }
+
+    @Test
+    void renderTreatsParameterValuesAsLiterals() {
+        PromptTemplate template = new PromptTemplate(
+            "review",
+            "Review changes",
+            PromptTemplateSource.PROJECT,
+            List.of(
+                new PromptParameter("scope", "Review scope", true, Optional.empty()),
+                new PromptParameter("tone", "Reply tone", true, Optional.empty())
+            ),
+            "Review {{scope}} with {{tone}} tone.",
+            "sha256:prompt"
+        );
+
+        PromptRenderResult result = new DefaultPromptRenderer()
+            .render(template, new PromptRenderRequest(
+                "review",
+                Map.of("scope", "changes containing {{tone}}", "tone", "concise"),
+                "/review"
+            ));
+
+        assertThat(result.content()).isEqualTo("Review changes containing {{tone}} with concise tone.");
+        assertThat(result.diagnostics()).isEmpty();
+    }
 }
