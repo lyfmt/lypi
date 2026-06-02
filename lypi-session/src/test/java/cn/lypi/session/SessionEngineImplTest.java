@@ -13,6 +13,7 @@ import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
+import cn.lypi.contracts.session.SessionInfoEntry;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -278,14 +279,38 @@ class SessionEngineImplTest {
 
         assertThat(forked.sessionId()).isNotEqualTo("ses_main");
         assertThat(forked.sessionFile()).startsWith(targetCwd.resolve(".lypi").resolve("sessions"));
-        assertThat(forked.leafId()).isEqualTo("left");
-        assertThat(forked.byId()).containsOnlyKeys("root", "left");
+        assertThat(forked.byId()).containsKeys("root", "left", forked.leafId());
+        assertThat(forked.byId().get(forked.leafId()))
+            .isInstanceOfSatisfying(SessionInfoEntry.class, entry -> assertThat(entry.parentId()).isEqualTo("left"));
         assertThat(Files.readString(forked.sessionFile())).contains("\"parentSessionId\":\"ses_main\"");
 
         SessionEngine targetEngine = new SessionEngineImpl(targetCwd);
         SessionHandle reopened = targetEngine.openOrCreate(forked.sessionId());
-        assertThat(reopened.leafId()).isEqualTo("left");
-        assertThat(reopened.byId()).containsOnlyKeys("root", "left");
+        assertThat(reopened.leafId()).isEqualTo(forked.leafId());
+        assertThat(reopened.byId()).containsKeys("root", "left", forked.leafId());
+    }
+
+    @Test
+    void forkPersistsReasonAsSessionInfoWithoutCopyingSiblingBranches() throws Exception {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
+        engine.append(new CustomMessageEntry("right", "root", "right", Instant.parse("2026-06-01T00:02:00Z")));
+        Path targetCwd = tempDir.resolve("fork-cwd");
+
+        SessionHandle forked = engine.fork(new ForkRequest("ses_main", "left", targetCwd, "explore branch"));
+
+        assertThat(forked.byId()).doesNotContainKey("right");
+        assertThat(Files.readString(forked.sessionFile())).doesNotContain("\"id\":\"right\"");
+        assertThat(forked.byId().get(forked.leafId()))
+            .isInstanceOfSatisfying(SessionInfoEntry.class, entry -> {
+                assertThat(entry.parentId()).isEqualTo("left");
+                assertThat(entry.metadata())
+                    .containsEntry("forkReason", "explore branch")
+                    .containsEntry("sourceSessionId", "ses_main")
+                    .containsEntry("forkPointEntryId", "left");
+            });
     }
 
     @Test

@@ -4,11 +4,13 @@ import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
+import cn.lypi.contracts.session.SessionInfoEntry;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,6 +40,21 @@ final class ForkService {
             forkIndex.add(entry);
             targetStore.append(forkSessionId, entry);
         }
+        SessionInfoEntry forkInfo = new SessionInfoEntry(
+            SessionEntryIds.newEntryId(),
+            forkIndex.leafId(),
+            Map.of(
+                "forkReason",
+                request.reason(),
+                "sourceSessionId",
+                request.sourceSessionId(),
+                "forkPointEntryId",
+                request.forkPointEntryId()
+            ),
+            Instant.now(clock)
+        );
+        forkIndex.add(forkInfo);
+        targetStore.append(forkSessionId, forkInfo);
         return new SessionHandle(
             forkSessionId,
             targetStore.sessionFile(forkSessionId),
