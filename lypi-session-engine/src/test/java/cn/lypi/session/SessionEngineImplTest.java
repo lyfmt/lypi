@@ -4,10 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.contracts.context.AgentMessage;
-import cn.lypi.contracts.context.ContentBlock;
-import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
@@ -126,7 +125,7 @@ class SessionEngineImplTest {
             "msg_1",
             MessageRole.USER,
             MessageKind.TEXT,
-            List.of(new ContentBlock(ContentBlockKind.TEXT, "hello", Map.of())),
+            List.of(new TextContentBlock("hello", Map.of())),
             Instant.parse("2026-06-01T00:00:00Z"),
             Optional.empty(),
             Optional.empty()
