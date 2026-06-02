@@ -383,6 +383,9 @@ class SessionEngineImplTest {
         engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
 
+        assertThatThrownBy(() -> engine.fork(null))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork request is required");
         assertThatThrownBy(() -> engine.fork(new ForkRequest("ses_main", null, tempDir.resolve("fork-cwd"), "explore")))
             .isInstanceOf(SessionEngineException.class)
             .hasMessageContaining("Fork point entry id is required");
