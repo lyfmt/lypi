@@ -161,6 +161,11 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
             || command.contains("`")
             || command.contains("<(")
             || command.contains(">(")
+            || command.matches(".*\\s<<-?\\s*\\S+.*")
+            || command.matches(".*\\bfor\\b.*\\bdo\\b.*")
+            || command.matches(".*\\bwhile\\b.*\\bdo\\b.*")
+            || command.matches(".*\\bcase\\b.*\\bin\\b.*")
+            || command.matches(".*\\bif\\b.*\\bthen\\b.*")
             || command.matches(".*\\b(?:bash|sh|zsh)\\s+-c\\b.*");
     }
 

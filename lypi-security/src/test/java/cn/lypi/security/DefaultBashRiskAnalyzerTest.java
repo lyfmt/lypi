@@ -74,6 +74,30 @@ class DefaultBashRiskAnalyzerTest {
     }
 
     @Test
+    void analyzeMarksHeredocAsUnknownWhenItCanFeedShellContent() {
+        BashRiskAnalysis analysis = analyzer.analyze("cat <<EOF | sh\nrm -rf target\nEOF");
+
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(analysis.staticallyKnown()).isFalse();
+    }
+
+    @Test
+    void analyzeDetectsRedirectTargetEvenWhenCommandContainsWrapper() {
+        BashRiskAnalysis analysis = analyzer.analyze("timeout 5 echo hi > notes/output.txt");
+
+        assertThat(analysis.redirectTargets()).extracting(Object::toString).containsExactly("notes/output.txt");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.MEDIUM);
+    }
+
+    @Test
+    void analyzeMarksControlFlowAsUnknown() {
+        BashRiskAnalysis analysis = analyzer.analyze("for file in *; do rm -rf \"$file\"; done");
+
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(analysis.staticallyKnown()).isFalse();
+    }
+
+    @Test
     void analyzeCollectsFileDescriptorRedirectTargets() {
         BashRiskAnalysis stdoutRedirect = analyzer.analyze("echo ok 1> notes/stdout.txt");
         BashRiskAnalysis stderrAppendRedirect = analyzer.analyze("make test 2>> logs/stderr.txt");
