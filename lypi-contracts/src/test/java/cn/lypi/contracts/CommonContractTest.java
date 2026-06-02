@@ -7,6 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.boundary.BoundaryCheckReport;
 import cn.lypi.contracts.boundary.BoundaryRuleLevel;
 import cn.lypi.contracts.boundary.BoundaryRuleResult;
+import cn.lypi.contracts.boundary.CapabilityGuardResult;
+import cn.lypi.contracts.boundary.ExcludedCapability;
+import cn.lypi.contracts.boundary.ExclusionKind;
 import cn.lypi.contracts.boundary.FinalBoundaryRule;
 import cn.lypi.contracts.common.IdGenerator;
 import cn.lypi.contracts.runtime.AgentCorePort;
@@ -16,12 +19,15 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionEnginePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class CommonContractTest {
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = new ObjectMapper()
+        .registerModule(new Jdk8Module());
 
     @Test
     void generatedIdsUseDocumentedPrefixes() {
@@ -73,6 +79,49 @@ class CommonContractTest {
 
         assertTrue(restored.passed());
         assertTrue(mapper.writeValueAsString(restored).contains("\"passed\":true"));
+    }
+
+    @Test
+    void excludedCapabilityContractsPreserveReservedInterfaceAndGuardDecision() throws Exception {
+        ExcludedCapability capability = new ExcludedCapability(
+            "MCP Server",
+            "ly-pi only consumes MCP tools as a client",
+            ExclusionKind.NOT_SUPPORTED,
+            Optional.empty()
+        );
+        ExcludedCapability sandbox = new ExcludedCapability(
+            "Docker sandbox",
+            "sandbox implementations are reserved interfaces only",
+            ExclusionKind.INTERFACE_RESERVED_ONLY,
+            Optional.of("Executor")
+        );
+        CapabilityGuardResult guardResult = new CapabilityGuardResult(
+            sandbox.name(),
+            false,
+            "Docker sandbox cannot be registered as an available runtime capability"
+        );
+
+        String capabilityJson = mapper.writeValueAsString(capability);
+        String sandboxJson = mapper.writeValueAsString(sandbox);
+        String guardJson = mapper.writeValueAsString(guardResult);
+
+        assertAll(
+            () -> assertTrue(capabilityJson.contains("\"kind\":\"NOT_SUPPORTED\"")),
+            () -> assertTrue(sandboxJson.contains("\"reservedInterface\":\"Executor\"")),
+            () -> assertTrue(guardJson.contains("\"allowed\":false"))
+        );
+
+        ExcludedCapability restoredCapability = mapper.readValue(capabilityJson, ExcludedCapability.class);
+        ExcludedCapability restoredSandbox = mapper.readValue(sandboxJson, ExcludedCapability.class);
+        CapabilityGuardResult restoredGuardResult = mapper.readValue(guardJson, CapabilityGuardResult.class);
+
+        assertAll(
+            () -> assertEquals(ExclusionKind.NOT_SUPPORTED, restoredCapability.kind()),
+            () -> assertTrue(restoredCapability.reservedInterface().isEmpty()),
+            () -> assertEquals(Optional.of("Executor"), restoredSandbox.reservedInterface()),
+            () -> assertEquals("Docker sandbox", restoredGuardResult.capability()),
+            () -> assertEquals(false, restoredGuardResult.allowed())
+        );
     }
 
     @Test
