@@ -10,7 +10,6 @@ import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +22,7 @@ public final class DefaultPolicyEngine implements PolicyEngine {
 
     private final List<PermissionRule> rules;
     private final BashRiskAnalyzer bashRiskAnalyzer;
+    private final PathSafetyChecker pathSafetyChecker;
 
     public DefaultPolicyEngine() {
         this(List.of(), new DefaultBashRiskAnalyzer());
@@ -35,6 +35,7 @@ public final class DefaultPolicyEngine implements PolicyEngine {
     public DefaultPolicyEngine(List<PermissionRule> rules, BashRiskAnalyzer bashRiskAnalyzer) {
         this.rules = List.copyOf(rules);
         this.bashRiskAnalyzer = bashRiskAnalyzer;
+        this.pathSafetyChecker = new PathSafetyChecker();
     }
 
     @Override
@@ -116,21 +117,7 @@ public final class DefaultPolicyEngine implements PolicyEngine {
     }
 
     private Optional<PermissionDecision> pathSafetyDecision(ToolUseRequest request, ToolUseContext context) {
-        Object rawPath = request.input().get("path");
-        if (rawPath == null) {
-            return Optional.empty();
-        }
-        Path cwd = context.cwd().toAbsolutePath().normalize();
-        Path target = cwd.resolve(rawPath.toString()).normalize();
-        if (!target.startsWith(cwd)) {
-            return Optional.of(decision(
-                PermissionBehavior.DENY,
-                PermissionDecisionReason.PATH_SAFETY,
-                "工具路径越过当前工作目录: " + rawPath,
-                Map.of("path", rawPath.toString())
-            ));
-        }
-        return Optional.empty();
+        return pathSafetyChecker.check(request, context);
     }
 
     private Optional<PermissionDecision> bashRedirectDecision(ToolUseRequest request, BashRiskAnalysis bashRisk) {

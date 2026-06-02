@@ -1,0 +1,92 @@
+package cn.lypi.security;
+
+import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.tool.ToolUseContext;
+import cn.lypi.contracts.tool.ToolUseRequest;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+final class PathSafetyChecker {
+    private static final List<String> PATH_FIELDS = List.of(
+        "path",
+        "filePath",
+        "targetPath",
+        "sourcePath",
+        "destinationPath"
+    );
+    private static final List<String> PROTECTED_PATH_PREFIXES = List.of(
+        ".git/",
+        ".gitconfig",
+        ".gitmodules",
+        ".mcp.json",
+        ".claude.json",
+        ".bashrc",
+        ".zshrc",
+        ".profile"
+    );
+
+    Optional<PermissionDecision> check(ToolUseRequest request, ToolUseContext context) {
+        for (String fieldName : PATH_FIELDS) {
+            Object rawPath = request.input().get(fieldName);
+            if (rawPath == null) {
+                continue;
+            }
+            Optional<PermissionDecision> decision = checkPath(fieldName, rawPath.toString(), context);
+            if (decision.isPresent()) {
+                return decision;
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<PermissionDecision> checkPath(String fieldName, String rawPath, ToolUseContext context) {
+        Path cwd = context.cwd().toAbsolutePath().normalize();
+        Path target = cwd.resolve(rawPath).normalize();
+        if (!target.startsWith(cwd)) {
+            return Optional.of(decision(
+                "工具路径越过当前工作目录: " + rawPath,
+                fieldName,
+                rawPath,
+                target
+            ));
+        }
+        String relativePath = cwd.relativize(target).toString().replace('\\', '/');
+        if (isProtectedPath(relativePath)) {
+            return Optional.of(decision(
+                "工具路径命中受保护路径: " + rawPath,
+                fieldName,
+                rawPath,
+                target
+            ));
+        }
+        return Optional.empty();
+    }
+
+    private boolean isProtectedPath(String relativePath) {
+        for (String prefix : PROTECTED_PATH_PREFIXES) {
+            if (relativePath.equals(prefix) || relativePath.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private PermissionDecision decision(String message, String fieldName, String rawPath, Path normalizedPath) {
+        return new PermissionDecision(
+            PermissionBehavior.DENY,
+            PermissionDecisionReason.PATH_SAFETY,
+            message,
+            Optional.<PermissionUpdate>empty(),
+            Map.of(
+                "pathField", fieldName,
+                "path", rawPath,
+                "normalizedPath", normalizedPath.toString()
+            )
+        );
+    }
+}
