@@ -4,6 +4,7 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -11,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class JsonlSessionStore {
+    private static final int SUPPORTED_SESSION_VERSION = 1;
     private final Path sessionsDir;
     private final SessionJsonMapper mapper;
 
@@ -45,6 +47,8 @@ final class JsonlSessionStore {
                 StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE_NEW
             );
+        } catch (FileAlreadyExistsException e) {
+            throw new SessionEngineException("Session file already exists: " + file, e);
         } catch (IOException e) {
             throw new SessionEngineException("Failed to create session file: " + file, e);
         }
@@ -62,6 +66,7 @@ final class JsonlSessionStore {
             throw new SessionEngineException("Session file is empty: " + file);
         }
         SessionHeader header = mapper.readHeader(mapper.readEnvelope(lines.get(0)));
+        validateHeader(header);
         List<SessionEntry> entries = new ArrayList<>();
         for (int i = 1; i < lines.size(); i++) {
             String line = lines.get(i);
@@ -83,6 +88,12 @@ final class JsonlSessionStore {
             );
         } catch (IOException e) {
             throw new SessionEngineException("Failed to append session entry: " + entry.id(), e);
+        }
+    }
+
+    private void validateHeader(SessionHeader header) {
+        if (header.version() != SUPPORTED_SESSION_VERSION) {
+            throw new SessionEngineException("Unsupported session version: " + header.version());
         }
     }
 }

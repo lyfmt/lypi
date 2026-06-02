@@ -51,6 +51,13 @@ public final class SessionEngineImpl implements SessionEngine {
     }
 
     @Override
+    public SessionHandle switchLeaf(String leafId) {
+        ensureOpen();
+        index.switchLeaf(leafId);
+        return handle();
+    }
+
+    @Override
     public List<SessionEntry> pathToRoot(String leafId) {
         ensureOpen();
         return index.pathToRoot(leafId);
