@@ -26,6 +26,7 @@ final class JsonlSessionStore {
     }
 
     Path sessionFile(String sessionId) {
+        SessionIdValidator.validate(sessionId);
         Path file = sessionsDir.resolve(sessionId + ".jsonl").normalize();
         if (!file.startsWith(sessionsDir)) {
             throw new SessionEngineException("Invalid session id: " + sessionId);

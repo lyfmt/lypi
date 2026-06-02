@@ -11,7 +11,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 public final class SessionEngineImpl implements SessionEngine {
     private final Path cwd;
@@ -66,7 +65,7 @@ public final class SessionEngineImpl implements SessionEngine {
     @Override
     public SessionHandle appendMessage(AgentMessage message) {
         ensureOpen();
-        String entryId = "entry_" + UUID.randomUUID().toString().replace("-", "");
+        String entryId = SessionEntryIds.newEntryId();
         MessageEntry entry = new MessageEntry(entryId, index.leafId(), message, message.timestamp());
         return append(entry);
     }

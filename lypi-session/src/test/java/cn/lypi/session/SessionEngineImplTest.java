@@ -63,6 +63,21 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void openOrCreateRejectsBlankOrUnsafeSessionIds() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate(""))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Invalid session id");
+        assertThatThrownBy(() -> engine.openOrCreate("ses:bad"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Invalid session id");
+        assertThatThrownBy(() -> engine.openOrCreate("ses/main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Invalid session id");
+    }
+
+    @Test
     void openOrCreateRejectsUnsupportedSessionHeaderVersion() {
         JsonlSessionStore store = new JsonlSessionStore(tempDir);
         store.create(
@@ -183,21 +198,23 @@ class SessionEngineImplTest {
     void appendMessageCreatesMessageEntryThroughAppendSemantics() {
         SessionEngine engine = new SessionEngineImpl(tempDir);
         engine.openOrCreate("ses_main");
-        AgentMessage message = new AgentMessage(
-            "msg_1",
-            MessageRole.USER,
-            MessageKind.TEXT,
-            List.of(new TextContentBlock("hello", Map.of())),
-            Instant.parse("2026-06-01T00:00:00Z"),
-            Optional.empty(),
-            Optional.empty()
-        );
+        AgentMessage message = textMessage("msg_1", "hello");
 
         SessionHandle handle = engine.appendMessage(message);
 
         assertThat(handle.leafId()).isNotBlank();
         assertThat(handle.byId().get(handle.leafId()))
             .isInstanceOfSatisfying(MessageEntry.class, entry -> assertThat(entry.message()).isEqualTo(message));
+    }
+
+    @Test
+    void appendMessageUsesStableEntryIdPrefix() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+
+        SessionHandle handle = engine.appendMessage(textMessage("msg_1", "hello"));
+
+        assertThat(handle.leafId()).startsWith("entry_");
     }
 
     @Test
@@ -239,5 +256,17 @@ class SessionEngineImplTest {
         assertThatThrownBy(() -> store.create(header))
             .isInstanceOf(SessionEngineException.class)
             .hasMessageContaining("Session file already exists");
+    }
+
+    private static AgentMessage textMessage(String id, String text) {
+        return new AgentMessage(
+            id,
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new TextContentBlock(text, Map.of())),
+            Instant.parse("2026-06-01T00:00:00Z"),
+            Optional.empty(),
+            Optional.empty()
+        );
     }
 }
