@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.PromptTemplateSource;
+import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ContextFile;
 import cn.lypi.contracts.resource.MemorySource;
@@ -13,6 +14,7 @@ import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.skill.SkillSource;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class DefaultSystemPromptBuilderTest {
@@ -37,7 +39,7 @@ class DefaultSystemPromptBuilderTest {
                 "review",
                 "Review changes",
                 PromptTemplateSource.PROJECT,
-                List.of(),
+                List.of(new PromptParameter("scope", "Review scope", true, Optional.empty())),
                 "body must not be included",
                 "sha256:prompt"
             )),
@@ -49,8 +51,12 @@ class DefaultSystemPromptBuilderTest {
 
         assertThat(prompt.content()).contains("Follow project rules.");
         assertThat(prompt.content()).contains("MEMORY.md").contains("sha256:memory");
-        assertThat(prompt.content()).contains("java-style").contains("Use Java conventions");
-        assertThat(prompt.content()).contains("review").contains("Review changes");
+        assertThat(prompt.content()).contains("skill:java-style").contains("PROJECT").contains("sha256:skill");
+        assertThat(prompt.content()).contains("description: Use Java conventions");
+        assertThat(prompt.content()).contains("paths: [**/*.java]");
+        assertThat(prompt.content()).contains("prompt:review").contains("PROJECT").contains("sha256:prompt");
+        assertThat(prompt.content()).contains("description: Review changes");
+        assertThat(prompt.content()).contains("parameters: scope(required)");
         assertThat(prompt.content()).doesNotContain("body must not be included");
         assertThat(prompt.sourceNames()).containsExactly("AGENTS.md", "MEMORY.md", "skill:java-style", "prompt:review");
         assertThat(prompt.contentHash()).startsWith("sha256:");

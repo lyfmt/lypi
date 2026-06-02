@@ -1,6 +1,7 @@
 package cn.lypi.resource;
 
 import cn.lypi.contracts.prompt.SystemPrompt;
+import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.resource.ContextFile;
 import cn.lypi.contracts.resource.MemorySource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -38,14 +39,19 @@ public class DefaultSystemPromptBuilder implements SystemPromptBuilder {
             content.append("## Available Skills\n");
             for (SkillDescriptor skill : resources.skillIndex().skills()) {
                 sourceNames.add("skill:" + skill.name());
-                content.append("- ")
+                content.append("- skill:")
                     .append(skill.name())
-                    .append(": ")
-                    .append(skill.description());
+                    .append(" source=")
+                    .append(skill.source())
+                    .append(" hash=")
+                    .append(skill.contentHash())
+                    .append('\n')
+                    .append("  description: ")
+                    .append(skill.description())
+                    .append('\n');
                 if (!skill.pathGlobs().isEmpty()) {
-                    content.append(" paths=").append(skill.pathGlobs());
+                    content.append("  paths: ").append(skill.pathGlobs()).append('\n');
                 }
-                content.append('\n');
             }
             content.append('\n');
         }
@@ -54,16 +60,31 @@ public class DefaultSystemPromptBuilder implements SystemPromptBuilder {
             content.append("## Prompt Templates\n");
             resources.promptTemplates().forEach(template -> {
                 sourceNames.add("prompt:" + template.name());
-                content.append("- ")
+                content.append("- prompt:")
                     .append(template.name())
-                    .append(": ")
+                    .append(" source=")
+                    .append(template.source())
+                    .append(" hash=")
+                    .append(template.contentHash())
+                    .append('\n')
+                    .append("  description: ")
                     .append(template.description())
                     .append('\n');
+                if (!template.parameters().isEmpty()) {
+                    content.append("  parameters: ").append(parameterSummary(template.parameters())).append('\n');
+                }
             });
             content.append('\n');
         }
 
         String promptContent = content.toString().strip();
         return new SystemPrompt(promptContent, List.copyOf(sourceNames), Hashing.sha256(promptContent));
+    }
+
+    private String parameterSummary(List<PromptParameter> parameters) {
+        return parameters.stream()
+            .map(parameter -> parameter.name() + (parameter.required() ? "(required)" : "(optional)"))
+            .reduce((left, right) -> left + ", " + right)
+            .orElse("");
     }
 }
