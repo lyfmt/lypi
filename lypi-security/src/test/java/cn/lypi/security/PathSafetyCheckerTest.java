@@ -155,6 +155,43 @@ class PathSafetyCheckerTest {
     }
 
     @Test
+    void deniesSymlinkToSymlinkChainThatEscapesCurrentWorkingDirectory(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Path outside = tempDir.resolve("outside");
+        Files.createDirectories(workspace);
+        Files.createDirectories(outside);
+        Files.createSymbolicLink(workspace.resolve("link-a"), Path.of("link-b"));
+        Files.createSymbolicLink(workspace.resolve("link-b"), outside);
+        PathSafetyChecker checker = new PathSafetyChecker();
+
+        Optional<PermissionDecision> decision = checker.check(
+            request("read_file", Map.of("path", "link-a/secret.txt")),
+            new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
+        );
+
+        assertThat(decision).isPresent();
+        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
+    @Test
+    void allowsNormalChildPathWhenCurrentWorkingDirectoryIsSymlink(@TempDir Path tempDir) throws IOException {
+        Path realWorkspace = tempDir.resolve("real-workspace");
+        Path linkedWorkspace = tempDir.resolve("linked-workspace");
+        Files.createDirectories(realWorkspace);
+        Files.createFile(realWorkspace.resolve("notes.txt"));
+        Files.createSymbolicLink(linkedWorkspace, realWorkspace);
+        PathSafetyChecker checker = new PathSafetyChecker();
+
+        Optional<PermissionDecision> decision = checker.check(
+            request("read_file", Map.of("path", "notes.txt")),
+            new ToolUseContext("ses_1", "msg_1", linkedWorkspace, Map.of("permissionMode", PermissionMode.BYPASS))
+        );
+
+        assertThat(decision).isEmpty();
+    }
+
+    @Test
     void checksCommonPathFieldsForEditLikeTools() {
         PathSafetyChecker checker = new PathSafetyChecker();
 

@@ -200,7 +200,8 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         String commandWord = firstWhitespace < 0 ? trimmed : trimmed.substring(0, firstWhitespace);
         return commandWord.indexOf('\'') >= 0
             || commandWord.indexOf('"') >= 0
-            || commandWord.indexOf('\\') >= 0;
+            || commandWord.indexOf('\\') >= 0
+            || commandWord.indexOf('$') >= 0;
     }
 
     private int firstWhitespace(String value) {

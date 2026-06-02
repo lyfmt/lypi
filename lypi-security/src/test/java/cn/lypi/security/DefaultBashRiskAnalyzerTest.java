@@ -169,6 +169,7 @@ class DefaultBashRiskAnalyzerTest {
         BashRiskAnalysis singleQuoted = analyzer.analyze("'rm' -rf target");
         BashRiskAnalysis splitQuoted = analyzer.analyze("r''m -rf target");
         BashRiskAnalysis backslashEscaped = analyzer.analyze("r\\m -rf target");
+        BashRiskAnalysis parameterExpanded = analyzer.analyze("r${PATH:+}m -rf target");
 
         assertThat(singleQuoted.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
         assertThat(singleQuoted.staticallyKnown()).isFalse();
@@ -176,6 +177,8 @@ class DefaultBashRiskAnalyzerTest {
         assertThat(splitQuoted.staticallyKnown()).isFalse();
         assertThat(backslashEscaped.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
         assertThat(backslashEscaped.staticallyKnown()).isFalse();
+        assertThat(parameterExpanded.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(parameterExpanded.staticallyKnown()).isFalse();
     }
 
     @Test

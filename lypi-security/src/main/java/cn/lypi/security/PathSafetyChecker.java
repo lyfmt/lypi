@@ -60,7 +60,7 @@ final class PathSafetyChecker {
             ));
         }
         Optional<Path> realCwd = realPathForCwd(cwd);
-        Optional<Path> realPath = realCwd.map(path -> realPathForSafetyCheck(rawPath, cwd));
+        Optional<Path> realPath = realCwd.map(path -> realPathForSafetyCheck(rawPath, path));
         if (realPath.isPresent() && !realPath.get().startsWith(realCwd.get())) {
             return Optional.of(decision(
                 "工具路径经符号链接越过当前工作目录: " + rawPath,
@@ -92,13 +92,13 @@ final class PathSafetyChecker {
         return Optional.empty();
     }
 
-    private Path realPathForSafetyCheck(String rawPath, Path cwd) {
+    private Path realPathForSafetyCheck(String rawPath, Path realCwd) {
         Path raw = Path.of(rawPath);
         List<Path> segments = new ArrayList<>();
         for (Path segment : raw) {
             segments.add(segment);
         }
-        Path current = raw.isAbsolute() ? raw.getRoot() : cwd;
+        Path current = raw.isAbsolute() ? raw.getRoot() : realCwd;
         return resolveSegments(current, segments, 0, 0).normalize();
     }
 
@@ -106,22 +106,41 @@ final class PathSafetyChecker {
         if (symlinkDepth > 40) {
             return Path.of("/");
         }
+        Path resolvedCurrent = resolveCurrentSymlink(current, symlinkDepth);
         if (index >= segments.size()) {
-            if (Files.isSymbolicLink(current)) {
-                return resolveSymlink(current, segments, index, symlinkDepth);
-            }
-            return current;
+            return resolvedCurrent;
         }
         String segment = segments.get(index).toString();
         if (".".equals(segment) || segment.isBlank()) {
-            return resolveSegments(current, segments, index + 1, symlinkDepth);
+            return resolveSegments(resolvedCurrent, segments, index + 1, symlinkDepth);
         }
         if ("..".equals(segment)) {
-            Path parent = current.getParent();
-            return resolveSegments(parent == null ? current : parent, segments, index + 1, symlinkDepth);
+            Path parent = resolvedCurrent.getParent();
+            return resolveSegments(parent == null ? resolvedCurrent : parent, segments, index + 1, symlinkDepth);
         }
-        Path next = current.resolve(segment).normalize();
+        Path next = resolvedCurrent.resolve(segment).normalize();
         return resolveSymlink(next, segments, index + 1, symlinkDepth);
+    }
+
+    private Path resolveCurrentSymlink(Path current, int symlinkDepth) {
+        Path resolved = current;
+        int depth = symlinkDepth;
+        while (Files.isSymbolicLink(resolved) && depth <= 40) {
+            try {
+                Path linkTarget = Files.readSymbolicLink(resolved);
+                Path parent = resolved.getParent() == null ? resolved : resolved.getParent();
+                resolved = linkTarget.isAbsolute()
+                    ? linkTarget.normalize()
+                    : parent.resolve(linkTarget).normalize();
+                depth++;
+            } catch (IOException exception) {
+                return resolved;
+            }
+        }
+        if (depth > 40) {
+            return Path.of("/");
+        }
+        return resolved;
     }
 
     private Path resolveSymlink(Path current, List<Path> remainingSegments, int nextIndex, int symlinkDepth) {
