@@ -121,34 +121,18 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
-    void decideAsksForBashRedirectTargetsOutsideCwdUnlessBypass() {
+    void decideDeniesBashRedirectsInEveryPermissionMode() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 
-        PermissionDecision defaultExecuteDecision = engine.decide(
-            request("bash", Map.of("command", "echo ok > ../secret.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE)
-        );
-        PermissionDecision dontAskDecision = engine.decide(
-            request("bash", Map.of("command", "echo ok > ../secret.txt")),
-            context(PermissionMode.DONT_ASK)
-        );
-        PermissionDecision acceptEditsDecision = engine.decide(
-            request("bash", Map.of("command", "echo ok > ../secret.txt")),
-            context(PermissionMode.ACCEPT_EDITS)
-        );
-        PermissionDecision bypassDecision = engine.decide(
-            request("bash", Map.of("command", "echo ok > ../secret.txt")),
-            context(PermissionMode.BYPASS)
-        );
+        for (PermissionMode mode : PermissionMode.values()) {
+            PermissionDecision decision = engine.decide(
+                request("bash", Map.of("command", "echo ok > notes/output.txt")),
+                context(mode)
+            );
 
-        assertThat(defaultExecuteDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
-        assertThat(defaultExecuteDecision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-        assertThat(dontAskDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
-        assertThat(dontAskDecision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-        assertThat(acceptEditsDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
-        assertThat(acceptEditsDecision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-        assertThat(bypassDecision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
-        assertThat(bypassDecision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+            assertThat(decision.behavior()).as(mode.name()).isEqualTo(PermissionBehavior.DENY);
+            assertThat(decision.reason()).as(mode.name()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        }
     }
 
     @Test

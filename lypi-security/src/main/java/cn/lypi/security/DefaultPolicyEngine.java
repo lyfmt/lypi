@@ -50,18 +50,18 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             return pathSafety.get();
         }
 
-        PermissionMode mode = permissionMode(context);
         BashRiskAnalysis bashRisk = bashRisk(request);
-        Optional<PermissionDecision> bashRedirectPathSafety = bashRedirectPathSafetyDecision(request, context, mode, bashRisk);
-        if (bashRedirectPathSafety.isPresent()) {
-            return bashRedirectPathSafety.get();
+        Optional<PermissionDecision> bashRedirectDecision = bashRedirectDecision(request, bashRisk);
+        if (bashRedirectDecision.isPresent()) {
+            return bashRedirectDecision.get();
         }
 
-        Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, mode, bashRisk);
+        Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, permissionMode(context), bashRisk);
         if (bashRiskDecision.isPresent()) {
             return bashRiskDecision.get();
         }
 
+        PermissionMode mode = permissionMode(context);
         if (mode == PermissionMode.PLAN && isWriteTool(request.toolName())) {
             return decision(
                 PermissionBehavior.DENY,
@@ -133,28 +133,16 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         return Optional.empty();
     }
 
-    private Optional<PermissionDecision> bashRedirectPathSafetyDecision(
-        ToolUseRequest request,
-        ToolUseContext context,
-        PermissionMode mode,
-        BashRiskAnalysis bashRisk
-    ) {
-        if (!isBashTool(request.toolName()) || bashRisk == null || mode == PermissionMode.BYPASS) {
+    private Optional<PermissionDecision> bashRedirectDecision(ToolUseRequest request, BashRiskAnalysis bashRisk) {
+        if (!isBashTool(request.toolName()) || bashRisk == null || bashRisk.redirectTargets().isEmpty()) {
             return Optional.empty();
         }
-        Path cwd = context.cwd().toAbsolutePath().normalize();
-        for (Path redirectTarget : bashRisk.redirectTargets()) {
-            Path target = cwd.resolve(redirectTarget).normalize();
-            if (!target.startsWith(cwd)) {
-                return Optional.of(decision(
-                    PermissionBehavior.ASK,
-                    PermissionDecisionReason.PATH_SAFETY,
-                    "Bash 重定向目标越过当前工作目录，需要用户确认: " + redirectTarget,
-                    Map.of("path", redirectTarget.toString(), "bashRisk", bashRisk)
-                ));
-            }
-        }
-        return Optional.empty();
+        return Optional.of(decision(
+            PermissionBehavior.DENY,
+            PermissionDecisionReason.PATH_SAFETY,
+            "Bash 命令禁止使用输出重定向。",
+            Map.of("bashRisk", bashRisk)
+        ));
     }
 
     private Optional<PermissionDecision> bashRiskDecision(
