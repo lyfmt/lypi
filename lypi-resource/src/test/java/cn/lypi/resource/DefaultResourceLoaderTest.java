@@ -10,6 +10,7 @@ import cn.lypi.contracts.skill.SkillSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -28,11 +29,11 @@ class DefaultResourceLoaderTest {
         Files.writeString(module.resolve("CLAUDE.md"), "module claude");
         Files.writeString(module.resolve("APPEND_SYSTEM.md"), "module append");
 
-        ResourceSnapshot snapshot = new DefaultResourceLoader().load(module);
+        ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(), List.of()).load(module);
 
         assertThat(snapshot.agentFiles())
             .extracting(file -> root.relativize(file.path()).toString())
-            .containsExactly("AGENTS.md", "SYSTEM.md", "module/CLAUDE.md", "module/APPEND_SYSTEM.md");
+            .containsExactly("SYSTEM.md", "AGENTS.md", "module/APPEND_SYSTEM.md", "module/CLAUDE.md");
         assertThat(snapshot.agentFiles()).allSatisfy(file -> assertThat(file.contentHash()).startsWith("sha256:"));
         assertThat(snapshot.diagnostics()).isEmpty();
     }
@@ -46,7 +47,7 @@ class DefaultResourceLoaderTest {
         Files.writeString(module.resolve("pom.xml"), "<project/>");
         Files.writeString(module.resolve("SYSTEM.md"), "module system");
 
-        ResourceSnapshot snapshot = new DefaultResourceLoader().load(module);
+        ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(), List.of()).load(module);
 
         assertThat(snapshot.agentFiles())
             .extracting(file -> root.relativize(file.path()).toString())
@@ -102,7 +103,7 @@ class DefaultResourceLoaderTest {
             }
             """);
 
-        ResourceSnapshot snapshot = new DefaultResourceLoader().load(root);
+        ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(), List.of()).load(root);
 
         assertThat(snapshot.memorySources())
             .extracting(source -> root.relativize(source.path()).toString())
@@ -158,7 +159,7 @@ class DefaultResourceLoaderTest {
         Files.createDirectories(root.resolve(".ly-pi"));
         Files.writeString(root.resolve(".ly-pi/mcp.json"), "{not-json");
 
-        ResourceSnapshot snapshot = new DefaultResourceLoader().load(root);
+        ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(), List.of()).load(root);
 
         assertThat(snapshot.skillIndex().skills()).hasSize(2);
         assertThat(snapshot.diagnostics())

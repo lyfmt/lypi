@@ -7,6 +7,7 @@ import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -19,7 +20,10 @@ class DefaultResourceRuntimeTest {
         Path root = Files.createDirectories(tempDir.resolve("repo"));
         Files.writeString(root.resolve(".git"), "gitdir: /tmp/repo.git");
         Files.writeString(root.resolve("AGENTS.md"), "runtime rules");
-        ResourceRuntimePort runtime = new DefaultResourceRuntime();
+        ResourceRuntimePort runtime = new DefaultResourceRuntime(
+            new DefaultResourceLoader(List.of(), List.of()),
+            new DefaultSystemPromptBuilder()
+        );
 
         ResourceSnapshot snapshot = runtime.load(root);
         SystemPrompt prompt = runtime.buildSystemPrompt(snapshot);
