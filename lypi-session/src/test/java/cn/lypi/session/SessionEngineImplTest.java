@@ -13,6 +13,7 @@ import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
+import cn.lypi.contracts.session.SessionInfoEntry;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -63,6 +64,21 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void openOrCreateRejectsBlankOrUnsafeSessionIds() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate(""))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Invalid session id");
+        assertThatThrownBy(() -> engine.openOrCreate("ses:bad"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Invalid session id");
+        assertThatThrownBy(() -> engine.openOrCreate("ses/main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Invalid session id");
+    }
+
+    @Test
     void openOrCreateRejectsUnsupportedSessionHeaderVersion() {
         JsonlSessionStore store = new JsonlSessionStore(tempDir);
         store.create(
@@ -83,6 +99,31 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void openOrCreateRejectsSessionFileWithDuplicateEntryIds() {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(sessionHeader("ses_main"));
+        store.append("ses_main", new CustomMessageEntry("entry_1", null, "first", Instant.parse("2026-06-01T00:01:00Z")));
+        store.append("ses_main", new CustomMessageEntry("entry_1", null, "duplicate", Instant.parse("2026-06-01T00:02:00Z")));
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("already exists");
+    }
+
+    @Test
+    void openOrCreateRejectsSessionFileWithMissingParent() {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(sessionHeader("ses_main"));
+        store.append("ses_main", new CustomMessageEntry("entry_1", "missing", "orphan", Instant.parse("2026-06-01T00:01:00Z")));
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Parent session entry does not exist");
+    }
+
+    @Test
     void readRejectsNonSessionHeaderType() throws Exception {
         Path sessionFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_main.jsonl");
         Files.createDirectories(sessionFile.getParent());
@@ -92,6 +133,25 @@ class SessionEngineImplTest {
         assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
             .isInstanceOf(SessionEngineException.class)
             .hasMessageContaining("First session JSONL line must be a session header");
+    }
+
+    @Test
+    void openOrCreateReportsLineNumberForMalformedJsonlEntry() throws Exception {
+        Path sessionFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_main.jsonl");
+        Files.createDirectories(sessionFile.getParent());
+        Files.writeString(
+            sessionFile,
+            """
+            {"type":"session","version":1,"id":"ses_main","cwd":"%s","parentSessionId":null,"timestamp":"2026-06-01T00:00:00Z"}
+            not-json
+            """.formatted(tempDir.toString())
+        );
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("line 2")
+            .hasMessageContaining("Unrecognized token");
     }
 
     @Test
@@ -170,6 +230,18 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void switchLeafDoesNotAppendJsonlLine() throws Exception {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionHandle opened = engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        int before = Files.readAllLines(opened.sessionFile()).size();
+
+        engine.switchLeaf("root");
+
+        assertThat(Files.readAllLines(opened.sessionFile())).hasSize(before);
+    }
+
+    @Test
     void switchLeafRejectsUnknownEntry() {
         SessionEngine engine = new SessionEngineImpl(tempDir);
         engine.openOrCreate("ses_main");
@@ -180,24 +252,49 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void pathToRootWithNullLeafReturnsEmptyPath() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+
+        assertThat(engine.pathToRoot(null)).isEmpty();
+    }
+
+    @Test
+    void switchLeafAllowsNullToAppendNewRoot() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root_a", null, "root a", Instant.parse("2026-06-01T00:00:00Z")));
+
+        SessionHandle switched = engine.switchLeaf(null);
+        SessionHandle secondRoot = engine.append(
+            new CustomMessageEntry("root_b", switched.leafId(), "root b", Instant.parse("2026-06-01T00:01:00Z"))
+        );
+
+        assertThat(secondRoot.leafId()).isEqualTo("root_b");
+        assertThat(engine.pathToRoot("root_b")).extracting(SessionEntry::id).containsExactly("root_b");
+    }
+
+    @Test
     void appendMessageCreatesMessageEntryThroughAppendSemantics() {
         SessionEngine engine = new SessionEngineImpl(tempDir);
         engine.openOrCreate("ses_main");
-        AgentMessage message = new AgentMessage(
-            "msg_1",
-            MessageRole.USER,
-            MessageKind.TEXT,
-            List.of(new TextContentBlock("hello", Map.of())),
-            Instant.parse("2026-06-01T00:00:00Z"),
-            Optional.empty(),
-            Optional.empty()
-        );
+        AgentMessage message = textMessage("msg_1", "hello");
 
         SessionHandle handle = engine.appendMessage(message);
 
         assertThat(handle.leafId()).isNotBlank();
         assertThat(handle.byId().get(handle.leafId()))
             .isInstanceOfSatisfying(MessageEntry.class, entry -> assertThat(entry.message()).isEqualTo(message));
+    }
+
+    @Test
+    void appendMessageUsesStableEntryIdPrefix() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+
+        SessionHandle handle = engine.appendMessage(textMessage("msg_1", "hello"));
+
+        assertThat(handle.leafId()).startsWith("entry_");
     }
 
     @Test
@@ -213,14 +310,91 @@ class SessionEngineImplTest {
 
         assertThat(forked.sessionId()).isNotEqualTo("ses_main");
         assertThat(forked.sessionFile()).startsWith(targetCwd.resolve(".lypi").resolve("sessions"));
-        assertThat(forked.leafId()).isEqualTo("left");
-        assertThat(forked.byId()).containsOnlyKeys("root", "left");
+        assertThat(forked.byId()).containsKeys("root", "left", forked.leafId());
+        assertThat(forked.byId().get(forked.leafId()))
+            .isInstanceOfSatisfying(SessionInfoEntry.class, entry -> assertThat(entry.parentId()).isEqualTo("left"));
         assertThat(Files.readString(forked.sessionFile())).contains("\"parentSessionId\":\"ses_main\"");
 
         SessionEngine targetEngine = new SessionEngineImpl(targetCwd);
         SessionHandle reopened = targetEngine.openOrCreate(forked.sessionId());
-        assertThat(reopened.leafId()).isEqualTo("left");
-        assertThat(reopened.byId()).containsOnlyKeys("root", "left");
+        assertThat(reopened.leafId()).isEqualTo(forked.leafId());
+        assertThat(reopened.byId()).containsKeys("root", "left", forked.leafId());
+    }
+
+    @Test
+    void forkPersistsReasonAsSessionInfoWithoutCopyingSiblingBranches() throws Exception {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
+        engine.append(new CustomMessageEntry("right", "root", "right", Instant.parse("2026-06-01T00:02:00Z")));
+        Path targetCwd = tempDir.resolve("fork-cwd");
+
+        SessionHandle forked = engine.fork(new ForkRequest("ses_main", "left", targetCwd, "explore branch"));
+
+        assertThat(forked.byId()).doesNotContainKey("right");
+        assertThat(Files.readString(forked.sessionFile())).doesNotContain("\"id\":\"right\"");
+        assertThat(forked.byId().get(forked.leafId()))
+            .isInstanceOfSatisfying(SessionInfoEntry.class, entry -> {
+                assertThat(entry.parentId()).isEqualTo("left");
+                assertThat(entry.metadata())
+                    .containsEntry("forkReason", "explore branch")
+                    .containsEntry("sourceSessionId", "ses_main")
+                    .containsEntry("forkPointEntryId", "left");
+            });
+    }
+
+    @Test
+    void appendAfterForkUsesForkInfoAsParent() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
+        Path targetCwd = tempDir.resolve("fork-cwd");
+
+        SessionHandle forked = engine.fork(new ForkRequest("ses_main", "left", targetCwd, "explore branch"));
+        SessionEngine targetEngine = new SessionEngineImpl(targetCwd);
+        targetEngine.openOrCreate(forked.sessionId());
+
+        SessionHandle afterMessage = targetEngine.appendMessage(textMessage("msg_after_fork", "continue"));
+
+        assertThat(targetEngine.pathToRoot(afterMessage.leafId()))
+            .extracting(SessionEntry::id)
+            .containsExactly(afterMessage.leafId(), forked.leafId(), "left", "root");
+    }
+
+    @Test
+    void forkRejectsBlankReasonWithSessionEngineException() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+
+        assertThatThrownBy(() -> engine.fork(new ForkRequest("ses_main", "root", tempDir.resolve("fork-cwd"), null)))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork reason is required");
+        assertThatThrownBy(() -> engine.fork(new ForkRequest("ses_main", "root", tempDir.resolve("fork-cwd"), " ")))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork reason is required");
+    }
+
+    @Test
+    void forkRejectsMissingRequestFieldsWithSessionEngineException() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+
+        assertThatThrownBy(() -> engine.fork(null))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork request is required");
+        assertThatThrownBy(() -> engine.fork(new ForkRequest("ses_main", null, tempDir.resolve("fork-cwd"), "explore")))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork point entry id is required");
+        assertThatThrownBy(() -> engine.fork(new ForkRequest("ses_main", "root", null, "explore")))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork target cwd is required");
+        assertThatThrownBy(() -> engine.fork(new ForkRequest(null, "root", tempDir.resolve("fork-cwd"), "explore")))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Fork source session id is required");
     }
 
     @Test
@@ -239,5 +413,28 @@ class SessionEngineImplTest {
         assertThatThrownBy(() -> store.create(header))
             .isInstanceOf(SessionEngineException.class)
             .hasMessageContaining("Session file already exists");
+    }
+
+    private static AgentMessage textMessage(String id, String text) {
+        return new AgentMessage(
+            id,
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new TextContentBlock(text, Map.of())),
+            Instant.parse("2026-06-01T00:00:00Z"),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private SessionHeader sessionHeader(String sessionId) {
+        return new SessionHeader(
+            "session",
+            1,
+            sessionId,
+            tempDir,
+            Optional.empty(),
+            Instant.parse("2026-06-01T00:00:00Z")
+        );
     }
 }

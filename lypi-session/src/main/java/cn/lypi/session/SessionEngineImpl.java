@@ -11,7 +11,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 public final class SessionEngineImpl implements SessionEngine {
     private final Path cwd;
@@ -66,7 +65,7 @@ public final class SessionEngineImpl implements SessionEngine {
     @Override
     public SessionHandle appendMessage(AgentMessage message) {
         ensureOpen();
-        String entryId = "entry_" + UUID.randomUUID().toString().replace("-", "");
+        String entryId = SessionEntryIds.newEntryId();
         MessageEntry entry = new MessageEntry(entryId, index.leafId(), message, message.timestamp());
         return append(entry);
     }
@@ -74,6 +73,12 @@ public final class SessionEngineImpl implements SessionEngine {
     @Override
     public SessionHandle fork(ForkRequest request) {
         ensureOpen();
+        if (request == null) {
+            throw new SessionEngineException("Fork request is required");
+        }
+        if (request.sourceSessionId() == null || request.sourceSessionId().isBlank()) {
+            throw new SessionEngineException("Fork source session id is required");
+        }
         if (!sessionId.equals(request.sourceSessionId())) {
             throw new SessionEngineException("Fork source session does not match open session: " + request.sourceSessionId());
         }
