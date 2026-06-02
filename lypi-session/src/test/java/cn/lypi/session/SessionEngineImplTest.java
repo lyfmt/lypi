@@ -220,6 +220,29 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void pathToRootWithNullLeafReturnsEmptyPath() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+
+        assertThat(engine.pathToRoot(null)).isEmpty();
+    }
+
+    @Test
+    void switchLeafAllowsNullToAppendNewRoot() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root_a", null, "root a", Instant.parse("2026-06-01T00:00:00Z")));
+
+        SessionHandle switched = engine.switchLeaf(null);
+        SessionHandle secondRoot = engine.append(
+            new CustomMessageEntry("root_b", switched.leafId(), "root b", Instant.parse("2026-06-01T00:01:00Z"))
+        );
+
+        assertThat(secondRoot.leafId()).isEqualTo("root_b");
+        assertThat(engine.pathToRoot("root_b")).extracting(SessionEntry::id).containsExactly("root_b");
+    }
+
+    @Test
     void appendMessageCreatesMessageEntryThroughAppendSemantics() {
         SessionEngine engine = new SessionEngineImpl(tempDir);
         engine.openOrCreate("ses_main");
