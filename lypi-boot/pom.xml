@@ -23,7 +23,7 @@
 		</dependency>
 		<dependency>
 			<groupId>cn.lypi</groupId>
-			<artifactId>lypi-session-engine</artifactId>
+			<artifactId>lypi-session</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>cn.lypi</groupId>
@@ -64,4 +64,3 @@
 		</plugins>
 	</build>
 </project>
-
