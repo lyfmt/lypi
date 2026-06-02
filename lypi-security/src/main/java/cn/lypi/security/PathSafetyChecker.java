@@ -8,8 +8,8 @@ import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -60,7 +60,7 @@ final class PathSafetyChecker {
             ));
         }
         Optional<Path> realCwd = realPathForCwd(cwd);
-        Optional<Path> realPath = realCwd.flatMap(path -> realPathForSafetyCheck(target, cwd));
+        Optional<Path> realPath = realCwd.map(path -> realPathForSafetyCheck(rawPath, cwd));
         if (realPath.isPresent() && !realPath.get().startsWith(realCwd.get())) {
             return Optional.of(decision(
                 "工具路径经符号链接越过当前工作目录: " + rawPath,
@@ -92,47 +92,52 @@ final class PathSafetyChecker {
         return Optional.empty();
     }
 
-    private Optional<Path> realPathForSafetyCheck(Path target, Path cwd) {
-        Optional<Path> symlinkTarget = escapingSymlinkTarget(target, cwd);
-        if (symlinkTarget.isPresent()) {
-            return symlinkTarget;
+    private Path realPathForSafetyCheck(String rawPath, Path cwd) {
+        Path raw = Path.of(rawPath);
+        List<Path> segments = new ArrayList<>();
+        for (Path segment : raw) {
+            segments.add(segment);
         }
-        Path probe = target;
-        while (probe != null && !Files.exists(probe, LinkOption.NOFOLLOW_LINKS)) {
-            if (probe.equals(cwd)) {
-                return Optional.empty();
-            }
-            probe = probe.getParent();
-        }
-        if (probe == null) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(probe.toRealPath());
-        } catch (IOException exception) {
-            return Optional.empty();
-        }
+        Path current = raw.isAbsolute() ? raw.getRoot() : cwd;
+        return resolveSegments(current, segments, 0, 0).normalize();
     }
 
-    private Optional<Path> escapingSymlinkTarget(Path target, Path cwd) {
-        Path relativeTarget = cwd.relativize(target);
-        Path current = cwd;
-        for (Path segment : relativeTarget) {
-            current = current.resolve(segment).normalize();
-            if (!Files.isSymbolicLink(current)) {
-                continue;
-            }
-            try {
-                Path linkTarget = Files.readSymbolicLink(current);
-                Path resolved = linkTarget.isAbsolute()
-                    ? linkTarget.normalize()
-                    : current.getParent().resolve(linkTarget).normalize();
-                return Optional.of(resolved);
-            } catch (IOException exception) {
-                return Optional.of(current);
-            }
+    private Path resolveSegments(Path current, List<Path> segments, int index, int symlinkDepth) {
+        if (symlinkDepth > 40) {
+            return Path.of("/");
         }
-        return Optional.empty();
+        if (index >= segments.size()) {
+            if (Files.isSymbolicLink(current)) {
+                return resolveSymlink(current, segments, index, symlinkDepth);
+            }
+            return current;
+        }
+        String segment = segments.get(index).toString();
+        if (".".equals(segment) || segment.isBlank()) {
+            return resolveSegments(current, segments, index + 1, symlinkDepth);
+        }
+        if ("..".equals(segment)) {
+            Path parent = current.getParent();
+            return resolveSegments(parent == null ? current : parent, segments, index + 1, symlinkDepth);
+        }
+        Path next = current.resolve(segment).normalize();
+        return resolveSymlink(next, segments, index + 1, symlinkDepth);
+    }
+
+    private Path resolveSymlink(Path current, List<Path> remainingSegments, int nextIndex, int symlinkDepth) {
+        if (!Files.isSymbolicLink(current)) {
+            return resolveSegments(current, remainingSegments, nextIndex, symlinkDepth);
+        }
+        try {
+            Path linkTarget = Files.readSymbolicLink(current);
+            Path parent = current.getParent() == null ? current : current.getParent();
+            Path resolved = linkTarget.isAbsolute()
+                ? linkTarget.normalize()
+                : parent.resolve(linkTarget).normalize();
+            return resolveSegments(resolved, remainingSegments, nextIndex, symlinkDepth + 1);
+        } catch (IOException exception) {
+            return current;
+        }
     }
 
     private Optional<Path> realPathForCwd(Path cwd) {

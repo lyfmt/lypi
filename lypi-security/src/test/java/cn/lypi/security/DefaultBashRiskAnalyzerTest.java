@@ -87,8 +87,8 @@ class DefaultBashRiskAnalyzerTest {
         assertThat(time.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
         assertThat(envChdir.parsedCommands()).containsExactly("rm -rf target");
         assertThat(envChdir.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
-        assertThat(envSplitString.parsedCommands()).containsExactly("rm -rf target");
-        assertThat(envSplitString.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(envSplitString.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(envSplitString.staticallyKnown()).isFalse();
     }
 
     @Test
@@ -162,6 +162,42 @@ class DefaultBashRiskAnalyzerTest {
         assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
         assertThat(analysis.staticallyKnown()).isFalse();
         assertThat(analysis.reasons()).contains("包含动态 shell 结构");
+    }
+
+    @Test
+    void analyzeMarksQuotedOrEscapedCommandNamesAsUnknown() {
+        BashRiskAnalysis singleQuoted = analyzer.analyze("'rm' -rf target");
+        BashRiskAnalysis splitQuoted = analyzer.analyze("r''m -rf target");
+        BashRiskAnalysis backslashEscaped = analyzer.analyze("r\\m -rf target");
+
+        assertThat(singleQuoted.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(singleQuoted.staticallyKnown()).isFalse();
+        assertThat(splitQuoted.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(splitQuoted.staticallyKnown()).isFalse();
+        assertThat(backslashEscaped.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(backslashEscaped.staticallyKnown()).isFalse();
+    }
+
+    @Test
+    void analyzeMarksSubshellAndBraceGroupsAsUnknown() {
+        BashRiskAnalysis subshell = analyzer.analyze("(rm -rf target)");
+        BashRiskAnalysis braceGroup = analyzer.analyze("{ rm -rf target; }");
+
+        assertThat(subshell.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(subshell.staticallyKnown()).isFalse();
+        assertThat(braceGroup.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(braceGroup.staticallyKnown()).isFalse();
+    }
+
+    @Test
+    void analyzeMarksEnvSplitStringAsUnknownWhenCommandIsHiddenInsideArgument() {
+        BashRiskAnalysis shortOption = analyzer.analyze("env -S 'rm -rf target'");
+        BashRiskAnalysis longOption = analyzer.analyze("env --split-string='rm -rf target'");
+
+        assertThat(shortOption.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(shortOption.staticallyKnown()).isFalse();
+        assertThat(longOption.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(longOption.staticallyKnown()).isFalse();
     }
 
     @Test

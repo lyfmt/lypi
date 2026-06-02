@@ -70,7 +70,7 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         List<Path> redirectTargets = redirectTargets(normalized);
         List<String> reasons = new ArrayList<>();
 
-        if (containsDynamicShell(normalized)) {
+        if (containsDynamicShell(normalized) || containsAmbiguousShellSyntax(normalized, parsedCommands)) {
             reasons.add("包含动态 shell 结构");
             return analysis(normalized, parsedCommands, redirectTargets, BashRiskLevel.UNKNOWN, reasons, false);
         }
@@ -167,6 +167,49 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
             || command.matches(".*\\bcase\\b.*\\bin\\b.*")
             || command.matches(".*\\bif\\b.*\\bthen\\b.*")
             || command.matches(".*\\b(?:bash|sh|zsh)\\s+-c\\b.*");
+    }
+
+    private boolean containsAmbiguousShellSyntax(String normalizedCommand, List<String> parsedCommands) {
+        if (containsEnvSplitString(normalizedCommand)) {
+            return true;
+        }
+        for (String parsedCommand : parsedCommands) {
+            if (isSubshellOrGroupCommand(parsedCommand) || hasQuotedOrEscapedCommandWord(parsedCommand)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsEnvSplitString(String command) {
+        return command.matches("(^|.*[;&|\\s])env(?:\\s+[^;&|]*)?\\s-(?:[^;&|\\s]*S[^;&|\\s]*)(?:\\s|=).*")
+            || command.matches("(^|.*[;&|\\s])env(?:\\s+[^;&|]*)?\\s--split-string(?:\\s|=).*");
+    }
+
+    private boolean isSubshellOrGroupCommand(String command) {
+        String trimmed = command.trim();
+        return trimmed.startsWith("(") || trimmed.startsWith("{");
+    }
+
+    private boolean hasQuotedOrEscapedCommandWord(String command) {
+        String trimmed = command.trim();
+        if (trimmed.isBlank()) {
+            return false;
+        }
+        int firstWhitespace = firstWhitespace(trimmed);
+        String commandWord = firstWhitespace < 0 ? trimmed : trimmed.substring(0, firstWhitespace);
+        return commandWord.indexOf('\'') >= 0
+            || commandWord.indexOf('"') >= 0
+            || commandWord.indexOf('\\') >= 0;
+    }
+
+    private int firstWhitespace(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            if (Character.isWhitespace(value.charAt(index))) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     private String commandKey(String command) {
