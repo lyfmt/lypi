@@ -8,6 +8,7 @@ import java.util.Map;
 
 final class EntryTreeIndex {
     private final Map<String, SessionEntry> byId = new LinkedHashMap<>();
+    private String leafId;
 
     EntryTreeIndex(List<SessionEntry> entries) {
         for (SessionEntry entry : entries) {
@@ -24,19 +25,20 @@ final class EntryTreeIndex {
     }
 
     String leafId() {
-        if (byId.isEmpty()) {
-            return null;
-        }
-        String leafId = null;
-        for (String id : byId.keySet()) {
-            leafId = id;
-        }
         return leafId;
     }
 
     void add(SessionEntry entry) {
         validateAppend(entry);
         byId.put(entry.id(), entry);
+        leafId = entry.id();
+    }
+
+    void switchLeaf(String leafId) {
+        if (leafId != null && !byId.containsKey(leafId)) {
+            throw new SessionEngineException("Session entry does not exist: " + leafId);
+        }
+        this.leafId = leafId;
     }
 
     void validateAppend(SessionEntry entry) {

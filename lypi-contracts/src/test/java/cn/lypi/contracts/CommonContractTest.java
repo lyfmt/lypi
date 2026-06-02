@@ -129,6 +129,7 @@ class CommonContractTest {
         assertAll(
             () -> assertMethod(SessionEnginePort.class, "openOrCreate", 1),
             () -> assertMethod(SessionEnginePort.class, "append", 1),
+            () -> assertMethod(SessionEnginePort.class, "switchLeaf", 1),
             () -> assertMethod(SessionEnginePort.class, "pathToRoot", 1),
             () -> assertMethod(SessionEnginePort.class, "appendMessage", 1),
             () -> assertMethod(SessionEnginePort.class, "fork", 1),

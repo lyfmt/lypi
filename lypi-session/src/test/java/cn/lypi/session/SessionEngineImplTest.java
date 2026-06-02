@@ -12,6 +12,7 @@ import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionHeader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -59,6 +60,38 @@ class SessionEngineImplTest {
             .hasMessageContaining("Invalid session id");
 
         assertThat(tempDir.resolve(".lypi").resolve("escape.jsonl")).doesNotExist();
+    }
+
+    @Test
+    void openOrCreateRejectsUnsupportedSessionHeaderVersion() {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(
+            new SessionHeader(
+                "session",
+                99,
+                "ses_main",
+                tempDir,
+                Optional.empty(),
+                Instant.parse("2026-06-01T00:00:00Z")
+            )
+        );
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Unsupported session version");
+    }
+
+    @Test
+    void readRejectsNonSessionHeaderType() throws Exception {
+        Path sessionFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_main.jsonl");
+        Files.createDirectories(sessionFile.getParent());
+        Files.writeString(sessionFile, "{\"type\":\"message\",\"version\":1,\"id\":\"ses_main\"}\n");
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("First session JSONL line must be a session header");
     }
 
     @Test
@@ -118,6 +151,35 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void switchLeafMovesCurrentBranchWithoutAppendingHistory() throws Exception {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionHandle opened = engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
+        int lineCountBeforeSwitch = Files.readAllLines(opened.sessionFile()).size();
+
+        SessionHandle switched = engine.switchLeaf("root");
+        SessionHandle branched = engine.append(
+            new CustomMessageEntry("right", switched.leafId(), "right", Instant.parse("2026-06-01T00:02:00Z"))
+        );
+
+        assertThat(switched.leafId()).isEqualTo("root");
+        assertThat(Files.readAllLines(opened.sessionFile())).hasSize(lineCountBeforeSwitch + 1);
+        assertThat(branched.leafId()).isEqualTo("right");
+        assertThat(engine.pathToRoot(branched.leafId())).extracting(SessionEntry::id).containsExactly("right", "root");
+    }
+
+    @Test
+    void switchLeafRejectsUnknownEntry() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+
+        assertThatThrownBy(() -> engine.switchLeaf("missing"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Session entry does not exist");
+    }
+
+    @Test
     void appendMessageCreatesMessageEntryThroughAppendSemantics() {
         SessionEngine engine = new SessionEngineImpl(tempDir);
         engine.openOrCreate("ses_main");
@@ -159,5 +221,23 @@ class SessionEngineImplTest {
         SessionHandle reopened = targetEngine.openOrCreate(forked.sessionId());
         assertThat(reopened.leafId()).isEqualTo("left");
         assertThat(reopened.byId()).containsOnlyKeys("root", "left");
+    }
+
+    @Test
+    void createRejectsExistingSessionFileToPreserveAppendOnlyHistory() {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        SessionHeader header = new SessionHeader(
+            "session",
+            1,
+            "ses_main",
+            tempDir,
+            Optional.empty(),
+            Instant.parse("2026-06-01T00:00:00Z")
+        );
+        store.create(header);
+
+        assertThatThrownBy(() -> store.create(header))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Session file already exists");
     }
 }

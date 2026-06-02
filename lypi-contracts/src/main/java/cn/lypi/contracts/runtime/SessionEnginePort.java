@@ -22,6 +22,13 @@ public interface SessionEnginePort {
     SessionHandle append(SessionEntry entry);
 
     /**
+     * 切换当前 session leaf。
+     *
+     * NOTE: 该操作只影响内存中的当前分支指针，不追加或改写 JSONL 历史。
+     */
+    SessionHandle switchLeaf(String leafId);
+
+    /**
      * 查询从 leaf 到 root 的分支路径。
      *
      * ContextAssembler 使用该路径构建当前上下文视图。
