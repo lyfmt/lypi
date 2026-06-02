@@ -1,4 +1,5 @@
 /docs/
+AGENTS.md
 target/
 **/target/
 .worktrees/

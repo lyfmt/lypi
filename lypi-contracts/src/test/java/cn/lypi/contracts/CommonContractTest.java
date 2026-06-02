@@ -9,7 +9,14 @@ import cn.lypi.contracts.boundary.BoundaryRuleLevel;
 import cn.lypi.contracts.boundary.BoundaryRuleResult;
 import cn.lypi.contracts.boundary.FinalBoundaryRule;
 import cn.lypi.contracts.common.IdGenerator;
+import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.SessionEnginePort;
+import cn.lypi.contracts.runtime.ToolRuntimePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.lang.reflect.Method;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -66,5 +73,34 @@ class CommonContractTest {
 
         assertTrue(restored.passed());
         assertTrue(mapper.writeValueAsString(restored).contains("\"passed\":true"));
+    }
+
+    @Test
+    void runtimePortsExposeDocumentedCrossModuleCapabilities() {
+        assertAll(
+            () -> assertMethod(SessionEnginePort.class, "openOrCreate", 1),
+            () -> assertMethod(SessionEnginePort.class, "append", 1),
+            () -> assertMethod(SessionEnginePort.class, "pathToRoot", 1),
+            () -> assertMethod(SessionEnginePort.class, "appendMessage", 1),
+            () -> assertMethod(SessionEnginePort.class, "fork", 1),
+            () -> assertMethod(AiProviderRuntimePort.class, "stream", 2),
+            () -> assertMethod(ToolRuntimePort.class, "register", 1),
+            () -> assertMethod(ToolRuntimePort.class, "resolve", 1),
+            () -> assertMethod(ToolRuntimePort.class, "snapshot", 0),
+            () -> assertMethod(ToolRuntimePort.class, "execute", 2),
+            () -> assertMethod(SecurityRuntimePort.class, "decide", 2),
+            () -> assertMethod(ResourceRuntimePort.class, "load", 1),
+            () -> assertMethod(ResourceRuntimePort.class, "buildSystemPrompt", 1),
+            () -> assertMethod(AgentCorePort.class, "execute", 1)
+        );
+    }
+
+    private void assertMethod(Class<?> type, String name, int parameterCount) {
+        for (Method method : type.getMethods()) {
+            if (method.getName().equals(name) && method.getParameterCount() == parameterCount) {
+                return;
+            }
+        }
+        throw new AssertionError(type.getSimpleName() + " is missing " + name + "/" + parameterCount);
     }
 }
