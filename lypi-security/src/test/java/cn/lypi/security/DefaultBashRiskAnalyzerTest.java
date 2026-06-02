@@ -39,6 +39,22 @@ class DefaultBashRiskAnalyzerTest {
     }
 
     @Test
+    void analyzeClassifiesNewlineSeparatedCommandsIndependently() {
+        BashRiskAnalysis analysis = analyzer.analyze("git status\nrm -rf target");
+
+        assertThat(analysis.parsedCommands()).containsExactly("git status", "rm -rf target");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
+    void analyzeClassifiesBackgroundOperatorSegmentsIndependently() {
+        BashRiskAnalysis analysis = analyzer.analyze("git status & rm -rf target");
+
+        assertThat(analysis.parsedCommands()).containsExactly("git status", "rm -rf target");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
     void analyzeStripsSafeWrappersBeforeClassifyingCommandRisk() {
         BashRiskAnalysis analysis = analyzer.analyze("FOO=bar timeout 5 nice git status --short");
 
@@ -53,6 +69,20 @@ class DefaultBashRiskAnalyzerTest {
 
         assertThat(analysis.parsedCommands()).containsExactly("rm -rf target");
         assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
+    void analyzeStillFindsDestructiveCommandBehindWrapperOptions() {
+        BashRiskAnalysis nice = analyzer.analyze("nice -n 10 rm -rf target");
+        BashRiskAnalysis env = analyzer.analyze("env -i rm -rf target");
+        BashRiskAnalysis time = analyzer.analyze("time -p rm -rf target");
+
+        assertThat(nice.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(nice.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(env.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(env.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(time.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(time.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
     }
 
     @Test

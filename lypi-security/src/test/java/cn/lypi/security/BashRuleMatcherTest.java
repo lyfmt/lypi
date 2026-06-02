@@ -44,6 +44,36 @@ class BashRuleMatcherTest {
         assertThat(matched).isFalse();
     }
 
+    @Test
+    void allowWildcardRuleDoesNotMatchCompoundCommand() {
+        BashRuleMatcher matcher = new BashRuleMatcher(new BashCommandNormalizer());
+        PermissionRule allowAll = rule(PermissionBehavior.ALLOW, "bash", "*", "allow all");
+        BashRiskAnalysis analysis = analyzer.analyze("git status && echo ok");
+
+        boolean matched = matcher.matches(
+            allowAll,
+            request("bash", Map.of("command", "git status && echo ok")),
+            analysis
+        );
+
+        assertThat(matched).isFalse();
+    }
+
+    @Test
+    void denyRuleMatchesDangerousCommandBehindWrapperOptions() {
+        BashRuleMatcher matcher = new BashRuleMatcher(new BashCommandNormalizer());
+        PermissionRule denyRm = rule(PermissionBehavior.DENY, "bash", "rm -rf *", "protect delete");
+        BashRiskAnalysis analysis = analyzer.analyze("nice -n 10 rm -rf target");
+
+        boolean matched = matcher.matches(
+            denyRm,
+            request("bash", Map.of("command", "nice -n 10 rm -rf target")),
+            analysis
+        );
+
+        assertThat(matched).isTrue();
+    }
+
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
         return new ToolUseRequest("toolu_1", toolName, input, "msg_1");
     }

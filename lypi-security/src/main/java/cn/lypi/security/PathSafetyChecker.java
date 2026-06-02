@@ -6,6 +6,8 @@ import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +22,7 @@ final class PathSafetyChecker {
         "destinationPath"
     );
     private static final List<String> PROTECTED_PATH_PREFIXES = List.of(
+        ".git",
         ".git/",
         ".gitconfig",
         ".gitmodules",
@@ -55,6 +58,16 @@ final class PathSafetyChecker {
                 target
             ));
         }
+        Optional<Path> realCwd = realPathForCwd(cwd);
+        Optional<Path> realPath = realCwd.flatMap(path -> realPathForSafetyCheck(target, cwd));
+        if (realPath.isPresent() && !realPath.get().startsWith(realCwd.get())) {
+            return Optional.of(decision(
+                "工具路径经符号链接越过当前工作目录: " + rawPath,
+                fieldName,
+                rawPath,
+                realPath.get()
+            ));
+        }
         String relativePath = cwd.relativize(target).toString().replace('\\', '/');
         if (isProtectedPath(relativePath)) {
             return Optional.of(decision(
@@ -65,6 +78,32 @@ final class PathSafetyChecker {
             ));
         }
         return Optional.empty();
+    }
+
+    private Optional<Path> realPathForSafetyCheck(Path target, Path cwd) {
+        Path probe = target;
+        while (probe != null && !Files.exists(probe)) {
+            if (probe.equals(cwd)) {
+                return Optional.empty();
+            }
+            probe = probe.getParent();
+        }
+        if (probe == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(probe.toRealPath());
+        } catch (IOException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private Optional<Path> realPathForCwd(Path cwd) {
+        try {
+            return Optional.of(cwd.toRealPath());
+        } catch (IOException exception) {
+            return Optional.empty();
+        }
     }
 
     private boolean isProtectedPath(String relativePath) {

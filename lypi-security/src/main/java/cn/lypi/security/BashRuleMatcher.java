@@ -21,7 +21,7 @@ final class BashRuleMatcher {
             return false;
         }
         String pattern = rule.value().pattern();
-        if (pattern == null || pattern.isBlank() || pattern.equals("*")) {
+        if (pattern == null || pattern.isBlank()) {
             return true;
         }
 
