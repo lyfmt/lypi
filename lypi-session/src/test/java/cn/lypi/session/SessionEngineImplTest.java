@@ -229,6 +229,18 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void switchLeafDoesNotAppendJsonlLine() throws Exception {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionHandle opened = engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        int before = Files.readAllLines(opened.sessionFile()).size();
+
+        engine.switchLeaf("root");
+
+        assertThat(Files.readAllLines(opened.sessionFile())).hasSize(before);
+    }
+
+    @Test
     void switchLeafRejectsUnknownEntry() {
         SessionEngine engine = new SessionEngineImpl(tempDir);
         engine.openOrCreate("ses_main");
