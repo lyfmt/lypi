@@ -226,6 +226,36 @@ class DefaultPolicyEngineTest {
         assertThat(decision.message()).contains("confirm remote updates");
     }
 
+    @Test
+    void decideAppliesDenyRuleToBashSubcommandsBeforeRiskAsk() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
+            rule(PermissionBehavior.DENY, "bash", "rm -rf *", "protect delete")
+        ));
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "git status && rm -rf target")),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.EXPLICIT_RULE);
+    }
+
+    @Test
+    void decideDoesNotLetAllowRulePermitCompoundBashCommand() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
+            rule(PermissionBehavior.ALLOW, "bash", "git status *", "allow status")
+        ));
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "git status && unknown-tool")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+    }
+
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
         return new ToolUseRequest("toolu_1", toolName, input, "msg_1");
     }

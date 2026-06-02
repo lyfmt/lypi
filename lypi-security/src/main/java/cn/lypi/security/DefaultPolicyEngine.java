@@ -23,6 +23,7 @@ public final class DefaultPolicyEngine implements PolicyEngine {
     private final List<PermissionRule> rules;
     private final BashRiskAnalyzer bashRiskAnalyzer;
     private final PathSafetyChecker pathSafetyChecker;
+    private final BashRuleMatcher bashRuleMatcher;
 
     public DefaultPolicyEngine() {
         this(List.of(), new DefaultBashRiskAnalyzer());
@@ -36,12 +37,14 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         this.rules = List.copyOf(rules);
         this.bashRiskAnalyzer = bashRiskAnalyzer;
         this.pathSafetyChecker = new PathSafetyChecker();
+        this.bashRuleMatcher = new BashRuleMatcher(new BashCommandNormalizer());
     }
 
     @Override
     public PermissionDecision decide(ToolUseRequest request, ToolUseContext context) {
+        BashRiskAnalysis bashRisk = bashRisk(request);
         List<PermissionRule> effectiveRules = effectiveRules(context);
-        Optional<PermissionDecision> explicitDeny = explicitDecision(request, effectiveRules, PermissionBehavior.DENY);
+        Optional<PermissionDecision> explicitDeny = explicitDecision(request, effectiveRules, PermissionBehavior.DENY, bashRisk);
         if (explicitDeny.isPresent()) {
             return explicitDeny.get();
         }
@@ -51,7 +54,6 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             return pathSafety.get();
         }
 
-        BashRiskAnalysis bashRisk = bashRisk(request);
         Optional<PermissionDecision> bashRedirectDecision = bashRedirectDecision(request, bashRisk);
         if (bashRedirectDecision.isPresent()) {
             return bashRedirectDecision.get();
@@ -72,12 +74,12 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             );
         }
 
-        Optional<PermissionDecision> explicitAsk = explicitDecision(request, effectiveRules, PermissionBehavior.ASK);
+        Optional<PermissionDecision> explicitAsk = explicitDecision(request, effectiveRules, PermissionBehavior.ASK, bashRisk);
         if (explicitAsk.isPresent()) {
             return explicitAsk.get();
         }
 
-        Optional<PermissionDecision> explicitAllow = explicitDecision(request, effectiveRules, PermissionBehavior.ALLOW);
+        Optional<PermissionDecision> explicitAllow = explicitDecision(request, effectiveRules, PermissionBehavior.ALLOW, bashRisk);
         if (explicitAllow.isPresent()) {
             return explicitAllow.get();
         }
@@ -101,10 +103,11 @@ public final class DefaultPolicyEngine implements PolicyEngine {
     private Optional<PermissionDecision> explicitDecision(
         ToolUseRequest request,
         List<PermissionRule> effectiveRules,
-        PermissionBehavior behavior
+        PermissionBehavior behavior,
+        BashRiskAnalysis bashRisk
     ) {
         for (PermissionRule rule : effectiveRules) {
-            if (rule.behavior() == behavior && matches(rule, request)) {
+            if (rule.behavior() == behavior && matches(rule, request, bashRisk)) {
                 return Optional.of(decision(
                     behavior,
                     PermissionDecisionReason.EXPLICIT_RULE,
@@ -187,7 +190,10 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         return List.copyOf(effectiveRules);
     }
 
-    private boolean matches(PermissionRule rule, ToolUseRequest request) {
+    private boolean matches(PermissionRule rule, ToolUseRequest request, BashRiskAnalysis bashRisk) {
+        if (isBashTool(request.toolName())) {
+            return bashRuleMatcher.matches(rule, request, bashRisk);
+        }
         String ruleToolName = rule.value().toolName();
         if (ruleToolName != null && !ruleToolName.equals("*") && !ruleToolName.equals(request.toolName())) {
             return false;
