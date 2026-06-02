@@ -14,6 +14,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * 默认 Prompt Template 渲染器。
+ *
+ * NOTE: 缺失必填参数时返回空文本和诊断，不尝试执行任何副作用。
+ */
 public class DefaultPromptRenderer implements PromptRenderer {
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{([A-Za-z0-9_.-]+)}}");
 

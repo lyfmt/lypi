@@ -2,6 +2,9 @@ package cn.lypi.security;
 
 import cn.lypi.contracts.security.BashRiskAnalysis;
 
+/**
+ * 分析 Bash 命令的静态风险。
+ */
 public interface BashRiskAnalyzer {
     /**
      * 分析 Bash 命令风险。

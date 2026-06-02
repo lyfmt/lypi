@@ -8,6 +8,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
+/**
+ * 匹配 Bash 权限规则。
+ *
+ * NOTE: ALLOW 规则不下沉匹配复合命令段，DENY 和 ASK 规则可以匹配子命令。
+ */
 final class BashRuleMatcher {
     private final BashCommandNormalizer normalizer;
 
@@ -15,6 +20,9 @@ final class BashRuleMatcher {
         this.normalizer = normalizer;
     }
 
+    /**
+     * 判断权限规则是否命中 Bash 请求。
+     */
     boolean matches(PermissionRule rule, ToolUseRequest request, BashRiskAnalysis analysis) {
         String ruleToolName = rule.value().toolName();
         if (ruleToolName != null && !ruleToolName.equals("*") && !ruleToolName.equals(request.toolName())) {

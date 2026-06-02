@@ -16,9 +16,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 扫描 Skill 定义并构建 Skill 索引。
+ *
+ * NOTE: 扫描阶段只披露元数据和 hash，不加载 Skill 正文。
+ */
 class SkillScanner {
     private final FrontmatterParser frontmatterParser = new FrontmatterParser();
 
+    /**
+     * 从资源位置中扫描 SKILL.md 文件。
+     */
     SkillIndex scan(List<ResourceLocation> locations, List<ResourceDiagnostic> diagnostics) {
         List<ResourceDiagnostic> skillDiagnostics = new ArrayList<>();
         List<SkillDescriptor> skills = new ArrayList<>();

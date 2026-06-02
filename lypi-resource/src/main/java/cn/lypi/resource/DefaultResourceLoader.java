@@ -11,6 +11,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 默认资源加载器。
+ *
+ * NOTE: 该类只编排资源发现和解析，最终输出 ResourceSnapshot，不构建 system prompt。
+ */
 public class DefaultResourceLoader implements ResourceLoader {
     private final ProjectRootResolver projectRootResolver;
     private final ResourceLocationResolver locationResolver;
@@ -58,6 +63,9 @@ public class DefaultResourceLoader implements ResourceLoader {
         this.mcpConfigScanner = mcpConfigScanner;
     }
 
+    /**
+     * 发现并解析当前目录可见的资源。
+     */
     @Override
     public ResourceSnapshot load(Path cwd) {
         ResourceDiscoveryPlan rootPlan = projectRootResolver.resolve(cwd);

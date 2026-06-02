@@ -14,6 +14,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * 创建 fork session。
+ *
+ * NOTE: fork 只复制指定 fork point 所在的线性路径，并追加 fork 元信息。
+ */
 final class ForkService {
     private final Clock clock;
 
@@ -21,6 +26,9 @@ final class ForkService {
         this.clock = clock;
     }
 
+    /**
+     * 从源索引派生新的 session。
+     */
     SessionHandle fork(ForkRequest request, EntryTreeIndex sourceIndex) {
         validateRequest(request);
         List<SessionEntry> path = new ArrayList<>(sourceIndex.pathToRoot(request.forkPointEntryId()));

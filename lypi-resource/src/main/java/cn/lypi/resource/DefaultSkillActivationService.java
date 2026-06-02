@@ -8,6 +8,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 默认 Skill 激活服务。
+ *
+ * NOTE: 激活只读取 Skill 文件正文并返回记录，是否写入 session 由上层决定。
+ */
 public class DefaultSkillActivationService implements SkillActivationService {
     private final FrontmatterParser frontmatterParser = new FrontmatterParser();
 

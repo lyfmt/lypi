@@ -3,6 +3,9 @@ package cn.lypi.resource;
 import cn.lypi.contracts.prompt.PromptRenderRequest;
 import cn.lypi.contracts.prompt.PromptTemplate;
 
+/**
+ * 渲染 Prompt Template 文本。
+ */
 public interface PromptRenderer {
     /**
      * 渲染 Prompt Template。

@@ -16,9 +16,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * 扫描 MCP Server 静态配置。
+ *
+ * NOTE: 该扫描器只做配置解析和静态校验，不建立 MCP 连接。
+ */
 class McpConfigScanner {
     private final ObjectMapper jsonMapper = new ObjectMapper();
 
+    /**
+     * 从资源位置中扫描 MCP 配置文件。
+     */
     List<McpServerConfig> scan(List<ResourceLocation> locations, List<ResourceDiagnostic> diagnostics) {
         Map<String, PrioritizedResource<McpServerConfig>> selected = new LinkedHashMap<>();
         for (ResourceLocation location : orderedLocations(locations)) {
