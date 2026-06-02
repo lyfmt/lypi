@@ -98,6 +98,31 @@ class SessionEngineImplTest {
     }
 
     @Test
+    void openOrCreateRejectsSessionFileWithDuplicateEntryIds() {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(sessionHeader("ses_main"));
+        store.append("ses_main", new CustomMessageEntry("entry_1", null, "first", Instant.parse("2026-06-01T00:01:00Z")));
+        store.append("ses_main", new CustomMessageEntry("entry_1", null, "duplicate", Instant.parse("2026-06-01T00:02:00Z")));
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("already exists");
+    }
+
+    @Test
+    void openOrCreateRejectsSessionFileWithMissingParent() {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(sessionHeader("ses_main"));
+        store.append("ses_main", new CustomMessageEntry("entry_1", "missing", "orphan", Instant.parse("2026-06-01T00:01:00Z")));
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+
+        assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Parent session entry does not exist");
+    }
+
+    @Test
     void readRejectsNonSessionHeaderType() throws Exception {
         Path sessionFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_main.jsonl");
         Files.createDirectories(sessionFile.getParent());
@@ -267,6 +292,17 @@ class SessionEngineImplTest {
             Instant.parse("2026-06-01T00:00:00Z"),
             Optional.empty(),
             Optional.empty()
+        );
+    }
+
+    private SessionHeader sessionHeader(String sessionId) {
+        return new SessionHeader(
+            "session",
+            1,
+            sessionId,
+            tempDir,
+            Optional.empty(),
+            Instant.parse("2026-06-01T00:00:00Z")
         );
     }
 }
