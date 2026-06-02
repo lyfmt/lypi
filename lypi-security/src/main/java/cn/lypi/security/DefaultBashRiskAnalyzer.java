@@ -11,7 +11,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
-    private static final Pattern LEADING_ENV_ASSIGNMENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*=[^\\s]+\\s+");
     private static final Pattern REDIRECT_TARGET = Pattern.compile("(?<!<)(?:(?:\\d+)?>>?|&>)\\s*([^\\s;&|()]+)");
     private static final Set<String> LOW_RISK_COMMANDS = Set.of(
         "cat",
@@ -54,10 +53,19 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         "shred"
     );
     private static final Set<String> SHELL_COMMANDS = Set.of("bash", "sh", "zsh");
+    private final BashCommandNormalizer normalizer;
+
+    public DefaultBashRiskAnalyzer() {
+        this(new BashCommandNormalizer());
+    }
+
+    DefaultBashRiskAnalyzer(BashCommandNormalizer normalizer) {
+        this.normalizer = normalizer;
+    }
 
     @Override
     public BashRiskAnalysis analyze(String rawCommand) {
-        String normalized = normalize(rawCommand);
+        String normalized = normalizer.normalizeRaw(rawCommand);
         List<String> parsedCommands = parseCommands(normalized);
         List<Path> redirectTargets = redirectTargets(normalized);
         List<String> reasons = new ArrayList<>();
@@ -117,22 +125,9 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         );
     }
 
-    private String normalize(String rawCommand) {
-        String normalized = rawCommand == null ? "" : rawCommand.trim().replaceAll("\\s+", " ");
-        Matcher matcher = LEADING_ENV_ASSIGNMENT.matcher(normalized);
-        while (matcher.find()) {
-            normalized = matcher.replaceFirst("");
-            matcher = LEADING_ENV_ASSIGNMENT.matcher(normalized);
-        }
-        return normalized;
-    }
-
     private List<String> parseCommands(String normalizedCommand) {
-        if (normalizedCommand.isBlank()) {
-            return List.of();
-        }
         List<String> commands = new ArrayList<>();
-        for (String part : normalizedCommand.split("\\s*(?:&&|\\|\\||;|(?<!\\|)\\|(?!\\|))\\s*")) {
+        for (String part : normalizer.splitCommandSegments(normalizedCommand)) {
             String command = part.trim();
             if (!command.isBlank()) {
                 commands.add(displayCommand(command));

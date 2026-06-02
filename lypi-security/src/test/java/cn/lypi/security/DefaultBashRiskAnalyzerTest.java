@@ -39,6 +39,23 @@ class DefaultBashRiskAnalyzerTest {
     }
 
     @Test
+    void analyzeStripsSafeWrappersBeforeClassifyingCommandRisk() {
+        BashRiskAnalysis analysis = analyzer.analyze("FOO=bar timeout 5 nice git status --short");
+
+        assertThat(analysis.normalizedCommand()).isEqualTo("timeout 5 nice git status --short");
+        assertThat(analysis.parsedCommands()).containsExactly("git status");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.LOW);
+    }
+
+    @Test
+    void analyzeStillFindsDestructiveCommandBehindSafeWrappers() {
+        BashRiskAnalysis analysis = analyzer.analyze("timeout 10 env FOO=bar rm -rf target");
+
+        assertThat(analysis.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
     void analyzeMarksDynamicShellFeaturesAsUnknown() {
         BashRiskAnalysis analysis = analyzer.analyze("bash -c \"$(cat script.sh)\"");
 
