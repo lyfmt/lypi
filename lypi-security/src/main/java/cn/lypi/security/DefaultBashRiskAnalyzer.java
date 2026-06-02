@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
 
 public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
     private static final Pattern LEADING_ENV_ASSIGNMENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*=[^\\s]+\\s+");
-    private static final Pattern REDIRECT_TARGET = Pattern.compile("(?:^|\\s)(?:>>?|2>|&>)\\s*([^\\s;&|]+)");
+    private static final Pattern REDIRECT_TARGET = Pattern.compile("(?:^|\\s)(?:(?:\\d+)?>>?|&>)\\s*([^\\s;&|]+)");
     private static final Set<String> LOW_RISK_COMMANDS = Set.of(
         "cat",
         "cd",
@@ -164,6 +164,8 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
     private boolean containsDynamicShell(String command) {
         return command.contains("$(")
             || command.contains("`")
+            || command.contains("<(")
+            || command.contains(">(")
             || command.matches(".*\\b(?:bash|sh|zsh)\\s+-c\\b.*");
     }
 

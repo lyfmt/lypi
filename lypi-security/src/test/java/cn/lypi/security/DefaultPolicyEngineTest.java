@@ -136,6 +136,44 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
+    void decideDeniesFileDescriptorBashRedirectsInBypassMode() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision stdoutRedirect = engine.decide(
+            request("bash", Map.of("command", "echo ok 1> notes/output.txt")),
+            context(PermissionMode.BYPASS)
+        );
+        PermissionDecision stderrAppendRedirect = engine.decide(
+            request("bash", Map.of("command", "make test 2>> logs/stderr.txt")),
+            context(PermissionMode.BYPASS)
+        );
+        PermissionDecision customFdRedirect = engine.decide(
+            request("bash", Map.of("command", "echo data 3> notes/fd3.txt")),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(stdoutRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(stdoutRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(stderrAppendRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(stderrAppendRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(customFdRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(customFdRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
+    @Test
+    void decideAsksForBashProcessSubstitutionRiskInBypassMode() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "cat <(rm -rf target)")),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+    }
+
+    @Test
     void decideAllowsReadOnlyToolsByDefaultExecuteMode() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 

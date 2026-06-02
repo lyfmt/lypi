@@ -57,6 +57,26 @@ class DefaultBashRiskAnalyzerTest {
     }
 
     @Test
+    void analyzeCollectsFileDescriptorRedirectTargets() {
+        BashRiskAnalysis stdoutRedirect = analyzer.analyze("echo ok 1> notes/stdout.txt");
+        BashRiskAnalysis stderrAppendRedirect = analyzer.analyze("make test 2>> logs/stderr.txt");
+        BashRiskAnalysis customFdRedirect = analyzer.analyze("echo data 3> notes/fd3.txt");
+
+        assertThat(stdoutRedirect.redirectTargets()).extracting(Object::toString).containsExactly("notes/stdout.txt");
+        assertThat(stderrAppendRedirect.redirectTargets()).extracting(Object::toString).containsExactly("logs/stderr.txt");
+        assertThat(customFdRedirect.redirectTargets()).extracting(Object::toString).containsExactly("notes/fd3.txt");
+    }
+
+    @Test
+    void analyzeMarksProcessSubstitutionAsUnknown() {
+        BashRiskAnalysis analysis = analyzer.analyze("cat <(rm -rf target)");
+
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(analysis.staticallyKnown()).isFalse();
+        assertThat(analysis.reasons()).contains("包含动态 shell 结构");
+    }
+
+    @Test
     void analyzeClassifiesEveryPipelineSegment() {
         BashRiskAnalysis shellPipe = analyzer.analyze("cat script.sh | sh");
         BashRiskAnalysis destructivePipe = analyzer.analyze("cat README.md | rm -rf target");
