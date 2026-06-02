@@ -3,12 +3,10 @@ package cn.lypi.agent;
 import cn.lypi.contracts.context.ContextSnapshot;
 
 public interface CompactionCoordinator {
-    /*
-    * @status : 未完成
-    * @summary : 执行上下文压缩预检查。
-    *@description : 当上下文超预算时生成压缩计划和摘要；失败时回退到未压缩上下文。
-    *
-    *
-                              */
+    /**
+     * TODO: 执行上下文压缩预检查。
+     *
+     * 当上下文超预算时生成压缩计划和摘要；失败时回退到未压缩上下文。
+     */
     CompactionDecision preflight(ContextSnapshot context);
 }
