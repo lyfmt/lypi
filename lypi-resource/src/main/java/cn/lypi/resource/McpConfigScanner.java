@@ -74,9 +74,12 @@ class McpConfigScanner {
                 diagnostics.add(ResourceDiagnostics.warning("mcp config does not contain servers or mcpServers object", file));
                 return;
             }
-            serversNode.properties().forEach(entry ->
-                mergeServer(entry.getKey(), toMcpServer(entry.getKey(), entry.getValue()), location, file, diagnostics, selected)
-            );
+            serversNode.properties().forEach(entry -> {
+                McpServerConfig server = toMcpServer(entry.getKey(), entry.getValue(), file, diagnostics);
+                if (server != null) {
+                    mergeServer(entry.getKey(), server, location, file, diagnostics, selected);
+                }
+            });
         } catch (RuntimeException | IOException exception) {
             diagnostics.add(ResourceDiagnostics.warning("Failed to parse mcp config: " + exception.getMessage(), file));
         }
@@ -111,8 +114,16 @@ class McpConfigScanner {
         }
     }
 
-    private McpServerConfig toMcpServer(String name, JsonNode node) {
-        McpTransport transport = McpTransport.valueOf(node.path("transport").asText("STDIO").toUpperCase());
+    private McpServerConfig toMcpServer(
+        String name,
+        JsonNode node,
+        Path file,
+        List<ResourceDiagnostic> diagnostics
+    ) {
+        McpTransport transport = parseTransport(name, node, file, diagnostics);
+        if (transport == null) {
+            return null;
+        }
         List<String> command = new ArrayList<>();
         JsonNode commandNode = node.path("command");
         if (commandNode.isTextual()) {
@@ -121,6 +132,7 @@ class McpConfigScanner {
             commandNode.forEach(part -> command.add(part.asText()));
         }
         node.path("args").forEach(part -> command.add(part.asText()));
+        validateTransportSpecificFields(name, transport, command, node, file, diagnostics);
         Map<String, String> env = new LinkedHashMap<>();
         node.path("env").properties().forEach(entry -> env.put(entry.getKey(), entry.getValue().asText()));
         return new McpServerConfig(
@@ -128,8 +140,62 @@ class McpConfigScanner {
             transport,
             List.copyOf(command),
             Map.copyOf(env),
-            Duration.ofSeconds(node.path("startupTimeoutSeconds").asLong(10)),
-            Duration.ofSeconds(node.path("callTimeoutSeconds").asLong(60))
+            Duration.ofSeconds(timeoutSeconds(name, node, "startupTimeoutSeconds", 10, file, diagnostics)),
+            Duration.ofSeconds(timeoutSeconds(name, node, "callTimeoutSeconds", 60, file, diagnostics))
         );
+    }
+
+    private McpTransport parseTransport(
+        String name,
+        JsonNode node,
+        Path file,
+        List<ResourceDiagnostic> diagnostics
+    ) {
+        String transportName = node.path("transport").asText("STDIO").toUpperCase();
+        try {
+            return McpTransport.valueOf(transportName);
+        } catch (IllegalArgumentException exception) {
+            diagnostics.add(ResourceDiagnostics.warning("unsupported mcp transport for " + name + ": " + transportName, file));
+            return null;
+        }
+    }
+
+    private void validateTransportSpecificFields(
+        String name,
+        McpTransport transport,
+        List<String> command,
+        JsonNode node,
+        Path file,
+        List<ResourceDiagnostic> diagnostics
+    ) {
+        if (transport == McpTransport.STDIO && command.isEmpty()) {
+            diagnostics.add(ResourceDiagnostics.warning("mcp server command is empty: " + name, file));
+        }
+        if (transport == McpTransport.HTTP && node.path("url").asText("").isBlank()) {
+            diagnostics.add(ResourceDiagnostics.warning("HTTP mcp server url is empty: " + name, file));
+        }
+    }
+
+    private long timeoutSeconds(
+        String name,
+        JsonNode node,
+        String fieldName,
+        long defaultValue,
+        Path file,
+        List<ResourceDiagnostic> diagnostics
+    ) {
+        JsonNode value = node.path(fieldName);
+        if (value.isMissingNode()) {
+            return defaultValue;
+        }
+        long seconds = value.asLong(defaultValue);
+        if (seconds <= 0) {
+            diagnostics.add(ResourceDiagnostics.warning(
+                "mcp server " + fieldName + " must be positive for " + name + "; using default " + defaultValue,
+                file
+            ));
+            return defaultValue;
+        }
+        return seconds;
     }
 }
