@@ -79,6 +79,42 @@ class PathSafetyCheckerTest {
     }
 
     @Test
+    void deniesDanglingSymlinkFileThatEscapesCurrentWorkingDirectory(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Path outside = tempDir.resolve("outside");
+        Files.createDirectories(workspace);
+        Files.createDirectories(outside);
+        Files.createSymbolicLink(workspace.resolve("link-file"), outside.resolve("new.txt"));
+        PathSafetyChecker checker = new PathSafetyChecker();
+
+        Optional<PermissionDecision> decision = checker.check(
+            request("write_file", Map.of("path", "link-file")),
+            new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
+        );
+
+        assertThat(decision).isPresent();
+        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
+    @Test
+    void deniesSymlinkThatResolvesToProtectedProjectPath(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace.resolve(".git"));
+        Files.createSymbolicLink(workspace.resolve("git-link"), workspace.resolve(".git"));
+        PathSafetyChecker checker = new PathSafetyChecker();
+
+        Optional<PermissionDecision> decision = checker.check(
+            request("write_file", Map.of("path", "git-link/config")),
+            new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
+        );
+
+        assertThat(decision).isPresent();
+        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
+    @Test
     void checksCommonPathFieldsForEditLikeTools() {
         PathSafetyChecker checker = new PathSafetyChecker();
 

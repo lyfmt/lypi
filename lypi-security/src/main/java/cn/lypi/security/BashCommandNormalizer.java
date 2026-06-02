@@ -123,7 +123,7 @@ final class BashCommandNormalizer {
                 next++;
             } else if (word.startsWith("-")) {
                 next++;
-                if (("-u".equals(word) || "--unset".equals(word)) && next < words.size()) {
+                if (envOptionRequiresValue(word) && next < words.size()) {
                     next++;
                 }
             } else {
@@ -131,6 +131,15 @@ final class BashCommandNormalizer {
             }
         }
         return next < words.size() ? next : index;
+    }
+
+    private boolean envOptionRequiresValue(String option) {
+        return "-u".equals(option)
+            || "--unset".equals(option)
+            || "-C".equals(option)
+            || "--chdir".equals(option)
+            || "-S".equals(option)
+            || "--split-string".equals(option);
     }
 
     private int stripCommand(List<String> words, int index) {

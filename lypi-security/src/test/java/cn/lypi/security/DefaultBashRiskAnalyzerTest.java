@@ -76,6 +76,8 @@ class DefaultBashRiskAnalyzerTest {
         BashRiskAnalysis nice = analyzer.analyze("nice -n 10 rm -rf target");
         BashRiskAnalysis env = analyzer.analyze("env -i rm -rf target");
         BashRiskAnalysis time = analyzer.analyze("time -p rm -rf target");
+        BashRiskAnalysis envChdir = analyzer.analyze("env -C /tmp rm -rf target");
+        BashRiskAnalysis envSplitString = analyzer.analyze("env -S ignored rm -rf target");
 
         assertThat(nice.parsedCommands()).containsExactly("rm -rf target");
         assertThat(nice.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
@@ -83,6 +85,10 @@ class DefaultBashRiskAnalyzerTest {
         assertThat(env.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
         assertThat(time.parsedCommands()).containsExactly("rm -rf target");
         assertThat(time.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(envChdir.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(envChdir.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
+        assertThat(envSplitString.parsedCommands()).containsExactly("rm -rf target");
+        assertThat(envSplitString.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
     }
 
     @Test
