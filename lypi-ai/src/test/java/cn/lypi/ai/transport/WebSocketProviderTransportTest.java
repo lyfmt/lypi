@@ -1,12 +1,15 @@
 package cn.lypi.ai.transport;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
 import java.net.URI;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class WebSocketProviderTransportTest {
@@ -25,7 +28,8 @@ class WebSocketProviderTransportTest {
         ProviderRequest request = new ProviderRequest(
             URI.create("wss://api.example.test/v1/responses"),
             Map.of("Authorization", "Bearer ${LYPI_TEST_TOKEN}"),
-            "{\"stream\":true}"
+            "{\"stream\":true}",
+            Optional.of(Duration.ofSeconds(7))
         );
 
         List<ProviderRawEvent> events = transport.stream(request, () -> false).toList();
@@ -33,6 +37,7 @@ class WebSocketProviderTransportTest {
         assertThat(client.uri).isEqualTo(request.uri());
         assertThat(client.headers).containsEntry("Authorization", "Bearer ${LYPI_TEST_TOKEN}");
         assertThat(client.payload).isEqualTo("{\"stream\":true}");
+        assertThat(client.timeout).isEqualTo(Duration.ofSeconds(7));
         assertThat(events).containsExactly(new ProviderRawEvent("{\"type\":\"response.created\"}"), new ProviderRawEvent("[DONE]"));
     }
 
@@ -46,21 +51,45 @@ class WebSocketProviderTransportTest {
         assertThat(client.payload).isNull();
     }
 
+    @Test
+    void jdkClientFailsWhenProviderDoesNotCompleteBeforeTimeout() {
+        WebSocketProviderTransport.CollectorListener listener = new WebSocketProviderTransport.CollectorListener();
+
+        assertThatThrownBy(() -> listener.await(Duration.ofMillis(1)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Provider WebSocket request timed out.");
+    }
+
+    @Test
+    void jdkClientFailsWhenProviderReportsWebSocketError() {
+        WebSocketProviderTransport.CollectorListener listener = new WebSocketProviderTransport.CollectorListener();
+        RuntimeException providerError = new RuntimeException("connection refused");
+
+        listener.onError(null, providerError);
+
+        assertThatThrownBy(() -> listener.await(Duration.ofSeconds(1)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Provider WebSocket request failed.")
+            .hasCause(providerError);
+    }
+
     private static final class RecordingWebSocketClient implements WebSocketProviderTransport.WebSocketClient {
         private final List<String> messages;
         private URI uri;
         private Map<String, String> headers;
         private String payload;
+        private Duration timeout;
 
         private RecordingWebSocketClient(List<String> messages) {
             this.messages = messages;
         }
 
         @Override
-        public List<String> exchange(URI uri, Map<String, String> headers, String payload) {
+        public List<String> exchange(URI uri, Map<String, String> headers, String payload, Duration timeout) {
             this.uri = uri;
             this.headers = headers;
             this.payload = payload;
+            this.timeout = timeout;
             return messages;
         }
     }

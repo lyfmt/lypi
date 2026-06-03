@@ -152,17 +152,17 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         URI uri = config.websocketUrl()
             .orElseGet(() -> cn.lypi.ai.transport.WebSocketProviderTransport.deriveUri(config.baseUrl(), config.websocketPath()));
         ObjectNode body = responsesRequestBuilder.buildWebSocketCreateEvent(request, config);
-        return new ProviderRequest(uri, headers(), body.toString());
+        return new ProviderRequest(uri, headers(), body.toString(), java.util.Optional.of(config.timeout()));
     }
 
     private ProviderRequest responsesSseRequest(LypiModelRequest request) {
         ObjectNode body = responsesRequestBuilder.build(request, config);
-        return new ProviderRequest(endpoint("responses"), headers(), body.toString());
+        return new ProviderRequest(endpoint("responses"), headers(), body.toString(), java.util.Optional.of(config.timeout()));
     }
 
     private ProviderRequest chatCompletionsRequest(LypiModelRequest request) {
         ObjectNode body = chatCompletionsRequestBuilder.build(request, config);
-        return new ProviderRequest(endpoint("chat/completions"), headers(), body.toString());
+        return new ProviderRequest(endpoint("chat/completions"), headers(), body.toString(), java.util.Optional.of(config.timeout()));
     }
 
     private Map<String, String> headers() {

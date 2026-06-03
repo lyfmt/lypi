@@ -6,6 +6,7 @@ import cn.lypi.ai.ApiProviderRegistry;
 import cn.lypi.ai.ModelPort;
 import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
+import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
 import java.net.URI;
 import java.time.Duration;
@@ -108,6 +109,23 @@ class LyPiAiAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasSingleBean(ModelRegistry.class);
                 assertThat(context.getBean(ModelRegistry.class).list()).isNotEmpty();
+            });
+    }
+
+    @Test
+    void defaultsResponsesFallbackToResponses() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.ai.providers.openai.enabled=true",
+                "lypi.ai.providers.openai.base-url=https://api.openai.test/v1",
+                "lypi.ai.providers.openai.api-key=${LYPI_TEST_TOKEN}"
+            )
+            .run(context -> {
+                LyPiAiProperties properties = context.getBean(LyPiAiProperties.class);
+
+                assertThat(properties.getProviders().get("openai").getRequestStyle()).isEqualTo(RequestStyle.RESPONSES);
+                assertThat(properties.getProviders().get("openai").getFallbackRequestStyle()).isEqualTo(RequestStyle.RESPONSES);
             });
     }
 

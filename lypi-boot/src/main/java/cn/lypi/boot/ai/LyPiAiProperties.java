@@ -46,7 +46,7 @@ public class LyPiAiProperties {
         private boolean enabled;
         private ApiStyle apiStyle = ApiStyle.OPENAI_COMPATIBLE;
         private RequestStyle requestStyle = RequestStyle.RESPONSES;
-        private RequestStyle fallbackRequestStyle = RequestStyle.CHAT_COMPLETIONS;
+        private RequestStyle fallbackRequestStyle = RequestStyle.RESPONSES;
         private TransportMode transport = TransportMode.AUTO;
         private URI baseUrl;
         private String websocketPath = "/v1/responses";

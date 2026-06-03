@@ -32,7 +32,8 @@ public final class WebSocketProviderTransport implements ProviderTransport {
         if (signal.aborted()) {
             return Stream.empty();
         }
-        return client.exchange(request.uri(), request.headers(), request.body()).stream()
+        Duration timeout = request.timeout().orElse(Duration.ofSeconds(30));
+        return client.exchange(request.uri(), request.headers(), request.body(), timeout).stream()
             .map(ProviderRawEvent::new);
     }
 
@@ -52,7 +53,7 @@ public final class WebSocketProviderTransport implements ProviderTransport {
     }
 
     public interface WebSocketClient {
-        List<String> exchange(URI uri, Map<String, String> headers, String payload);
+        List<String> exchange(URI uri, Map<String, String> headers, String payload, Duration timeout);
     }
 
     private static final class JdkWebSocketClient implements WebSocketClient {
@@ -63,14 +64,14 @@ public final class WebSocketProviderTransport implements ProviderTransport {
         }
 
         @Override
-        public List<String> exchange(URI uri, Map<String, String> headers, String payload) {
+        public List<String> exchange(URI uri, Map<String, String> headers, String payload, Duration timeout) {
             CollectorListener listener = new CollectorListener();
-            WebSocket.Builder builder = httpClient.newWebSocketBuilder().connectTimeout(Duration.ofSeconds(30));
+            WebSocket.Builder builder = httpClient.newWebSocketBuilder().connectTimeout(timeout);
             headers.forEach(builder::header);
             WebSocket webSocket = builder.buildAsync(uri, listener).join();
             webSocket.sendText(payload, true).join();
             try {
-                listener.await();
+                listener.await(timeout);
             } finally {
                 webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done");
             }
@@ -78,9 +79,10 @@ public final class WebSocketProviderTransport implements ProviderTransport {
         }
     }
 
-    private static final class CollectorListener implements WebSocket.Listener {
+    static final class CollectorListener implements WebSocket.Listener {
         private final List<String> messages = new ArrayList<>();
         private final CountDownLatch done = new CountDownLatch(1);
+        private Throwable error;
 
         @Override
         public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
@@ -100,14 +102,22 @@ public final class WebSocketProviderTransport implements ProviderTransport {
 
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
+            this.error = error;
             done.countDown();
         }
 
-        private void await() {
+        void await(Duration timeout) {
             try {
-                done.await(30, TimeUnit.SECONDS);
+                boolean completed = done.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
+                if (!completed) {
+                    throw new IllegalStateException("Provider WebSocket request timed out.");
+                }
+                if (error != null) {
+                    throw new IllegalStateException("Provider WebSocket request failed.", error);
+                }
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
+                throw new IllegalStateException("Provider WebSocket request interrupted.", exception);
             }
         }
     }
