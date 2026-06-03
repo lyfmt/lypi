@@ -3,6 +3,7 @@ package cn.lypi.ai.provider.openai;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import cn.lypi.ai.ApiProvider;
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
 import cn.lypi.ai.provider.ProviderTransport;
@@ -181,6 +182,18 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(tools.get(0).path("name").asText()).isEqualTo("read");
         assertThat(tools.get(0).path("description").asText()).isEqualTo("read");
         assertThat(tools.get(0).path("parameters").path("type").asText()).isEqualTo("object");
+    }
+
+    @Test
+    void adapterDoesNotImplementApiProviderDirectly() {
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key"),
+            RecordingTransport.events(),
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        assertThat(adapter).isNotInstanceOf(ApiProvider.class);
     }
 
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {
