@@ -7,6 +7,7 @@ import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.tool.ToolDescriptor;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -30,9 +31,15 @@ public final class ProviderAdapterApiProvider implements ApiProvider {
     }
 
     @Override
-    public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+    public Stream<AssistantStreamEvent> stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        List<ToolDescriptor> tools,
+        AbortSignal signal
+    ) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(descriptor, "descriptor");
+        Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(signal, "signal");
         ProviderAdapter adapter = adapters.get(descriptor.provider());
         if (adapter == null) {
@@ -43,6 +50,6 @@ public final class ProviderAdapterApiProvider implements ApiProvider {
                 "Provider adapter is not available."
             );
         }
-        return adapter.stream(context, descriptor, signal);
+        return adapter.stream(context, descriptor, tools, signal);
     }
 }

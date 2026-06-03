@@ -5,6 +5,8 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.tool.ToolDescriptor;
+import java.util.List;
 import java.util.stream.Stream;
 
 public interface ApiProvider {
@@ -18,5 +20,17 @@ public interface ApiProvider {
     /**
      * 发起 provider 流式调用并标准化输出。
      */
-    Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal);
+    default Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+        return stream(context, descriptor, List.of(), signal);
+    }
+
+    /**
+     * 发起带工具规格的 provider 流式调用并标准化输出。
+     */
+    Stream<AssistantStreamEvent> stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        List<ToolDescriptor> tools,
+        AbortSignal signal
+    );
 }

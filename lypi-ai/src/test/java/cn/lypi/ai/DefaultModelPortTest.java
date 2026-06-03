@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.error.ErrorSeverity;
@@ -20,6 +21,7 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.tool.ToolDescriptor;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.util.List;
@@ -41,8 +43,9 @@ class DefaultModelPortTest {
             new DefaultApiProviderRegistry(List.of(apiProvider))
         );
         ContextSnapshot context = context(new ModelSelection("openai", "gpt-5", ThinkingLevel.HIGH), ThinkingLevel.HIGH);
+        ToolDescriptor tool = new ToolDescriptor("read", List.of("cat"), "read", new JsonSchema(Map.of()), true, false);
 
-        List<AssistantStreamEvent> events = port.stream(context, () -> false).toList();
+        List<AssistantStreamEvent> events = port.stream(context, List.of(tool), () -> false).toList();
 
         assertThat(events).containsExactly(
             new AssistantStart("msg-1"),
@@ -51,6 +54,7 @@ class DefaultModelPortTest {
         );
         assertThat(apiProvider.descriptor).isEqualTo(descriptor);
         assertThat(apiProvider.context).isEqualTo(context);
+        assertThat(apiProvider.tools).containsExactly(tool);
         assertThat(apiProvider.signal.aborted()).isFalse();
     }
 
@@ -147,6 +151,7 @@ class DefaultModelPortTest {
         private final Stream<AssistantStreamEvent> events;
         private ContextSnapshot context;
         private ModelDescriptor descriptor;
+        private List<ToolDescriptor> tools;
         private AbortSignal signal;
 
         private RecordingApiProvider(ApiStyle apiStyle, Stream<AssistantStreamEvent> events) {
@@ -160,9 +165,15 @@ class DefaultModelPortTest {
         }
 
         @Override
-        public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+        public Stream<AssistantStreamEvent> stream(
+            ContextSnapshot context,
+            ModelDescriptor descriptor,
+            List<ToolDescriptor> tools,
+            AbortSignal signal
+        ) {
             this.context = context;
             this.descriptor = descriptor;
+            this.tools = List.copyOf(tools);
             this.signal = signal;
             return events;
         }

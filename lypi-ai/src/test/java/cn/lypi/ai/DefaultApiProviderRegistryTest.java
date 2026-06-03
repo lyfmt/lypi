@@ -18,6 +18,7 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.tool.ToolDescriptor;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.util.List;
@@ -77,7 +78,12 @@ class DefaultApiProviderRegistryTest {
 
     private record RecordingApiProvider(ApiStyle apiStyle) implements ApiProvider {
         @Override
-        public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+        public Stream<AssistantStreamEvent> stream(
+            ContextSnapshot context,
+            ModelDescriptor descriptor,
+            List<ToolDescriptor> tools,
+            AbortSignal signal
+        ) {
             return Stream.empty();
         }
     }
@@ -98,7 +104,12 @@ class DefaultApiProviderRegistryTest {
         }
 
         @Override
-        public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+        public Stream<AssistantStreamEvent> stream(
+            ContextSnapshot context,
+            ModelDescriptor descriptor,
+            List<ToolDescriptor> tools,
+            AbortSignal signal
+        ) {
             this.descriptor = descriptor;
             return events;
         }

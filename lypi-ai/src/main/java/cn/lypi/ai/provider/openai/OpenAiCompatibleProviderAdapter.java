@@ -1,6 +1,5 @@
 package cn.lypi.ai.provider.openai;
 
-import cn.lypi.ai.ApiProvider;
 import cn.lypi.ai.ProviderAdapter;
 import cn.lypi.ai.provider.ProviderFallbackDecider;
 import cn.lypi.ai.provider.ProviderRawEvent;
@@ -9,14 +8,15 @@ import cn.lypi.ai.provider.ProviderTransport;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.ai.spec.ContextSnapshotRequestFactory;
 import cn.lypi.ai.spec.LypiModelRequest;
+import cn.lypi.ai.spec.ToolSpecMapper;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStreamEvent;
-import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.tool.ToolDescriptor;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.util.ArrayList;
@@ -26,7 +26,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Stream;
 
-public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, ApiProvider {
+public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter {
     private final OpenAiProviderConfig config;
     private final ProviderTransport webSocketTransport;
     private final ProviderTransport responsesSseTransport;
@@ -76,14 +76,15 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
     }
 
     @Override
-    public ApiStyle apiStyle() {
-        return ApiStyle.OPENAI_COMPATIBLE;
-    }
-
-    @Override
-    public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+    public Stream<AssistantStreamEvent> stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        List<ToolDescriptor> tools,
+        AbortSignal signal
+    ) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(descriptor, "descriptor");
+        Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(signal, "signal");
         if (config.apiKey() == null || config.apiKey().isBlank()) {
             throw new ModelProviderException(
@@ -93,7 +94,11 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
                 "Provider API key is not configured."
             );
         }
-        LypiModelRequest request = ContextSnapshotRequestFactory.from(context, UUID.randomUUID().toString(), List.of());
+        LypiModelRequest request = ContextSnapshotRequestFactory.from(
+            context,
+            UUID.randomUUID().toString(),
+            ToolSpecMapper.fromDescriptors(tools)
+        );
         List<Attempt> attempts = attempts(request);
         RuntimeException lastFailure = null;
         for (Attempt attempt : attempts) {

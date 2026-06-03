@@ -7,6 +7,8 @@ import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.tool.ToolDescriptor;
+import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
 
@@ -20,8 +22,9 @@ public final class DefaultModelPort implements ModelPort {
     }
 
     @Override
-    public Stream<AssistantStreamEvent> stream(ContextSnapshot context, AbortSignal signal) {
+    public Stream<AssistantStreamEvent> stream(ContextSnapshot context, List<ToolDescriptor> tools, AbortSignal signal) {
         Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(signal, "signal");
         if (signal.aborted()) {
             return Stream.empty();
@@ -34,7 +37,7 @@ public final class DefaultModelPort implements ModelPort {
         ApiProvider apiProvider = apiProviders.find(descriptor.apiStyle())
             .orElseThrow(() -> unavailable("api_provider.unavailable", "API provider is not available."));
 
-        return apiProvider.stream(context, descriptor, signal);
+        return apiProvider.stream(context, descriptor, tools, signal);
     }
 
     private static void validateThinking(ContextSnapshot context, ModelDescriptor descriptor) {

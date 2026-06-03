@@ -9,6 +9,7 @@ import cn.lypi.ai.provider.ProviderTransport;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.AgentMessage;
@@ -25,6 +26,7 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.tool.ToolDescriptor;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Duration;
@@ -145,6 +147,40 @@ class OpenAiCompatibleProviderAdapterTest {
 
         assertThat(websocket.requests).hasSize(3);
         assertThat(events).singleElement().isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
+    }
+
+    @Test
+    void includesToolSpecsInProviderRequest() throws Exception {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2},\"status\":\"completed\"}}"
+        );
+        RecordingTransport chat = RecordingTransport.events();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key"),
+            websocket,
+            sse,
+            chat
+        );
+        ToolDescriptor tool = new ToolDescriptor(
+            "read",
+            List.of("cat"),
+            "read",
+            new JsonSchema(Map.of("type", "object")),
+            true,
+            false
+        );
+
+        adapter.stream(context(), descriptor(), List.of(tool), () -> false).toList();
+
+        JsonNode body = OBJECT_MAPPER.readTree(sse.requests.getFirst().body());
+        JsonNode tools = body.path("tools");
+        assertThat(tools).hasSize(1);
+        assertThat(tools.get(0).path("type").asText()).isEqualTo("function");
+        assertThat(tools.get(0).path("name").asText()).isEqualTo("read");
+        assertThat(tools.get(0).path("description").asText()).isEqualTo("read");
+        assertThat(tools.get(0).path("parameters").path("type").asText()).isEqualTo("object");
     }
 
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {
