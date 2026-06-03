@@ -1,6 +1,5 @@
 package cn.lypi.tool;
 
-import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
@@ -12,6 +11,7 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
@@ -35,7 +35,6 @@ import java.util.concurrent.Semaphore;
  * NOTE: 运行时负责串接注册表、校验、权限、拦截、执行规划和结果预算。
  */
 public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrator {
-    private static final String METADATA_ABORT_SIGNAL = "abortSignal";
     private static final String METADATA_ORIGINAL_TOOL_NAME = "originalToolName";
     private static final String METADATA_TOOL_USE_ID = "toolUseId";
     private static final ProgressSink NOOP_PROGRESS = message -> {
@@ -258,7 +257,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 return errorResult(request.toolUseId(), beforeResult.message());
             }
 
-            if (aborted(toolContext)) {
+            if (shouldSkipForAbort(tool, toolContext)) {
                 return errorResult(request.toolUseId(), "工具调用已中止。");
             }
 
@@ -328,9 +327,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return options == null ? ToolRuntimeOptions.defaults() : options;
     }
 
-    private boolean aborted(ToolUseContext context) {
-        Object signal = context.metadata().get(METADATA_ABORT_SIGNAL);
-        return signal instanceof AbortSignal abortSignal && abortSignal.aborted();
+    private boolean shouldSkipForAbort(Tool<Map<String, Object>, ?> tool, ToolUseContext context) {
+        return ToolAbortSupport.aborted(context) && tool.interruptBehavior() == InterruptBehavior.CANCEL;
     }
 
     private PermissionGateResult resolvePermission(
