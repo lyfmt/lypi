@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
+import cn.lypi.ai.spec.LypiAttachmentBlock;
 import cn.lypi.ai.spec.LypiGenerationOptions;
 import cn.lypi.ai.spec.LypiMessage;
 import cn.lypi.ai.spec.LypiModelRequest;
@@ -80,6 +81,29 @@ class OpenAiResponsesRequestBuilderTest {
         JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
 
         assertThat(body.get("reasoning")).isNull();
+    }
+
+    @Test
+    void mapsAttachmentBlocksAsTextContentForNow() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-attachment",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(new LypiMessage(
+                LypiRole.USER,
+                List.of(new LypiAttachmentBlock("att-1", "附件说明", "image/png", Map.of())),
+                Map.of()
+            )),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of()
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
+
+        assertThat(body.at("/input/0/content/0/type").asText()).isEqualTo("input_text");
+        assertThat(body.at("/input/0/content/0/text").asText()).isEqualTo("附件说明");
     }
 
     @Test

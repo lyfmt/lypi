@@ -96,7 +96,11 @@ public final class OpenAiChatCompletionsRequestBuilder {
             case LypiThinkingBlock thinking -> thinking.text();
             case LypiToolCallBlock toolCall -> toolCall.text();
             case LypiToolResultBlock toolResult -> toolResult.text();
-            case LypiAttachmentBlock attachment -> attachment.text();
+            case LypiAttachmentBlock attachment -> {
+                // NOTE: 当前仅将附件文本说明发送给 provider，尚未按 mediaType 构造多模态内容。
+                // TODO: 支持 supportsImageInput 模型的多模态 image content 映射。
+                yield attachment.text();
+            }
             case LypiErrorBlock error -> error.text();
         };
     }

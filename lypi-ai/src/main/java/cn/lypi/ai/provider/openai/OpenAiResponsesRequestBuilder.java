@@ -103,7 +103,11 @@ public final class OpenAiResponsesRequestBuilder {
             case LypiThinkingBlock thinking -> content.add(textContent(role, thinking.text()));
             case LypiToolCallBlock toolCall -> content.add(textContent(role, toolCall.text()));
             case LypiToolResultBlock toolResult -> content.add(textContent(LypiRole.USER, toolResult.text()));
-            case LypiAttachmentBlock attachment -> content.add(textContent(role, attachment.text()));
+            case LypiAttachmentBlock attachment -> {
+                // NOTE: 当前仅将附件文本说明发送给 provider，尚未按 mediaType 构造多模态内容。
+                // TODO: 支持 supportsImageInput 模型的多模态 image content 映射。
+                content.add(textContent(role, attachment.text()));
+            }
             case LypiErrorBlock error -> content.add(textContent(role, error.text()));
         }
     }
