@@ -17,6 +17,7 @@ import cn.lypi.contracts.error.LyPiException;
 import cn.lypi.contracts.error.ToolValidationException;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventEnvelope;
+import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
@@ -121,6 +122,33 @@ class ContractSerializationTest {
         assertEquals("legacy approval", request.message());
         assertEquals("unknown", request.toolName());
         assertEquals("", request.renderedToolUse());
+    }
+
+    @Test
+    void permissionDecisionEventCanReadLegacyJson() throws Exception {
+        String json = """
+            {
+              "type": "permission_decision",
+              "sessionId": "ses_01",
+              "toolUseId": "toolu_01",
+              "decision": {
+                "behavior": "ALLOW",
+                "reason": "TOOL_SPECIFIC",
+                "message": "legacy allowed",
+                "suggestedUpdate": null,
+                "metadata": {}
+              },
+              "timestamp": "2026-06-01T12:00:00Z"
+            }
+            """;
+
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        PermissionDecisionEvent decision = assertInstanceOf(PermissionDecisionEvent.class, restored);
+        assertEquals("toolu_01", decision.toolUseId());
+        assertEquals("unknown", decision.toolName());
+        assertEquals("", decision.renderedToolUse());
+        assertEquals(PermissionBehavior.ALLOW, decision.decision().behavior());
     }
 
     @Test

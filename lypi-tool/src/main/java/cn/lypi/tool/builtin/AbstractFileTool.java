@@ -136,6 +136,9 @@ abstract class AbstractFileTool implements Tool<Map<String, Object>, String> {
 
     protected void writeAtomically(Path path, String content) throws IOException {
         Path parent = path.getParent();
+        if (parent == null) {
+            parent = Path.of(".");
+        }
         Path temp = Files.createTempFile(parent, "." + path.getFileName(), ".tmp");
         try {
             Files.writeString(temp, content);
