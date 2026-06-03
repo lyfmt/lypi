@@ -134,6 +134,7 @@ class CommonContractTest {
             () -> assertMethod(SessionEnginePort.class, "appendMessage", 1),
             () -> assertMethod(SessionEnginePort.class, "fork", 1),
             () -> assertMethod(AiProviderRuntimePort.class, "stream", 2),
+            () -> assertMethod(AiProviderRuntimePort.class, "stream", 3),
             () -> assertMethod(ToolRuntimePort.class, "register", 1),
             () -> assertMethod(ToolRuntimePort.class, "resolve", 1),
             () -> assertMethod(ToolRuntimePort.class, "snapshot", 0),
