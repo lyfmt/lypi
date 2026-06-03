@@ -79,6 +79,25 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
+    void decideDeniesBuiltInWriteAndEditToolsInPlanMode() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision writeDecision = engine.decide(
+            request("write", Map.of("path", "notes.txt", "content", "hello")),
+            context(PermissionMode.PLAN)
+        );
+        PermissionDecision editDecision = engine.decide(
+            request("edit", Map.of("path", "notes.txt", "oldString", "a", "newString", "b")),
+            context(PermissionMode.PLAN)
+        );
+
+        assertThat(writeDecision.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(writeDecision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+        assertThat(editDecision.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(editDecision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
     void decideDoesNotLetAllowRuleBypassPlanModeWriteDeny() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
             rule(PermissionBehavior.ALLOW, "apply_patch", "*", "allow edits")

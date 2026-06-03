@@ -17,13 +17,20 @@ import cn.lypi.contracts.error.LyPiException;
 import cn.lypi.contracts.error.ToolValidationException;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventEnvelope;
+import cn.lypi.contracts.event.PermissionDecisionEvent;
+import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
+import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class ContractSerializationTest {
@@ -63,6 +70,85 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"type\":\"turn_start\""));
         assertInstanceOf(TurnStartEvent.class, restored.event());
         assertEquals(7, restored.sequence());
+    }
+
+    @Test
+    void permissionRequestEventRoundTripContainsRenderableToolContext() throws Exception {
+        PermissionDecision decision = new PermissionDecision(
+            PermissionBehavior.ASK,
+            PermissionDecisionReason.BASH_RISK,
+            "command needs approval",
+            Optional.empty(),
+            Map.of("risk", "medium")
+        );
+        AgentEvent event = new PermissionRequestEvent(
+            "ses_01",
+            "toolu_01",
+            "bash",
+            "bash {command=rm -rf target}",
+            "command needs approval",
+            decision,
+            Instant.parse("2026-06-01T12:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"permission_request\""));
+        assertTrue(json.contains("\"toolName\":\"bash\""));
+        assertTrue(json.contains("\"renderedToolUse\":\"bash {command=rm -rf target}\""));
+        assertInstanceOf(PermissionRequestEvent.class, restored);
+        PermissionRequestEvent request = (PermissionRequestEvent) restored;
+        assertEquals("bash", request.toolName());
+        assertEquals(PermissionBehavior.ASK, request.decision().behavior());
+    }
+
+    @Test
+    void permissionRequestEventCanReadLegacyJson() throws Exception {
+        String json = """
+            {
+              "type": "permission_request",
+              "sessionId": "ses_01",
+              "toolUseId": "toolu_01",
+              "message": "legacy approval",
+              "timestamp": "2026-06-01T12:00:00Z"
+            }
+            """;
+
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, restored);
+        assertEquals("toolu_01", request.toolUseId());
+        assertEquals("legacy approval", request.message());
+        assertEquals("unknown", request.toolName());
+        assertEquals("", request.renderedToolUse());
+    }
+
+    @Test
+    void permissionDecisionEventCanReadLegacyJson() throws Exception {
+        String json = """
+            {
+              "type": "permission_decision",
+              "sessionId": "ses_01",
+              "toolUseId": "toolu_01",
+              "decision": {
+                "behavior": "ALLOW",
+                "reason": "TOOL_SPECIFIC",
+                "message": "legacy allowed",
+                "suggestedUpdate": null,
+                "metadata": {}
+              },
+              "timestamp": "2026-06-01T12:00:00Z"
+            }
+            """;
+
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        PermissionDecisionEvent decision = assertInstanceOf(PermissionDecisionEvent.class, restored);
+        assertEquals("toolu_01", decision.toolUseId());
+        assertEquals("unknown", decision.toolName());
+        assertEquals("", decision.renderedToolUse());
+        assertEquals(PermissionBehavior.ALLOW, decision.decision().behavior());
     }
 
     @Test

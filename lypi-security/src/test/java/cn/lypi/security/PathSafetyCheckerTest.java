@@ -204,6 +204,25 @@ class PathSafetyCheckerTest {
         assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
     }
 
+    @Test
+    void checksCwdFieldForBashTools(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Path outside = tempDir.resolve("outside");
+        Files.createDirectories(workspace);
+        Files.createDirectories(outside);
+        Files.createSymbolicLink(workspace.resolve("link-outside"), outside);
+        PathSafetyChecker checker = new PathSafetyChecker();
+
+        Optional<PermissionDecision> decision = checker.check(
+            request("bash", Map.of("command", "pwd", "cwd", "link-outside")),
+            new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
+        );
+
+        assertThat(decision).isPresent();
+        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
         return new ToolUseRequest("toolu_1", toolName, input, "msg_1");
     }

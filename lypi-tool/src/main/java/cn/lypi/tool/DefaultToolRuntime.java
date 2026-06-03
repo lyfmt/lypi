@@ -1,6 +1,5 @@
 package cn.lypi.tool;
 
-import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
@@ -12,6 +11,7 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
@@ -35,7 +35,6 @@ import java.util.concurrent.Semaphore;
  * NOTE: 运行时负责串接注册表、校验、权限、拦截、执行规划和结果预算。
  */
 public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrator {
-    private static final String METADATA_ABORT_SIGNAL = "abortSignal";
     private static final String METADATA_ORIGINAL_TOOL_NAME = "originalToolName";
     private static final String METADATA_TOOL_USE_ID = "toolUseId";
     private static final ProgressSink NOOP_PROGRESS = message -> {
@@ -48,6 +47,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final ToolRuntimeContextFactory contextFactory;
     private final ToolExecutionInterceptor interceptor;
     private final SecurityRuntimePort securityRuntime;
+    private final PermissionGate permissionGate;
     private final int maxConcurrency;
 
     public DefaultToolRuntime(SecurityRuntimePort securityRuntime) {
@@ -63,6 +63,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             new ToolRuntimeContextFactory(normalizeOptions(options)),
             ToolExecutionInterceptors.noop(),
             securityRuntime,
+            PermissionGate.denying(),
             normalizeOptions(options).maxConcurrency()
         );
     }
@@ -84,6 +85,30 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             contextFactory,
             interceptor,
             securityRuntime,
+            PermissionGate.denying(),
+            ToolRuntimeOptions.defaults().maxConcurrency()
+        );
+    }
+
+    public DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            permissionGate,
             ToolRuntimeOptions.defaults().maxConcurrency()
         );
     }
@@ -96,6 +121,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolRuntimeContextFactory contextFactory,
         ToolExecutionInterceptor interceptor,
         SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
         int maxConcurrency
     ) {
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
@@ -105,6 +131,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.contextFactory = Objects.requireNonNull(contextFactory, "contextFactory must not be null");
         this.interceptor = interceptor == null ? ToolExecutionInterceptors.noop() : interceptor;
         this.securityRuntime = Objects.requireNonNull(securityRuntime, "securityRuntime must not be null");
+        this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
         this.maxConcurrency = Math.max(1, maxConcurrency);
     }
 
@@ -213,14 +240,20 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 return errorResult(request.toolUseId(), "工具输入校验失败: " + joinMessages(inputResult));
             }
 
-            PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
-            if (!allowed(toolDecision)) {
-                return errorResult(request.toolUseId(), "工具权限未允许: " + decisionMessage(toolDecision));
+            PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
+            if (isDeny(securityDecision)) {
+                return permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(securityDecision)));
             }
 
-            PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
-            if (!allowed(securityDecision)) {
-                return errorResult(request.toolUseId(), "安全策略未允许: " + decisionMessage(securityDecision));
+            PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
+            PermissionGateResult toolGateResult = resolvePermission(request, tool, toolContext, toolDecision);
+            if (toolGateResult.status() != PermissionGateResult.Status.ALLOW) {
+                return permissionGateError(request.toolUseId(), toolGateResult);
+            }
+
+            PermissionGateResult securityGateResult = resolvePermission(request, tool, toolContext, securityDecision);
+            if (securityGateResult.status() != PermissionGateResult.Status.ALLOW) {
+                return permissionGateError(request.toolUseId(), securityGateResult);
             }
 
             ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
@@ -228,7 +261,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 return errorResult(request.toolUseId(), beforeResult.message());
             }
 
-            if (aborted(toolContext)) {
+            if (shouldSkipForAbort(tool, toolContext)) {
                 return errorResult(request.toolUseId(), "工具调用已中止。");
             }
 
@@ -298,13 +331,36 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return options == null ? ToolRuntimeOptions.defaults() : options;
     }
 
-    private boolean aborted(ToolUseContext context) {
-        Object signal = context.metadata().get(METADATA_ABORT_SIGNAL);
-        return signal instanceof AbortSignal abortSignal && abortSignal.aborted();
+    private boolean shouldSkipForAbort(Tool<Map<String, Object>, ?> tool, ToolUseContext context) {
+        return ToolAbortSupport.aborted(context) && tool.interruptBehavior() == InterruptBehavior.CANCEL;
     }
 
-    private boolean allowed(PermissionDecision decision) {
-        return decision != null && decision.behavior() == PermissionBehavior.ALLOW;
+    private PermissionGateResult resolvePermission(
+        ToolUseRequest request,
+        Tool<Map<String, Object>, ?> tool,
+        ToolUseContext context,
+        PermissionDecision decision
+    ) {
+        if (decision == null || decision.behavior() == PermissionBehavior.DENY) {
+            return PermissionGateResult.deny(decisionMessage(decision));
+        }
+        if (decision.behavior() == PermissionBehavior.ALLOW) {
+            return PermissionGateResult.allow();
+        }
+        PermissionGateResult result = permissionGate.request(request, tool, context, decision);
+        return result == null ? PermissionGateResult.deny("权限请求未获允许。") : result;
+    }
+
+    private boolean isDeny(PermissionDecision decision) {
+        return decision == null || decision.behavior() == PermissionBehavior.DENY;
+    }
+
+    private ToolResult<?> permissionGateError(String toolUseId, PermissionGateResult result) {
+        String message = result.message().orElse("权限请求未获允许。");
+        if (result.status() == PermissionGateResult.Status.ABORT) {
+            return errorResult(toolUseId, "工具权限请求已中断: " + message);
+        }
+        return errorResult(toolUseId, "权限请求未获允许: " + message);
     }
 
     private String decisionMessage(PermissionDecision decision) {

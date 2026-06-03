@@ -246,6 +246,8 @@ public final class DefaultPolicyEngine implements PolicyEngine {
                 || toolName.equals("write_file")
                 || toolName.equals("edit_file")
                 || toolName.equals("delete_file")
+                || toolName.equals("write")
+                || toolName.equals("edit")
                 || toolName.equals("bash")
         );
     }
