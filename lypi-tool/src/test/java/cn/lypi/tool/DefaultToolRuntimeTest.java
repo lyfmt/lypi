@@ -102,6 +102,27 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void securityDenyShortCircuitsBeforeToolAskPermissionGate() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.DENY, "hard deny");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permission("edit", PermissionBehavior.ASK));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "edit", Map.of("path", ".git/config"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("hard deny"));
+    }
+
+    @Test
     void permissionGateDenyReturnsToolErrorForSecurityAskDecision() {
         SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
         PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.deny("user denied");

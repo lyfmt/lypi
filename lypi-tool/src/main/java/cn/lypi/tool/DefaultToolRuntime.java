@@ -240,13 +240,17 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 return errorResult(request.toolUseId(), "工具输入校验失败: " + joinMessages(inputResult));
             }
 
+            PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
+            if (isDeny(securityDecision)) {
+                return permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(securityDecision)));
+            }
+
             PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
             PermissionGateResult toolGateResult = resolvePermission(request, tool, toolContext, toolDecision);
             if (toolGateResult.status() != PermissionGateResult.Status.ALLOW) {
                 return permissionGateError(request.toolUseId(), toolGateResult);
             }
 
-            PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
             PermissionGateResult securityGateResult = resolvePermission(request, tool, toolContext, securityDecision);
             if (securityGateResult.status() != PermissionGateResult.Status.ALLOW) {
                 return permissionGateError(request.toolUseId(), securityGateResult);
@@ -345,6 +349,10 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         }
         PermissionGateResult result = permissionGate.request(request, tool, context, decision);
         return result == null ? PermissionGateResult.deny("权限请求未获允许。") : result;
+    }
+
+    private boolean isDeny(PermissionDecision decision) {
+        return decision == null || decision.behavior() == PermissionBehavior.DENY;
     }
 
     private ToolResult<?> permissionGateError(String toolUseId, PermissionGateResult result) {
