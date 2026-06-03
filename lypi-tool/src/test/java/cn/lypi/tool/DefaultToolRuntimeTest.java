@@ -8,6 +8,7 @@ import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -66,7 +67,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void deniesWhenToolPermissionRequiresAsk() {
+    void defaultGateDeniesWhenToolPermissionRequiresAsk() {
         DefaultToolRuntime runtime = new DefaultToolRuntime(allowAllSecurity());
         runtime.register(TestTools.permission("write", PermissionBehavior.ASK));
 
@@ -76,7 +77,58 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
-        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("工具权限未允许"));
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("权限请求未获允许"));
+    }
+
+    @Test
+    void permissionGateAllowContinuesAfterToolAskDecision() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            requestedDecision.set(decision);
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.permission("write", PermissionBehavior.ASK));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+        assertEquals("done", result.newMessages().getFirst().content().getFirst().text());
+    }
+
+    @Test
+    void permissionGateDenyReturnsToolErrorForSecurityAskDecision() {
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.deny("user denied");
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "nope"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("user denied"));
+    }
+
+    @Test
+    void permissionGateAbortReturnsInterruptedToolError() {
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.abort("user aborted");
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.permission("write", PermissionBehavior.ASK));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("user aborted"));
     }
 
     @Test
@@ -208,5 +260,18 @@ class DefaultToolRuntimeTest {
 
     private SecurityRuntimePort allowAllSecurity() {
         return (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+    }
+
+    private DefaultToolRuntime runtimeWithGate(PermissionGate gate, SecurityRuntimePort security) {
+        return new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate
+        );
     }
 }
