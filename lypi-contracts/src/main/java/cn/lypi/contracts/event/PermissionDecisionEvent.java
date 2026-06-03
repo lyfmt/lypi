@@ -6,7 +6,8 @@ import java.time.Instant;
 public record PermissionDecisionEvent(
     String sessionId,
     String toolUseId,
+    String toolName,
+    String renderedToolUse,
     PermissionDecision decision,
     Instant timestamp
 ) implements AgentEvent {}
-
