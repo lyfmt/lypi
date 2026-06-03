@@ -15,6 +15,9 @@ import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.Files;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -110,6 +113,18 @@ abstract class AbstractFileTool implements Tool<Map<String, Object>, String> {
     protected String toolUseId(ToolUseContext context) {
         Object value = context.metadata().get("toolUseId");
         return value == null ? "toolu_unknown" : value.toString();
+    }
+
+    protected void writeAtomically(Path path, String content) throws IOException {
+        Path parent = path.getParent();
+        Path temp = Files.createTempFile(parent, "." + path.getFileName(), ".tmp");
+        try {
+            Files.writeString(temp, content);
+            Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException exception) {
+            Files.deleteIfExists(temp);
+            throw exception;
+        }
     }
 
     private AgentMessage toolMessage(String toolUseId, String text, boolean error) {
