@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-public final class RemoteModelDiscoveryClient {
+public class RemoteModelDiscoveryClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
