@@ -3,6 +3,7 @@ package cn.lypi.ai.model;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -11,10 +12,12 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 public class RemoteModelDiscoveryClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private volatile String lastFailure;
 
     public RemoteModelDiscoveryClient() {
         this(HttpClient.newHttpClient(), new ObjectMapper());
@@ -25,9 +28,14 @@ public class RemoteModelDiscoveryClient {
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
     }
 
+    public Optional<String> lastFailure() {
+        return Optional.ofNullable(lastFailure);
+    }
+
     public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
         Objects.requireNonNull(baseUrl, "baseUrl");
         Objects.requireNonNull(paths, "paths");
+        lastFailure = null;
         Duration requestTimeout = timeout == null ? Duration.ofSeconds(30) : timeout;
         for (String path : paths) {
             List<String> modelIds = request(baseUrl, apiKey, path, requestTimeout);
@@ -39,7 +47,8 @@ public class RemoteModelDiscoveryClient {
     }
 
     private List<String> request(URI baseUrl, String apiKey, String path, Duration timeout) {
-        HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint(baseUrl, path))
+        URI endpoint = endpoint(baseUrl, path);
+        HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint)
             .timeout(timeout)
             .GET();
         if (apiKey != null && !apiKey.isBlank()) {
@@ -48,6 +57,7 @@ public class RemoteModelDiscoveryClient {
         try {
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                recordFailure("Discovery " + endpoint + " returned HTTP " + response.statusCode() + ".");
                 return List.of();
             }
             return parse(response.body());
@@ -55,8 +65,28 @@ public class RemoteModelDiscoveryClient {
             if (error instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
+            recordFailure("Discovery " + endpoint + " " + failureKind(error) + ": " + failureMessage(error) + ".");
             return List.of();
         }
+    }
+
+    private void recordFailure(String message) {
+        lastFailure = message;
+    }
+
+    private static String failureMessage(Throwable error) {
+        String message = error.getMessage();
+        if (message == null || message.isBlank()) {
+            return error.getClass().getSimpleName();
+        }
+        return message;
+    }
+
+    private static String failureKind(Throwable error) {
+        if (error instanceof UncheckedIOException || error instanceof IOException) {
+            return "parse or network failed";
+        }
+        return "failed";
     }
 
     private List<String> parse(String body) throws IOException {

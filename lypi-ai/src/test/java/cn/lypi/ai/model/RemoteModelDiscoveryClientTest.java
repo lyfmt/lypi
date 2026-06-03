@@ -37,6 +37,7 @@ class RemoteModelDiscoveryClientTest {
         assertThat(client.discover(baseUrl(), "test-key", List.of("/models"), Duration.ofSeconds(2)))
             .containsExactly("gpt-5-mini", "gpt-5");
         assertThat(authorization.get()).isEqualTo("Bearer test-key");
+        assertThat(client.lastFailure()).isEmpty();
     }
 
     @Test
@@ -71,6 +72,32 @@ class RemoteModelDiscoveryClientTest {
 
         assertThat(client.discover(URI.create("http://127.0.0.1:1/v1"), "test-key", List.of("/models"), Duration.ofMillis(100)))
             .isEmpty();
+        assertThat(client.lastFailure()).hasValueSatisfying(failure -> assertThat(failure).contains("Discovery"));
+        assertThat(client.lastFailure().orElseThrow()).doesNotContain("test-key");
+    }
+
+    @Test
+    void recordsHttpFailureWithoutLeakingApiKey() throws IOException {
+        startServer(exchange -> respond(exchange, 401, "{\"error\":\"unauthorized\"}"));
+        RemoteModelDiscoveryClient client = new RemoteModelDiscoveryClient();
+
+        assertThat(client.discover(baseUrl(), "secret-key", List.of("/models"), Duration.ofSeconds(2)))
+            .isEmpty();
+
+        assertThat(client.lastFailure()).hasValueSatisfying(failure -> assertThat(failure).contains("HTTP 401"));
+        assertThat(client.lastFailure().orElseThrow()).doesNotContain("secret-key");
+        assertThat(client.lastFailure().orElseThrow()).contains("/v1/models");
+    }
+
+    @Test
+    void recordsParseFailure() throws IOException {
+        startServer(exchange -> respond(exchange, 200, "{not-json"));
+        RemoteModelDiscoveryClient client = new RemoteModelDiscoveryClient();
+
+        assertThat(client.discover(baseUrl(), "test-key", List.of("/models"), Duration.ofSeconds(2)))
+            .isEmpty();
+
+        assertThat(client.lastFailure()).hasValueSatisfying(failure -> assertThat(failure).contains("parse"));
     }
 
     private URI baseUrl() {
