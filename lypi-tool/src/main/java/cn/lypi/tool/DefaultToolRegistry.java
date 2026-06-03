@@ -48,11 +48,18 @@ public final class DefaultToolRegistry implements ToolRegistry {
             .map(tool -> new ToolDescriptor(
                 tool.name(),
                 safeAliases(tool),
+                toolDescription(tool),
+                tool.inputSchema(),
                 readOnly(tool),
                 destructive(tool)
             ))
             .toList();
         return new ToolRegistrySnapshot(descriptors);
+    }
+
+    private String toolDescription(Tool<?, ?> tool) {
+        // TODO: 工具契约后续应提供稳定 description；当前使用主名称作为 provider 工具描述。
+        return tool.name();
     }
 
     private String requireLookupName(String value, String label) {
