@@ -1,6 +1,5 @@
 package cn.lypi.boot.ai;
 
-import cn.lypi.ai.ApiProvider;
 import cn.lypi.ai.ApiProviderRegistry;
 import cn.lypi.ai.DefaultApiProviderRegistry;
 import cn.lypi.ai.DefaultModelPort;
@@ -8,6 +7,7 @@ import cn.lypi.ai.DefaultModelRegistry;
 import cn.lypi.ai.ModelPort;
 import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.ProviderAdapter;
+import cn.lypi.ai.ProviderAdapterApiProvider;
 import cn.lypi.ai.model.BuiltinModelDescriptorSource;
 import cn.lypi.ai.model.CompositeModelDescriptorSource;
 import cn.lypi.ai.model.ModelDescriptorSource;
@@ -57,10 +57,10 @@ public class LyPiAiAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public ApiProviderRegistry apiProviderRegistry(@Qualifier("openAiCompatibleProviderAdapters") List<ProviderAdapter> adapters) {
-        return new DefaultApiProviderRegistry(adapters.stream()
-            .filter(ApiProvider.class::isInstance)
-            .map(ApiProvider.class::cast)
-            .toList());
+        if (adapters.isEmpty()) {
+            return new DefaultApiProviderRegistry(List.of());
+        }
+        return new DefaultApiProviderRegistry(List.of(new ProviderAdapterApiProvider(ApiStyle.OPENAI_COMPATIBLE, adapters)));
     }
 
     @Bean

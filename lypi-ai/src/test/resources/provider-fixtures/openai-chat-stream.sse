@@ -1,4 +1,3 @@
 data: {"id":"chatcmpl-fixture","choices":[{"delta":{"content":"hello"}}]}
 
 data: [DONE]
-

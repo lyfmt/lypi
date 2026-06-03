@@ -100,6 +100,34 @@ class LyPiAiAutoConfigurationTest {
     }
 
     @Test
+    void supportsMultipleOpenAiCompatibleProvidersWithOneApiProvider() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.ai.providers.openai.enabled=true",
+                "lypi.ai.providers.openai.api-style=openai_compatible",
+                "lypi.ai.providers.openai.base-url=https://api.openai.test/v1",
+                "lypi.ai.providers.openai.api-key=${LYPI_TEST_TOKEN}",
+                "lypi.ai.providers.openai.models[0].model-id=gpt-5-mini",
+                "lypi.ai.providers.openai.models[0].context-window=128000",
+                "lypi.ai.providers.openai.models[0].max-output-tokens=16384",
+                "lypi.ai.providers.fixture.enabled=true",
+                "lypi.ai.providers.fixture.api-style=openai_compatible",
+                "lypi.ai.providers.fixture.base-url=https://api.fixture.test/v1",
+                "lypi.ai.providers.fixture.api-key=${LYPI_FIXTURE_TOKEN}",
+                "lypi.ai.providers.fixture.models[0].model-id=fixture-model",
+                "lypi.ai.providers.fixture.models[0].context-window=64000",
+                "lypi.ai.providers.fixture.models[0].max-output-tokens=8192"
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(ApiProviderRegistry.class);
+                assertThat(context.getBean(ModelRegistry.class).list())
+                    .extracting(descriptor -> descriptor.provider() + ":" + descriptor.modelId())
+                    .contains("openai:gpt-5-mini", "fixture:fixture-model");
+            });
+    }
+
+    @Test
     void bindsProviderPropertiesFromYamlResources() {
         new ApplicationContextRunner()
             .withInitializer(new ConfigDataApplicationContextInitializer())
