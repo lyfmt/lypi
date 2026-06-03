@@ -34,7 +34,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -102,7 +101,6 @@ class OpenAiProviderFixtureEndToEndTest {
     private void startServer(String path, String body) throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(path, exchange -> respond(exchange, body));
-        server.setExecutor(Executors.newSingleThreadExecutor());
         server.start();
     }
 

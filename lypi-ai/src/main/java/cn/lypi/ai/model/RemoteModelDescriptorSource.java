@@ -6,9 +6,7 @@ import cn.lypi.contracts.model.ModelDescriptor;
 import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -62,24 +60,10 @@ public final class RemoteModelDescriptorSource implements ModelDescriptorSource 
                 defaults.supportsThinking(),
                 defaults.supportsImageInput(),
                 defaults.costProfile(),
-                sanitizedCompat(defaults.compat())
+                CompatSanitizer.sanitize(defaults.compat())
             ));
         }
         return descriptors;
-    }
-
-    private static Map<String, Object> sanitizedCompat(Map<String, Object> compat) {
-        Map<String, Object> sanitized = new LinkedHashMap<>(compat);
-        sanitized.keySet().removeIf(RemoteModelDescriptorSource::sensitiveCompatKey);
-        return Map.copyOf(sanitized);
-    }
-
-    private static boolean sensitiveCompatKey(String key) {
-        String normalized = key.replace("-", "").replace("_", "").toLowerCase(Locale.ROOT);
-        return switch (normalized) {
-            case "apikey", "authorization", "accesstoken", "bearertoken", "token" -> true;
-            default -> false;
-        };
     }
 
     public record DescriptorDefaults(

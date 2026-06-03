@@ -9,6 +9,7 @@ import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.ProviderAdapter;
 import cn.lypi.ai.ProviderAdapterApiProvider;
 import cn.lypi.ai.model.BuiltinModelDescriptorSource;
+import cn.lypi.ai.model.CompatSanitizer;
 import cn.lypi.ai.model.CompositeModelDescriptorSource;
 import cn.lypi.ai.model.ModelDescriptorSource;
 import cn.lypi.ai.model.RemoteModelDescriptorSource;
@@ -200,16 +201,7 @@ public class LyPiAiAutoConfiguration {
         Map<String, Object> compat = new LinkedHashMap<>();
         compat.putAll(providerCompat);
         compat.putAll(modelCompat);
-        compat.keySet().removeIf(this::sensitiveCompatKey);
-        return compat;
-    }
-
-    private boolean sensitiveCompatKey(String key) {
-        String normalized = key.replace("-", "").replace("_", "").toLowerCase(java.util.Locale.ROOT);
-        return switch (normalized) {
-            case "apikey", "authorization", "accesstoken", "bearertoken", "token" -> true;
-            default -> false;
-        };
+        return CompatSanitizer.sanitize(compat);
     }
 
     private static <T> T valueOrDefault(T value, T defaultValue) {

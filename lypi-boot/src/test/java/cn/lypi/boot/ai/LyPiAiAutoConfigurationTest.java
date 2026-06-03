@@ -30,6 +30,8 @@ class LyPiAiAutoConfigurationTest {
             "lypi.ai.providers.openai.api-key=${LYPI_TEST_TOKEN}",
             "lypi.ai.providers.openai.compat.api_key=${LYPI_COMPAT_TOKEN}",
             "lypi.ai.providers.openai.compat.Authorization=${LYPI_AUTH_TOKEN}",
+            "lypi.ai.providers.openai.compat.client-secret=${LYPI_CLIENT_SECRET}",
+            "lypi.ai.providers.openai.compat.x-api-key=${LYPI_X_API_KEY}",
             "lypi.ai.providers.openai.compat.safe-flag=true",
             "lypi.ai.providers.openai.models[0].model-id=gpt-5-mini",
             "lypi.ai.providers.openai.models[0].context-window=256000",
@@ -40,6 +42,8 @@ class LyPiAiAutoConfigurationTest {
             "lypi.ai.providers.openai.models[0].output-token-cost=0",
             "lypi.ai.providers.openai.models[0].currency=USD",
             "lypi.ai.providers.openai.models[0].compat.access_token=${LYPI_ACCESS_TOKEN}",
+            "lypi.ai.providers.openai.models[0].compat.refresh_token=${LYPI_REFRESH_TOKEN}",
+            "lypi.ai.providers.openai.models[0].compat.secret_key=${LYPI_SECRET_KEY}",
             "lypi.ai.providers.openai.models[0].compat.vendor=fixture",
             "lypi.ai.providers.disabled.enabled=false",
             "lypi.ai.providers.disabled.base-url=https://disabled.test/v1",
@@ -64,7 +68,15 @@ class LyPiAiAutoConfigurationTest {
             assertThat(registry.list().getFirst().compat()).containsEntry("safe-flag", "true");
             assertThat(registry.list().getFirst().compat()).containsEntry("vendor", "fixture");
             assertThat(registry.list().getFirst().compat().toString())
-                .doesNotContain("LYPI_COMPAT_TOKEN", "LYPI_AUTH_TOKEN", "LYPI_ACCESS_TOKEN");
+                .doesNotContain(
+                    "LYPI_COMPAT_TOKEN",
+                    "LYPI_AUTH_TOKEN",
+                    "LYPI_CLIENT_SECRET",
+                    "LYPI_X_API_KEY",
+                    "LYPI_ACCESS_TOKEN",
+                    "LYPI_REFRESH_TOKEN",
+                    "LYPI_SECRET_KEY"
+                );
             assertThat(adapters).hasSize(1);
             assertThat(adapters.getFirst()).isInstanceOf(OpenAiCompatibleProviderAdapter.class);
         });

@@ -57,7 +57,14 @@ class RemoteModelDescriptorSourceTest {
                 true,
                 true,
                 new CostProfile(BigDecimal.ONE, BigDecimal.TEN, "USD"),
-                Map.of("apiKey", "secret", "safe", "value")
+                Map.of(
+                    "apiKey", "secret",
+                    "client_secret", "secret",
+                    "secret_key", "secret",
+                    "x-api-key", "secret",
+                    "refresh_token", "secret",
+                    "safe", "value"
+                )
             )
         );
 
@@ -69,7 +76,7 @@ class RemoteModelDescriptorSourceTest {
         assertThat(descriptor.supportsImageInput()).isTrue();
         assertThat(descriptor.costProfile()).isEqualTo(new CostProfile(BigDecimal.ONE, BigDecimal.TEN, "USD"));
         assertThat(descriptor.compat()).containsEntry("safe", "value");
-        assertThat(descriptor.compat()).doesNotContainKeys("apiKey");
+        assertThat(descriptor.compat()).doesNotContainKeys("apiKey", "client_secret", "secret_key", "x-api-key", "refresh_token");
     }
 
     @Test
