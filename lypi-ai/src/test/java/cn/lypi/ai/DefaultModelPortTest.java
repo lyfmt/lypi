@@ -31,14 +31,14 @@ import org.junit.jupiter.api.Test;
 class DefaultModelPortTest {
     @Test
     void streamDelegatesToAdapterForSelectedModel() {
-        ModelDescriptor descriptor = descriptor("openai", "gpt-5", true);
-        RecordingProviderAdapter adapter = new RecordingProviderAdapter(
-            "openai",
+        ModelDescriptor descriptor = descriptor("openai", "gpt-5", true, ApiStyle.OPENAI_COMPATIBLE);
+        RecordingApiProvider apiProvider = new RecordingApiProvider(
+            ApiStyle.OPENAI_COMPATIBLE,
             Stream.of(new AssistantStart("msg-1"), new TextDelta("hello"), new AssistantDone(Optional.empty(), Optional.of("stop")))
         );
         DefaultModelPort port = new DefaultModelPort(
             new DefaultModelRegistry(List.of(descriptor)),
-            List.of(adapter)
+            new DefaultApiProviderRegistry(List.of(apiProvider))
         );
         ContextSnapshot context = context(new ModelSelection("openai", "gpt-5", ThinkingLevel.HIGH), ThinkingLevel.HIGH);
 
@@ -49,16 +49,16 @@ class DefaultModelPortTest {
             new TextDelta("hello"),
             new AssistantDone(Optional.empty(), Optional.of("stop"))
         );
-        assertThat(adapter.descriptor).isEqualTo(descriptor);
-        assertThat(adapter.context).isEqualTo(context);
-        assertThat(adapter.signal.aborted()).isFalse();
+        assertThat(apiProvider.descriptor).isEqualTo(descriptor);
+        assertThat(apiProvider.context).isEqualTo(context);
+        assertThat(apiProvider.signal.aborted()).isFalse();
     }
 
     @Test
     void streamFailsWhenSelectedModelIsNotRegistered() {
         DefaultModelPort port = new DefaultModelPort(
-            new DefaultModelRegistry(List.of(descriptor("openai", "gpt-5", true))),
-            List.of(new RecordingProviderAdapter("openai", Stream.empty()))
+            new DefaultModelRegistry(List.of(descriptor("openai", "gpt-5", true, ApiStyle.OPENAI_COMPATIBLE))),
+            new DefaultApiProviderRegistry(List.of(new RecordingApiProvider(ApiStyle.OPENAI_COMPATIBLE, Stream.empty())))
         );
         ContextSnapshot context = context(new ModelSelection("openai", "gpt-4.1", ThinkingLevel.MEDIUM), ThinkingLevel.MEDIUM);
 
@@ -71,16 +71,16 @@ class DefaultModelPortTest {
     }
 
     @Test
-    void streamFailsWhenProviderAdapterIsMissing() {
+    void streamFailsWhenApiProviderIsMissing() {
         DefaultModelPort port = new DefaultModelPort(
-            new DefaultModelRegistry(List.of(descriptor("anthropic", "claude-4", true))),
-            List.of(new RecordingProviderAdapter("openai", Stream.empty()))
+            new DefaultModelRegistry(List.of(descriptor("anthropic", "claude-4", true, ApiStyle.ANTHROPIC))),
+            new DefaultApiProviderRegistry(List.of())
         );
         ContextSnapshot context = context(new ModelSelection("anthropic", "claude-4", ThinkingLevel.MEDIUM), ThinkingLevel.MEDIUM);
 
         assertThatThrownBy(() -> port.stream(context, () -> false).toList())
             .isInstanceOfSatisfying(ModelProviderException.class, error -> {
-                assertThat(error.errorId()).isEqualTo("provider.adapter_unavailable");
+                assertThat(error.errorId()).isEqualTo("api_provider.unavailable");
                 assertThat(error.severity()).isEqualTo(ErrorSeverity.ERROR);
                 assertThat(error.retryable()).isFalse();
             });
@@ -89,8 +89,8 @@ class DefaultModelPortTest {
     @Test
     void streamFailsWhenThinkingRequestedForModelWithoutThinkingSupport() {
         DefaultModelPort port = new DefaultModelPort(
-            new DefaultModelRegistry(List.of(descriptor("openai", "gpt-5-mini", false))),
-            List.of(new RecordingProviderAdapter("openai", Stream.empty()))
+            new DefaultModelRegistry(List.of(descriptor("openai", "gpt-5-mini", false, ApiStyle.OPENAI_COMPATIBLE))),
+            new DefaultApiProviderRegistry(List.of(new RecordingApiProvider(ApiStyle.OPENAI_COMPATIBLE, Stream.empty())))
         );
         ContextSnapshot context = context(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH), ThinkingLevel.HIGH);
 
@@ -104,15 +104,15 @@ class DefaultModelPortTest {
 
     @Test
     void streamShortCircuitsWhenAlreadyAborted() {
-        RecordingProviderAdapter adapter = new RecordingProviderAdapter("openai", Stream.of(new TextDelta("ignored")));
+        RecordingApiProvider apiProvider = new RecordingApiProvider(ApiStyle.OPENAI_COMPATIBLE, Stream.of(new TextDelta("ignored")));
         DefaultModelPort port = new DefaultModelPort(
-            new DefaultModelRegistry(List.of(descriptor("openai", "gpt-5", true))),
-            List.of(adapter)
+            new DefaultModelRegistry(List.of(descriptor("openai", "gpt-5", true, ApiStyle.OPENAI_COMPATIBLE))),
+            new DefaultApiProviderRegistry(List.of(apiProvider))
         );
         ContextSnapshot context = context(new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM), ThinkingLevel.MEDIUM);
 
         assertThat(port.stream(context, () -> true).toList()).isEmpty();
-        assertThat(adapter.context).isNull();
+        assertThat(apiProvider.context).isNull();
     }
 
     private static ContextSnapshot context(ModelSelection selection, ThinkingLevel thinkingLevel) {
@@ -127,12 +127,12 @@ class DefaultModelPortTest {
         );
     }
 
-    private static ModelDescriptor descriptor(String provider, String modelId, boolean supportsThinking) {
+    private static ModelDescriptor descriptor(String provider, String modelId, boolean supportsThinking, ApiStyle apiStyle) {
         return new ModelDescriptor(
             provider,
             modelId,
             URI.create("https://example.test/v1"),
-            ApiStyle.OPENAI_COMPATIBLE,
+            apiStyle,
             128_000,
             16_384,
             supportsThinking,
@@ -142,21 +142,21 @@ class DefaultModelPortTest {
         );
     }
 
-    private static final class RecordingProviderAdapter implements ProviderAdapter {
-        private final String provider;
+    private static final class RecordingApiProvider implements ApiProvider {
+        private final ApiStyle apiStyle;
         private final Stream<AssistantStreamEvent> events;
         private ContextSnapshot context;
         private ModelDescriptor descriptor;
         private AbortSignal signal;
 
-        private RecordingProviderAdapter(String provider, Stream<AssistantStreamEvent> events) {
-            this.provider = provider;
+        private RecordingApiProvider(ApiStyle apiStyle, Stream<AssistantStreamEvent> events) {
+            this.apiStyle = apiStyle;
             this.events = events;
         }
 
         @Override
-        public String provider() {
-            return provider;
+        public ApiStyle apiStyle() {
+            return apiStyle;
         }
 
         @Override

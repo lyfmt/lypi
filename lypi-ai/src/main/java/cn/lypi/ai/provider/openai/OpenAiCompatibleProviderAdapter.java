@@ -1,5 +1,6 @@
 package cn.lypi.ai.provider.openai;
 
+import cn.lypi.ai.ApiProvider;
 import cn.lypi.ai.ProviderAdapter;
 import cn.lypi.ai.provider.ProviderFallbackDecider;
 import cn.lypi.ai.provider.ProviderRawEvent;
@@ -14,6 +15,7 @@ import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.ModelDescriptor;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
@@ -24,7 +26,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Stream;
 
-public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter {
+public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, ApiProvider {
     private final OpenAiProviderConfig config;
     private final ProviderTransport webSocketTransport;
     private final ProviderTransport responsesSseTransport;
@@ -71,6 +73,11 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter {
     @Override
     public String provider() {
         return config.provider();
+    }
+
+    @Override
+    public ApiStyle apiStyle() {
+        return ApiStyle.OPENAI_COMPATIBLE;
     }
 
     @Override
