@@ -42,6 +42,19 @@ class GrepToolTest {
     }
 
     @Test
+    void doesNotReadSymlinkFileOutsideWorkspace(@TempDir Path outsideDir) throws Exception {
+        Files.writeString(outsideDir.resolve("secret.txt"), "needle secret\n");
+        Files.createSymbolicLink(tempDir.resolve("secret-link.txt"), outsideDir.resolve("secret.txt"));
+        GrepTool tool = new GrepTool();
+
+        ToolResult<String> result = tool.execute(Map.of("pattern", "needle"), context(), message -> {
+        });
+
+        assertFalse(result.isError());
+        assertFalse(result.output().contains("secret"));
+    }
+
+    @Test
     void isReadOnlyAndConcurrencySafe() {
         GrepTool tool = new GrepTool();
 

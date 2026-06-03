@@ -11,6 +11,10 @@ import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,6 +49,32 @@ class EventPublishingPermissionGateTest {
         assertEquals("write", decisionEvent.toolName());
         assertEquals("write {path=a.txt}", decisionEvent.renderedToolUse());
         assertEquals(PermissionBehavior.ALLOW, decisionEvent.decision().behavior());
+    }
+
+    @Test
+    void publishesPermissionUpdateInDecisionEventWhenDelegateAllowsWithRule() {
+        RecordingEventBus events = new RecordingEventBus();
+        PermissionUpdate update = new PermissionUpdate(
+            PermissionRuleSource.SESSION,
+            new PermissionRule(
+                PermissionRuleSource.SESSION,
+                PermissionBehavior.ALLOW,
+                new PermissionRuleValue("write", "*"),
+                "allow once"
+            )
+        );
+        PermissionGate delegate = (request, tool, context, decision) -> PermissionGateResult.allow(java.util.Optional.of(update));
+        EventPublishingPermissionGate gate = new EventPublishingPermissionGate(events, delegate);
+
+        gate.request(
+            new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
+            TestTools.echo("write", List.of(), false, false, true),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.decision(PermissionBehavior.ASK, "write requires approval")
+        );
+
+        PermissionDecisionEvent decisionEvent = assertInstanceOf(PermissionDecisionEvent.class, events.events.get(1));
+        assertEquals(update, decisionEvent.decision().suggestedUpdate().orElseThrow());
     }
 
     private static final class RecordingEventBus implements EventBus {

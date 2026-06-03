@@ -14,6 +14,7 @@ import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -44,6 +45,7 @@ class BashToolTest {
         assertEquals(List.of("bash", "-lc", "echo hi"), executor.request.get().command());
         assertEquals(tempDir, executor.request.get().cwd());
         assertEquals(Duration.ofSeconds(3), executor.request.get().timeout());
+        assertTrue(executor.request.get().sandboxPolicy().failIfUnavailable());
         assertTrue(result.output().contains("exitCode=7"));
         assertTrue(result.output().contains("stdout:\nout"));
         assertTrue(result.output().contains("stderr:\nerr"));
@@ -77,6 +79,20 @@ class BashToolTest {
 
         assertTrue(result.isError());
         assertTrue(result.output().contains("越过当前工作目录"));
+    }
+
+    @Test
+    void rejectsCwdSymlinkOutsideWorkspace(@TempDir Path outsideDir) throws Exception {
+        Files.createSymbolicLink(tempDir.resolve("outside-link"), outsideDir);
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(executor);
+
+        ToolResult<String> result = tool.execute(Map.of("command", "pwd", "cwd", "outside-link"), context(Map.of()), message -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("越过当前工作目录"));
+        assertEquals(null, executor.request.get());
     }
 
     @Test

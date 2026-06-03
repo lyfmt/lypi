@@ -103,6 +103,27 @@ class ContractSerializationTest {
     }
 
     @Test
+    void permissionRequestEventCanReadLegacyJson() throws Exception {
+        String json = """
+            {
+              "type": "permission_request",
+              "sessionId": "ses_01",
+              "toolUseId": "toolu_01",
+              "message": "legacy approval",
+              "timestamp": "2026-06-01T12:00:00Z"
+            }
+            """;
+
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, restored);
+        assertEquals("toolu_01", request.toolUseId());
+        assertEquals("legacy approval", request.message());
+        assertEquals("unknown", request.toolName());
+        assertEquals("", request.renderedToolUse());
+    }
+
+    @Test
     void contentBlockRoundTripUsesSpecializedBlockTypes() throws Exception {
         ContentBlock block = new TextContentBlock("hello");
 

@@ -55,7 +55,7 @@ public final class WriteTool extends AbstractFileTool {
                 return ask("覆盖已有文件需要确认。", input);
             }
         } catch (IllegalArgumentException exception) {
-            return super.checkPermissions(input, context);
+            return deny(exception.getMessage(), input);
         }
         return super.checkPermissions(input, context);
     }
@@ -111,6 +111,16 @@ public final class WriteTool extends AbstractFileTool {
         return new PermissionDecision(
             PermissionBehavior.ASK,
             PermissionDecisionReason.TOOL_SPECIFIC,
+            message,
+            Optional.<PermissionUpdate>empty(),
+            Map.of("tool", name(), "path", input.getOrDefault("path", "").toString())
+        );
+    }
+
+    private PermissionDecision deny(String message, Map<String, Object> input) {
+        return new PermissionDecision(
+            PermissionBehavior.DENY,
+            PermissionDecisionReason.PATH_SAFETY,
             message,
             Optional.<PermissionUpdate>empty(),
             Map.of("tool", name(), "path", input.getOrDefault("path", "").toString())

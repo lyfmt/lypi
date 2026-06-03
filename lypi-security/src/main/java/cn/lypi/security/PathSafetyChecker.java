@@ -25,7 +25,8 @@ final class PathSafetyChecker {
         "filePath",
         "targetPath",
         "sourcePath",
-        "destinationPath"
+        "destinationPath",
+        "cwd"
     );
     private static final List<String> PROTECTED_PATH_PREFIXES = List.of(
         ".git",

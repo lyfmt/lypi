@@ -15,6 +15,7 @@ import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.nio.file.Path;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -31,8 +32,8 @@ public final class BashTool extends AbstractFileTool {
         List.of(),
         List.of(),
         List.of(),
-        false,
-        false
+        true,
+        true
     );
 
     private final Executor executor;
@@ -83,6 +84,7 @@ public final class BashTool extends AbstractFileTool {
         String toolUseId = toolUseId(context);
         try {
             Path cwd = resolvePath(input, context, "cwd");
+            requireRealPathInsideWorkspace(cwd, context);
             Duration timeout = Duration.ofSeconds(intInput(input, "timeoutSeconds", (int) DEFAULT_TIMEOUT.toSeconds(), 1, 86_400));
             ExecutionRequest request = new ExecutionRequest(
                 List.of("bash", "-lc", input.get("command").toString()),
@@ -95,6 +97,8 @@ public final class BashTool extends AbstractFileTool {
             return success(toolUseId, renderResult(result));
         } catch (IllegalArgumentException exception) {
             return error(toolUseId, exception.getMessage());
+        } catch (IOException exception) {
+            return error(toolUseId, "工作目录安全检查失败: " + exception.getMessage());
         } catch (RuntimeException exception) {
             return error(toolUseId, "命令执行失败: " + exception.getMessage());
         }

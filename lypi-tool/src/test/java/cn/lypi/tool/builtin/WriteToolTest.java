@@ -75,6 +75,10 @@ class WriteToolTest {
 
         assertTrue(result.isError());
         assertTrue(result.output().contains("越过当前工作目录"));
+        assertEquals(
+            PermissionBehavior.DENY,
+            tool.checkPermissions(Map.of("path", "../a.txt", "content", "x"), context()).behavior()
+        );
     }
 
     private ToolUseContext context() {

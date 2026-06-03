@@ -6,7 +6,7 @@ import java.util.Optional;
 /**
  * 表示 ASK 权限请求的确认结果。
  *
- * NOTE: 该结果只表达一次请求的交互结论，不直接修改权限规则持久化。
+ * NOTE: 该结果只表达一次请求的交互结论；权限规则持久化必须由事件消费者或后续策略端口处理。
  */
 public record PermissionGateResult(
     Status status,

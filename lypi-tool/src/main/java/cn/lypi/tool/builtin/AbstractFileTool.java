@@ -91,6 +91,25 @@ abstract class AbstractFileTool implements Tool<Map<String, Object>, String> {
         return relative.isBlank() ? "." : relative;
     }
 
+    protected Path requireRealPathInsideWorkspace(Path path, ToolUseContext context) throws IOException {
+        Path realCwd = context.cwd().toRealPath();
+        Path realPath = path.toRealPath();
+        if (!realPath.startsWith(realCwd)) {
+            throw new IllegalArgumentException("路径经符号链接越过当前工作目录: " + relativePath(path, context));
+        }
+        return realPath;
+    }
+
+    protected boolean realPathInsideWorkspace(Path path, ToolUseContext context) {
+        try {
+            Path realCwd = context.cwd().toRealPath();
+            Path realPath = path.toRealPath();
+            return realPath.startsWith(realCwd);
+        } catch (IOException exception) {
+            return false;
+        }
+    }
+
     protected int intInput(Map<String, Object> input, String fieldName, int defaultValue, int min, int max) {
         Object value = input.get(fieldName);
         int parsed = switch (value) {

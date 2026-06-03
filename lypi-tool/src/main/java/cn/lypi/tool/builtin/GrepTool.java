@@ -55,6 +55,7 @@ public final class GrepTool extends AbstractFileTool {
             List<Path> files;
             try (var walk = Files.walk(root)) {
                 files = walk.filter(Files::isRegularFile)
+                    .filter(path -> realPathInsideWorkspace(path, context))
                     .filter(path -> !ignored(path))
                     .sorted(Comparator.comparing(Path::toString))
                     .toList();

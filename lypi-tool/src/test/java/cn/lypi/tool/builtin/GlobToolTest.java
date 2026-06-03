@@ -44,6 +44,19 @@ class GlobToolTest {
     }
 
     @Test
+    void doesNotReportSymlinkFileOutsideWorkspace(@TempDir Path outsideDir) throws Exception {
+        Files.writeString(outsideDir.resolve("secret.txt"), "secret");
+        Files.createSymbolicLink(tempDir.resolve("secret-link.txt"), outsideDir.resolve("secret.txt"));
+        GlobTool tool = new GlobTool();
+
+        ToolResult<String> result = tool.execute(Map.of("pattern", "*.txt"), context(), message -> {
+        });
+
+        assertFalse(result.isError());
+        assertFalse(result.output().contains("secret-link.txt"));
+    }
+
+    @Test
     void isReadOnlyAndConcurrencySafe() {
         GlobTool tool = new GlobTool();
 

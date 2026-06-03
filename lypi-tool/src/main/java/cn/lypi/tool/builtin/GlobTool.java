@@ -55,6 +55,7 @@ public final class GlobTool extends AbstractFileTool {
             List<String> matches;
             try (var walk = Files.walk(root)) {
                 matches = walk.filter(Files::isRegularFile)
+                    .filter(path -> realPathInsideWorkspace(path, context))
                     .filter(path -> !ignored(path))
                     .filter(path -> matchesAny(matchers, root.relativize(path)))
                     .map(path -> relativePath(path, context))
