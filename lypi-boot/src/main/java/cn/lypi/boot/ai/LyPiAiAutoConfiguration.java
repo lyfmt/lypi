@@ -1,10 +1,20 @@
 package cn.lypi.boot.ai;
 
+import cn.lypi.ai.ApiProviderRegistry;
+import cn.lypi.ai.DefaultApiProviderRegistry;
 import cn.lypi.ai.DefaultModelPort;
 import cn.lypi.ai.DefaultModelRegistry;
 import cn.lypi.ai.ModelPort;
 import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.ProviderAdapter;
+import cn.lypi.ai.ProviderAdapterApiProvider;
+import cn.lypi.ai.model.BuiltinModelDescriptorSource;
+import cn.lypi.ai.model.CompatSanitizer;
+import cn.lypi.ai.model.CompositeModelDescriptorSource;
+import cn.lypi.ai.model.ModelDescriptorSource;
+import cn.lypi.ai.model.RemoteModelDescriptorSource;
+import cn.lypi.ai.model.RemoteModelDiscoveryClient;
+import cn.lypi.ai.model.StaticModelDescriptorSource;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
 import cn.lypi.ai.provider.openai.OpenAiProviderConfig;
 import cn.lypi.ai.transport.HttpSseProviderTransport;
@@ -32,23 +42,46 @@ import org.springframework.context.annotation.Configuration;
 public class LyPiAiAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
-    public ModelRegistry modelRegistry(LyPiAiProperties properties) {
-        return new DefaultModelRegistry(modelDescriptors(properties));
+    public ModelRegistry modelRegistry(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
+        return new DefaultModelRegistry(modelDescriptorSource(properties, discoveryClient).list());
     }
 
     @Bean
     @ConditionalOnMissingBean
     public ModelPort modelPort(
         ModelRegistry modelRegistry,
-        @Qualifier("openAiCompatibleProviderAdapters") List<ProviderAdapter> adapters
+        ApiProviderRegistry apiProviderRegistry
     ) {
-        return new DefaultModelPort(modelRegistry, adapters);
+        return new DefaultModelPort(modelRegistry, apiProviderRegistry);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ApiProviderRegistry apiProviderRegistry(@Qualifier("openAiCompatibleProviderAdapters") List<ProviderAdapter> adapters) {
+        if (adapters.isEmpty()) {
+            return new DefaultApiProviderRegistry(List.of());
+        }
+        return new DefaultApiProviderRegistry(List.of(new ProviderAdapterApiProvider(ApiStyle.OPENAI_COMPATIBLE, adapters)));
     }
 
     @Bean
     @ConditionalOnMissingBean(name = "openAiCompatibleProviderAdapters")
     public List<ProviderAdapter> openAiCompatibleProviderAdapters(LyPiAiProperties properties) {
         return List.copyOf(buildOpenAiProviderAdapters(properties));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RemoteModelDiscoveryClient remoteModelDiscoveryClient() {
+        return new RemoteModelDiscoveryClient();
+    }
+
+    private ModelDescriptorSource modelDescriptorSource(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
+        List<ModelDescriptorSource> sources = new ArrayList<>();
+        sources.add(new BuiltinModelDescriptorSource());
+        sources.add(new StaticModelDescriptorSource(modelDescriptors(properties)));
+        sources.add(new StaticModelDescriptorSource(remoteModelDescriptors(properties, discoveryClient)));
+        return new CompositeModelDescriptorSource(sources);
     }
 
     private List<ModelDescriptor> modelDescriptors(LyPiAiProperties properties) {
@@ -65,6 +98,44 @@ public class LyPiAiAutoConfiguration {
             }
         });
         return descriptors;
+    }
+
+    private List<ModelDescriptor> remoteModelDescriptors(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
+        List<ModelDescriptor> descriptors = new ArrayList<>();
+        properties.getProviders().forEach((providerName, provider) -> {
+            if (!provider.isEnabled() || provider.getBaseUrl() == null || !provider.getModelDiscovery().isEnabled()) {
+                return;
+            }
+            RemoteModelDescriptorSource.DescriptorDefaults defaults = descriptorDefaults(provider);
+            descriptors.addAll(new RemoteModelDescriptorSource(
+                true,
+                providerName,
+                provider.getBaseUrl(),
+                valueOrDefault(provider.getApiStyle(), ApiStyle.OPENAI_COMPATIBLE),
+                provider.getApiKey(),
+                provider.getModelDiscovery().getPaths(),
+                valueOrDefault(provider.getTimeout(), Duration.ofSeconds(30)),
+                discoveryClient,
+                defaults
+            ).list());
+        });
+        return descriptors;
+    }
+
+    private RemoteModelDescriptorSource.DescriptorDefaults descriptorDefaults(ProviderProperties provider) {
+        ModelProperties firstModel = provider.getModels().isEmpty() ? new ModelProperties() : provider.getModels().getFirst();
+        return new RemoteModelDescriptorSource.DescriptorDefaults(
+            firstModel.getContextWindow(),
+            firstModel.getMaxOutputTokens(),
+            firstModel.isSupportsThinking(),
+            firstModel.isSupportsImageInput(),
+            new CostProfile(
+                valueOrDefault(firstModel.getInputTokenCost(), BigDecimal.ZERO),
+                valueOrDefault(firstModel.getOutputTokenCost(), BigDecimal.ZERO),
+                valueOrDefault(firstModel.getCurrency(), "USD")
+            ),
+            sanitizedCompat(provider.getCompat(), firstModel.getCompat())
+        );
     }
 
     private ModelDescriptor modelDescriptor(String providerName, ProviderProperties provider, ModelProperties model) {
@@ -130,16 +201,7 @@ public class LyPiAiAutoConfiguration {
         Map<String, Object> compat = new LinkedHashMap<>();
         compat.putAll(providerCompat);
         compat.putAll(modelCompat);
-        compat.keySet().removeIf(this::sensitiveCompatKey);
-        return compat;
-    }
-
-    private boolean sensitiveCompatKey(String key) {
-        String normalized = key.replace("-", "").replace("_", "").toLowerCase(java.util.Locale.ROOT);
-        return switch (normalized) {
-            case "apikey", "authorization", "accesstoken", "bearertoken", "token" -> true;
-            default -> false;
-        };
+        return CompatSanitizer.sanitize(compat);
     }
 
     private static <T> T valueOrDefault(T value, T defaultValue) {

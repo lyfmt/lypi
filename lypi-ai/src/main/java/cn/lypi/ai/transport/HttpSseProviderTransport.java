@@ -33,6 +33,7 @@ public final class HttpSseProviderTransport implements ProviderTransport {
         HttpRequest.Builder builder = HttpRequest.newBuilder(request.uri())
             .POST(HttpRequest.BodyPublishers.ofString(request.body()))
             .header("Content-Type", "application/json");
+        request.timeout().ifPresent(builder::timeout);
         for (Map.Entry<String, String> header : request.headers().entrySet()) {
             builder.header(header.getKey(), header.getValue());
         }

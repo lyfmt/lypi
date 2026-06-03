@@ -7,21 +7,16 @@ import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ThinkingLevel;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public final class DefaultModelPort implements ModelPort {
     private final ModelRegistry registry;
-    private final Map<String, ProviderAdapter> adapters;
+    private final ApiProviderRegistry apiProviders;
 
-    public DefaultModelPort(ModelRegistry registry, List<ProviderAdapter> adapters) {
+    public DefaultModelPort(ModelRegistry registry, ApiProviderRegistry apiProviders) {
         this.registry = Objects.requireNonNull(registry, "registry");
-        this.adapters = List.copyOf(Objects.requireNonNull(adapters, "adapters")).stream()
-            .collect(Collectors.toUnmodifiableMap(ProviderAdapter::provider, Function.identity()));
+        this.apiProviders = Objects.requireNonNull(apiProviders, "apiProviders");
     }
 
     @Override
@@ -36,12 +31,10 @@ public final class DefaultModelPort implements ModelPort {
             .orElseThrow(() -> unavailable("model.unavailable", "Selected model is not available."));
         validateThinking(context, descriptor);
 
-        ProviderAdapter adapter = adapters.get(descriptor.provider());
-        if (adapter == null) {
-            throw unavailable("provider.adapter_unavailable", "Provider adapter is not available.");
-        }
+        ApiProvider apiProvider = apiProviders.find(descriptor.apiStyle())
+            .orElseThrow(() -> unavailable("api_provider.unavailable", "API provider is not available."));
 
-        return adapter.stream(context, descriptor, signal);
+        return apiProvider.stream(context, descriptor, signal);
     }
 
     private static void validateThinking(ContextSnapshot context, ModelDescriptor descriptor) {
