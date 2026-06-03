@@ -24,14 +24,14 @@ class WebSocketProviderTransportTest {
         WebSocketProviderTransport transport = new WebSocketProviderTransport(client);
         ProviderRequest request = new ProviderRequest(
             URI.create("wss://api.example.test/v1/responses"),
-            Map.of("Authorization", "Bearer test-secret"),
+            Map.of("Authorization", "Bearer ${LYPI_TEST_TOKEN}"),
             "{\"stream\":true}"
         );
 
         List<ProviderRawEvent> events = transport.stream(request, () -> false).toList();
 
         assertThat(client.uri).isEqualTo(request.uri());
-        assertThat(client.headers).containsEntry("Authorization", "Bearer test-secret");
+        assertThat(client.headers).containsEntry("Authorization", "Bearer ${LYPI_TEST_TOKEN}");
         assertThat(client.payload).isEqualTo("{\"stream\":true}");
         assertThat(events).containsExactly(new ProviderRawEvent("{\"type\":\"response.created\"}"), new ProviderRawEvent("[DONE]"));
     }

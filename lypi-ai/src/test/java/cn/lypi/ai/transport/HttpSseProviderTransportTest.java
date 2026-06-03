@@ -42,13 +42,13 @@ class HttpSseProviderTransportTest {
             ObjectNode body = new ObjectMapper().createObjectNode().put("stream", true);
             ProviderRequest request = new ProviderRequest(
                 URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/responses"),
-                Map.of("Authorization", "Bearer test-secret"),
+                Map.of("Authorization", "Bearer ${LYPI_TEST_TOKEN}"),
                 body.toString()
             );
 
             List<ProviderRawEvent> events = new HttpSseProviderTransport().stream(request, () -> false).toList();
 
-            assertThat(authorization.get()).isEqualTo("Bearer test-secret");
+            assertThat(authorization.get()).isEqualTo("Bearer ${LYPI_TEST_TOKEN}");
             assertThat(requestBody.get()).contains("\"stream\":true");
             assertThat(events).containsExactly(
                 new ProviderRawEvent("{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"),
@@ -72,14 +72,14 @@ class HttpSseProviderTransportTest {
         try {
             ProviderRequest request = new ProviderRequest(
                 URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/responses"),
-                Map.of("Authorization", "Bearer test-secret"),
+                Map.of("Authorization", "Bearer ${LYPI_TEST_TOKEN}"),
                 "{}"
             );
 
             assertThatThrownBy(() -> new HttpSseProviderTransport().stream(request, () -> false).toList())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("HTTP 400")
-                .hasMessageNotContaining("test-secret");
+                .hasMessageNotContaining("LYPI_TEST_TOKEN");
         } finally {
             server.stop(0);
         }
