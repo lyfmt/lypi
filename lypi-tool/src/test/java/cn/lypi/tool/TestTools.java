@@ -28,6 +28,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 final class TestTools {
     private TestTools() {
@@ -120,6 +121,28 @@ final class TestTools {
         }
     }
 
+    static final class ObservedConcurrencyTool extends EchoTool {
+        private final AtomicInteger active;
+        private final AtomicInteger maxActive;
+
+        ObservedConcurrencyTool(String name, AtomicInteger active, AtomicInteger maxActive) {
+            super(name, List.of(), true, true, false, Duration.ofMillis(80));
+            this.active = active;
+            this.maxActive = maxActive;
+        }
+
+        @Override
+        public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+            int current = active.incrementAndGet();
+            maxActive.updateAndGet(previous -> Math.max(previous, current));
+            try {
+                return super.execute(input, context, progress);
+            } finally {
+                active.decrementAndGet();
+            }
+        }
+    }
+
     private static class EchoTool implements Tool<Map<String, Object>, String> {
         private final String name;
         private final List<String> aliases;
@@ -180,7 +203,8 @@ final class TestTools {
                 }
             }
             Object text = input == null ? null : input.get("text");
-            return result("toolu_1", text == null ? "" : text.toString(), false);
+            Object toolUseId = context.metadata().get("toolUseId");
+            return result(toolUseId == null ? "toolu_1" : toolUseId.toString(), text == null ? "" : text.toString(), false);
         }
 
         @Override
