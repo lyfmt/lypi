@@ -56,6 +56,7 @@ public class LyPiAiProperties {
         private int maxRetries;
         private Map<String, Object> compat = new LinkedHashMap<>();
         private List<ModelProperties> models = new ArrayList<>();
+        private ModelDiscoveryProperties modelDiscovery = new ModelDiscoveryProperties();
 
         public boolean isEnabled() {
             return enabled;
@@ -159,6 +160,35 @@ public class LyPiAiProperties {
 
         public void setModels(List<ModelProperties> models) {
             this.models = models == null ? new ArrayList<>() : new ArrayList<>(models);
+        }
+
+        public ModelDiscoveryProperties getModelDiscovery() {
+            return modelDiscovery;
+        }
+
+        public void setModelDiscovery(ModelDiscoveryProperties modelDiscovery) {
+            this.modelDiscovery = modelDiscovery == null ? new ModelDiscoveryProperties() : modelDiscovery;
+        }
+    }
+
+    public static class ModelDiscoveryProperties {
+        private boolean enabled;
+        private List<String> paths = new ArrayList<>(List.of("/models", "/model"));
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public List<String> getPaths() {
+            return paths;
+        }
+
+        public void setPaths(List<String> paths) {
+            this.paths = paths == null ? new ArrayList<>() : new ArrayList<>(paths);
         }
     }
 
