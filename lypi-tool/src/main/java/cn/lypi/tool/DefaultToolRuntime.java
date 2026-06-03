@@ -36,6 +36,7 @@ import java.util.concurrent.Semaphore;
  */
 public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrator {
     private static final String METADATA_ABORT_SIGNAL = "abortSignal";
+    private static final String METADATA_ORIGINAL_TOOL_NAME = "originalToolName";
     private static final String METADATA_TOOL_USE_ID = "toolUseId";
     private static final ProgressSink NOOP_PROGRESS = message -> {
     };
@@ -145,7 +146,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 results.set(index, errorResult(request.toolUseId(), "未知工具: " + request.toolName()));
                 continue;
             }
-            resolvedCalls.add(new IndexedCall(index, request, castTool(tool.get())));
+            Tool<Map<String, Object>, ?> resolvedTool = castTool(tool.get());
+            resolvedCalls.add(new IndexedCall(index, canonicalRequest(request, resolvedTool), request.toolName(), resolvedTool));
         }
 
         List<ToolExecutionPlanner.ResolvedToolCall> calls = resolvedCalls.stream()
@@ -169,14 +171,14 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     ) {
         if (!batch.parallel()) {
             IndexedCall indexedCall = indexedBatch.getFirst();
-            results.set(indexedCall.index(), executeCall(indexedCall.request(), indexedCall.tool(), context));
+            results.set(indexedCall.index(), executeCall(indexedCall.request(), indexedCall.originalToolName(), indexedCall.tool(), context));
             return;
         }
 
         try (BoundedVirtualExecutor executor = new BoundedVirtualExecutor(maxConcurrency)) {
             List<CompletableFuture<IndexedResult>> futures = indexedBatch.stream()
                 .map(call -> CompletableFuture.supplyAsync(
-                    () -> new IndexedResult(call.index(), executeCall(call.request(), call.tool(), context)),
+                    () -> new IndexedResult(call.index(), executeCall(call.request(), call.originalToolName(), call.tool(), context)),
                     executor
                 ))
                 .toList();
@@ -189,11 +191,17 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
     private ToolResult<?> executeCall(
         ToolUseRequest request,
+        String originalToolName,
         Tool<Map<String, Object>, ?> tool,
         ContextSnapshot context
     ) {
         Map<String, Object> input = request.input() == null ? Map.of() : request.input();
-        ToolUseContext toolContext = contextWithToolUseId(contextFactory.create(request, context), request.toolUseId());
+        ToolUseContext toolContext = contextWithCallMetadata(
+            contextFactory.create(request, context),
+            request.toolUseId(),
+            originalToolName,
+            request.toolName()
+        );
         try {
             ValidationResult schemaResult = schemaValidator.validate(tool.inputSchema(), input);
             if (!schemaResult.valid()) {
@@ -224,18 +232,60 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 return errorResult(request.toolUseId(), "工具调用已中止。");
             }
 
-            ToolResult<?> result = tool.execute(input, toolContext, NOOP_PROGRESS);
-            ToolResult<?> interceptedResult = interceptor.afterExecute(request, tool, toolContext, result);
-            ToolResult<?> finalResult = interceptedResult == null ? result : interceptedResult;
-            return resultBudgeter.apply(request.toolUseId(), tool.name(), finalResult, tool.maxResultSize());
+            ToolResult<?> result = executeTool(request, tool, input, toolContext);
+            return applyAfterInterceptorAndBudget(request, tool, toolContext, result);
         } catch (RuntimeException exception) {
             return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
         }
     }
 
-    private ToolUseContext contextWithToolUseId(ToolUseContext context, String toolUseId) {
+    private ToolResult<?> executeTool(
+        ToolUseRequest request,
+        Tool<Map<String, Object>, ?> tool,
+        Map<String, Object> input,
+        ToolUseContext toolContext
+    ) {
+        try {
+            return tool.execute(input, toolContext, NOOP_PROGRESS);
+        } catch (RuntimeException exception) {
+            return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
+        }
+    }
+
+    private ToolResult<?> applyAfterInterceptorAndBudget(
+        ToolUseRequest request,
+        Tool<Map<String, Object>, ?> tool,
+        ToolUseContext toolContext,
+        ToolResult<?> result
+    ) {
+        ToolResult<?> interceptedResult = interceptor.afterExecute(request, tool, toolContext, result);
+        ToolResult<?> finalResult = interceptedResult == null ? result : interceptedResult;
+        return resultBudgeter.apply(request.toolUseId(), tool.name(), finalResult, tool.maxResultSize());
+    }
+
+    private ToolUseRequest canonicalRequest(ToolUseRequest request, Tool<Map<String, Object>, ?> tool) {
+        if (Objects.equals(request.toolName(), tool.name())) {
+            return request;
+        }
+        return new ToolUseRequest(
+            request.toolUseId(),
+            tool.name(),
+            request.input(),
+            request.parentMessageId()
+        );
+    }
+
+    private ToolUseContext contextWithCallMetadata(
+        ToolUseContext context,
+        String toolUseId,
+        String originalToolName,
+        String canonicalToolName
+    ) {
         Map<String, Object> metadata = new LinkedHashMap<>(context.metadata());
         metadata.put(METADATA_TOOL_USE_ID, toolUseId);
+        if (!Objects.equals(originalToolName, canonicalToolName)) {
+            metadata.put(METADATA_ORIGINAL_TOOL_NAME, originalToolName);
+        }
         return new ToolUseContext(
             context.sessionId(),
             context.messageId(),
@@ -293,6 +343,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private record IndexedCall(
         int index,
         ToolUseRequest request,
+        String originalToolName,
         Tool<Map<String, Object>, ?> tool
     ) {}
 

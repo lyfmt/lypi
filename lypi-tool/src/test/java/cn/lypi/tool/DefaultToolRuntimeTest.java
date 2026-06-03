@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class DefaultToolRuntimeTest {
@@ -44,6 +45,24 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
+    }
+
+    @Test
+    void passesCanonicalToolNameToSecurityRuntimeWhenCalledByAlias() {
+        AtomicReference<String> securityToolName = new AtomicReference<>();
+        SecurityRuntimePort security = (request, context) -> {
+            securityToolName.set(request.toolName());
+            return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+        };
+        DefaultToolRuntime runtime = new DefaultToolRuntime(security);
+        runtime.register(TestTools.echo("bash", List.of("sh"), true, true, false));
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "sh", Map.of("text", "hello"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertEquals("bash", securityToolName.get());
     }
 
     @Test
@@ -138,6 +157,35 @@ class DefaultToolRuntimeTest {
 
         assertTrue(result.isError());
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("blocked"));
+    }
+
+    @Test
+    void afterInterceptorReceivesNormalizedErrorWhenToolThrows() {
+        AtomicInteger afterCalls = new AtomicInteger();
+        ToolExecutionInterceptor interceptor = ToolExecutionInterceptor.after((request, tool, context, result) -> {
+            afterCalls.incrementAndGet();
+            assertTrue(result.isError());
+            return TestTools.result(request.toolUseId(), "after saw failure", true);
+        });
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()),
+            interceptor,
+            allowAllSecurity()
+        );
+        runtime.register(TestTools.throwingExecute("throwing"));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "throwing", Map.of(), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertEquals(1, afterCalls.get());
+        assertTrue(result.isError());
+        assertEquals("after saw failure", result.newMessages().getFirst().content().getFirst().text());
     }
 
     @Test

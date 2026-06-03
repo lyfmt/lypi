@@ -62,6 +62,15 @@ final class TestTools {
         };
     }
 
+    static Tool<Map<String, Object>, String> throwingExecute(String name) {
+        return new EchoTool(name, List.of(), true, true, false, Duration.ZERO) {
+            @Override
+            public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+                throw new IllegalStateException("boom");
+            }
+        };
+    }
+
     static ToolResult<String> result(String toolUseId, String text, boolean error) {
         AgentMessage message = new AgentMessage(
             "msg_" + toolUseId,
