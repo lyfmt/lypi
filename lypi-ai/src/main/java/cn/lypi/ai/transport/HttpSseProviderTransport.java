@@ -39,7 +39,7 @@ public final class HttpSseProviderTransport implements ProviderTransport {
         try {
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalStateException("Provider HTTP " + response.statusCode() + ": " + response.body());
+                throw new IllegalStateException("Provider HTTP " + response.statusCode() + ".");
             }
             return parseSse(response.body()).stream();
         } catch (IOException exception) {

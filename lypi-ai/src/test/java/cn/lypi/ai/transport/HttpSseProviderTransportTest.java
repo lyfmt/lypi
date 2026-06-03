@@ -63,7 +63,7 @@ class HttpSseProviderTransportTest {
     void doesNotLeakAuthorizationHeaderInHttpErrors() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/v1/responses", exchange -> {
-            byte[] body = "unsupported".getBytes(StandardCharsets.UTF_8);
+            byte[] body = "unsupported prompt payload".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(400, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -79,7 +79,8 @@ class HttpSseProviderTransportTest {
             assertThatThrownBy(() -> new HttpSseProviderTransport().stream(request, () -> false).toList())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("HTTP 400")
-                .hasMessageNotContaining("LYPI_TEST_TOKEN");
+                .hasMessageNotContaining("LYPI_TEST_TOKEN")
+                .hasMessageNotContaining("prompt payload");
         } finally {
             server.stop(0);
         }

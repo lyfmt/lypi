@@ -5,6 +5,7 @@ import cn.lypi.ai.provider.TransportMode;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 public record OpenAiProviderConfig(
@@ -21,7 +22,15 @@ public record OpenAiProviderConfig(
     Map<String, Object> compat
 ) {
     public OpenAiProviderConfig {
+        Objects.requireNonNull(provider, "provider");
+        Objects.requireNonNull(baseUrl, "baseUrl");
+        Objects.requireNonNull(websocketPath, "websocketPath");
+        Objects.requireNonNull(apiKey, "apiKey");
+        Objects.requireNonNull(requestStyle, "requestStyle");
+        Objects.requireNonNull(fallbackRequestStyle, "fallbackRequestStyle");
+        Objects.requireNonNull(transportMode, "transportMode");
+        Objects.requireNonNull(timeout, "timeout");
         websocketUrl = websocketUrl == null ? Optional.empty() : websocketUrl;
-        compat = Map.copyOf(compat);
+        compat = compat == null ? Map.of() : Map.copyOf(compat);
     }
 }

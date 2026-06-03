@@ -82,6 +82,28 @@ class OpenAiResponsesRequestBuilderTest {
         assertThat(body.get("reasoning")).isNull();
     }
 
+    @Test
+    void buildsWebSocketResponseCreateEnvelopeWithoutHttpStreamFlag() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-3",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "You are concise.",
+            List.of(new LypiMessage(LypiRole.USER, List.of(new LypiTextBlock("hello", Map.of())), Map.of())),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of()
+        );
+
+        JsonNode envelope = new OpenAiResponsesRequestBuilder().buildWebSocketCreateEvent(request, config());
+
+        assertThat(envelope.get("type").asText()).isEqualTo("response.create");
+        assertThat(envelope.get("stream")).isNull();
+        assertThat(envelope.at("/response/model").asText()).isEqualTo("gpt-5-mini");
+        assertThat(envelope.at("/response/instructions").asText()).isEqualTo("You are concise.");
+        assertThat(envelope.at("/response/input/0/content/0/text").asText()).isEqualTo("hello");
+    }
+
     private static OpenAiProviderConfig config() {
         return new OpenAiProviderConfig(
             "openai",

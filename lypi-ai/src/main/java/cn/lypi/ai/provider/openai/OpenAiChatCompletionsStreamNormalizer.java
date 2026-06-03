@@ -21,6 +21,7 @@ public final class OpenAiChatCompletionsStreamNormalizer {
     private final ObjectMapper objectMapper;
     private final Map<String, ToolCallAccumulator> toolCalls = new LinkedHashMap<>();
     private boolean started;
+    private boolean doneEmitted;
 
     public OpenAiChatCompletionsStreamNormalizer() {
         this(new ObjectMapper());
@@ -41,7 +42,7 @@ public final class OpenAiChatCompletionsStreamNormalizer {
             return List.of();
         }
         if ("[DONE]".equals(trimmed)) {
-            return List.of(new AssistantDone(Optional.empty(), Optional.of("stop")));
+            return done(Optional.empty());
         }
         JsonNode event;
         try {
@@ -57,7 +58,7 @@ public final class OpenAiChatCompletionsStreamNormalizer {
             ));
         }
         if (event.has("usage")) {
-            return done(event.path("usage"));
+            return doneWithUsage(event.path("usage"));
         }
         List<AssistantStreamEvent> normalized = new ArrayList<>();
         if (!started && event.hasNonNull("id")) {
@@ -102,14 +103,22 @@ public final class OpenAiChatCompletionsStreamNormalizer {
         );
     }
 
-    private List<AssistantStreamEvent> done(JsonNode usage) {
+    private List<AssistantStreamEvent> doneWithUsage(JsonNode usage) {
         TokenUsage tokenUsage = new TokenUsage(
             usage.path("prompt_tokens").asLong(),
             usage.path("completion_tokens").asLong(),
             usage.path("prompt_tokens_details").path("cached_tokens").asLong(),
             usage.path("completion_tokens_details").path("reasoning_tokens").asLong()
         );
-        return List.of(new AssistantDone(Optional.of(tokenUsage), Optional.of("stop")));
+        return done(Optional.of(tokenUsage));
+    }
+
+    private List<AssistantStreamEvent> done(Optional<TokenUsage> usage) {
+        if (doneEmitted) {
+            return List.of();
+        }
+        doneEmitted = true;
+        return List.of(new AssistantDone(usage, Optional.of("stop")));
     }
 
     private final class ToolCallAccumulator {

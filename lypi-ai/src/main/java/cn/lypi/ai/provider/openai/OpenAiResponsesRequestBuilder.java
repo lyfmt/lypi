@@ -55,6 +55,20 @@ public final class OpenAiResponsesRequestBuilder {
         return body;
     }
 
+    /**
+     * 构造 Responses WebSocket `response.create` 事件。
+     *
+     * WebSocket 传输使用事件 envelope，HTTP SSE 专用的 `stream` 字段不进入 payload。
+     */
+    public ObjectNode buildWebSocketCreateEvent(LypiModelRequest request, OpenAiProviderConfig config) {
+        ObjectNode response = build(request, config);
+        response.remove("stream");
+        ObjectNode event = objectMapper.createObjectNode();
+        event.put("type", "response.create");
+        event.set("response", response);
+        return event;
+    }
+
     private ArrayNode input(LypiModelRequest request) {
         ArrayNode input = objectMapper.createArrayNode();
         for (LypiMessage message : request.messages()) {

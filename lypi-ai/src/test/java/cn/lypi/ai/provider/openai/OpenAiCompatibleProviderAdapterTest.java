@@ -35,10 +35,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 class OpenAiCompatibleProviderAdapterTest {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     @Test
-    void triesWebSocketResponsesThenSseResponsesThenChatCompletionsFallback() {
+    void triesWebSocketResponsesThenSseResponsesThenChatCompletionsFallback() throws Exception {
         RecordingTransport websocket = RecordingTransport.fail("WebSocket handshake failed");
         RecordingTransport sse = RecordingTransport.fail("Provider HTTP 404: endpoint unsupported");
         RecordingTransport chat = RecordingTransport.events(
@@ -58,6 +62,10 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(sse.requests).hasSize(1);
         assertThat(chat.requests).hasSize(1);
         assertThat(websocket.requests.getFirst().uri().getScheme()).isEqualTo("wss");
+        JsonNode webSocketBody = OBJECT_MAPPER.readTree(websocket.requests.getFirst().body());
+        assertThat(webSocketBody.get("type").asText()).isEqualTo("response.create");
+        assertThat(webSocketBody.get("stream")).isNull();
+        assertThat(webSocketBody.at("/response/model").asText()).isEqualTo("gpt-5-mini");
         assertThat(sse.requests.getFirst().uri().getPath()).isEqualTo("/v1/responses");
         assertThat(chat.requests.getFirst().uri().getPath()).isEqualTo("/v1/chat/completions");
         assertThat(events).contains(new TextDelta("hello"), new AssistantDone(Optional.empty(), Optional.of("stop")));
@@ -97,18 +105,79 @@ class OpenAiCompatibleProviderAdapterTest {
             });
     }
 
+    @Test
+    void respectsChatCompletionsAsPrimaryRequestStyle() {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.events();
+        RecordingTransport chat = RecordingTransport.events(
+            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}",
+            "[DONE]"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.AUTO, "test-key", RequestStyle.CHAT_COMPLETIONS, RequestStyle.RESPONSES),
+            websocket,
+            sse,
+            chat
+        );
+
+        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+
+        assertThat(websocket.requests).isEmpty();
+        assertThat(sse.requests).isEmpty();
+        assertThat(chat.requests).hasSize(1);
+        assertThat(chat.requests.getFirst().uri().getPath()).isEqualTo("/v1/chat/completions");
+        assertThat(events).contains(new TextDelta("hello"));
+    }
+
+    @Test
+    void retriesAttemptAccordingToConfiguredMaxRetriesBeforeFallback() {
+        RecordingTransport websocket = RecordingTransport.fail("WebSocket handshake failed");
+        RecordingTransport sse = RecordingTransport.events();
+        RecordingTransport chat = RecordingTransport.events();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key", RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS, 2),
+            websocket,
+            sse,
+            chat
+        );
+
+        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+
+        assertThat(websocket.requests).hasSize(3);
+        assertThat(events).singleElement().isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
+    }
+
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {
+        return config(transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS);
+    }
+
+    private static OpenAiProviderConfig config(
+        TransportMode transportMode,
+        String apiKey,
+        RequestStyle requestStyle,
+        RequestStyle fallbackRequestStyle
+    ) {
+        return config(transportMode, apiKey, requestStyle, fallbackRequestStyle, 0);
+    }
+
+    private static OpenAiProviderConfig config(
+        TransportMode transportMode,
+        String apiKey,
+        RequestStyle requestStyle,
+        RequestStyle fallbackRequestStyle,
+        int maxRetries
+    ) {
         return new OpenAiProviderConfig(
             "openai",
             URI.create("https://api.openai.test/v1"),
             Optional.empty(),
             "/v1/responses",
             apiKey,
-            RequestStyle.RESPONSES,
-            RequestStyle.CHAT_COMPLETIONS,
+            requestStyle,
+            fallbackRequestStyle,
             transportMode,
             Duration.ofSeconds(30),
-            1,
+            maxRetries,
             Map.of()
         );
     }

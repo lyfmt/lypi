@@ -130,10 +130,16 @@ public class LyPiAiAutoConfiguration {
         Map<String, Object> compat = new LinkedHashMap<>();
         compat.putAll(providerCompat);
         compat.putAll(modelCompat);
-        compat.remove("apiKey");
-        compat.remove("api-key");
-        compat.remove("authorization");
+        compat.keySet().removeIf(this::sensitiveCompatKey);
         return compat;
+    }
+
+    private boolean sensitiveCompatKey(String key) {
+        String normalized = key.replace("-", "").replace("_", "").toLowerCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "apikey", "authorization", "accesstoken", "bearertoken", "token" -> true;
+            default -> false;
+        };
     }
 
     private static <T> T valueOrDefault(T value, T defaultValue) {

@@ -52,6 +52,16 @@ class OpenAiChatCompletionsStreamNormalizerTest {
     }
 
     @Test
+    void doesNotEmitDuplicateDoneAfterUsageChunk() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        assertThat(normalizer.normalize("""
+            {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}
+            """)).containsExactly(new AssistantDone(Optional.of(new TokenUsage(10, 5, 0, 0)), Optional.of("stop")));
+        assertThat(normalizer.normalize("[DONE]")).isEmpty();
+    }
+
+    @Test
     void reportsMalformedJson() {
         OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
 

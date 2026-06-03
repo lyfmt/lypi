@@ -28,10 +28,13 @@ class OpenAiResponsesStreamNormalizerTest {
                 {"type":"response.reasoning_summary_text.delta","delta":"thinking"}
                 """),
             normalizer.normalize("""
-                {"type":"response.function_call_arguments.delta","item_id":"call-1","name":"read_file","delta":"{\\"path\\""}
+                {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"item-1","call_id":"call-1","name":"read_file"}}
                 """),
             normalizer.normalize("""
-                {"type":"response.function_call_arguments.delta","item_id":"call-1","name":"read_file","delta":":\\"pom.xml\\"}"}
+                {"type":"response.function_call_arguments.delta","item_id":"item-1","output_index":1,"delta":"{\\"path\\""}
+                """),
+            normalizer.normalize("""
+                {"type":"response.function_call_arguments.done","item_id":"item-1","output_index":1,"arguments":"{\\"path\\":\\"pom.xml\\"}"}
                 """),
             normalizer.normalize("""
                 {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":2},"output_tokens_details":{"reasoning_tokens":3}}}}
@@ -53,15 +56,16 @@ class OpenAiResponsesStreamNormalizerTest {
         OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
 
         List<AssistantStreamEvent> first = normalizer.normalize("""
-            {"type":"response.function_call_arguments.delta","output_index":0,"name":"search","delta":"{}"}
+            {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"search"}}
             """);
         List<AssistantStreamEvent> second = normalizer.normalize("""
-            {"type":"response.function_call_arguments.delta","output_index":0,"name":"search","delta":"{}"}
+            {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{}"}
             """);
 
-        assertThat(first).hasSize(1);
+        assertThat(first).isEmpty();
         assertThat(second).hasSize(1);
-        assertThat(((ToolCallDelta) first.getFirst()).toolUseId()).isEqualTo(((ToolCallDelta) second.getFirst()).toolUseId());
+        assertThat(((ToolCallDelta) second.getFirst()).toolUseId()).isNotBlank();
+        assertThat(((ToolCallDelta) second.getFirst()).toolName()).isEqualTo("search");
     }
 
     @Test

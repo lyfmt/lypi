@@ -90,21 +90,23 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter {
         List<Attempt> attempts = attempts(request);
         RuntimeException lastFailure = null;
         for (Attempt attempt : attempts) {
-            boolean outputStarted = false;
-            List<AssistantStreamEvent> events = new ArrayList<>();
-            try {
-                for (ProviderRawEvent rawEvent : (Iterable<ProviderRawEvent>) attempt.transport.stream(attempt.request, signal)::iterator) {
-                    List<AssistantStreamEvent> normalized = attempt.normalize(rawEvent.data());
-                    if (!normalized.isEmpty()) {
-                        outputStarted = true;
+            for (int retry = 0; retry <= Math.max(0, config.maxRetries()); retry++) {
+                boolean outputStarted = false;
+                List<AssistantStreamEvent> events = new ArrayList<>();
+                try {
+                    for (ProviderRawEvent rawEvent : (Iterable<ProviderRawEvent>) attempt.transport.stream(attempt.request, signal)::iterator) {
+                        List<AssistantStreamEvent> normalized = attempt.normalize(rawEvent.data());
+                        if (!normalized.isEmpty()) {
+                            outputStarted = true;
+                        }
+                        events.addAll(normalized);
                     }
-                    events.addAll(normalized);
-                }
-                return events.stream();
-            } catch (RuntimeException error) {
-                lastFailure = error;
-                if (!fallbackDecider.shouldFallback(error, outputStarted)) {
-                    throw error;
+                    return events.stream();
+                } catch (RuntimeException error) {
+                    lastFailure = error;
+                    if (!fallbackDecider.shouldFallback(error, outputStarted)) {
+                        throw error;
+                    }
                 }
             }
         }
@@ -114,25 +116,35 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter {
 
     private List<Attempt> attempts(LypiModelRequest request) {
         List<Attempt> attempts = new ArrayList<>();
-        if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.WEBSOCKET) {
-            OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
-            attempts.add(new Attempt(webSocketTransport, responsesWebSocketRequest(request), normalizer::normalize));
+        addAttemptsForStyle(attempts, request, config.requestStyle());
+        if (config.fallbackRequestStyle() != config.requestStyle()) {
+            addAttemptsForStyle(attempts, request, config.fallbackRequestStyle());
         }
-        if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
-            OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
-            attempts.add(new Attempt(responsesSseTransport, responsesSseRequest(request), normalizer::normalize));
+        return attempts;
+    }
+
+    private void addAttemptsForStyle(List<Attempt> attempts, LypiModelRequest request, cn.lypi.ai.provider.RequestStyle style) {
+        if (style == cn.lypi.ai.provider.RequestStyle.RESPONSES) {
+            if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.WEBSOCKET) {
+                OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+                attempts.add(new Attempt(webSocketTransport, responsesWebSocketRequest(request), normalizer::normalize));
+            }
+            if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
+                OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+                attempts.add(new Attempt(responsesSseTransport, responsesSseRequest(request), normalizer::normalize));
+            }
+            return;
         }
         if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
             OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
             attempts.add(new Attempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer::normalize));
         }
-        return attempts;
     }
 
     private ProviderRequest responsesWebSocketRequest(LypiModelRequest request) {
         URI uri = config.websocketUrl()
             .orElseGet(() -> cn.lypi.ai.transport.WebSocketProviderTransport.deriveUri(config.baseUrl(), config.websocketPath()));
-        ObjectNode body = responsesRequestBuilder.build(request, config);
+        ObjectNode body = responsesRequestBuilder.buildWebSocketCreateEvent(request, config);
         return new ProviderRequest(uri, headers(), body.toString());
     }
 

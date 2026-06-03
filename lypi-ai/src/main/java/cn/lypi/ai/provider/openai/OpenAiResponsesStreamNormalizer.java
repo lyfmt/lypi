@@ -50,7 +50,9 @@ public final class OpenAiResponsesStreamNormalizer {
             case "response.created" -> start(event);
             case "response.output_text.delta" -> textDelta(event);
             case "response.reasoning_summary_text.delta", "response.reasoning_text.delta" -> thinkingDelta(event);
+            case "response.output_item.added", "response.output_item.done" -> outputItem(event);
             case "response.function_call_arguments.delta" -> toolCallDelta(event);
+            case "response.function_call_arguments.done" -> toolCallDone(event);
             case "response.completed" -> done(event);
             case "error", "response.failed", "response.incomplete" -> error(event);
             default -> List.of();
@@ -70,28 +72,77 @@ public final class OpenAiResponsesStreamNormalizer {
         return List.of(new ThinkingDelta(event.path("delta").asText()));
     }
 
-    private List<AssistantStreamEvent> toolCallDelta(JsonNode event) {
-        String toolUseId = toolUseId(event);
+    private List<AssistantStreamEvent> outputItem(JsonNode event) {
+        JsonNode item = event.path("item");
+        if (!"function_call".equals(item.path("type").asText())) {
+            return List.of();
+        }
+        String key = toolCallKey(event);
         ToolCallAccumulator accumulator = toolCalls.computeIfAbsent(
-            toolUseId,
-            ignored -> new ToolCallAccumulator(toolUseId, event.path("name").asText(""))
+            key,
+            ignored -> new ToolCallAccumulator(toolUseId(event, item), item.path("name").asText(""))
         );
-        accumulator.append(event.path("delta").asText(""));
-        return List.of(new ToolCallDelta(
-            accumulator.toolUseId,
-            accumulator.toolName,
-            accumulator.partialInput(),
-            accumulator.complete()
-        ));
+        String callId = item.path("call_id").asText();
+        if (!callId.isBlank()) {
+            accumulator.toolUseId = callId;
+        }
+        String name = item.path("name").asText();
+        if (!name.isBlank()) {
+            accumulator.toolName = name;
+        }
+        String arguments = item.path("arguments").asText();
+        if (!arguments.isBlank()) {
+            accumulator.replace(arguments);
+            return List.of(accumulator.event(true));
+        }
+        return List.of();
     }
 
-    private String toolUseId(JsonNode event) {
+    private List<AssistantStreamEvent> toolCallDelta(JsonNode event) {
+        String key = toolCallKey(event);
+        ToolCallAccumulator accumulator = toolCalls.computeIfAbsent(
+            key,
+            ignored -> new ToolCallAccumulator(toolUseId(event, event.path("item")), event.path("name").asText(""))
+        );
+        accumulator.append(event.path("delta").asText(""));
+        return List.of(accumulator.event(false));
+    }
+
+    private List<AssistantStreamEvent> toolCallDone(JsonNode event) {
+        String key = toolCallKey(event);
+        ToolCallAccumulator accumulator = toolCalls.computeIfAbsent(
+            key,
+            ignored -> new ToolCallAccumulator(toolUseId(event, event.path("item")), event.path("name").asText(""))
+        );
+        String arguments = event.path("arguments").asText();
+        if (!arguments.isBlank()) {
+            accumulator.replace(arguments);
+        }
+        return List.of(accumulator.event(true));
+    }
+
+    private String toolCallKey(JsonNode event) {
         String itemId = event.path("item_id").asText();
         if (!itemId.isBlank()) {
             return itemId;
         }
-        String key = event.path("output_index").asText("0") + ":" + event.path("name").asText("tool");
-        return StableToolCallIds.from(key);
+        String nestedItemId = event.path("item").path("id").asText();
+        if (!nestedItemId.isBlank()) {
+            return nestedItemId;
+        }
+        return "output:" + event.path("output_index").asText("0");
+    }
+
+    private String toolUseId(JsonNode event, JsonNode item) {
+        String callId = item.path("call_id").asText();
+        if (!callId.isBlank()) {
+            return callId;
+        }
+        String itemId = event.path("item_id").asText(item.path("id").asText());
+        if (!itemId.isBlank()) {
+            return itemId;
+        }
+        return StableToolCallIds.from(toolCallKey(event) + ":" + item.path("name").asText("tool"));
     }
 
     private List<AssistantStreamEvent> done(JsonNode event) {
@@ -116,8 +167,8 @@ public final class OpenAiResponsesStreamNormalizer {
     }
 
     private final class ToolCallAccumulator {
-        private final String toolUseId;
-        private final String toolName;
+        private String toolUseId;
+        private String toolName;
         private final StringBuilder arguments = new StringBuilder();
 
         private ToolCallAccumulator(String toolUseId, String toolName) {
@@ -127,6 +178,15 @@ public final class OpenAiResponsesStreamNormalizer {
 
         private void append(String delta) {
             arguments.append(delta);
+        }
+
+        private void replace(String input) {
+            arguments.setLength(0);
+            arguments.append(input);
+        }
+
+        private ToolCallDelta event(boolean forceComplete) {
+            return new ToolCallDelta(toolUseId, toolName, partialInput(), forceComplete || complete());
         }
 
         private boolean complete() {
