@@ -15,6 +15,12 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Iterator;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.StreamSupport;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -59,6 +65,57 @@ class HttpSseProviderTransportTest {
                 new ProviderRawEvent("{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"),
                 new ProviderRawEvent("[DONE]")
             );
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void yieldsFirstSseEventBeforeResponseCloses() throws Exception {
+        CountDownLatch firstEventWritten = new CountDownLatch(1);
+        CountDownLatch allowClose = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/responses", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().write("""
+                data: {"type":"response.output_text.delta","delta":"hello"}
+
+                """.getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+            firstEventWritten.countDown();
+            try {
+                allowClose.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.close();
+        });
+        server.start();
+        try {
+            ProviderRequest request = new ProviderRequest(
+                URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/responses"),
+                Map.of(),
+                "{}"
+            );
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Callable<ProviderRawEvent> readFirstEvent = () -> {
+                    try (ProviderEventStream stream = new HttpSseProviderTransport().stream(request, () -> false)) {
+                        Iterator<ProviderRawEvent> iterator = stream.iterator();
+                        assertThat(iterator.hasNext()).isTrue();
+                        return iterator.next();
+                    }
+                };
+
+                var firstEvent = executor.submit(readFirstEvent);
+                assertThat(firstEventWritten.await(1, TimeUnit.SECONDS)).isTrue();
+                assertThat(firstEvent.get(1, TimeUnit.SECONDS))
+                    .isEqualTo(new ProviderRawEvent("{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"));
+            } finally {
+                executor.shutdownNow();
+                allowClose.countDown();
+            }
         } finally {
             server.stop(0);
         }
