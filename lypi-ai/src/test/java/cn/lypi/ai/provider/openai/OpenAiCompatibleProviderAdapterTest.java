@@ -35,6 +35,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Iterator;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -76,8 +78,76 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     @Test
+    void doesNotOpenTransportUntilStreamIsConsumed() {
+        RecordingTransport websocket = RecordingTransport.events("{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}");
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        try (var ignored = adapter.stream(context(), descriptor(), () -> false)) {
+            assertThat(websocket.requests).isEmpty();
+        }
+    }
+
+    @Test
+    void aggregatesResultAfterCompleteConsumption() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        try (var stream = adapter.stream(context(), descriptor(), () -> false)) {
+            List<AssistantStreamEvent> events = StreamSupport.stream(stream.spliterator(), false).toList();
+
+            assertThat(events).contains(new TextDelta("hello"), new AssistantDone(Optional.of(new cn.lypi.contracts.model.TokenUsage(1, 2, 0, 0)), Optional.of("stop")));
+            assertThat(stream.result().messageId()).isEqualTo("resp-1");
+            assertThat(stream.result().events()).containsExactlyElementsOf(events);
+            assertThat(stream.result().completed()).isTrue();
+            assertThat(stream.result().aborted()).isFalse();
+            assertThat(stream.result().stopReason()).contains("stop");
+        }
+    }
+
+    @Test
+    void marksResultAbortedWhenClosedBeforeCompletion() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        var stream = adapter.stream(context(), descriptor(), () -> false);
+        Iterator<AssistantStreamEvent> iterator = stream.iterator();
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next()).isInstanceOf(cn.lypi.contracts.model.AssistantStart.class);
+        stream.close();
+
+        assertThat(stream.result().aborted()).isTrue();
+        assertThat(stream.result().completed()).isFalse();
+        assertThat(stream.result().messageId()).isEqualTo("resp-1");
+    }
+
+    @Test
     void doesNotFallbackAfterAnyOutputStarted() {
-        RecordingTransport websocket = RecordingTransport.events("{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}");
+        RecordingTransport websocket = RecordingTransport.eventsThenFail(
+            "Provider stream failed after output",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
+        );
         RecordingTransport sse = RecordingTransport.events();
         RecordingTransport chat = RecordingTransport.events();
         OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
@@ -87,8 +157,18 @@ class OpenAiCompatibleProviderAdapterTest {
             chat
         );
 
-        assertThat(collect(adapter.stream(context(), descriptor(), () -> false)))
-            .containsExactly(new TextDelta("hello"));
+        try (var stream = adapter.stream(context(), descriptor(), () -> false)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(iterator.next()).isEqualTo(new TextDelta("hello"));
+            assertThatThrownBy(iterator::hasNext)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Provider stream failed after output");
+            assertThat(stream.result().events()).containsExactly(new TextDelta("hello"));
+            assertThat(stream.result().error()).isPresent();
+            assertThat(stream.result().completed()).isFalse();
+        }
         assertThat(sse.requests).isEmpty();
         assertThat(chat.requests).isEmpty();
     }
@@ -245,13 +325,57 @@ class OpenAiCompatibleProviderAdapterTest {
             return new RecordingTransport(List.of(), new IllegalStateException(message));
         }
 
+        private static RecordingTransport eventsThenFail(String message, String... events) {
+            return new RecordingTransport(List.of(events), new IllegalStateException(message));
+        }
+
         @Override
         public ProviderEventStream stream(ProviderRequest request, AbortSignal signal) {
             requests.add(request);
-            if (failure != null) {
+            if (failure != null && events.isEmpty()) {
                 throw failure;
             }
+            if (failure != null) {
+                return new FailingProviderEventStream(events, failure);
+            }
             return new ListProviderEventStream(events.stream().map(ProviderRawEvent::new).toList());
+        }
+    }
+
+    private static final class FailingProviderEventStream implements ProviderEventStream {
+        private final List<String> events;
+        private final RuntimeException failure;
+
+        private FailingProviderEventStream(List<String> events, RuntimeException failure) {
+            this.events = events;
+            this.failure = failure;
+        }
+
+        @Override
+        public Iterator<ProviderRawEvent> iterator() {
+            return new Iterator<>() {
+                private int index;
+
+                @Override
+                public boolean hasNext() {
+                    if (index < events.size()) {
+                        return true;
+                    }
+                    throw failure;
+                }
+
+                @Override
+                public ProviderRawEvent next() {
+                    if (index >= events.size()) {
+                        throw new NoSuchElementException();
+                    }
+                    return new ProviderRawEvent(events.get(index++));
+                }
+            };
+        }
+
+        @Override
+        public void close() {
         }
     }
 }

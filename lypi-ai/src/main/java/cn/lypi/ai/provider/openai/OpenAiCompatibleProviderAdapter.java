@@ -3,20 +3,16 @@ package cn.lypi.ai.provider.openai;
 import cn.lypi.ai.ApiProvider;
 import cn.lypi.ai.ProviderAdapter;
 import cn.lypi.ai.provider.ProviderFallbackDecider;
-import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
 import cn.lypi.ai.provider.ProviderTransport;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.ai.spec.ContextSnapshotRequestFactory;
 import cn.lypi.ai.spec.LypiModelRequest;
-import cn.lypi.ai.stream.CompletedAssistantEventStream;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
-import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantEventStream;
-import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.ModelDescriptor;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -95,35 +91,11 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
             );
         }
         LypiModelRequest request = ContextSnapshotRequestFactory.from(context, UUID.randomUUID().toString(), List.of());
-        List<Attempt> attempts = attempts(request);
-        RuntimeException lastFailure = null;
-        for (Attempt attempt : attempts) {
-            for (int retry = 0; retry <= Math.max(0, config.maxRetries()); retry++) {
-                boolean outputStarted = false;
-                List<AssistantStreamEvent> events = new ArrayList<>();
-                try (var providerStream = attempt.transport.stream(attempt.request, signal)) {
-                    for (ProviderRawEvent rawEvent : providerStream) {
-                        List<AssistantStreamEvent> normalized = attempt.normalize(rawEvent.data());
-                        if (!normalized.isEmpty()) {
-                            outputStarted = true;
-                        }
-                        events.addAll(normalized);
-                    }
-                    return CompletedAssistantEventStream.completed(events);
-                } catch (RuntimeException error) {
-                    lastFailure = error;
-                    if (!fallbackDecider.shouldFallback(error, outputStarted)) {
-                        throw error;
-                    }
-                }
-            }
-        }
-        RuntimeException failure = lastFailure == null ? new IllegalStateException("Provider request failed.") : lastFailure;
-        return CompletedAssistantEventStream.completed(List.of(new AssistantError("provider.request_failed", failure.getMessage())));
+        return new OpenAiAssistantEventStream(attempts(request), signal, fallbackDecider, config.maxRetries());
     }
 
-    private List<Attempt> attempts(LypiModelRequest request) {
-        List<Attempt> attempts = new ArrayList<>();
+    private List<OpenAiStreamAttempt> attempts(LypiModelRequest request) {
+        List<OpenAiStreamAttempt> attempts = new ArrayList<>();
         addAttemptsForStyle(attempts, request, config.requestStyle());
         if (config.fallbackRequestStyle() != config.requestStyle()) {
             addAttemptsForStyle(attempts, request, config.fallbackRequestStyle());
@@ -131,21 +103,21 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         return attempts;
     }
 
-    private void addAttemptsForStyle(List<Attempt> attempts, LypiModelRequest request, cn.lypi.ai.provider.RequestStyle style) {
+    private void addAttemptsForStyle(List<OpenAiStreamAttempt> attempts, LypiModelRequest request, cn.lypi.ai.provider.RequestStyle style) {
         if (style == cn.lypi.ai.provider.RequestStyle.RESPONSES) {
             if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.WEBSOCKET) {
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
-                attempts.add(new Attempt(webSocketTransport, responsesWebSocketRequest(request), normalizer::normalize));
+                attempts.add(new OpenAiStreamAttempt(webSocketTransport, responsesWebSocketRequest(request), normalizer::normalize));
             }
             if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
-                attempts.add(new Attempt(responsesSseTransport, responsesSseRequest(request), normalizer::normalize));
+                attempts.add(new OpenAiStreamAttempt(responsesSseTransport, responsesSseRequest(request), normalizer::normalize));
             }
             return;
         }
         if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
             OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
-            attempts.add(new Attempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer::normalize));
+            attempts.add(new OpenAiStreamAttempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer::normalize));
         }
     }
 
@@ -177,17 +149,4 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         return URI.create(normalizedBase + "/" + normalizedSuffix);
     }
 
-    private record Attempt(
-        ProviderTransport transport,
-        ProviderRequest request,
-        EventNormalizer normalizer
-    ) {
-        private List<AssistantStreamEvent> normalize(String data) {
-            return normalizer.normalize(data);
-        }
-    }
-
-    private interface EventNormalizer {
-        List<AssistantStreamEvent> normalize(String data);
-    }
 }
