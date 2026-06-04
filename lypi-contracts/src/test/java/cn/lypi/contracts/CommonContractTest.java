@@ -12,6 +12,10 @@ import cn.lypi.contracts.boundary.ExcludedCapability;
 import cn.lypi.contracts.boundary.ExclusionKind;
 import cn.lypi.contracts.boundary.FinalBoundaryRule;
 import cn.lypi.contracts.common.IdGenerator;
+import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.model.AssistantEventStream;
+import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
@@ -143,6 +147,21 @@ class CommonContractTest {
             () -> assertMethod(ResourceRuntimePort.class, "buildSystemPrompt", 1),
             () -> assertMethod(AgentCorePort.class, "execute", 1)
         );
+    }
+
+    @Test
+    void aiProviderRuntimePortReturnsAssistantEventStream() throws Exception {
+        assertEquals(
+            AssistantEventStream.class,
+            AiProviderRuntimePort.class.getMethod(
+                "stream",
+                ContextSnapshot.class,
+                AbortSignal.class
+            ).getReturnType()
+        );
+        assertTrue(AutoCloseable.class.isAssignableFrom(AssistantEventStream.class));
+        assertTrue(Iterable.class.isAssignableFrom(AssistantEventStream.class));
+        assertTrue(AssistantStreamResult.class.isRecord());
     }
 
     private void assertMethod(Class<?> type, String name, int parameterCount) {

@@ -57,7 +57,7 @@ public final class OpenAiChatCompletionsStreamNormalizer {
                 error.path("message").asText("Provider stream failed.")
             ));
         }
-        if (event.has("usage")) {
+        if (event.path("usage").isObject()) {
             return doneWithUsage(event.path("usage"));
         }
         List<AssistantStreamEvent> normalized = new ArrayList<>();
@@ -85,12 +85,14 @@ public final class OpenAiChatCompletionsStreamNormalizer {
     }
 
     private ToolCallDelta toolCallDelta(JsonNode toolCall) {
+        String key = "index:" + toolCall.path("index").asText("0");
         String rawId = toolCall.path("id").asText();
-        String id = rawId.isBlank()
-            ? StableToolCallIds.from(toolCall.path("index").asText("0") + ":" + toolCall.path("function").path("name").asText("tool"))
-            : rawId;
+        String fallbackId = StableToolCallIds.from(key + ":" + toolCall.path("function").path("name").asText("tool"));
         String name = toolCall.path("function").path("name").asText("");
-        ToolCallAccumulator accumulator = toolCalls.computeIfAbsent(id, ignored -> new ToolCallAccumulator(id, name));
+        ToolCallAccumulator accumulator = toolCalls.computeIfAbsent(key, ignored -> new ToolCallAccumulator(fallbackId, name));
+        if (!rawId.isBlank()) {
+            accumulator.toolUseId = rawId;
+        }
         if (!name.isBlank()) {
             accumulator.toolName = name;
         }
@@ -122,7 +124,7 @@ public final class OpenAiChatCompletionsStreamNormalizer {
     }
 
     private final class ToolCallAccumulator {
-        private final String toolUseId;
+        private String toolUseId;
         private String toolName;
         private final StringBuilder arguments = new StringBuilder();
 

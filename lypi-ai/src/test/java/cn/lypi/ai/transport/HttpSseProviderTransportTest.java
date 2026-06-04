@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
+import cn.lypi.ai.provider.ProviderEventStream;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
@@ -14,6 +15,13 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Iterator;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.StreamSupport;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -46,7 +54,10 @@ class HttpSseProviderTransportTest {
                 body.toString()
             );
 
-            List<ProviderRawEvent> events = new HttpSseProviderTransport().stream(request, () -> false).toList();
+            List<ProviderRawEvent> events;
+            try (ProviderEventStream stream = new HttpSseProviderTransport().stream(request, () -> false)) {
+                events = StreamSupport.stream(stream.spliterator(), false).toList();
+            }
 
             assertThat(authorization.get()).isEqualTo("Bearer ${LYPI_TEST_TOKEN}");
             assertThat(requestBody.get()).contains("\"stream\":true");
@@ -54,6 +65,57 @@ class HttpSseProviderTransportTest {
                 new ProviderRawEvent("{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"),
                 new ProviderRawEvent("[DONE]")
             );
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void yieldsFirstSseEventBeforeResponseCloses() throws Exception {
+        CountDownLatch firstEventWritten = new CountDownLatch(1);
+        CountDownLatch allowClose = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/responses", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().write("""
+                data: {"type":"response.output_text.delta","delta":"hello"}
+
+                """.getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+            firstEventWritten.countDown();
+            try {
+                allowClose.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.close();
+        });
+        server.start();
+        try {
+            ProviderRequest request = new ProviderRequest(
+                URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/responses"),
+                Map.of(),
+                "{}"
+            );
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Callable<ProviderRawEvent> readFirstEvent = () -> {
+                    try (ProviderEventStream stream = new HttpSseProviderTransport().stream(request, () -> false)) {
+                        Iterator<ProviderRawEvent> iterator = stream.iterator();
+                        assertThat(iterator.hasNext()).isTrue();
+                        return iterator.next();
+                    }
+                };
+
+                var firstEvent = executor.submit(readFirstEvent);
+                assertThat(firstEventWritten.await(1, TimeUnit.SECONDS)).isTrue();
+                assertThat(firstEvent.get(1, TimeUnit.SECONDS))
+                    .isEqualTo(new ProviderRawEvent("{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"));
+            } finally {
+                executor.shutdownNow();
+                allowClose.countDown();
+            }
         } finally {
             server.stop(0);
         }
@@ -76,7 +138,11 @@ class HttpSseProviderTransportTest {
                 "{}"
             );
 
-            assertThatThrownBy(() -> new HttpSseProviderTransport().stream(request, () -> false).toList())
+            assertThatThrownBy(() -> {
+                try (ProviderEventStream stream = new HttpSseProviderTransport().stream(request, () -> false)) {
+                    StreamSupport.stream(stream.spliterator(), false).toList();
+                }
+            })
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("HTTP 400")
                 .hasMessageNotContaining("LYPI_TEST_TOKEN")
@@ -90,6 +156,8 @@ class HttpSseProviderTransportTest {
     void returnsEmptyWhenAlreadyAborted() throws IOException {
         ProviderRequest request = new ProviderRequest(URI.create("http://localhost:1/v1/responses"), Map.of(), "{}");
 
-        assertThat(new HttpSseProviderTransport().stream(request, () -> true)).isEmpty();
+        try (ProviderEventStream stream = new HttpSseProviderTransport().stream(request, () -> true)) {
+            assertThat(StreamSupport.stream(stream.spliterator(), false).toList()).isEmpty();
+        }
     }
 }

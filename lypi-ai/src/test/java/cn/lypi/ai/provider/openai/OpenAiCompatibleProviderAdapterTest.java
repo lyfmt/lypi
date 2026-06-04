@@ -3,6 +3,8 @@ package cn.lypi.ai.provider.openai;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import cn.lypi.ai.provider.ListProviderEventStream;
+import cn.lypi.ai.provider.ProviderEventStream;
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
 import cn.lypi.ai.provider.ProviderTransport;
@@ -17,6 +19,7 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
@@ -32,9 +35,13 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Iterator;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -56,7 +63,7 @@ class OpenAiCompatibleProviderAdapterTest {
             chat
         );
 
-        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
 
         assertThat(websocket.requests).hasSize(1);
         assertThat(sse.requests).hasSize(1);
@@ -72,8 +79,144 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     @Test
-    void doesNotFallbackAfterAnyOutputStarted() {
-        RecordingTransport websocket = RecordingTransport.events("{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}");
+    void doesNotOpenTransportUntilStreamIsConsumed() {
+        RecordingTransport websocket = RecordingTransport.events("{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}");
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        try (var ignored = adapter.stream(context(), descriptor(), () -> false)) {
+            assertThat(websocket.requests).isEmpty();
+        }
+    }
+
+    @Test
+    void aggregatesResultAfterCompleteConsumption() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        try (var stream = adapter.stream(context(), descriptor(), () -> false)) {
+            List<AssistantStreamEvent> events = StreamSupport.stream(stream.spliterator(), false).toList();
+
+            assertThat(events).contains(new TextDelta("hello"), new AssistantDone(Optional.of(new cn.lypi.contracts.model.TokenUsage(1, 2, 0, 0)), Optional.of("stop")));
+            assertThat(stream.result().messageId()).isEqualTo("resp-1");
+            assertThat(stream.result().events()).containsExactlyElementsOf(events);
+            assertThat(stream.result().completed()).isTrue();
+            assertThat(stream.result().aborted()).isFalse();
+            assertThat(stream.result().stopReason()).contains("stop");
+        }
+    }
+
+    @Test
+    void marksResultAbortedWhenClosedBeforeCompletion() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        var stream = adapter.stream(context(), descriptor(), () -> false);
+        Iterator<AssistantStreamEvent> iterator = stream.iterator();
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next()).isInstanceOf(cn.lypi.contracts.model.AssistantStart.class);
+        stream.close();
+
+        assertThat(stream.result().aborted()).isTrue();
+        assertThat(stream.result().completed()).isFalse();
+        assertThat(stream.result().messageId()).isEqualTo("resp-1");
+    }
+
+    @Test
+    void closeAfterSignalAbortMarksResultAborted() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}"
+        );
+        MutableAbortSignal signal = new MutableAbortSignal();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        var stream = adapter.stream(context(), descriptor(), signal);
+        Iterator<AssistantStreamEvent> iterator = stream.iterator();
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next()).isInstanceOf(cn.lypi.contracts.model.AssistantStart.class);
+        signal.abort();
+        stream.close();
+
+        assertThat(stream.result().aborted()).isTrue();
+        assertThat(stream.result().completed()).isFalse();
+    }
+
+    @Test
+    @Timeout(2)
+    void abortDuringProviderReadStopsIterationWithoutReopeningAttempt() {
+        MutableAbortSignal signal = new MutableAbortSignal();
+        AbortOnReadTransport websocket = new AbortOnReadTransport(signal);
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        try (var stream = adapter.stream(context(), descriptor(), signal)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.hasNext()).isFalse();
+            assertThat(stream.result().aborted()).isTrue();
+            assertThat(stream.result().completed()).isFalse();
+        }
+        assertThat(websocket.requests).hasSize(1);
+    }
+
+    @Test
+    void fallsBackWhenAttemptClosesBeforeAnyAssistantDoneOrOutput() {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.events();
+        RecordingTransport chat = RecordingTransport.events(
+            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}",
+            "[DONE]"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            chat
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
+
+        assertThat(websocket.requests).hasSize(1);
+        assertThat(sse.requests).hasSize(1);
+        assertThat(chat.requests).hasSize(1);
+        assertThat(events).contains(new TextDelta("hello"), new AssistantDone(Optional.empty(), Optional.of("stop")));
+    }
+
+    @Test
+    void reportsErrorWhenAttemptClosesAfterOutputWithoutAssistantDone() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
+        );
         RecordingTransport sse = RecordingTransport.events();
         RecordingTransport chat = RecordingTransport.events();
         OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
@@ -83,8 +226,48 @@ class OpenAiCompatibleProviderAdapterTest {
             chat
         );
 
-        assertThat(adapter.stream(context(), descriptor(), () -> false).toList())
-            .containsExactly(new TextDelta("hello"));
+        try (var stream = adapter.stream(context(), descriptor(), () -> false)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(iterator.next()).isEqualTo(new TextDelta("hello"));
+            assertThatThrownBy(iterator::hasNext)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("completed without AssistantDone");
+            assertThat(stream.result().completed()).isFalse();
+            assertThat(stream.result().error()).isPresent();
+        }
+        assertThat(sse.requests).isEmpty();
+        assertThat(chat.requests).isEmpty();
+    }
+
+    @Test
+    void doesNotFallbackAfterAnyOutputStarted() {
+        RecordingTransport websocket = RecordingTransport.eventsThenFail(
+            "Provider stream failed after output",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
+        );
+        RecordingTransport sse = RecordingTransport.events();
+        RecordingTransport chat = RecordingTransport.events();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            sse,
+            chat
+        );
+
+        try (var stream = adapter.stream(context(), descriptor(), () -> false)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(iterator.next()).isEqualTo(new TextDelta("hello"));
+            assertThatThrownBy(iterator::hasNext)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Provider stream failed after output");
+            assertThat(stream.result().events()).containsExactly(new TextDelta("hello"));
+            assertThat(stream.result().error()).isPresent();
+            assertThat(stream.result().completed()).isFalse();
+        }
         assertThat(sse.requests).isEmpty();
         assertThat(chat.requests).isEmpty();
     }
@@ -98,7 +281,7 @@ class OpenAiCompatibleProviderAdapterTest {
             RecordingTransport.events()
         );
 
-        assertThatThrownBy(() -> adapter.stream(context(), descriptor(), () -> false).toList())
+        assertThatThrownBy(() -> collect(adapter.stream(context(), descriptor(), () -> false)))
             .isInstanceOfSatisfying(ModelProviderException.class, error -> {
                 assertThat(error.errorId()).isEqualTo("provider.api_key_missing");
                 assertThat(error.getMessage()).doesNotContain("Bearer");
@@ -120,7 +303,7 @@ class OpenAiCompatibleProviderAdapterTest {
             chat
         );
 
-        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
 
         assertThat(websocket.requests).isEmpty();
         assertThat(sse.requests).isEmpty();
@@ -141,7 +324,7 @@ class OpenAiCompatibleProviderAdapterTest {
             chat
         );
 
-        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
 
         assertThat(websocket.requests).hasSize(3);
         assertThat(events).singleElement().isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
@@ -149,6 +332,12 @@ class OpenAiCompatibleProviderAdapterTest {
 
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {
         return config(transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS);
+    }
+
+    private static List<AssistantStreamEvent> collect(AssistantEventStream stream) {
+        try (stream) {
+            return StreamSupport.stream(stream.spliterator(), false).toList();
+        }
     }
 
     private static OpenAiProviderConfig config(
@@ -235,13 +424,108 @@ class OpenAiCompatibleProviderAdapterTest {
             return new RecordingTransport(List.of(), new IllegalStateException(message));
         }
 
+        private static RecordingTransport eventsThenFail(String message, String... events) {
+            return new RecordingTransport(List.of(events), new IllegalStateException(message));
+        }
+
         @Override
-        public Stream<ProviderRawEvent> stream(ProviderRequest request, AbortSignal signal) {
+        public ProviderEventStream stream(ProviderRequest request, AbortSignal signal) {
             requests.add(request);
-            if (failure != null) {
+            if (failure != null && events.isEmpty()) {
                 throw failure;
             }
-            return events.stream().map(ProviderRawEvent::new);
+            if (failure != null) {
+                return new FailingProviderEventStream(events, failure);
+            }
+            return new ListProviderEventStream(events.stream().map(ProviderRawEvent::new).toList());
+        }
+    }
+
+    private static final class FailingProviderEventStream implements ProviderEventStream {
+        private final List<String> events;
+        private final RuntimeException failure;
+
+        private FailingProviderEventStream(List<String> events, RuntimeException failure) {
+            this.events = events;
+            this.failure = failure;
+        }
+
+        @Override
+        public Iterator<ProviderRawEvent> iterator() {
+            return new Iterator<>() {
+                private int index;
+
+                @Override
+                public boolean hasNext() {
+                    if (index < events.size()) {
+                        return true;
+                    }
+                    throw failure;
+                }
+
+                @Override
+                public ProviderRawEvent next() {
+                    if (index >= events.size()) {
+                        throw new NoSuchElementException();
+                    }
+                    return new ProviderRawEvent(events.get(index++));
+                }
+            };
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class MutableAbortSignal implements AbortSignal {
+        private boolean aborted;
+
+        @Override
+        public boolean aborted() {
+            return aborted;
+        }
+
+        private void abort() {
+            aborted = true;
+        }
+    }
+
+    private static final class AbortOnReadTransport implements ProviderTransport {
+        private final MutableAbortSignal signal;
+        private final List<ProviderRequest> requests = new ArrayList<>();
+
+        private AbortOnReadTransport(MutableAbortSignal signal) {
+            this.signal = signal;
+        }
+
+        @Override
+        public ProviderEventStream stream(ProviderRequest request, AbortSignal ignored) {
+            requests.add(request);
+            if (requests.size() > 1) {
+                throw new IllegalStateException("stream reopened after abort");
+            }
+            return new ProviderEventStream() {
+                @Override
+                public Iterator<ProviderRawEvent> iterator() {
+                    return new Iterator<>() {
+                        @Override
+                        public boolean hasNext() {
+                            signal.abort();
+                            return false;
+                        }
+
+                        @Override
+                        public ProviderRawEvent next() {
+                            throw new NoSuchElementException();
+                        }
+                    };
+                }
+
+                @Override
+                public void close() {
+                }
+            };
         }
     }
 }

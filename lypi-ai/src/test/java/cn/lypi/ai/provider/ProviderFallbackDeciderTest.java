@@ -15,6 +15,10 @@ class ProviderFallbackDeciderTest {
             .isTrue();
         assertThat(decider.shouldFallback(new IllegalStateException("WebSocket handshake failed"), false))
             .isTrue();
+        assertThat(decider.shouldFallback(new IllegalStateException("Provider WebSocket handshake failed."), false))
+            .isTrue();
+        assertThat(decider.shouldFallback(new IllegalStateException("Provider stream completed without AssistantDone."), false))
+            .isTrue();
     }
 
     @Test

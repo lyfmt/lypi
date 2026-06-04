@@ -1,14 +1,14 @@
 package cn.lypi.ai;
 
+import cn.lypi.ai.stream.CompletedAssistantEventStream;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
-import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ThinkingLevel;
 import java.util.Objects;
-import java.util.stream.Stream;
 
 public final class DefaultModelPort implements ModelPort {
     private final ModelRegistry registry;
@@ -20,11 +20,11 @@ public final class DefaultModelPort implements ModelPort {
     }
 
     @Override
-    public Stream<AssistantStreamEvent> stream(ContextSnapshot context, AbortSignal signal) {
+    public AssistantEventStream stream(ContextSnapshot context, AbortSignal signal) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(signal, "signal");
         if (signal.aborted()) {
-            return Stream.empty();
+            return CompletedAssistantEventStream.aborted();
         }
 
         ModelDescriptor descriptor = registry.find(context.model())

@@ -22,6 +22,7 @@ public final class ProviderFallbackDecider {
         return message.contains("unsupported")
             || message.contains("404")
             || message.contains("405")
-            || message.contains("handshake failed");
+            || message.contains("handshake failed")
+            || message.contains("without assistantdone");
     }
 }

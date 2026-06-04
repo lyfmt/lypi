@@ -9,7 +9,9 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.model.CostProfile;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
@@ -24,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 
 class DefaultApiProviderRegistryTest {
@@ -57,8 +60,10 @@ class DefaultApiProviderRegistryTest {
         ModelDescriptor descriptor = descriptor("fixture", "gpt-5-mini");
         ContextSnapshot context = context();
 
-        assertThat(apiProvider.stream(context, descriptor, () -> false).toList())
-            .containsExactly(new TextDelta("fixture"));
+        try (AssistantEventStream stream = apiProvider.stream(context, descriptor, () -> false)) {
+            assertThat(StreamSupport.stream(stream.spliterator(), false).toList())
+                .containsExactly(new TextDelta("fixture"));
+        }
         assertThat(fixture.descriptor).isEqualTo(descriptor);
         assertThat(openAi.descriptor).isNull();
     }
@@ -70,15 +75,15 @@ class DefaultApiProviderRegistryTest {
             List.of(new RecordingProviderAdapter("openai", Stream.of(new AssistantDone(Optional.empty(), Optional.of("stop")))))
         );
 
-        assertThatThrownBy(() -> apiProvider.stream(context(), descriptor("fixture", "gpt-5-mini"), () -> false).toList())
+        assertThatThrownBy(() -> apiProvider.stream(context(), descriptor("fixture", "gpt-5-mini"), () -> false))
             .isInstanceOfSatisfying(ModelProviderException.class, error ->
                 assertThat(error.errorId()).isEqualTo("provider.adapter_unavailable"));
     }
 
     private record RecordingApiProvider(ApiStyle apiStyle) implements ApiProvider {
         @Override
-        public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
-            return Stream.empty();
+        public AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+            return new TestAssistantEventStream(List.of());
         }
     }
 
@@ -98,9 +103,39 @@ class DefaultApiProviderRegistryTest {
         }
 
         @Override
-        public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+        public AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
             this.descriptor = descriptor;
-            return events;
+            return new TestAssistantEventStream(events.toList());
+        }
+    }
+
+    private static final class TestAssistantEventStream implements AssistantEventStream {
+        private final List<AssistantStreamEvent> events;
+
+        private TestAssistantEventStream(List<AssistantStreamEvent> events) {
+            this.events = List.copyOf(events);
+        }
+
+        @Override
+        public java.util.Iterator<AssistantStreamEvent> iterator() {
+            return events.iterator();
+        }
+
+        @Override
+        public AssistantStreamResult result() {
+            return new AssistantStreamResult(
+                "",
+                events,
+                Optional.empty(),
+                Optional.empty(),
+                events.stream().anyMatch(AssistantDone.class::isInstance),
+                false,
+                Optional.empty()
+            );
+        }
+
+        @Override
+        public void close() {
         }
     }
 

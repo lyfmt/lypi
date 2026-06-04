@@ -44,6 +44,43 @@ class OpenAiChatCompletionsStreamNormalizerTest {
     }
 
     @Test
+    void keepsToolCallAccumulatorWhenOnlyFirstChunkHasIdAndName() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\"\"}}]}}]}"),
+            normalizer.normalize("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\":\\\"pom.xml\\\"}\"}}]}}]}")
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new ToolCallDelta("call-1", "read_file", java.util.Map.of(), false),
+            new ToolCallDelta("call-1", "read_file", java.util.Map.of("path", "pom.xml"), true)
+        );
+    }
+
+    @Test
+    void ignoresNullUsageAndKeepsNormalizingDeltas() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("""
+                {"id":"chatcmpl-1","choices":[{"delta":{"content":"hello"}}],"usage":null}
+                """),
+            normalizer.normalize("""
+                {"choices":[{"delta":{"content":" world"}}]}
+                """),
+            normalizer.normalize("[DONE]")
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new AssistantStart("chatcmpl-1"),
+            new TextDelta("hello"),
+            new TextDelta(" world"),
+            new AssistantDone(Optional.empty(), Optional.of("stop"))
+        );
+    }
+
+    @Test
     void treatsDoneMarkerAsDoneWithoutUsage() {
         OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
 

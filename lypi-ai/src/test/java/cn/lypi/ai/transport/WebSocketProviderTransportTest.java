@@ -5,11 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
+import cn.lypi.ai.provider.ProviderEventStream;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 
 class WebSocketProviderTransportTest {
@@ -32,7 +36,10 @@ class WebSocketProviderTransportTest {
             Optional.of(Duration.ofSeconds(7))
         );
 
-        List<ProviderRawEvent> events = transport.stream(request, () -> false).toList();
+        List<ProviderRawEvent> events;
+        try (ProviderEventStream stream = transport.stream(request, () -> false)) {
+            events = StreamSupport.stream(stream.spliterator(), false).toList();
+        }
 
         assertThat(client.uri).isEqualTo(request.uri());
         assertThat(client.headers).containsEntry("Authorization", "Bearer ${LYPI_TEST_TOKEN}");
@@ -47,30 +54,65 @@ class WebSocketProviderTransportTest {
         WebSocketProviderTransport transport = new WebSocketProviderTransport(client);
         ProviderRequest request = new ProviderRequest(URI.create("wss://api.example.test/v1/responses"), Map.of(), "{}");
 
-        assertThat(transport.stream(request, () -> true)).isEmpty();
+        try (ProviderEventStream stream = transport.stream(request, () -> true)) {
+            assertThat(StreamSupport.stream(stream.spliterator(), false).toList()).isEmpty();
+        }
         assertThat(client.payload).isNull();
     }
 
     @Test
-    void jdkClientFailsWhenProviderDoesNotCompleteBeforeTimeout() {
-        WebSocketProviderTransport.CollectorListener listener = new WebSocketProviderTransport.CollectorListener();
+    void closeNotifiesClientStream() {
+        RecordingWebSocketClient client = new RecordingWebSocketClient(List.of("{\"type\":\"response.created\"}"));
+        WebSocketProviderTransport transport = new WebSocketProviderTransport(client);
+        ProviderRequest request = new ProviderRequest(URI.create("wss://api.example.test/v1/responses"), Map.of(), "{}");
 
-        assertThatThrownBy(() -> listener.await(Duration.ofMillis(1)))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessage("Provider WebSocket request timed out.");
+        ProviderEventStream stream = transport.stream(request, () -> false);
+        stream.close();
+
+        assertThat(client.stream.closed).isTrue();
+    }
+
+    @Test
+    void yieldsMessagesBeforeSocketCloses() throws Exception {
+        BlockingWebSocketClient client = new BlockingWebSocketClient();
+        WebSocketProviderTransport transport = new WebSocketProviderTransport(client);
+        ProviderRequest request = new ProviderRequest(URI.create("wss://api.example.test/v1/responses"), Map.of(), "{}");
+
+        try (ProviderEventStream stream = transport.stream(request, () -> false)) {
+            var iterator = stream.iterator();
+            client.messages.put(new ProviderRawEvent("{\"type\":\"response.created\"}"));
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(iterator.next()).isEqualTo(new ProviderRawEvent("{\"type\":\"response.created\"}"));
+            assertThat(client.closed).isFalse();
+        }
+        assertThat(client.closed).isTrue();
     }
 
     @Test
     void jdkClientFailsWhenProviderReportsWebSocketError() {
-        WebSocketProviderTransport.CollectorListener listener = new WebSocketProviderTransport.CollectorListener();
+        WebSocketProviderTransport.QueueingListener listener = new WebSocketProviderTransport.QueueingListener();
         RuntimeException providerError = new RuntimeException("connection refused");
 
         listener.onError(null, providerError);
 
-        assertThatThrownBy(() -> listener.await(Duration.ofSeconds(1)))
+        assertThatThrownBy(() -> listener.take(Duration.ofSeconds(1)))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Provider WebSocket request failed.")
             .hasCause(providerError);
+    }
+
+    @Test
+    void jdkListenerQueuesTextOnlyAfterFinalFragment() throws Exception {
+        WebSocketProviderTransport.QueueingListener listener = new WebSocketProviderTransport.QueueingListener();
+
+        listener.onText(null, "{\"type\":\"response.", false);
+        listener.onText(null, "created\"}", true);
+
+        Object item = listener.take(Duration.ofSeconds(1));
+        var message = item.getClass().getDeclaredMethod("message");
+        message.setAccessible(true);
+        assertThat(message.invoke(item)).isEqualTo("{\"type\":\"response.created\"}");
     }
 
     private static final class RecordingWebSocketClient implements WebSocketProviderTransport.WebSocketClient {
@@ -84,13 +126,81 @@ class WebSocketProviderTransportTest {
             this.messages = messages;
         }
 
+        private RecordingProviderEventStream stream;
+
         @Override
-        public List<String> exchange(URI uri, Map<String, String> headers, String payload, Duration timeout) {
+        public ProviderEventStream open(URI uri, Map<String, String> headers, String payload, Duration timeout, cn.lypi.contracts.common.AbortSignal signal) {
             this.uri = uri;
             this.headers = headers;
             this.payload = payload;
             this.timeout = timeout;
-            return messages;
+            this.stream = new RecordingProviderEventStream(messages);
+            return stream;
+        }
+    }
+
+    private static final class RecordingProviderEventStream implements ProviderEventStream {
+        private final List<String> messages;
+        private boolean closed;
+
+        private RecordingProviderEventStream(List<String> messages) {
+            this.messages = messages;
+        }
+
+        @Override
+        public java.util.Iterator<ProviderRawEvent> iterator() {
+            return messages.stream().map(ProviderRawEvent::new).iterator();
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+    }
+
+    private static final class BlockingWebSocketClient implements WebSocketProviderTransport.WebSocketClient {
+        private final ArrayBlockingQueue<ProviderRawEvent> messages = new ArrayBlockingQueue<>(1);
+        private boolean closed;
+
+        @Override
+        public ProviderEventStream open(URI uri, Map<String, String> headers, String payload, Duration timeout, cn.lypi.contracts.common.AbortSignal signal) {
+            return new ProviderEventStream() {
+                @Override
+                public java.util.Iterator<ProviderRawEvent> iterator() {
+                    return new java.util.Iterator<>() {
+                        private ProviderRawEvent next;
+
+                        @Override
+                        public boolean hasNext() {
+                            if (next != null) {
+                                return true;
+                            }
+                            try {
+                                next = messages.poll(1, TimeUnit.SECONDS);
+                                return next != null;
+                            } catch (InterruptedException exception) {
+                                Thread.currentThread().interrupt();
+                                throw new IllegalStateException(exception);
+                            }
+                        }
+
+                        @Override
+                        public ProviderRawEvent next() {
+                            if (!hasNext()) {
+                                throw new java.util.NoSuchElementException();
+                            }
+                            ProviderRawEvent event = next;
+                            next = null;
+                            return event;
+                        }
+                    };
+                }
+
+                @Override
+                public void close() {
+                    closed = true;
+                }
+            };
         }
     }
 }

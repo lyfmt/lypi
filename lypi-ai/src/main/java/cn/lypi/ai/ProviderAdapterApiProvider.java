@@ -5,14 +5,13 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.ApiStyle;
-import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.ModelDescriptor;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public final class ProviderAdapterApiProvider implements ApiProvider {
     private final ApiStyle apiStyle;
@@ -30,7 +29,7 @@ public final class ProviderAdapterApiProvider implements ApiProvider {
     }
 
     @Override
-    public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+    public AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(descriptor, "descriptor");
         Objects.requireNonNull(signal, "signal");

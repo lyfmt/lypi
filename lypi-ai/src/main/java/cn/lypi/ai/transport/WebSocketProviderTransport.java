@@ -1,5 +1,6 @@
 package cn.lypi.ai.transport;
 
+import cn.lypi.ai.provider.ProviderEventStream;
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
 import cn.lypi.ai.provider.ProviderTransport;
@@ -8,13 +9,15 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.time.Duration;
-import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class WebSocketProviderTransport implements ProviderTransport {
     private final WebSocketClient client;
@@ -28,13 +31,12 @@ public final class WebSocketProviderTransport implements ProviderTransport {
     }
 
     @Override
-    public Stream<ProviderRawEvent> stream(ProviderRequest request, AbortSignal signal) {
+    public ProviderEventStream stream(ProviderRequest request, AbortSignal signal) {
         if (signal.aborted()) {
-            return Stream.empty();
+            return new EmptyProviderEventStream();
         }
         Duration timeout = request.timeout().orElse(Duration.ofSeconds(30));
-        return client.exchange(request.uri(), request.headers(), request.body(), timeout).stream()
-            .map(ProviderRawEvent::new);
+        return client.open(request.uri(), request.headers(), request.body(), timeout, signal);
     }
 
     /**
@@ -53,7 +55,7 @@ public final class WebSocketProviderTransport implements ProviderTransport {
     }
 
     public interface WebSocketClient {
-        List<String> exchange(URI uri, Map<String, String> headers, String payload, Duration timeout);
+        ProviderEventStream open(URI uri, Map<String, String> headers, String payload, Duration timeout, AbortSignal signal);
     }
 
     private static final class JdkWebSocketClient implements WebSocketClient {
@@ -64,61 +66,155 @@ public final class WebSocketProviderTransport implements ProviderTransport {
         }
 
         @Override
-        public List<String> exchange(URI uri, Map<String, String> headers, String payload, Duration timeout) {
-            CollectorListener listener = new CollectorListener();
+        public ProviderEventStream open(URI uri, Map<String, String> headers, String payload, Duration timeout, AbortSignal signal) {
+            QueueingListener listener = new QueueingListener();
             WebSocket.Builder builder = httpClient.newWebSocketBuilder().connectTimeout(timeout);
             headers.forEach(builder::header);
-            WebSocket webSocket = builder.buildAsync(uri, listener).join();
-            webSocket.sendText(payload, true).join();
+            WebSocket webSocket;
             try {
-                listener.await(timeout);
-            } finally {
-                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done");
+                webSocket = builder.buildAsync(uri, listener).join();
+            } catch (CompletionException exception) {
+                throw new IllegalStateException("Provider WebSocket handshake failed.", exception.getCause() == null ? exception : exception.getCause());
             }
-            return listener.messages;
+            webSocket.sendText(payload, true).join();
+            return new JdkWebSocketEventStream(listener, webSocket, timeout, signal);
         }
     }
 
-    static final class CollectorListener implements WebSocket.Listener {
-        private final List<String> messages = new ArrayList<>();
-        private final CountDownLatch done = new CountDownLatch(1);
-        private Throwable error;
+    static final class QueueingListener implements WebSocket.Listener {
+        private final LinkedBlockingQueue<SocketItem> queue = new LinkedBlockingQueue<>();
+        private final StringBuilder partialText = new StringBuilder();
 
         @Override
-        public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-            messages.add(data.toString());
-            webSocket.request(1);
-            if ("[DONE]".contentEquals(data)) {
-                done.countDown();
+        public synchronized CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            partialText.append(data);
+            if (webSocket != null) {
+                webSocket.request(1);
+            }
+            if (!last) {
+                return null;
+            }
+            String message = partialText.toString();
+            partialText.setLength(0);
+            queue.offer(SocketItem.message(message));
+            if ("[DONE]".equals(message)) {
+                queue.offer(SocketItem.terminal());
             }
             return null;
         }
 
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-            done.countDown();
+            queue.offer(SocketItem.terminal());
             return null;
         }
 
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
-            this.error = error;
-            done.countDown();
+            queue.offer(SocketItem.error(error));
         }
 
-        void await(Duration timeout) {
+        SocketItem take(Duration timeout) {
             try {
-                boolean completed = done.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
-                if (!completed) {
+                SocketItem item = queue.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+                if (item == null) {
                     throw new IllegalStateException("Provider WebSocket request timed out.");
                 }
-                if (error != null) {
-                    throw new IllegalStateException("Provider WebSocket request failed.", error);
+                if (item.error() != null) {
+                    throw new IllegalStateException("Provider WebSocket request failed.", item.error());
                 }
+                return item;
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("Provider WebSocket request interrupted.", exception);
             }
+        }
+    }
+
+    private record SocketItem(String message, Throwable error, boolean closed) {
+        private static SocketItem message(String message) {
+            return new SocketItem(message, null, false);
+        }
+
+        private static SocketItem error(Throwable error) {
+            return new SocketItem(null, error, true);
+        }
+
+        private static SocketItem terminal() {
+            return new SocketItem(null, null, true);
+        }
+    }
+
+    private static final class JdkWebSocketEventStream implements ProviderEventStream {
+        private final QueueingListener listener;
+        private final WebSocket webSocket;
+        private final Duration timeout;
+        private final AbortSignal signal;
+        private final AtomicBoolean closed = new AtomicBoolean();
+        private boolean iteratorCreated;
+
+        private JdkWebSocketEventStream(QueueingListener listener, WebSocket webSocket, Duration timeout, AbortSignal signal) {
+            this.listener = listener;
+            this.webSocket = webSocket;
+            this.timeout = timeout;
+            this.signal = signal;
+        }
+
+        @Override
+        public Iterator<ProviderRawEvent> iterator() {
+            if (iteratorCreated) {
+                throw new IllegalStateException("Provider WebSocket stream is single-use.");
+            }
+            iteratorCreated = true;
+            return new Iterator<>() {
+                private ProviderRawEvent next;
+
+                @Override
+                public boolean hasNext() {
+                    if (next != null) {
+                        return true;
+                    }
+                    if (closed.get() || signal.aborted()) {
+                        close();
+                        return false;
+                    }
+                    SocketItem item = listener.take(timeout);
+                    if (item.closed()) {
+                        close();
+                        return false;
+                    }
+                    next = new ProviderRawEvent(item.message());
+                    return true;
+                }
+
+                @Override
+                public ProviderRawEvent next() {
+                    if (!hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    ProviderRawEvent event = next;
+                    next = null;
+                    return event;
+                }
+            };
+        }
+
+        @Override
+        public void close() {
+            if (closed.compareAndSet(false, true)) {
+                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done");
+            }
+        }
+    }
+
+    private static final class EmptyProviderEventStream implements ProviderEventStream {
+        @Override
+        public Iterator<ProviderRawEvent> iterator() {
+            return List.<ProviderRawEvent>of().iterator();
+        }
+
+        @Override
+        public void close() {
         }
     }
 }
