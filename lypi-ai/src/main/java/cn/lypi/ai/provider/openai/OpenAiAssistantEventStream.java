@@ -95,6 +95,7 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
         closeCurrentProviderStream();
         if (signal.aborted()) {
             aborted = true;
+            closed = true;
             return;
         }
         if (!completed && failure == null && error == null) {
@@ -164,6 +165,10 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
 
     private boolean openNextAttempt() {
         while (attemptIndex < attempts.size()) {
+            if (signal.aborted() || closed) {
+                aborted = signal.aborted() || aborted;
+                return false;
+            }
             OpenAiStreamAttempt attempt = attempts.get(attemptIndex);
             try {
                 currentProviderStream = attempt.transport().stream(attempt.request(), signal);
@@ -173,6 +178,9 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
                 handleAttemptFailure(exception);
                 if (failure != null) {
                     throw failure;
+                }
+                if (signal.aborted() || closed) {
+                    return false;
                 }
             }
         }

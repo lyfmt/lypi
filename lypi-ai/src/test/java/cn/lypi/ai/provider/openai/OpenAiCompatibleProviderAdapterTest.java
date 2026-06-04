@@ -41,6 +41,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -164,6 +165,28 @@ class OpenAiCompatibleProviderAdapterTest {
 
         assertThat(stream.result().aborted()).isTrue();
         assertThat(stream.result().completed()).isFalse();
+    }
+
+    @Test
+    @Timeout(2)
+    void abortDuringProviderReadStopsIterationWithoutReopeningAttempt() {
+        MutableAbortSignal signal = new MutableAbortSignal();
+        AbortOnReadTransport websocket = new AbortOnReadTransport(signal);
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        try (var stream = adapter.stream(context(), descriptor(), signal)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.hasNext()).isFalse();
+            assertThat(stream.result().aborted()).isTrue();
+            assertThat(stream.result().completed()).isFalse();
+        }
+        assertThat(websocket.requests).hasSize(1);
     }
 
     @Test
@@ -465,6 +488,44 @@ class OpenAiCompatibleProviderAdapterTest {
 
         private void abort() {
             aborted = true;
+        }
+    }
+
+    private static final class AbortOnReadTransport implements ProviderTransport {
+        private final MutableAbortSignal signal;
+        private final List<ProviderRequest> requests = new ArrayList<>();
+
+        private AbortOnReadTransport(MutableAbortSignal signal) {
+            this.signal = signal;
+        }
+
+        @Override
+        public ProviderEventStream stream(ProviderRequest request, AbortSignal ignored) {
+            requests.add(request);
+            if (requests.size() > 1) {
+                throw new IllegalStateException("stream reopened after abort");
+            }
+            return new ProviderEventStream() {
+                @Override
+                public Iterator<ProviderRawEvent> iterator() {
+                    return new Iterator<>() {
+                        @Override
+                        public boolean hasNext() {
+                            signal.abort();
+                            return false;
+                        }
+
+                        @Override
+                        public ProviderRawEvent next() {
+                            throw new NoSuchElementException();
+                        }
+                    };
+                }
+
+                @Override
+                public void close() {
+                }
+            };
         }
     }
 }

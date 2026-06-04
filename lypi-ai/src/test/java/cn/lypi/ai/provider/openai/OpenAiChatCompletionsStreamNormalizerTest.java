@@ -59,6 +59,28 @@ class OpenAiChatCompletionsStreamNormalizerTest {
     }
 
     @Test
+    void ignoresNullUsageAndKeepsNormalizingDeltas() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("""
+                {"id":"chatcmpl-1","choices":[{"delta":{"content":"hello"}}],"usage":null}
+                """),
+            normalizer.normalize("""
+                {"choices":[{"delta":{"content":" world"}}]}
+                """),
+            normalizer.normalize("[DONE]")
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new AssistantStart("chatcmpl-1"),
+            new TextDelta("hello"),
+            new TextDelta(" world"),
+            new AssistantDone(Optional.empty(), Optional.of("stop"))
+        );
+    }
+
+    @Test
     void treatsDoneMarkerAsDoneWithoutUsage() {
         OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
 

@@ -57,7 +57,7 @@ public final class OpenAiChatCompletionsStreamNormalizer {
                 error.path("message").asText("Provider stream failed.")
             ));
         }
-        if (event.has("usage")) {
+        if (event.path("usage").isObject()) {
             return doneWithUsage(event.path("usage"));
         }
         List<AssistantStreamEvent> normalized = new ArrayList<>();
