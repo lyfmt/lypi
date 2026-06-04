@@ -102,6 +102,19 @@ class WebSocketProviderTransportTest {
             .hasCause(providerError);
     }
 
+    @Test
+    void jdkListenerQueuesTextOnlyAfterFinalFragment() throws Exception {
+        WebSocketProviderTransport.QueueingListener listener = new WebSocketProviderTransport.QueueingListener();
+
+        listener.onText(null, "{\"type\":\"response.", false);
+        listener.onText(null, "created\"}", true);
+
+        Object item = listener.take(Duration.ofSeconds(1));
+        var message = item.getClass().getDeclaredMethod("message");
+        message.setAccessible(true);
+        assertThat(message.invoke(item)).isEqualTo("{\"type\":\"response.created\"}");
+    }
+
     private static final class RecordingWebSocketClient implements WebSocketProviderTransport.WebSocketClient {
         private final List<String> messages;
         private URI uri;

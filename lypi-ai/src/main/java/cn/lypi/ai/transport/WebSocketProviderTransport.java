@@ -13,6 +13,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -69,7 +70,12 @@ public final class WebSocketProviderTransport implements ProviderTransport {
             QueueingListener listener = new QueueingListener();
             WebSocket.Builder builder = httpClient.newWebSocketBuilder().connectTimeout(timeout);
             headers.forEach(builder::header);
-            WebSocket webSocket = builder.buildAsync(uri, listener).join();
+            WebSocket webSocket;
+            try {
+                webSocket = builder.buildAsync(uri, listener).join();
+            } catch (CompletionException exception) {
+                throw new IllegalStateException("Provider WebSocket handshake failed.", exception.getCause() == null ? exception : exception.getCause());
+            }
             webSocket.sendText(payload, true).join();
             return new JdkWebSocketEventStream(listener, webSocket, timeout, signal);
         }
@@ -77,12 +83,21 @@ public final class WebSocketProviderTransport implements ProviderTransport {
 
     static final class QueueingListener implements WebSocket.Listener {
         private final LinkedBlockingQueue<SocketItem> queue = new LinkedBlockingQueue<>();
+        private final StringBuilder partialText = new StringBuilder();
 
         @Override
-        public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-            queue.offer(SocketItem.message(data.toString()));
-            webSocket.request(1);
-            if ("[DONE]".contentEquals(data)) {
+        public synchronized CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            partialText.append(data);
+            if (webSocket != null) {
+                webSocket.request(1);
+            }
+            if (!last) {
+                return null;
+            }
+            String message = partialText.toString();
+            partialText.setLength(0);
+            queue.offer(SocketItem.message(message));
+            if ("[DONE]".equals(message)) {
                 queue.offer(SocketItem.terminal());
             }
             return null;

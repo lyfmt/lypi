@@ -93,7 +93,11 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
         }
         closed = true;
         closeCurrentProviderStream();
-        if (!completed && failure == null && error == null && !signal.aborted()) {
+        if (signal.aborted()) {
+            aborted = true;
+            return;
+        }
+        if (!completed && failure == null && error == null) {
             aborted = true;
         }
     }
@@ -126,8 +130,11 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
             try {
                 if (!currentRawIterator.hasNext()) {
                     closeCurrentProviderStream();
-                    completed = completed || error == null;
-                    return !pendingEvents.isEmpty();
+                    handleAttemptFailure(new IllegalStateException("Provider stream completed without AssistantDone."));
+                    if (failure != null) {
+                        throw failure;
+                    }
+                    continue;
                 }
                 ProviderRawEvent rawEvent = currentRawIterator.next();
                 List<AssistantStreamEvent> normalized = currentAttempt().normalize(rawEvent.data());

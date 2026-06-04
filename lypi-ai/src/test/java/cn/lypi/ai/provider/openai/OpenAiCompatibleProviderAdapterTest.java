@@ -143,6 +143,82 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     @Test
+    void closeAfterSignalAbortMarksResultAborted() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}"
+        );
+        MutableAbortSignal signal = new MutableAbortSignal();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        var stream = adapter.stream(context(), descriptor(), signal);
+        Iterator<AssistantStreamEvent> iterator = stream.iterator();
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next()).isInstanceOf(cn.lypi.contracts.model.AssistantStart.class);
+        signal.abort();
+        stream.close();
+
+        assertThat(stream.result().aborted()).isTrue();
+        assertThat(stream.result().completed()).isFalse();
+    }
+
+    @Test
+    void fallsBackWhenAttemptClosesBeforeAnyAssistantDoneOrOutput() {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.events();
+        RecordingTransport chat = RecordingTransport.events(
+            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}",
+            "[DONE]"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            chat
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
+
+        assertThat(websocket.requests).hasSize(1);
+        assertThat(sse.requests).hasSize(1);
+        assertThat(chat.requests).hasSize(1);
+        assertThat(events).contains(new TextDelta("hello"), new AssistantDone(Optional.empty(), Optional.of("stop")));
+    }
+
+    @Test
+    void reportsErrorWhenAttemptClosesAfterOutputWithoutAssistantDone() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
+        );
+        RecordingTransport sse = RecordingTransport.events();
+        RecordingTransport chat = RecordingTransport.events();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            sse,
+            chat
+        );
+
+        try (var stream = adapter.stream(context(), descriptor(), () -> false)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(iterator.next()).isEqualTo(new TextDelta("hello"));
+            assertThatThrownBy(iterator::hasNext)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("completed without AssistantDone");
+            assertThat(stream.result().completed()).isFalse();
+            assertThat(stream.result().error()).isPresent();
+        }
+        assertThat(sse.requests).isEmpty();
+        assertThat(chat.requests).isEmpty();
+    }
+
+    @Test
     void doesNotFallbackAfterAnyOutputStarted() {
         RecordingTransport websocket = RecordingTransport.eventsThenFail(
             "Provider stream failed after output",
@@ -376,6 +452,19 @@ class OpenAiCompatibleProviderAdapterTest {
 
         @Override
         public void close() {
+        }
+    }
+
+    private static final class MutableAbortSignal implements AbortSignal {
+        private boolean aborted;
+
+        @Override
+        public boolean aborted() {
+            return aborted;
+        }
+
+        private void abort() {
+            aborted = true;
         }
     }
 }

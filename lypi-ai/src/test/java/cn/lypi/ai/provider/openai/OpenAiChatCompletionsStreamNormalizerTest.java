@@ -44,6 +44,21 @@ class OpenAiChatCompletionsStreamNormalizerTest {
     }
 
     @Test
+    void keepsToolCallAccumulatorWhenOnlyFirstChunkHasIdAndName() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\"\"}}]}}]}"),
+            normalizer.normalize("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\":\\\"pom.xml\\\"}\"}}]}}]}")
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new ToolCallDelta("call-1", "read_file", java.util.Map.of(), false),
+            new ToolCallDelta("call-1", "read_file", java.util.Map.of("path", "pom.xml"), true)
+        );
+    }
+
+    @Test
     void treatsDoneMarkerAsDoneWithoutUsage() {
         OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
 
