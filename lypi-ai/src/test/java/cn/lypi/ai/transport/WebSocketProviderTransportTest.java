@@ -11,6 +11,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 
@@ -71,22 +73,30 @@ class WebSocketProviderTransportTest {
     }
 
     @Test
-    void jdkClientFailsWhenProviderDoesNotCompleteBeforeTimeout() {
-        WebSocketProviderTransport.CollectorListener listener = new WebSocketProviderTransport.CollectorListener();
+    void yieldsMessagesBeforeSocketCloses() throws Exception {
+        BlockingWebSocketClient client = new BlockingWebSocketClient();
+        WebSocketProviderTransport transport = new WebSocketProviderTransport(client);
+        ProviderRequest request = new ProviderRequest(URI.create("wss://api.example.test/v1/responses"), Map.of(), "{}");
 
-        assertThatThrownBy(() -> listener.await(Duration.ofMillis(1)))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessage("Provider WebSocket request timed out.");
+        try (ProviderEventStream stream = transport.stream(request, () -> false)) {
+            var iterator = stream.iterator();
+            client.messages.put(new ProviderRawEvent("{\"type\":\"response.created\"}"));
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(iterator.next()).isEqualTo(new ProviderRawEvent("{\"type\":\"response.created\"}"));
+            assertThat(client.closed).isFalse();
+        }
+        assertThat(client.closed).isTrue();
     }
 
     @Test
     void jdkClientFailsWhenProviderReportsWebSocketError() {
-        WebSocketProviderTransport.CollectorListener listener = new WebSocketProviderTransport.CollectorListener();
+        WebSocketProviderTransport.QueueingListener listener = new WebSocketProviderTransport.QueueingListener();
         RuntimeException providerError = new RuntimeException("connection refused");
 
         listener.onError(null, providerError);
 
-        assertThatThrownBy(() -> listener.await(Duration.ofSeconds(1)))
+        assertThatThrownBy(() -> listener.take(Duration.ofSeconds(1)))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Provider WebSocket request failed.")
             .hasCause(providerError);
@@ -132,6 +142,52 @@ class WebSocketProviderTransportTest {
         @Override
         public void close() {
             closed = true;
+        }
+    }
+
+    private static final class BlockingWebSocketClient implements WebSocketProviderTransport.WebSocketClient {
+        private final ArrayBlockingQueue<ProviderRawEvent> messages = new ArrayBlockingQueue<>(1);
+        private boolean closed;
+
+        @Override
+        public ProviderEventStream open(URI uri, Map<String, String> headers, String payload, Duration timeout, cn.lypi.contracts.common.AbortSignal signal) {
+            return new ProviderEventStream() {
+                @Override
+                public java.util.Iterator<ProviderRawEvent> iterator() {
+                    return new java.util.Iterator<>() {
+                        private ProviderRawEvent next;
+
+                        @Override
+                        public boolean hasNext() {
+                            if (next != null) {
+                                return true;
+                            }
+                            try {
+                                next = messages.poll(1, TimeUnit.SECONDS);
+                                return next != null;
+                            } catch (InterruptedException exception) {
+                                Thread.currentThread().interrupt();
+                                throw new IllegalStateException(exception);
+                            }
+                        }
+
+                        @Override
+                        public ProviderRawEvent next() {
+                            if (!hasNext()) {
+                                throw new java.util.NoSuchElementException();
+                            }
+                            ProviderRawEvent event = next;
+                            next = null;
+                            return event;
+                        }
+                    };
+                }
+
+                @Override
+                public void close() {
+                    closed = true;
+                }
+            };
         }
     }
 }
