@@ -1,5 +1,7 @@
 package cn.lypi.ai.transport;
 
+import cn.lypi.ai.provider.ListProviderEventStream;
+import cn.lypi.ai.provider.ProviderEventStream;
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
 import cn.lypi.ai.provider.ProviderTransport;
@@ -12,7 +14,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
 public final class HttpSseProviderTransport implements ProviderTransport {
     private final HttpClient httpClient;
@@ -26,9 +27,9 @@ public final class HttpSseProviderTransport implements ProviderTransport {
     }
 
     @Override
-    public Stream<ProviderRawEvent> stream(ProviderRequest request, AbortSignal signal) {
+    public ProviderEventStream stream(ProviderRequest request, AbortSignal signal) {
         if (signal.aborted()) {
-            return Stream.empty();
+            return new ListProviderEventStream(List.of());
         }
         HttpRequest.Builder builder = HttpRequest.newBuilder(request.uri())
             .POST(HttpRequest.BodyPublishers.ofString(request.body()))
@@ -42,7 +43,7 @@ public final class HttpSseProviderTransport implements ProviderTransport {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IllegalStateException("Provider HTTP " + response.statusCode() + ".");
             }
-            return parseSse(response.body()).stream();
+            return new ListProviderEventStream(parseSse(response.body()));
         } catch (IOException exception) {
             throw new IllegalStateException("Provider HTTP request failed.", exception);
         } catch (InterruptedException exception) {

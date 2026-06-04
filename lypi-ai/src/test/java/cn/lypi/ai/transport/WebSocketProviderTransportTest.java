@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
+import cn.lypi.ai.provider.ProviderEventStream;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 
 class WebSocketProviderTransportTest {
@@ -32,7 +34,10 @@ class WebSocketProviderTransportTest {
             Optional.of(Duration.ofSeconds(7))
         );
 
-        List<ProviderRawEvent> events = transport.stream(request, () -> false).toList();
+        List<ProviderRawEvent> events;
+        try (ProviderEventStream stream = transport.stream(request, () -> false)) {
+            events = StreamSupport.stream(stream.spliterator(), false).toList();
+        }
 
         assertThat(client.uri).isEqualTo(request.uri());
         assertThat(client.headers).containsEntry("Authorization", "Bearer ${LYPI_TEST_TOKEN}");
@@ -47,8 +52,22 @@ class WebSocketProviderTransportTest {
         WebSocketProviderTransport transport = new WebSocketProviderTransport(client);
         ProviderRequest request = new ProviderRequest(URI.create("wss://api.example.test/v1/responses"), Map.of(), "{}");
 
-        assertThat(transport.stream(request, () -> true)).isEmpty();
+        try (ProviderEventStream stream = transport.stream(request, () -> true)) {
+            assertThat(StreamSupport.stream(stream.spliterator(), false).toList()).isEmpty();
+        }
         assertThat(client.payload).isNull();
+    }
+
+    @Test
+    void closeNotifiesClientStream() {
+        RecordingWebSocketClient client = new RecordingWebSocketClient(List.of("{\"type\":\"response.created\"}"));
+        WebSocketProviderTransport transport = new WebSocketProviderTransport(client);
+        ProviderRequest request = new ProviderRequest(URI.create("wss://api.example.test/v1/responses"), Map.of(), "{}");
+
+        ProviderEventStream stream = transport.stream(request, () -> false);
+        stream.close();
+
+        assertThat(client.stream.closed).isTrue();
     }
 
     @Test
@@ -84,13 +103,35 @@ class WebSocketProviderTransportTest {
             this.messages = messages;
         }
 
+        private RecordingProviderEventStream stream;
+
         @Override
-        public List<String> exchange(URI uri, Map<String, String> headers, String payload, Duration timeout) {
+        public ProviderEventStream open(URI uri, Map<String, String> headers, String payload, Duration timeout, cn.lypi.contracts.common.AbortSignal signal) {
             this.uri = uri;
             this.headers = headers;
             this.payload = payload;
             this.timeout = timeout;
-            return messages;
+            this.stream = new RecordingProviderEventStream(messages);
+            return stream;
+        }
+    }
+
+    private static final class RecordingProviderEventStream implements ProviderEventStream {
+        private final List<String> messages;
+        private boolean closed;
+
+        private RecordingProviderEventStream(List<String> messages) {
+            this.messages = messages;
+        }
+
+        @Override
+        public java.util.Iterator<ProviderRawEvent> iterator() {
+            return messages.stream().map(ProviderRawEvent::new).iterator();
+        }
+
+        @Override
+        public void close() {
+            closed = true;
         }
     }
 }

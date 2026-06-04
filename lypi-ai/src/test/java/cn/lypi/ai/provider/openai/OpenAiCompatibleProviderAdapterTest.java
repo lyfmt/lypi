@@ -3,6 +3,8 @@ package cn.lypi.ai.provider.openai;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import cn.lypi.ai.provider.ListProviderEventStream;
+import cn.lypi.ai.provider.ProviderEventStream;
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
 import cn.lypi.ai.provider.ProviderTransport;
@@ -244,12 +246,12 @@ class OpenAiCompatibleProviderAdapterTest {
         }
 
         @Override
-        public Stream<ProviderRawEvent> stream(ProviderRequest request, AbortSignal signal) {
+        public ProviderEventStream stream(ProviderRequest request, AbortSignal signal) {
             requests.add(request);
             if (failure != null) {
                 throw failure;
             }
-            return events.stream().map(ProviderRawEvent::new);
+            return new ListProviderEventStream(events.stream().map(ProviderRawEvent::new).toList());
         }
     }
 }

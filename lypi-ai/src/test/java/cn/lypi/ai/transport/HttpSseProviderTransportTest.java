@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
+import cn.lypi.ai.provider.ProviderEventStream;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
@@ -14,6 +15,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.StreamSupport;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -46,7 +48,10 @@ class HttpSseProviderTransportTest {
                 body.toString()
             );
 
-            List<ProviderRawEvent> events = new HttpSseProviderTransport().stream(request, () -> false).toList();
+            List<ProviderRawEvent> events;
+            try (ProviderEventStream stream = new HttpSseProviderTransport().stream(request, () -> false)) {
+                events = StreamSupport.stream(stream.spliterator(), false).toList();
+            }
 
             assertThat(authorization.get()).isEqualTo("Bearer ${LYPI_TEST_TOKEN}");
             assertThat(requestBody.get()).contains("\"stream\":true");
@@ -76,7 +81,11 @@ class HttpSseProviderTransportTest {
                 "{}"
             );
 
-            assertThatThrownBy(() -> new HttpSseProviderTransport().stream(request, () -> false).toList())
+            assertThatThrownBy(() -> {
+                try (ProviderEventStream stream = new HttpSseProviderTransport().stream(request, () -> false)) {
+                    StreamSupport.stream(stream.spliterator(), false).toList();
+                }
+            })
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("HTTP 400")
                 .hasMessageNotContaining("LYPI_TEST_TOKEN")
@@ -90,6 +99,8 @@ class HttpSseProviderTransportTest {
     void returnsEmptyWhenAlreadyAborted() throws IOException {
         ProviderRequest request = new ProviderRequest(URI.create("http://localhost:1/v1/responses"), Map.of(), "{}");
 
-        assertThat(new HttpSseProviderTransport().stream(request, () -> true)).isEmpty();
+        try (ProviderEventStream stream = new HttpSseProviderTransport().stream(request, () -> true)) {
+            assertThat(StreamSupport.stream(stream.spliterator(), false).toList()).isEmpty();
+        }
     }
 }

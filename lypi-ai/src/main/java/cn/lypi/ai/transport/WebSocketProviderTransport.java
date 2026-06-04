@@ -1,5 +1,7 @@
 package cn.lypi.ai.transport;
 
+import cn.lypi.ai.provider.ListProviderEventStream;
+import cn.lypi.ai.provider.ProviderEventStream;
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRequest;
 import cn.lypi.ai.provider.ProviderTransport;
@@ -14,7 +16,7 @@ import java.util.Map;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
+import java.util.stream.Collectors;
 
 public final class WebSocketProviderTransport implements ProviderTransport {
     private final WebSocketClient client;
@@ -28,13 +30,12 @@ public final class WebSocketProviderTransport implements ProviderTransport {
     }
 
     @Override
-    public Stream<ProviderRawEvent> stream(ProviderRequest request, AbortSignal signal) {
+    public ProviderEventStream stream(ProviderRequest request, AbortSignal signal) {
         if (signal.aborted()) {
-            return Stream.empty();
+            return new ListProviderEventStream(List.of());
         }
         Duration timeout = request.timeout().orElse(Duration.ofSeconds(30));
-        return client.exchange(request.uri(), request.headers(), request.body(), timeout).stream()
-            .map(ProviderRawEvent::new);
+        return client.open(request.uri(), request.headers(), request.body(), timeout, signal);
     }
 
     /**
@@ -53,7 +54,7 @@ public final class WebSocketProviderTransport implements ProviderTransport {
     }
 
     public interface WebSocketClient {
-        List<String> exchange(URI uri, Map<String, String> headers, String payload, Duration timeout);
+        ProviderEventStream open(URI uri, Map<String, String> headers, String payload, Duration timeout, AbortSignal signal);
     }
 
     private static final class JdkWebSocketClient implements WebSocketClient {
@@ -64,7 +65,7 @@ public final class WebSocketProviderTransport implements ProviderTransport {
         }
 
         @Override
-        public List<String> exchange(URI uri, Map<String, String> headers, String payload, Duration timeout) {
+        public ProviderEventStream open(URI uri, Map<String, String> headers, String payload, Duration timeout, AbortSignal signal) {
             CollectorListener listener = new CollectorListener();
             WebSocket.Builder builder = httpClient.newWebSocketBuilder().connectTimeout(timeout);
             headers.forEach(builder::header);
@@ -75,7 +76,9 @@ public final class WebSocketProviderTransport implements ProviderTransport {
             } finally {
                 webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done");
             }
-            return listener.messages;
+            return new ListProviderEventStream(listener.messages.stream()
+                .map(ProviderRawEvent::new)
+                .collect(Collectors.toList()));
         }
     }
 

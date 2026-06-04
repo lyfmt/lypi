@@ -1,7 +1,6 @@
 package cn.lypi.ai.provider;
 
 import cn.lypi.contracts.common.AbortSignal;
-import java.util.stream.Stream;
 
 public interface ProviderTransport {
     /**
@@ -9,5 +8,5 @@ public interface ProviderTransport {
      *
      * NOTE: 原始事件只能由 provider adapter 消费，不得直接暴露给 agent-core。
      */
-    Stream<ProviderRawEvent> stream(ProviderRequest request, AbortSignal signal);
+    ProviderEventStream stream(ProviderRequest request, AbortSignal signal);
 }

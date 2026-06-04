@@ -101,8 +101,8 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
             for (int retry = 0; retry <= Math.max(0, config.maxRetries()); retry++) {
                 boolean outputStarted = false;
                 List<AssistantStreamEvent> events = new ArrayList<>();
-                try {
-                    for (ProviderRawEvent rawEvent : (Iterable<ProviderRawEvent>) attempt.transport.stream(attempt.request, signal)::iterator) {
+                try (var providerStream = attempt.transport.stream(attempt.request, signal)) {
+                    for (ProviderRawEvent rawEvent : providerStream) {
                         List<AssistantStreamEvent> normalized = attempt.normalize(rawEvent.data());
                         if (!normalized.isEmpty()) {
                             outputStarted = true;
