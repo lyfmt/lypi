@@ -17,6 +17,7 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
@@ -34,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -56,7 +58,7 @@ class OpenAiCompatibleProviderAdapterTest {
             chat
         );
 
-        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
 
         assertThat(websocket.requests).hasSize(1);
         assertThat(sse.requests).hasSize(1);
@@ -83,7 +85,7 @@ class OpenAiCompatibleProviderAdapterTest {
             chat
         );
 
-        assertThat(adapter.stream(context(), descriptor(), () -> false).toList())
+        assertThat(collect(adapter.stream(context(), descriptor(), () -> false)))
             .containsExactly(new TextDelta("hello"));
         assertThat(sse.requests).isEmpty();
         assertThat(chat.requests).isEmpty();
@@ -98,7 +100,7 @@ class OpenAiCompatibleProviderAdapterTest {
             RecordingTransport.events()
         );
 
-        assertThatThrownBy(() -> adapter.stream(context(), descriptor(), () -> false).toList())
+        assertThatThrownBy(() -> collect(adapter.stream(context(), descriptor(), () -> false)))
             .isInstanceOfSatisfying(ModelProviderException.class, error -> {
                 assertThat(error.errorId()).isEqualTo("provider.api_key_missing");
                 assertThat(error.getMessage()).doesNotContain("Bearer");
@@ -120,7 +122,7 @@ class OpenAiCompatibleProviderAdapterTest {
             chat
         );
 
-        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
 
         assertThat(websocket.requests).isEmpty();
         assertThat(sse.requests).isEmpty();
@@ -141,7 +143,7 @@ class OpenAiCompatibleProviderAdapterTest {
             chat
         );
 
-        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
 
         assertThat(websocket.requests).hasSize(3);
         assertThat(events).singleElement().isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
@@ -149,6 +151,12 @@ class OpenAiCompatibleProviderAdapterTest {
 
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {
         return config(transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS);
+    }
+
+    private static List<AssistantStreamEvent> collect(AssistantEventStream stream) {
+        try (stream) {
+            return StreamSupport.stream(stream.spliterator(), false).toList();
+        }
     }
 
     private static OpenAiProviderConfig config(

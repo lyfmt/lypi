@@ -14,6 +14,7 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.CostProfile;
 import cn.lypi.contracts.model.ModelDescriptor;
@@ -30,6 +31,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -61,7 +63,7 @@ class OpenAiProviderRealEndToEndTest {
             sseTransport
         );
 
-        List<AssistantStreamEvent> events = adapter.stream(context(settings), descriptor(settings), () -> false).toList();
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(settings), descriptor(settings), () -> false));
 
         assertThat(events)
             .filteredOn(TextDelta.class::isInstance)
@@ -84,6 +86,12 @@ class OpenAiProviderRealEndToEndTest {
             new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
             Map.of()
         );
+    }
+
+    private static List<AssistantStreamEvent> collect(AssistantEventStream stream) {
+        try (stream) {
+            return StreamSupport.stream(stream.spliterator(), false).toList();
+        }
     }
 
     private static ContextSnapshot context(RealProviderSettings settings) {

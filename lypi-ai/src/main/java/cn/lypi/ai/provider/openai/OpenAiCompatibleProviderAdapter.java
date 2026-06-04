@@ -9,11 +9,13 @@ import cn.lypi.ai.provider.ProviderTransport;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.ai.spec.ContextSnapshotRequestFactory;
 import cn.lypi.ai.spec.LypiModelRequest;
+import cn.lypi.ai.stream.CompletedAssistantEventStream;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantError;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.ModelDescriptor;
@@ -24,7 +26,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.stream.Stream;
 
 public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, ApiProvider {
     private final OpenAiProviderConfig config;
@@ -81,7 +82,7 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
     }
 
     @Override
-    public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+    public AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(descriptor, "descriptor");
         Objects.requireNonNull(signal, "signal");
@@ -108,7 +109,7 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
                         }
                         events.addAll(normalized);
                     }
-                    return events.stream();
+                    return CompletedAssistantEventStream.completed(events);
                 } catch (RuntimeException error) {
                     lastFailure = error;
                     if (!fallbackDecider.shouldFallback(error, outputStarted)) {
@@ -118,7 +119,7 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
             }
         }
         RuntimeException failure = lastFailure == null ? new IllegalStateException("Provider request failed.") : lastFailure;
-        return Stream.of(new AssistantError("provider.request_failed", failure.getMessage()));
+        return CompletedAssistantEventStream.completed(List.of(new AssistantError("provider.request_failed", failure.getMessage())));
     }
 
     private List<Attempt> attempts(LypiModelRequest request) {

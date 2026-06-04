@@ -2,9 +2,8 @@ package cn.lypi.ai;
 
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextSnapshot;
-import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.ModelDescriptor;
-import java.util.stream.Stream;
 
 public interface ProviderAdapter {
     /**
@@ -19,5 +18,5 @@ public interface ProviderAdapter {
      *
      * NOTE: 具体 provider 协议、thinking 参数和原始 SSE 必须在 adapter 内转换，不得泄漏到上层。
      */
-    Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal);
+    AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal);
 }

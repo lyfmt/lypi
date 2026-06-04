@@ -12,6 +12,7 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.CostProfile;
@@ -34,6 +35,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -52,7 +54,7 @@ class OpenAiProviderFixtureEndToEndTest {
         startServer("/v1/responses", fixture("openai-responses-stream.sse"));
         OpenAiCompatibleProviderAdapter adapter = adapter(RequestStyle.RESPONSES);
 
-        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
 
         assertThat(events)
             .contains(new AssistantStart("resp-fixture"), new TextDelta("hello"))
@@ -64,7 +66,7 @@ class OpenAiProviderFixtureEndToEndTest {
         startServer("/v1/chat/completions", fixture("openai-chat-stream.sse"));
         OpenAiCompatibleProviderAdapter adapter = adapter(RequestStyle.CHAT_COMPLETIONS);
 
-        List<AssistantStreamEvent> events = adapter.stream(context(), descriptor(), () -> false).toList();
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
 
         assertThat(events)
             .contains(new AssistantStart("chatcmpl-fixture"), new TextDelta("hello"), new AssistantDone(Optional.empty(), Optional.of("stop")));
@@ -92,6 +94,12 @@ class OpenAiProviderFixtureEndToEndTest {
             sseTransport,
             sseTransport
         );
+    }
+
+    private static List<AssistantStreamEvent> collect(AssistantEventStream stream) {
+        try (stream) {
+            return StreamSupport.stream(stream.spliterator(), false).toList();
+        }
     }
 
     private URI baseUrl() {

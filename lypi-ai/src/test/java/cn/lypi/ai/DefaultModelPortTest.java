@@ -10,8 +10,10 @@ import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.model.CostProfile;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
@@ -25,6 +27,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.StreamSupport;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
@@ -42,13 +45,20 @@ class DefaultModelPortTest {
         );
         ContextSnapshot context = context(new ModelSelection("openai", "gpt-5", ThinkingLevel.HIGH), ThinkingLevel.HIGH);
 
-        List<AssistantStreamEvent> events = port.stream(context, () -> false).toList();
+        try (AssistantEventStream stream = port.stream(context, () -> false)) {
+            List<AssistantStreamEvent> events = StreamSupport.stream(stream.spliterator(), false).toList();
 
-        assertThat(events).containsExactly(
-            new AssistantStart("msg-1"),
-            new TextDelta("hello"),
-            new AssistantDone(Optional.empty(), Optional.of("stop"))
-        );
+            assertThat(events).containsExactly(
+                new AssistantStart("msg-1"),
+                new TextDelta("hello"),
+                new AssistantDone(Optional.empty(), Optional.of("stop"))
+            );
+            assertThat(stream.result().events()).containsExactlyElementsOf(events);
+            assertThat(stream.result().messageId()).isEqualTo("msg-1");
+            assertThat(stream.result().completed()).isTrue();
+            assertThat(stream.result().aborted()).isFalse();
+            assertThat(stream.result().stopReason()).contains("stop");
+        }
         assertThat(apiProvider.descriptor).isEqualTo(descriptor);
         assertThat(apiProvider.context).isEqualTo(context);
         assertThat(apiProvider.signal.aborted()).isFalse();
@@ -62,7 +72,7 @@ class DefaultModelPortTest {
         );
         ContextSnapshot context = context(new ModelSelection("openai", "gpt-4.1", ThinkingLevel.MEDIUM), ThinkingLevel.MEDIUM);
 
-        assertThatThrownBy(() -> port.stream(context, () -> false).toList())
+        assertThatThrownBy(() -> port.stream(context, () -> false))
             .isInstanceOfSatisfying(ModelProviderException.class, error -> {
                 assertThat(error.errorId()).isEqualTo("model.unavailable");
                 assertThat(error.severity()).isEqualTo(ErrorSeverity.ERROR);
@@ -78,7 +88,7 @@ class DefaultModelPortTest {
         );
         ContextSnapshot context = context(new ModelSelection("anthropic", "claude-4", ThinkingLevel.MEDIUM), ThinkingLevel.MEDIUM);
 
-        assertThatThrownBy(() -> port.stream(context, () -> false).toList())
+        assertThatThrownBy(() -> port.stream(context, () -> false))
             .isInstanceOfSatisfying(ModelProviderException.class, error -> {
                 assertThat(error.errorId()).isEqualTo("api_provider.unavailable");
                 assertThat(error.severity()).isEqualTo(ErrorSeverity.ERROR);
@@ -94,7 +104,7 @@ class DefaultModelPortTest {
         );
         ContextSnapshot context = context(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH), ThinkingLevel.HIGH);
 
-        assertThatThrownBy(() -> port.stream(context, () -> false).toList())
+        assertThatThrownBy(() -> port.stream(context, () -> false))
             .isInstanceOfSatisfying(ModelProviderException.class, error -> {
                 assertThat(error.errorId()).isEqualTo("model.thinking_unsupported");
                 assertThat(error.severity()).isEqualTo(ErrorSeverity.ERROR);
@@ -111,7 +121,11 @@ class DefaultModelPortTest {
         );
         ContextSnapshot context = context(new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM), ThinkingLevel.MEDIUM);
 
-        assertThat(port.stream(context, () -> true).toList()).isEmpty();
+        try (AssistantEventStream stream = port.stream(context, () -> true)) {
+            assertThat(StreamSupport.stream(stream.spliterator(), false).toList()).isEmpty();
+            assertThat(stream.result().aborted()).isTrue();
+            assertThat(stream.result().completed()).isFalse();
+        }
         assertThat(apiProvider.context).isNull();
     }
 
@@ -160,11 +174,53 @@ class DefaultModelPortTest {
         }
 
         @Override
-        public Stream<AssistantStreamEvent> stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+        public AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
             this.context = context;
             this.descriptor = descriptor;
             this.signal = signal;
-            return events;
+            List<AssistantStreamEvent> eventList = events.toList();
+            return new TestAssistantEventStream(eventList);
+        }
+    }
+
+    private static final class TestAssistantEventStream implements AssistantEventStream {
+        private final List<AssistantStreamEvent> events;
+
+        private TestAssistantEventStream(List<AssistantStreamEvent> events) {
+            this.events = List.copyOf(events);
+        }
+
+        @Override
+        public java.util.Iterator<AssistantStreamEvent> iterator() {
+            return events.iterator();
+        }
+
+        @Override
+        public AssistantStreamResult result() {
+            String messageId = events.stream()
+                .filter(AssistantStart.class::isInstance)
+                .map(AssistantStart.class::cast)
+                .map(AssistantStart::messageId)
+                .findFirst()
+                .orElse("");
+            Optional<String> stopReason = events.stream()
+                .filter(AssistantDone.class::isInstance)
+                .map(AssistantDone.class::cast)
+                .flatMap(done -> done.stopReason().stream())
+                .findFirst();
+            return new AssistantStreamResult(
+                messageId,
+                events,
+                Optional.empty(),
+                stopReason,
+                events.stream().anyMatch(AssistantDone.class::isInstance),
+                false,
+                Optional.empty()
+            );
+        }
+
+        @Override
+        public void close() {
         }
     }
 }
