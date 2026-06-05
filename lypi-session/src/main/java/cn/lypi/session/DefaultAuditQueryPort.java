@@ -27,8 +27,8 @@ public final class DefaultAuditQueryPort implements AuditQueryPort {
             .filter(record -> query.sessionId().map(sessionId -> Objects.equals(sessionId, record.sessionId())).orElse(true))
             .filter(record -> query.entryId().map(entryId -> Objects.equals(entryId, record.entryId())).orElse(true))
             .filter(record -> query.kind().map(kind -> kind == record.kind()).orElse(true))
-            .filter(record -> query.toolUseId().map(toolUseId -> Objects.equals(toolUseId, record.details().get("toolUseId"))).orElse(true))
-            .filter(record -> query.messageId().map(messageId -> Objects.equals(messageId, record.details().get("messageId"))).orElse(true))
+            .filter(record -> query.toolUseId().map(toolUseId -> record.toolUseId().filter(toolUseId::equals).isPresent()).orElse(true))
+            .filter(record -> query.messageId().map(messageId -> record.messageId().filter(messageId::equals).isPresent()).orElse(true))
             .toList();
     }
 }

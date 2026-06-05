@@ -7,13 +7,23 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.audit.AuditKind;
+import cn.lypi.contracts.audit.AuditQuery;
+import cn.lypi.contracts.audit.AuditRecord;
+import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.session.CommandEntry;
+import cn.lypi.contracts.session.CommandKind;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.PermissionDecisionEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.session.ToolOutputEntry;
 import cn.lypi.contracts.session.ToolUseAuditEntry;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
@@ -103,6 +113,99 @@ class SessionEngineImplTest {
                 assertThat(entry.toolUseId()).isEqualTo("toolu_01");
                 assertThat(entry.resultRef().contentHash()).isEqualTo("sha256:abc123");
             });
+    }
+
+    @Test
+    void openOrCreateRestoresAllReplayableEntryTypes() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        Instant timestamp = Instant.parse("2026-06-01T00:00:00Z");
+        ToolResultSummary summary = new ToolResultSummary("bash succeeded", "hello", false, 0, false, 42L, Map.of());
+        ToolOutputRef ref = toolOutputRef("ses_main", "toolu_01");
+
+        engine.append(new PermissionDecisionEntry(
+            "entry_permission",
+            null,
+            "toolu_01",
+            "bash",
+            "echo hello",
+            new PermissionDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.TOOL_SPECIFIC,
+                "允许",
+                Optional.empty(),
+                Map.of()
+            ),
+            timestamp
+        ));
+        engine.append(new CommandEntry(
+            "entry_command",
+            "entry_permission",
+            CommandKind.STATE_CHANGE,
+            "/model gpt-5.4",
+            "model",
+            Map.of("model", "gpt-5.4"),
+            timestamp.plusSeconds(1)
+        ));
+        engine.append(new ToolOutputEntry(
+            "entry_output",
+            "entry_command",
+            "toolu_01",
+            ref,
+            summary,
+            "sha256:abc123",
+            42L,
+            Map.of("preview", "hello"),
+            timestamp.plusSeconds(2)
+        ));
+
+        SessionEngine reopenedEngine = new SessionEngineImpl(tempDir);
+        reopenedEngine.openOrCreate("ses_main");
+
+        assertThat(reopenedEngine.pathToRoot("entry_output"))
+            .extracting(SessionEntry::id)
+            .containsExactly("entry_output", "entry_command", "entry_permission");
+    }
+
+    @Test
+    void appendWritesAuditRecordsForReplayableFacts() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        Instant timestamp = Instant.parse("2026-06-01T00:00:00Z");
+        ToolResultSummary summary = new ToolResultSummary("bash succeeded", "hello", false, 0, false, 42L, Map.of());
+        ToolOutputRef ref = toolOutputRef("ses_main", "toolu_01");
+
+        engine.append(new ToolUseAuditEntry(
+            "entry_tool",
+            null,
+            "toolu_01",
+            "msg_parent",
+            "turn_01",
+            "bash",
+            "Bash",
+            "echo hello",
+            ToolExecutionStatus.SUCCEEDED,
+            0,
+            summary,
+            ref,
+            timestamp,
+            timestamp.plusSeconds(1),
+            1000L,
+            Map.of("cwd", "/tmp"),
+            timestamp.plusSeconds(1)
+        ));
+
+        DefaultAuditQueryPort queryPort = new DefaultAuditQueryPort(tempDir);
+
+        assertThat(queryPort.query(new AuditQuery(
+            Optional.of("ses_main"),
+            Optional.of("entry_tool"),
+            Optional.of("toolu_01"),
+            Optional.of("msg_parent"),
+            Optional.of(AuditKind.TOOL_USE)
+        )))
+            .extracting(AuditRecord::entryId)
+            .containsExactly("entry_tool");
     }
 
     @Test
@@ -488,6 +591,20 @@ class SessionEngineImplTest {
             tempDir,
             Optional.empty(),
             Instant.parse("2026-06-01T00:00:00Z")
+        );
+    }
+
+    private ToolOutputRef toolOutputRef(String sessionId, String toolUseId) {
+        return new ToolOutputRef(
+            "toolout_01",
+            sessionId,
+            toolUseId,
+            "text/plain; charset=utf-8",
+            "session_blob",
+            ".lypi/tool-output/toolout_01.txt",
+            "sha256:abc123",
+            42L,
+            Map.of()
         );
     }
 }

@@ -23,6 +23,8 @@ class DefaultAuditQueryPortTest {
             "ses_main",
             "entry_tool",
             AuditKind.TOOL_USE,
+            Optional.of("toolu_01"),
+            Optional.of("msg_01"),
             Map.of("toolUseId", "toolu_01", "messageId", "msg_01")
         ));
         store.append(new AuditRecord(
@@ -30,6 +32,8 @@ class DefaultAuditQueryPortTest {
             "ses_main",
             "entry_permission",
             AuditKind.PERMISSION_DECISION,
+            Optional.of("toolu_01"),
+            Optional.of("msg_01"),
             Map.of("toolUseId", "toolu_01", "messageId", "msg_01")
         ));
         store.append(new AuditRecord(
@@ -37,7 +41,18 @@ class DefaultAuditQueryPortTest {
             "ses_other",
             "entry_other",
             AuditKind.TOOL_USE,
+            Optional.of("toolu_02"),
+            Optional.of("msg_02"),
             Map.of("toolUseId", "toolu_02", "messageId", "msg_02")
+        ));
+        store.append(new AuditRecord(
+            "audit_legacy_null_details",
+            "ses_main",
+            "entry_legacy",
+            AuditKind.TOOL_USE,
+            Optional.empty(),
+            Optional.empty(),
+            null
         ));
 
         DefaultAuditQueryPort queryPort = new DefaultAuditQueryPort(store);
