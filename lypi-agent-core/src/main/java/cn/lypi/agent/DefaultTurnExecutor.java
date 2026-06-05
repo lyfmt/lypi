@@ -6,6 +6,7 @@ import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
@@ -66,6 +67,16 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             }
 
             while (!request.abortSignal().aborted()) {
+                if (hasIncompleteToolCalls(assistant)) {
+                    AgentMessage error = messageFactory.errorMessage(
+                        ids.newMessageId(),
+                        "incomplete-tool-call",
+                        "模型返回的工具调用参数未完成，已终止本轮执行。"
+                    );
+                    appendNewMessage(request.sessionId(), error);
+                    newMessages.add(error);
+                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
+                }
                 List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
                 if (toolRequests.isEmpty()) {
                     break;
@@ -127,6 +138,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private boolean isAssistantError(AgentMessage assistant, TurnRequest request) {
         return !request.abortSignal().aborted()
             && assistant.content().stream().anyMatch(block -> block.kind() == ContentBlockKind.ERROR);
+    }
+
+    private boolean hasIncompleteToolCalls(AgentMessage assistant) {
+        return assistant.content().stream()
+            .filter(ToolCallContentBlock.class::isInstance)
+            .map(ToolCallContentBlock.class::cast)
+            .anyMatch(toolCall -> !Boolean.TRUE.equals(toolCall.metadata().get("complete")));
     }
 
     private TurnState failedState(

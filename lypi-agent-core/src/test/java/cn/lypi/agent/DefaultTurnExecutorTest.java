@@ -354,6 +354,63 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void failsTurnWhenAssistantToolCallIsIncomplete() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        AgentCoreTestFixtures.RecordingMemoryExtractionWorker memory = new AgentCoreTestFixtures.RecordingMemoryExtractionWorker();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "read", Map.of(), false),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                memory
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback", "msg-error", "msg-catch"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "run tools", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(tools.requests).isEmpty();
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-tool-call", "msg-error");
+        assertThat(session.messages().getLast().kind()).isEqualTo(cn.lypi.contracts.context.MessageKind.ERROR);
+        assertThat(session.messages().getLast().content().getFirst().text()).contains("工具调用参数未完成");
+        assertThat(eventBus.events.stream()
+            .filter(event -> event instanceof MessageStartEvent || event instanceof MessageEndEvent)
+            .map(event -> event.getClass().getSimpleName() + ":" + messageId(event))
+            .toList())
+            .containsExactly(
+                "MessageStartEvent:msg-user",
+                "MessageEndEvent:msg-user",
+                "MessageStartEvent:msg-tool-call",
+                "MessageEndEvent:msg-tool-call",
+                "MessageStartEvent:msg-error",
+                "MessageEndEvent:msg-error"
+            );
+        assertThat(memory.calls).isZero();
+    }
+
+    @Test
     void publishesToolEndErrorEventsWhenToolRuntimeThrows() {
         AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
