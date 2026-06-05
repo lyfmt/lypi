@@ -35,6 +35,13 @@ import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionOption;
+import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.security.PermissionResponse;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.session.CommandEntry;
 import cn.lypi.contracts.session.CommandKind;
 import cn.lypi.contracts.session.CustomMessageEntry;
@@ -656,6 +663,172 @@ class ContractSerializationTest {
     }
 
     @Test
+    void permissionOptionRoundTripPreservesRememberUpdate() throws Exception {
+        PermissionUpdate update = permissionUpdate(PermissionRuleSource.SESSION);
+        PermissionOption option = new PermissionOption(
+            "allow_remember_session",
+            PermissionOptionKind.ALLOW_AND_REMEMBER,
+            "允许并记住",
+            "本次会话内允许相同工具调用。",
+            Optional.of(update),
+            Map.of("scope", "session")
+        );
+
+        String json = mapper.writeValueAsString(option);
+        PermissionOption restored = mapper.readValue(json, PermissionOption.class);
+
+        assertEquals(PermissionOptionKind.ALLOW_AND_REMEMBER, restored.kind());
+        assertEquals(update, restored.permissionUpdate().orElseThrow());
+        assertEquals("session", restored.metadata().get("scope"));
+    }
+
+    @Test
+    void permissionResponseRoundTripPreservesKeyboardCancel() throws Exception {
+        PermissionResponse response = new PermissionResponse(
+            "ses_01",
+            "perm_01",
+            "cancel",
+            true,
+            Instant.parse("2026-06-01T12:00:01Z")
+        );
+
+        String json = mapper.writeValueAsString(response);
+        PermissionResponse restored = mapper.readValue(json, PermissionResponse.class);
+
+        assertEquals("perm_01", restored.requestId());
+        assertEquals("cancel", restored.selectedOptionId());
+        assertTrue(restored.fromKeyboardCancel());
+    }
+
+    @Test
+    void structuredPermissionRequestEventRoundTripContainsOptionsAndDefaults() throws Exception {
+        PermissionDecision policyDecision = new PermissionDecision(
+            PermissionBehavior.ASK,
+            PermissionDecisionReason.BASH_RISK,
+            "command needs approval",
+            Optional.empty(),
+            Map.of("risk", "destructive")
+        );
+        AgentEvent event = new PermissionRequestEvent(
+            "ses_01",
+            "perm_01",
+            "toolu_01",
+            "bash",
+            "Bash 命令需要确认",
+            "bash {command=rm -rf target}",
+            policyDecision,
+            List.of(
+                new PermissionOption(
+                    "allow_once",
+                    PermissionOptionKind.ALLOW_ONCE,
+                    "允许一次",
+                    "仅允许当前工具调用。",
+                    Optional.empty(),
+                    Map.of()
+                ),
+                new PermissionOption(
+                    "deny",
+                    PermissionOptionKind.DENY,
+                    "拒绝",
+                    "拒绝当前工具调用。",
+                    Optional.empty(),
+                    Map.of()
+                ),
+                new PermissionOption(
+                    "cancel",
+                    PermissionOptionKind.CANCEL,
+                    "取消",
+                    "取消权限请求。",
+                    Optional.empty(),
+                    Map.of()
+                )
+            ),
+            "deny",
+            "cancel",
+            Map.of("source", "policy"),
+            Instant.parse("2026-06-01T12:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"permission_request\""));
+        PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, restored);
+        assertEquals("perm_01", request.requestId());
+        assertEquals("Bash 命令需要确认", request.displayTitle());
+        assertEquals(PermissionBehavior.ASK, request.policyDecision().behavior());
+        assertEquals(3, request.options().size());
+        assertEquals("deny", request.defaultOptionId());
+        assertEquals("cancel", request.cancelOptionId());
+        assertEquals("policy", request.metadata().get("source"));
+    }
+
+    @Test
+    void structuredPermissionDecisionEventRoundTripContainsSelectedOptionAndAppliedUpdate() throws Exception {
+        PermissionUpdate update = permissionUpdate(PermissionRuleSource.SESSION);
+        PermissionDecision decision = new PermissionDecision(
+            PermissionBehavior.ALLOW,
+            PermissionDecisionReason.BASH_RISK,
+            "allowed",
+            Optional.empty(),
+            Map.of("risk", "medium")
+        );
+        AgentEvent event = new PermissionDecisionEvent(
+            "ses_01",
+            "perm_01",
+            "toolu_01",
+            "bash",
+            "allow_remember_session",
+            decision,
+            Optional.of(update),
+            Map.of("updateStatus", "applied"),
+            Instant.parse("2026-06-01T12:00:02Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"permission_decision\""));
+        PermissionDecisionEvent permissionDecision = assertInstanceOf(PermissionDecisionEvent.class, restored);
+        assertEquals("perm_01", permissionDecision.requestId());
+        assertEquals("allow_remember_session", permissionDecision.selectedOptionId());
+        assertEquals(update, permissionDecision.appliedUpdate().orElseThrow());
+        assertEquals("applied", permissionDecision.metadata().get("updateStatus"));
+    }
+
+    @Test
+    void permissionOptionRejectsRememberWithoutUpdate() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> new PermissionOption(
+            "allow_remember",
+            PermissionOptionKind.ALLOW_AND_REMEMBER,
+            "允许并记住",
+            "缺少更新时应拒绝。",
+            Optional.empty(),
+            Map.of()
+        ));
+    }
+
+    @Test
+    void permissionOptionRejectsSystemRuleSourcesForRemember() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> new PermissionOption(
+            "allow_platform",
+            PermissionOptionKind.ALLOW_AND_REMEMBER,
+            "允许并记住",
+            "不能写入平台规则。",
+            Optional.of(permissionUpdate(PermissionRuleSource.PLATFORM)),
+            Map.of()
+        ));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> new PermissionOption(
+            "allow_cli",
+            PermissionOptionKind.ALLOW_AND_REMEMBER,
+            "允许并记住",
+            "不能写入 CLI 覆盖规则。",
+            Optional.of(permissionUpdate(PermissionRuleSource.CLI_OVERRIDE)),
+            Map.of()
+        ));
+    }
+
+    @Test
     void permissionRequestEventCanReadLegacyJson() throws Exception {
         String json = """
             {
@@ -674,6 +847,11 @@ class ContractSerializationTest {
         assertEquals("legacy approval", request.message());
         assertEquals("unknown", request.toolName());
         assertEquals("", request.renderedToolUse());
+        assertEquals("toolu_01", request.requestId());
+        assertEquals("legacy approval", request.displayTitle());
+        assertEquals(3, request.options().size());
+        assertEquals("allow_once", request.defaultOptionId());
+        assertEquals("cancel", request.cancelOptionId());
     }
 
     @Test
@@ -701,6 +879,21 @@ class ContractSerializationTest {
         assertEquals("unknown", decision.toolName());
         assertEquals("", decision.renderedToolUse());
         assertEquals(PermissionBehavior.ALLOW, decision.decision().behavior());
+        assertEquals("toolu_01", decision.requestId());
+        assertEquals("legacy", decision.selectedOptionId());
+        assertTrue(decision.appliedUpdate().isEmpty());
+    }
+
+    private PermissionUpdate permissionUpdate(PermissionRuleSource source) {
+        return new PermissionUpdate(
+            source,
+            new PermissionRule(
+                source,
+                PermissionBehavior.ALLOW,
+                new PermissionRuleValue("bash", "git status *"),
+                "allow status"
+            )
+        );
     }
 
     @Test
