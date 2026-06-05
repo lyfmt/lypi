@@ -6,10 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.JsonSchema;
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.mcp.McpToolSchema;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -21,19 +25,23 @@ class McpToolAdapterTest {
         JsonSchema schema = new JsonSchema(Map.of("type", "object"));
         McpToolSchema mcpSchema = new McpToolSchema("github", "list_issues", "ignored", schema, "List issues");
         AtomicReference<Map<String, Object>> input = new AtomicReference<>();
+        List<ToolProgress> progresses = new ArrayList<>();
         McpToolAdapter adapter = new McpToolAdapter(mcpSchema, (serverName, toolName, arguments, context, progress) -> {
             input.set(arguments);
             return Map.of("ok", true);
         });
 
-        ToolResult<Object> result = adapter.execute(Map.of("repo", "ly-pi"), context(), message -> {
-        });
+        ToolResult<Object> result = adapter.execute(Map.of("repo", "ly-pi"), context(), progresses::add);
 
         assertEquals("mcp__github__list_issues", adapter.name());
         assertSame(schema, adapter.inputSchema());
         assertEquals(Map.of("repo", "ly-pi"), input.get());
         assertFalse(result.isError());
         assertTrue(result.output().toString().contains("ok=true"));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.CUSTOM
+                && "mcp tool invoking".equals(progress.title())
+                && "github".equals(progress.metadata().get("serverName"))));
     }
 
     @Test

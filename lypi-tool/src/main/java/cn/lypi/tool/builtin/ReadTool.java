@@ -2,6 +2,7 @@ package cn.lypi.tool.builtin;
 
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -51,6 +52,7 @@ public final class ReadTool extends AbstractFileTool {
             if (Files.isDirectory(path)) {
                 return error(toolUseId, "不能读取目录: " + relativePath(path, context));
             }
+            progress.progress(ToolProgress.phase("reading", "读取文件"));
             List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
             int offset = intInput(input, "offset", 1, 1, Math.max(1, lines.size()));
             int limit = intInput(input, "limit", lines.size(), 1, Math.max(1, lines.size()));
@@ -61,6 +63,18 @@ public final class ReadTool extends AbstractFileTool {
             for (int index = startIndex; index < endIndex; index++) {
                 rendered.add((index + 1) + " | " + lines.get(index));
             }
+            progress.progress(new ToolProgress(
+                cn.lypi.contracts.common.ToolProgressKind.STATUS,
+                "read lines",
+                relativePath(path, context),
+                null,
+                null,
+                null,
+                (long) (endIndex - startIndex),
+                (long) lines.size(),
+                null,
+                Map.of()
+            ));
             return success(toolUseId, String.join("\n", rendered));
         } catch (IllegalArgumentException exception) {
             return error(toolUseId, exception.getMessage());

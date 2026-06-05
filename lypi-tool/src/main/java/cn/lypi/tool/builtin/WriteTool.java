@@ -2,6 +2,7 @@ package cn.lypi.tool.builtin;
 
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -75,8 +76,21 @@ public final class WriteTool extends AbstractFileTool {
             }
             boolean overwritten = Files.exists(path);
             String content = input.get("content").toString();
+            progress.progress(ToolProgress.phase("writing", "写入文件"));
             writeAtomically(path, content);
             int bytes = content.getBytes(StandardCharsets.UTF_8).length;
+            progress.progress(new ToolProgress(
+                cn.lypi.contracts.common.ToolProgressKind.STATUS,
+                "written bytes",
+                relativePath(path, context),
+                null,
+                null,
+                null,
+                (long) bytes,
+                (long) bytes,
+                null,
+                Map.of()
+            ));
             return success(toolUseId, "write path=" + relativePath(path, context)
                 + " bytes=" + bytes
                 + " overwritten=" + overwritten);
