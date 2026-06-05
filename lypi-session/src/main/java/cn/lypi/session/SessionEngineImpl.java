@@ -1,15 +1,24 @@
 package cn.lypi.session;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.audit.AuditKind;
+import cn.lypi.contracts.audit.AuditRecord;
+import cn.lypi.contracts.common.IdGenerator;
+import cn.lypi.contracts.memory.MemoryWriteEntry;
+import cn.lypi.contracts.session.FileChangeEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.PermissionDecisionEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
+import cn.lypi.contracts.session.ToolUseAuditEntry;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -20,6 +29,8 @@ import java.util.Optional;
 public final class SessionEngineImpl implements SessionEngine {
     private final Path cwd;
     private final JsonlSessionStore store;
+    private final JsonlAuditStore auditStore;
+    private final IdGenerator idGenerator;
     private final Clock clock;
     private String sessionId;
     private EntryTreeIndex index;
@@ -32,6 +43,8 @@ public final class SessionEngineImpl implements SessionEngine {
         this.cwd = cwd;
         this.clock = clock;
         this.store = new JsonlSessionStore(cwd);
+        this.auditStore = new JsonlAuditStore(cwd);
+        this.idGenerator = IdGenerator.random();
     }
 
     /**
@@ -49,6 +62,15 @@ public final class SessionEngineImpl implements SessionEngine {
     }
 
     /**
+     * 返回当前 session 句柄。
+     */
+    @Override
+    public SessionHandle current() {
+        ensureOpen();
+        return handle();
+    }
+
+    /**
      * 追加 entry 并移动当前 leaf。
      */
     @Override
@@ -56,6 +78,7 @@ public final class SessionEngineImpl implements SessionEngine {
         ensureOpen();
         index.validateAppend(entry);
         store.append(sessionId, entry);
+        appendAuditRecord(entry);
         index.add(entry);
         return handle();
     }
@@ -110,6 +133,87 @@ public final class SessionEngineImpl implements SessionEngine {
 
     private SessionHandle handle() {
         return new SessionHandle(sessionId, store.sessionFile(sessionId), index.leafId(), index.byId());
+    }
+
+    private void appendAuditRecord(SessionEntry entry) {
+        AuditRecord record = auditRecord(entry);
+        if (record != null) {
+            auditStore.append(record);
+        }
+    }
+
+    private AuditRecord auditRecord(SessionEntry entry) {
+        if (entry instanceof ToolUseAuditEntry toolEntry) {
+            return new AuditRecord(
+                idGenerator.auditId(),
+                sessionId,
+                entry.id(),
+                AuditKind.TOOL_USE,
+                Optional.ofNullable(toolEntry.toolUseId()),
+                Optional.ofNullable(toolEntry.parentMessageId()),
+                details(
+                    "toolName", toolEntry.toolName(),
+                    "status", toolEntry.status() == null ? null : toolEntry.status().name(),
+                    "durationMillis", toolEntry.durationMillis()
+                )
+            );
+        }
+        if (entry instanceof PermissionDecisionEntry permissionEntry) {
+            return new AuditRecord(
+                idGenerator.auditId(),
+                sessionId,
+                entry.id(),
+                AuditKind.PERMISSION_DECISION,
+                Optional.ofNullable(permissionEntry.toolUseId()),
+                Optional.empty(),
+                details(
+                    "toolName", permissionEntry.toolName(),
+                    "behavior", permissionEntry.decision() == null ? null : permissionEntry.decision().behavior().name()
+                )
+            );
+        }
+        if (entry instanceof FileChangeEntry fileEntry) {
+            return new AuditRecord(
+                idGenerator.auditId(),
+                sessionId,
+                entry.id(),
+                AuditKind.FILE_CHANGE,
+                Optional.ofNullable(fileEntry.toolUseId()),
+                Optional.ofNullable(fileEntry.messageId()),
+                details(
+                    "path", fileEntry.path() == null ? null : fileEntry.path().toString(),
+                    "operation", fileEntry.operation() == null ? null : fileEntry.operation().name()
+                )
+            );
+        }
+        if (entry instanceof MemoryWriteEntry memoryEntry) {
+            return new AuditRecord(
+                idGenerator.auditId(),
+                sessionId,
+                entry.id(),
+                AuditKind.MEMORY_WRITE,
+                Optional.empty(),
+                Optional.ofNullable(memoryEntry.sourceMessageId()),
+                details(
+                    "scope", memoryEntry.scope() == null ? null : memoryEntry.scope().name(),
+                    "targetPath", memoryEntry.targetPath() == null ? null : memoryEntry.targetPath().toString(),
+                    "contentHash", memoryEntry.contentHash()
+                )
+            );
+        }
+        return null;
+    }
+
+    private Map<String, Object> details(Object... pairs) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            String key = (String) pairs[i];
+            Object value = pairs[i + 1];
+            if (value != null) {
+                details.put(key, value);
+            }
+        }
+        return Map.copyOf(details);
     }
 
     private void ensureOpen() {

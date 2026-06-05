@@ -20,6 +20,11 @@ public interface SessionEngine extends SessionEnginePort {
     SessionHandle openOrCreate(String sessionId);
 
     /**
+     * 返回当前打开 session 的句柄。
+     */
+    SessionHandle current();
+
+    /**
      * 追加一条 session entry。
      *
      * NOTE: entry 必须满足 append-only 约束，不能复用已有 id。
