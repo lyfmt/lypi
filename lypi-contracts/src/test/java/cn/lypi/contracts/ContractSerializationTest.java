@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
@@ -19,6 +21,7 @@ import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -70,6 +73,27 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"type\":\"turn_start\""));
         assertInstanceOf(TurnStartEvent.class, restored.event());
         assertEquals(7, restored.sequence());
+    }
+
+    @Test
+    void toolProgressEventRoundTripKeepsStructuredProgress() throws Exception {
+        AgentEvent event = new ToolProgressEvent(
+            "ses_01",
+            "toolu_01",
+            ToolProgress.counter("扫描文件", 3, 10),
+            Instant.parse("2026-06-01T12:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"tool_progress\""));
+        assertTrue(json.contains("\"kind\":\"COUNTER\""));
+        ToolProgressEvent progress = assertInstanceOf(ToolProgressEvent.class, restored);
+        assertEquals(ToolProgressKind.COUNTER, progress.progress().kind());
+        assertEquals("扫描文件", progress.progress().title());
+        assertEquals(3L, progress.progress().current());
+        assertEquals(10L, progress.progress().total());
     }
 
     @Test

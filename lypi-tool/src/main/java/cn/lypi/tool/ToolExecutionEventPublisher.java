@@ -15,7 +15,7 @@ import java.util.Objects;
  * NOTE: 事件发布失败不得影响工具执行主链路。
  */
 final class ToolExecutionEventPublisher {
-    private static final ProgressSink NOOP_PROGRESS = message -> {
+    private static final ProgressSink NOOP_PROGRESS = progress -> {
     };
     private static final ToolExecutionEventPublisher NOOP = new ToolExecutionEventPublisher(null);
 
@@ -47,11 +47,11 @@ final class ToolExecutionEventPublisher {
             return NOOP_PROGRESS;
         }
         safePublish(new ToolStartEvent(sessionId, toolUseId, toolName, Instant.now()));
-        return message -> {
-            if (message == null || message.isBlank()) {
+        return progress -> {
+            if (progress == null) {
                 return;
             }
-            safePublish(new ToolProgressEvent(sessionId, toolUseId, message, Instant.now()));
+            safePublish(new ToolProgressEvent(sessionId, toolUseId, progress, Instant.now()));
         };
     }
 

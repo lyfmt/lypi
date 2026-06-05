@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
@@ -33,12 +35,12 @@ class BashToolTest {
     void mapsCommandToExecutionRequestAndResult() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(7, "out", "err", false, Optional.empty()));
         BashTool tool = new BashTool(executor);
-        List<String> progressMessages = new ArrayList<>();
+        List<ToolProgress> progresses = new ArrayList<>();
 
         ToolResult<String> result = tool.execute(
             Map.of("command", "echo hi", "timeoutSeconds", 3),
             context(Map.of()),
-            progressMessages::add
+            progresses::add
         );
 
         assertFalse(result.isError());
@@ -49,7 +51,24 @@ class BashToolTest {
         assertTrue(result.output().contains("exitCode=7"));
         assertTrue(result.output().contains("stdout:\nout"));
         assertTrue(result.output().contains("stderr:\nerr"));
-        assertEquals(List.of("executor progress"), progressMessages);
+        assertEquals(List.of(
+            ToolProgress.phase("running", "执行 shell 命令"),
+            ToolProgress.status("executor progress", null)
+        ), progresses);
+    }
+
+    @Test
+    void reportsRunningPhaseBeforeExecutingCommand() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(executor);
+        List<ToolProgress> progresses = new ArrayList<>();
+
+        tool.execute(Map.of("command", "echo hi"), context(Map.of()), progresses::add);
+
+        ToolProgress first = progresses.getFirst();
+        assertEquals(ToolProgressKind.PHASE, first.kind());
+        assertEquals("running", first.phase());
+        assertEquals("执行 shell 命令", first.title());
     }
 
     @Test
@@ -131,7 +150,7 @@ class BashToolTest {
         public ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal) {
             this.request.set(request);
             this.signal.set(signal);
-            progress.progress("executor progress");
+            progress.progress(ToolProgress.status("executor progress", null));
             return result;
         }
     }

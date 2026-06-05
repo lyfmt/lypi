@@ -3,6 +3,7 @@ package cn.lypi.tool.builtin;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
@@ -93,6 +94,7 @@ public final class BashTool extends AbstractFileTool {
                 timeout,
                 DEFAULT_SANDBOX_POLICY
             );
+            progress.progress(ToolProgress.phase("running", "执行 shell 命令"));
             ExecutionResult result = executor.execute(request, progress, abortSignal(context));
             return success(toolUseId, renderResult(result));
         } catch (IllegalArgumentException exception) {

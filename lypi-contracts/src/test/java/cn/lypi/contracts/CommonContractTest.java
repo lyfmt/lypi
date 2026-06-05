@@ -11,9 +11,11 @@ import cn.lypi.contracts.boundary.CapabilityGuardResult;
 import cn.lypi.contracts.boundary.ExcludedCapability;
 import cn.lypi.contracts.boundary.ExclusionKind;
 import cn.lypi.contracts.boundary.FinalBoundaryRule;
-import cn.lypi.contracts.common.IdGenerator;
 import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.common.IdGenerator;
+import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.runtime.AgentCorePort;
@@ -145,7 +147,9 @@ class CommonContractTest {
             () -> assertMethod(SecurityRuntimePort.class, "decide", 2),
             () -> assertMethod(ResourceRuntimePort.class, "load", 1),
             () -> assertMethod(ResourceRuntimePort.class, "buildSystemPrompt", 1),
-            () -> assertMethod(AgentCorePort.class, "execute", 1)
+            () -> assertMethod(AgentCorePort.class, "execute", 1),
+            () -> assertMethod(ProgressSink.class, "progress", 1),
+            () -> assertMethod(ToolProgressEvent.class, "progress", 0)
         );
     }
 

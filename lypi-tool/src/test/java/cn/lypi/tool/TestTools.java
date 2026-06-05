@@ -2,6 +2,7 @@ package cn.lypi.tool;
 
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
@@ -75,7 +76,7 @@ final class TestTools {
         return new EchoTool(name, List.of(), true, true, false, Duration.ZERO) {
             @Override
             public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
-                progress.progress(progressMessage);
+                progress.progress(ToolProgress.status(progressMessage, null));
                 return super.execute(input, context, progress);
             }
         };

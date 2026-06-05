@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
@@ -24,7 +26,7 @@ class ToolExecutionEventPublisherTest {
         ToolExecutionEventPublisher publisher = ToolExecutionEventPublisher.eventBus(events);
 
         ProgressSink progress = publisher.start("ses_1", "toolu_1", "bash");
-        progress.progress("running command");
+        progress.progress(ToolProgress.status("running command", null));
         publisher.end("ses_1", "toolu_1", false);
 
         assertEquals(3, events.events.size());
@@ -36,7 +38,8 @@ class ToolExecutionEventPublisherTest {
         ToolProgressEvent progressEvent = assertInstanceOf(ToolProgressEvent.class, events.events.get(1));
         assertEquals("ses_1", progressEvent.sessionId());
         assertEquals("toolu_1", progressEvent.toolUseId());
-        assertEquals("running command", progressEvent.message());
+        assertEquals(ToolProgressKind.STATUS, progressEvent.progress().kind());
+        assertEquals("running command", progressEvent.progress().title());
 
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(2));
         assertEquals("ses_1", end.sessionId());
@@ -45,14 +48,12 @@ class ToolExecutionEventPublisherTest {
     }
 
     @Test
-    void ignoresBlankProgressMessages() {
+    void ignoresNullProgress() {
         RecordingEventBus events = new RecordingEventBus();
         ToolExecutionEventPublisher publisher = ToolExecutionEventPublisher.eventBus(events);
 
         ProgressSink progress = publisher.start("ses_1", "toolu_1", "bash");
         progress.progress(null);
-        progress.progress("");
-        progress.progress("   ");
         publisher.end("ses_1", "toolu_1", false);
 
         assertEquals(2, events.events.size());
@@ -66,7 +67,7 @@ class ToolExecutionEventPublisherTest {
 
         assertDoesNotThrow(() -> {
             ProgressSink progress = publisher.start("ses_1", "toolu_1", "bash");
-            progress.progress("running command");
+            progress.progress(ToolProgress.status("running command", null));
             publisher.end("ses_1", "toolu_1", true);
         });
     }
@@ -77,7 +78,7 @@ class ToolExecutionEventPublisherTest {
 
         assertDoesNotThrow(() -> {
             ProgressSink progress = publisher.start("ses_1", "toolu_1", "bash");
-            progress.progress("running command");
+            progress.progress(ToolProgress.status("running command", null));
             publisher.end("ses_1", "toolu_1", false);
         });
     }
