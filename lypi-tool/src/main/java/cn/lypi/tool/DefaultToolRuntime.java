@@ -17,6 +17,7 @@ import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -64,7 +65,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             securityRuntime,
             PermissionGate.denying(),
             ToolExecutionEventPublisher.noop(),
-            normalizeOptions(options).maxConcurrency()
+            options
         );
     }
 
@@ -87,7 +88,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             securityRuntime,
             PermissionGate.denying(),
             ToolExecutionEventPublisher.noop(),
-            ToolRuntimeOptions.defaults().maxConcurrency()
+            ToolRuntimeOptions.defaults()
         );
     }
 
@@ -111,7 +112,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             securityRuntime,
             permissionGate,
             ToolExecutionEventPublisher.noop(),
-            ToolRuntimeOptions.defaults().maxConcurrency()
+            ToolRuntimeOptions.defaults()
         );
     }
 
@@ -136,7 +137,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             securityRuntime,
             permissionGate,
             eventPublisher,
-            ToolRuntimeOptions.defaults().maxConcurrency()
+            ToolRuntimeOptions.defaults()
         );
     }
 
@@ -150,8 +151,9 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         SecurityRuntimePort securityRuntime,
         PermissionGate permissionGate,
         ToolExecutionEventPublisher eventPublisher,
-        int maxConcurrency
+        ToolRuntimeOptions options
     ) {
+        ToolRuntimeOptions normalizedOptions = normalizeOptions(options);
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
         this.schemaValidator = Objects.requireNonNull(schemaValidator, "schemaValidator must not be null");
         this.executionPlanner = Objects.requireNonNull(executionPlanner, "executionPlanner must not be null");
@@ -161,7 +163,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.securityRuntime = Objects.requireNonNull(securityRuntime, "securityRuntime must not be null");
         this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
         this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
-        this.maxConcurrency = Math.max(1, maxConcurrency);
+        this.maxConcurrency = normalizedOptions.maxConcurrency();
     }
 
     @Override
@@ -177,6 +179,11 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     @Override
     public ToolRegistrySnapshot snapshot() {
         return registry.snapshot();
+    }
+
+    @Override
+    public Path cwd() {
+        return contextFactory.cwd();
     }
 
     /**

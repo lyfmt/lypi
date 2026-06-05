@@ -141,6 +141,7 @@ class CommonContractTest {
             () -> assertMethod(ToolRuntimePort.class, "register", 1),
             () -> assertMethod(ToolRuntimePort.class, "resolve", 1),
             () -> assertMethod(ToolRuntimePort.class, "snapshot", 0),
+            () -> assertMethod(ToolRuntimePort.class, "cwd", 0),
             () -> assertMethod(ToolRuntimePort.class, "execute", 2),
             () -> assertMethod(SecurityRuntimePort.class, "decide", 2),
             () -> assertMethod(ResourceRuntimePort.class, "load", 1),

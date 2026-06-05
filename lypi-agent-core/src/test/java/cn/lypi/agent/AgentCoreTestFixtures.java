@@ -121,7 +121,30 @@ final class AgentCoreTestFixtures {
         CompactionCoordinator compactionCoordinator,
         MemoryExtractionWorker memoryExtractionWorker
     ) {
+        return ports(
+            Path.of("."),
+            session,
+            aiProvider,
+            toolRuntime,
+            eventBus,
+            contextAssembler,
+            compactionCoordinator,
+            memoryExtractionWorker
+        );
+    }
+
+    static AgentCoreRuntimePorts ports(
+        Path cwd,
+        InMemorySessionEngine session,
+        StubAiProvider aiProvider,
+        StubToolRuntime toolRuntime,
+        RecordingEventBus eventBus,
+        ContextAssembler contextAssembler,
+        CompactionCoordinator compactionCoordinator,
+        MemoryExtractionWorker memoryExtractionWorker
+    ) {
         return new AgentCoreRuntimePorts(
+            cwd,
             session,
             aiProvider,
             toolRuntime,
@@ -263,6 +286,7 @@ final class AgentCoreTestFixtures {
         final List<List<ToolUseRequest>> requests = new ArrayList<>();
         private final List<List<ToolResult<?>>> results = new ArrayList<>();
         private final List<RuntimeException> failures = new ArrayList<>();
+        private Path cwd = Path.of(".").toAbsolutePath().normalize();
 
         void enqueue(List<ToolResult<?>> result) {
             results.add(result);
@@ -270,6 +294,10 @@ final class AgentCoreTestFixtures {
 
         void failWith(RuntimeException failure) {
             failures.add(failure);
+        }
+
+        void cwd(Path cwd) {
+            this.cwd = cwd.toAbsolutePath().normalize();
         }
 
         @Override
@@ -284,6 +312,11 @@ final class AgentCoreTestFixtures {
         @Override
         public ToolRegistrySnapshot snapshot() {
             return new ToolRegistrySnapshot(List.of());
+        }
+
+        @Override
+        public Path cwd() {
+            return cwd;
         }
 
         @Override

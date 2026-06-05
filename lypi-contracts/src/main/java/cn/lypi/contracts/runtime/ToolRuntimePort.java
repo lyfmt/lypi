@@ -5,6 +5,7 @@ import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,6 +30,13 @@ public interface ToolRuntimePort {
      * NOTE: 快照供启动上下文、诊断和 prompt 构建消费，不暴露工具实现对象。
      */
     ToolRegistrySnapshot snapshot();
+
+    /**
+     * 返回工具运行时工作目录。
+     *
+     * NOTE: 该目录必须与 agent-core/resource runtime 使用的 cwd 保持一致，避免模型上下文和工具执行作用于不同项目。
+     */
+    Path cwd();
 
     /**
      * 编排并执行模型发出的工具调用。

@@ -22,8 +22,10 @@ import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.tool.ToolResult;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -158,6 +160,113 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void failsTurnBeforeToolExecutionWhenToolRuntimeCwdDiffersFromAgentRuntimeCwd() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        Path agentCwd = Path.of("/workspace/project-a").toAbsolutePath().normalize();
+        Path toolCwd = Path.of("/workspace/project-b").toAbsolutePath().normalize();
+        tools.cwd(toolCwd);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "should not run",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "content", false)),
+            Optional.empty()
+        )));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                agentCwd,
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback", "msg-error"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "run tools", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(tools.requests).isEmpty();
+        assertThat(session.messages().getLast().content().getFirst().text()).contains("工具运行目录不一致");
+    }
+
+    @Test
+    void failsTurnWhenMaxToolRoundsIsExceeded() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        AgentCoreTestFixtures.RecordingMemoryExtractionWorker memory = new AgentCoreTestFixtures.RecordingMemoryExtractionWorker();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call-1"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call-2"),
+            new ToolCallDelta("toolu-2", "read", Map.of("path", "pom.xml"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "ok",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "content", false)),
+            Optional.empty()
+        )));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                memory
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2", "msg-error"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "run tools", Optional.empty(), () -> false, 1));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(state.currentToolRound()).isEqualTo(1);
+        assertThat(tools.requests).hasSize(1);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-tool-call-1", "msg-tool-result", "msg-tool-call-2", "msg-error");
+        assertThat(session.messages().getLast().kind()).isEqualTo(cn.lypi.contracts.context.MessageKind.ERROR);
+        assertThat(session.messages().getLast().content().getFirst().text()).contains("工具调用轮数上限");
+        assertThat(memory.calls).isZero();
+    }
+
+    @Test
     void preservesMultipleToolCallRequestResultAndEventOrder() {
         AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
@@ -281,6 +390,123 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void failsTurnAndClosesToolEventsWhenToolRuntimeReturnsTooFewResults() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), true),
+            new ToolCallDelta("toolu-2", "grep", Map.of("pattern", "agent"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "only one",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result-1", "toolu-1", "first", false)),
+            Optional.empty()
+        )));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback", "msg-error"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "run tools", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(provider.contexts).hasSize(1);
+        assertThat(eventBus.events.stream()
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event) + ":" + toolError(event))
+            .toList())
+            .containsExactly(
+                "ToolStartEvent:toolu-1:false",
+                "ToolStartEvent:toolu-2:false",
+                "ToolEndEvent:toolu-1:true",
+                "ToolEndEvent:toolu-2:true"
+            );
+    }
+
+    @Test
+    void failsTurnAndClosesToolEventsWhenToolRuntimeReturnsTooManyResults() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        tools.enqueue(List.of(
+            new ToolResult<>(
+                "first",
+                false,
+                List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result-1", "toolu-1", "first", false)),
+                Optional.empty()
+            ),
+            new ToolResult<>(
+                "unexpected",
+                false,
+                List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result-2", "toolu-extra", "extra", false)),
+                Optional.empty()
+            )
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback", "msg-error"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "run tools", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(provider.contexts).hasSize(1);
+        assertThat(eventBus.events.stream()
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event) + ":" + toolError(event))
+            .toList())
+            .containsExactly(
+                "ToolStartEvent:toolu-1:false",
+                "ToolEndEvent:toolu-1:true"
+            );
+    }
+
+    @Test
     void runsCompactionPreflightBeforeModelCall() {
         AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
@@ -326,6 +552,50 @@ class DefaultTurnExecutorTest {
         executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
 
         assertThat(provider.contexts).containsExactly(compactedContext);
+    }
+
+    @Test
+    void buildsContextWithRuntimeCwd() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        Path runtimeCwd = Path.of("/workspace/project").toAbsolutePath().normalize();
+        List<Path> requestedCwds = new ArrayList<>();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> {
+            requestedCwds.add(request.cwd());
+            return new ContextAssembly(
+                AgentCoreTestFixtures.minimalContext(session.messages()),
+                List.of(),
+                List.of(),
+                List.of(),
+                false
+            );
+        };
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                runtimeCwd,
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(requestedCwds).containsExactly(runtimeCwd);
     }
 
     @Test

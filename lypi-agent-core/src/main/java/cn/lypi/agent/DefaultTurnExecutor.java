@@ -73,6 +73,16 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 if (toolRequests.isEmpty()) {
                     break;
                 }
+                if (toolRound >= request.maxToolRounds()) {
+                    AgentMessage error = messageFactory.errorMessage(
+                        ids.newMessageId(),
+                        "max-tool-rounds-exceeded",
+                        "已达到工具调用轮数上限 " + request.maxToolRounds() + "，终止本轮执行以避免无限循环。"
+                    );
+                    ports.sessionEngine().appendMessage(error);
+                    newMessages.add(error);
+                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
+                }
                 toolRound++;
                 List<ToolResult<?>> toolResults = executeTools(request.sessionId(), toolRequests, context);
                 for (ToolResult<?> toolResult : toolResults) {
@@ -146,8 +156,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ContextAssembly assembly = ports.contextAssembler().build(new ContextBuildRequest(
             request.sessionId(),
             leafEntryId,
-            // NOTE: TurnRequest 暂未携带 cwd；boot/session 接入后应改为传入真实工作目录。
-            Path.of("."),
+            // NOTE: lypi-resource 负责从 cwd 探索 project root 和资源层级；agent-core 只传入启动层确定的 cwd 起点。
+            ports.cwd(),
             true
         ));
         CompactionDecision compaction = ports.compactionCoordinator().preflight(assembly.snapshot());
@@ -175,24 +185,46 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private List<ToolResult<?>> executeTools(String sessionId, List<ToolUseRequest> toolRequests, ContextSnapshot context) {
+        ensureToolRuntimeCwdMatches();
         for (ToolUseRequest toolRequest : toolRequests) {
             ports.eventBus().publish(new ToolStartEvent(sessionId, toolRequest.toolUseId(), toolRequest.toolName(), clock.instant()));
         }
         List<ToolResult<?>> results;
+        boolean toolEndErrorsPublished = false;
         try {
             results = ports.toolRuntime().execute(toolRequests, context);
+            if (results.size() != toolRequests.size()) {
+                publishToolEndErrors(sessionId, toolRequests);
+                toolEndErrorsPublished = true;
+                throw new IllegalStateException(
+                    "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
+                );
+            }
         } catch (RuntimeException failure) {
-            for (ToolUseRequest request : toolRequests) {
-                ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), true, clock.instant()));
+            if (!toolEndErrorsPublished) {
+                publishToolEndErrors(sessionId, toolRequests);
             }
             throw failure;
         }
         for (int index = 0; index < toolRequests.size(); index++) {
             ToolUseRequest request = toolRequests.get(index);
-            boolean error = index < results.size() && results.get(index).isError();
-            ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), error, clock.instant()));
+            ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), results.get(index).isError(), clock.instant()));
         }
         return results;
+    }
+
+    private void ensureToolRuntimeCwdMatches() {
+        Path agentCwd = ports.cwd();
+        Path toolCwd = ports.toolRuntime().cwd().toAbsolutePath().normalize();
+        if (!agentCwd.equals(toolCwd)) {
+            throw new IllegalStateException("工具运行目录不一致: agent cwd=" + agentCwd + ", tool cwd=" + toolCwd);
+        }
+    }
+
+    private void publishToolEndErrors(String sessionId, List<ToolUseRequest> toolRequests) {
+        for (ToolUseRequest request : toolRequests) {
+            ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), true, clock.instant()));
+        }
     }
 
     private String currentAssistantId(AssistantStreamAccumulator accumulator) {
