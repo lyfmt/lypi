@@ -49,6 +49,15 @@ public final class SessionEngineImpl implements SessionEngine {
     }
 
     /**
+     * 返回当前 session 句柄。
+     */
+    @Override
+    public SessionHandle current() {
+        ensureOpen();
+        return handle();
+    }
+
+    /**
      * 追加 entry 并移动当前 leaf。
      */
     @Override

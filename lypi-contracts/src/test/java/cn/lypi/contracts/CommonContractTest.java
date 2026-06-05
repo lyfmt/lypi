@@ -2,8 +2,10 @@ package cn.lypi.contracts;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.audit.AuditQueryPort;
 import cn.lypi.contracts.boundary.BoundaryCheckReport;
 import cn.lypi.contracts.boundary.BoundaryRuleLevel;
 import cn.lypi.contracts.boundary.BoundaryRuleResult;
@@ -15,6 +17,7 @@ import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.IdGenerator;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamResult;
@@ -23,7 +26,12 @@ import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionEnginePort;
+import cn.lypi.contracts.runtime.StateStream;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.session.SessionReplayPort;
+import cn.lypi.contracts.transport.TransportAdapter;
+import cn.lypi.contracts.transport.TransportRuntimeView;
+import cn.lypi.contracts.tui.SessionRuntimeState;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import java.lang.reflect.Method;
@@ -149,8 +157,32 @@ class CommonContractTest {
             () -> assertMethod(ResourceRuntimePort.class, "buildSystemPrompt", 1),
             () -> assertMethod(AgentCorePort.class, "execute", 1),
             () -> assertMethod(ProgressSink.class, "progress", 1),
-            () -> assertMethod(ToolProgressEvent.class, "progress", 0)
+            () -> assertMethod(ToolProgressEvent.class, "progress", 0),
+            () -> assertMethod(TransportAdapter.class, "attach", 1)
         );
+    }
+
+    @Test
+    void transportRuntimeViewExposesReplayAuditAndPendingRuntimeFacts() {
+        EventBus events = new NoopEventBus();
+        StateStream<SessionRuntimeState> state = new StaticStateStream<>(null);
+        SessionReplayPort replay = new NoopSessionReplayPort();
+        AuditQueryPort audit = query -> List.of();
+        TransportRuntimeView view = new TransportRuntimeView(
+            events,
+            state,
+            replay,
+            audit,
+            Optional.of("turn_01"),
+            Optional.of("toolu_01")
+        );
+
+        assertSame(events, view.events());
+        assertSame(state, view.sessionState());
+        assertSame(replay, view.sessionReplay());
+        assertSame(audit, view.auditQuery());
+        assertEquals(Optional.of("turn_01"), view.pendingTurnId());
+        assertEquals(Optional.of("toolu_01"), view.pendingApprovalToolUseId());
     }
 
     @Test
@@ -175,5 +207,32 @@ class CommonContractTest {
             }
         }
         throw new AssertionError(type.getSimpleName() + " is missing " + name + "/" + parameterCount);
+    }
+
+    private record StaticStateStream<T>(T current) implements StateStream<T> {}
+
+    private static final class NoopEventBus implements EventBus {
+        @Override
+        public void publish(cn.lypi.contracts.event.AgentEvent event) {}
+
+        @Override
+        public cn.lypi.contracts.event.EventSubscription subscribe(
+            cn.lypi.contracts.event.EventFilter filter,
+            cn.lypi.contracts.event.EventConsumer consumer
+        ) {
+            return () -> {};
+        }
+    }
+
+    private static final class NoopSessionReplayPort implements SessionReplayPort {
+        @Override
+        public cn.lypi.contracts.session.SessionView currentView() {
+            return null;
+        }
+
+        @Override
+        public cn.lypi.contracts.session.SessionView view(String leafId) {
+            return null;
+        }
     }
 }

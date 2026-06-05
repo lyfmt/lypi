@@ -14,6 +14,10 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.session.ToolUseAuditEntry;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
+import cn.lypi.contracts.tool.ToolOutputRef;
+import cn.lypi.contracts.tool.ToolResultSummary;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -50,6 +54,55 @@ class SessionEngineImplTest {
         assertThat(reopenedEngine.pathToRoot("entry_2"))
             .extracting(SessionEntry::id)
             .containsExactly("entry_2", "entry_1");
+    }
+
+    @Test
+    void openOrCreateRestoresReplayableToolAuditEntries() {
+        SessionEngine engine = new SessionEngineImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        Instant startedAt = Instant.parse("2026-06-01T00:00:00Z");
+        ToolResultSummary summary = new ToolResultSummary("bash succeeded", "hello", false, 0, false, 42L, Map.of());
+        ToolOutputRef ref = new ToolOutputRef(
+            "toolout_01",
+            "ses_main",
+            "toolu_01",
+            "text/plain; charset=utf-8",
+            "session_blob",
+            ".lypi/tool-output/toolout_01.txt",
+            "sha256:abc123",
+            42L,
+            Map.of()
+        );
+
+        engine.append(new ToolUseAuditEntry(
+            "entry_tool",
+            null,
+            "toolu_01",
+            "msg_parent",
+            "turn_01",
+            "bash",
+            "Bash",
+            "echo hello",
+            ToolExecutionStatus.SUCCEEDED,
+            0,
+            summary,
+            ref,
+            startedAt,
+            startedAt.plusSeconds(1),
+            1000L,
+            Map.of("cwd", "/tmp"),
+            startedAt.plusSeconds(1)
+        ));
+
+        SessionEngine reopenedEngine = new SessionEngineImpl(tempDir);
+        reopenedEngine.openOrCreate("ses_main");
+
+        assertThat(reopenedEngine.pathToRoot("entry_tool"))
+            .singleElement()
+            .isInstanceOfSatisfying(ToolUseAuditEntry.class, entry -> {
+                assertThat(entry.toolUseId()).isEqualTo("toolu_01");
+                assertThat(entry.resultRef().contentHash()).isEqualTo("sha256:abc123");
+            });
     }
 
     @Test
