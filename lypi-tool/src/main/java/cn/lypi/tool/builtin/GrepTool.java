@@ -2,6 +2,7 @@ package cn.lypi.tool.builtin;
 
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -50,6 +51,7 @@ public final class GrepTool extends AbstractFileTool {
             if (!Files.exists(root)) {
                 return error(toolUseId, "搜索路径不存在: " + relativePath(root, context));
             }
+            progress.progress(ToolProgress.phase("scanning", "扫描文件"));
             StringBuilder output = new StringBuilder();
             int count = 0;
             List<Path> files;
@@ -60,6 +62,7 @@ public final class GrepTool extends AbstractFileTool {
                     .sorted(Comparator.comparing(Path::toString))
                     .toList();
             }
+            progress.progress(ToolProgress.counter("files", files.size(), files.size()));
             for (Path file : files) {
                 List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
                 for (int index = 0; index < lines.size(); index++) {
@@ -73,6 +76,7 @@ public final class GrepTool extends AbstractFileTool {
                         .append(lines.get(index))
                         .append('\n');
                     count++;
+                    progress.progress(ToolProgress.status("matched", relativePath(file, context)));
                     if (count >= maxResults) {
                         return success(toolUseId, trimTrailingNewline(output));
                     }

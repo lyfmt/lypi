@@ -4,9 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.util.ArrayList;
+import java.util.List;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -21,18 +25,22 @@ class EditToolTest {
     void replacesUniqueOldStringAndReturnsDiffPreview() throws Exception {
         Files.writeString(tempDir.resolve("a.txt"), "alpha\nold\nomega\n");
         EditTool tool = new EditTool();
+        List<ToolProgress> progresses = new ArrayList<>();
 
         ToolResult<String> result = tool.execute(
             Map.of("path", "a.txt", "oldString", "old", "newString", "new"),
             context(),
-            message -> {
-            }
+            progresses::add
         );
 
         assertFalse(result.isError());
         assertEquals("alpha\nnew\nomega\n", Files.readString(tempDir.resolve("a.txt")));
         assertTrue(result.output().contains("- old"));
         assertTrue(result.output().contains("+ new"));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.PHASE && "editing".equals(progress.phase())));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.STATUS && "changed".equals(progress.title())));
     }
 
     @Test

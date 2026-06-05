@@ -3,6 +3,7 @@ package cn.lypi.tool;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
@@ -13,10 +14,16 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
+import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -37,6 +44,8 @@ import java.util.concurrent.Semaphore;
 public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrator {
     private static final String METADATA_ORIGINAL_TOOL_NAME = "originalToolName";
     private static final String METADATA_TOOL_USE_ID = "toolUseId";
+    private static final String METADATA_TURN_ID = "turnId";
+    private static final int OUTPUT_REF_PREVIEW_CHARS = 12;
 
     private final ToolRegistry registry;
     private final ToolSchemaValidator schemaValidator;
@@ -276,25 +285,15 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
             PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
             PermissionGateResult toolGateResult = resolvePermission(request, tool, toolContext, toolDecision);
-            if (toolGateResult.status() != PermissionGateResult.Status.ALLOW) {
-                return permissionGateError(request.toolUseId(), toolGateResult);
-            }
 
             PermissionGateResult securityGateResult = resolvePermission(request, tool, toolContext, securityDecision);
-            if (securityGateResult.status() != PermissionGateResult.Status.ALLOW) {
-                return permissionGateError(request.toolUseId(), securityGateResult);
-            }
 
             ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
             if (beforeResult != null && beforeResult.blocked()) {
                 return errorResult(request.toolUseId(), beforeResult.message());
             }
 
-            if (shouldSkipForAbort(tool, toolContext)) {
-                return errorResult(request.toolUseId(), "工具调用已中止。");
-            }
-
-            return executeStartedCall(request, tool, input, toolContext);
+            return executeStartedCall(request, tool, input, toolContext, toolGateResult, securityGateResult);
         } catch (RuntimeException exception) {
             return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
         }
@@ -304,18 +303,78 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolUseRequest request,
         Tool<Map<String, Object>, ?> tool,
         Map<String, Object> input,
-        ToolUseContext toolContext
+        ToolUseContext toolContext,
+        PermissionGateResult toolGateResult,
+        PermissionGateResult securityGateResult
     ) {
-        ProgressSink progress = eventPublisher.start(toolContext.sessionId(), request.toolUseId(), tool.name());
-        boolean error = true;
+        ToolExecutionEventPublisher.StartedToolExecution started = eventPublisher.start(
+            toolContext.sessionId(),
+            request.toolUseId(),
+            request.parentMessageId(),
+            stringMetadata(toolContext, METADATA_TURN_ID),
+            tool.name(),
+            displayTitle(tool.name()),
+            inputSummary(tool.name(), input),
+            inputMetadata(input)
+        );
+        ToolResult<?> rawResult = null;
+        ToolResult<?> finalResult = null;
+        ToolExecutionStatus status = ToolExecutionStatus.FAILED;
         try {
-            ToolResult<?> result = executeTool(request, tool, input, toolContext, progress);
-            ToolResult<?> finalResult = applyAfterInterceptorAndBudget(request, tool, toolContext, result);
-            error = finalResult.isError();
+            if (toolGateResult.status() != PermissionGateResult.Status.ALLOW) {
+                status = statusForGateResult(toolGateResult);
+                finalResult = permissionGateError(request.toolUseId(), toolGateResult);
+                return finalResult;
+            }
+            if (securityGateResult.status() != PermissionGateResult.Status.ALLOW) {
+                status = statusForGateResult(securityGateResult);
+                finalResult = permissionGateError(request.toolUseId(), securityGateResult);
+                return finalResult;
+            }
+            if (shouldSkipForAbort(tool, toolContext)) {
+                status = ToolExecutionStatus.CANCELLED;
+                finalResult = errorResult(request.toolUseId(), "工具调用已中止。");
+                return finalResult;
+            }
+            ToolResult<?> result = executeTool(request, tool, input, toolContext, started.progressSink());
+            rawResult = applyAfterInterceptor(request, tool, toolContext, result);
+            finalResult = resultBudgeter.apply(request.toolUseId(), tool.name(), rawResult, tool.maxResultSize());
+            status = finalResult.isError() ? ToolExecutionStatus.FAILED : ToolExecutionStatus.SUCCEEDED;
+            return finalResult;
+        } catch (RuntimeException exception) {
+            finalResult = errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
+            rawResult = finalResult;
+            status = ToolExecutionStatus.FAILED;
             return finalResult;
         } finally {
-            eventPublisher.end(toolContext.sessionId(), request.toolUseId(), error);
+            Instant endedAt = Instant.now();
+            ToolResult<?> eventResult = rawResult == null ? finalResult : rawResult;
+            ToolResultSummary summary = resultSummary(tool.name(), eventResult, status);
+            ToolOutputRef resultRef = resultRef(
+                toolContext.sessionId(),
+                request.toolUseId(),
+                tool.name(),
+                eventResult,
+                finalResult != null && finalResult.replacement().isPresent()
+            );
+            eventPublisher.end(
+                toolContext.sessionId(),
+                request.toolUseId(),
+                status,
+                summary.exitCode(),
+                summary,
+                resultRef,
+                started.startedAt(),
+                endedAt,
+                Map.of("toolName", tool.name())
+            );
         }
+    }
+
+    private ToolExecutionStatus statusForGateResult(PermissionGateResult result) {
+        return result.status() == PermissionGateResult.Status.ABORT
+            ? ToolExecutionStatus.CANCELLED
+            : ToolExecutionStatus.FAILED;
     }
 
     private ToolResult<?> executeTool(
@@ -332,15 +391,146 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         }
     }
 
-    private ToolResult<?> applyAfterInterceptorAndBudget(
+    private ToolResult<?> applyAfterInterceptor(
         ToolUseRequest request,
         Tool<Map<String, Object>, ?> tool,
         ToolUseContext toolContext,
         ToolResult<?> result
     ) {
         ToolResult<?> interceptedResult = interceptor.afterExecute(request, tool, toolContext, result);
-        ToolResult<?> finalResult = interceptedResult == null ? result : interceptedResult;
-        return resultBudgeter.apply(request.toolUseId(), tool.name(), finalResult, tool.maxResultSize());
+        return interceptedResult == null ? result : interceptedResult;
+    }
+
+    private ToolResultSummary resultSummary(String toolName, ToolResult<?> result, ToolExecutionStatus status) {
+        String outputText = outputText(result);
+        boolean error = result == null || result.isError();
+        return new ToolResultSummary(
+            toolName + " " + status.name().toLowerCase(),
+            summarize(outputText),
+            error,
+            exitCode(result),
+            status == ToolExecutionStatus.TIMED_OUT,
+            byteLength(outputText),
+            Map.of("toolName", toolName)
+        );
+    }
+
+    private ToolOutputRef resultRef(
+        String sessionId,
+        String toolUseId,
+        String toolName,
+        ToolResult<?> result,
+        boolean budgeted
+    ) {
+        if (result == null) {
+            return null;
+        }
+        String outputText = outputText(result);
+        if (!budgeted && result.replacement().isEmpty()) {
+            return null;
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("toolName", toolName);
+        metadata.put("preview", preview(outputText));
+        if (budgeted) {
+            metadata.put("truncated", true);
+            metadata.put("truncationReason", "budgeted");
+        }
+        return new ToolOutputRef(
+            "toolout_" + sessionId + "_" + toolUseId,
+            sessionId,
+            toolUseId,
+            "text/plain; charset=utf-8",
+            "pending",
+            "",
+            sha256(outputText),
+            byteLength(outputText),
+            metadata
+        );
+    }
+
+    private String outputText(ToolResult<?> result) {
+        if (result == null || result.newMessages() == null || result.newMessages().isEmpty()) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        for (AgentMessage message : result.newMessages()) {
+            if (message.content() == null) {
+                continue;
+            }
+            for (ContentBlock block : message.content()) {
+                if (block instanceof ToolResultContentBlock toolResultBlock) {
+                    parts.add(toolResultBlock.text());
+                }
+            }
+        }
+        return String.join("\n", parts);
+    }
+
+    private String summarize(String outputText) {
+        if (outputText == null || outputText.isBlank()) {
+            return "";
+        }
+        return outputText.length() <= 200 ? outputText : outputText.substring(0, 200);
+    }
+
+    private String preview(String outputText) {
+        if (outputText == null || outputText.isEmpty()) {
+            return "";
+        }
+        return outputText.substring(0, Math.min(OUTPUT_REF_PREVIEW_CHARS, outputText.length()));
+    }
+
+    private long byteLength(String outputText) {
+        return outputText == null ? 0L : outputText.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    private String sha256(String outputText) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest((outputText == null ? "" : outputText).getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return "sha256:" + hex;
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 algorithm is unavailable.", exception);
+        }
+    }
+
+    private Integer exitCode(ToolResult<?> result) {
+        Object output = result == null ? null : result.output();
+        if (output instanceof Map<?, ?> outputMap) {
+            Object exitCode = outputMap.get("exitCode");
+            if (exitCode instanceof Number number) {
+                return number.intValue();
+            }
+        }
+        return null;
+    }
+
+    private String displayTitle(String toolName) {
+        if (toolName == null || toolName.isBlank()) {
+            return "Tool";
+        }
+        return Character.toUpperCase(toolName.charAt(0)) + toolName.substring(1);
+    }
+
+    private String inputSummary(String toolName, Map<String, Object> input) {
+        return toolName + " " + input;
+    }
+
+    private Map<String, Object> inputMetadata(Map<String, Object> input) {
+        if (input == null || input.isEmpty()) {
+            return Map.of();
+        }
+        return Map.copyOf(input);
+    }
+
+    private String stringMetadata(ToolUseContext context, String key) {
+        Object value = context.metadata().get(key);
+        return value == null ? null : value.toString();
     }
 
     private ToolUseRequest canonicalRequest(ToolUseRequest request, Tool<Map<String, Object>, ?> tool) {
