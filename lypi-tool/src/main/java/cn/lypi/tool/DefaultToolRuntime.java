@@ -285,25 +285,15 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
             PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
             PermissionGateResult toolGateResult = resolvePermission(request, tool, toolContext, toolDecision);
-            if (toolGateResult.status() != PermissionGateResult.Status.ALLOW) {
-                return permissionGateError(request.toolUseId(), toolGateResult);
-            }
 
             PermissionGateResult securityGateResult = resolvePermission(request, tool, toolContext, securityDecision);
-            if (securityGateResult.status() != PermissionGateResult.Status.ALLOW) {
-                return permissionGateError(request.toolUseId(), securityGateResult);
-            }
 
             ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
             if (beforeResult != null && beforeResult.blocked()) {
                 return errorResult(request.toolUseId(), beforeResult.message());
             }
 
-            if (shouldSkipForAbort(tool, toolContext)) {
-                return errorResult(request.toolUseId(), "工具调用已中止。");
-            }
-
-            return executeStartedCall(request, tool, input, toolContext);
+            return executeStartedCall(request, tool, input, toolContext, toolGateResult, securityGateResult);
         } catch (RuntimeException exception) {
             return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
         }
@@ -313,7 +303,9 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolUseRequest request,
         Tool<Map<String, Object>, ?> tool,
         Map<String, Object> input,
-        ToolUseContext toolContext
+        ToolUseContext toolContext,
+        PermissionGateResult toolGateResult,
+        PermissionGateResult securityGateResult
     ) {
         ToolExecutionEventPublisher.StartedToolExecution started = eventPublisher.start(
             toolContext.sessionId(),
@@ -329,6 +321,21 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolResult<?> finalResult = null;
         ToolExecutionStatus status = ToolExecutionStatus.FAILED;
         try {
+            if (toolGateResult.status() != PermissionGateResult.Status.ALLOW) {
+                status = statusForGateResult(toolGateResult);
+                finalResult = permissionGateError(request.toolUseId(), toolGateResult);
+                return finalResult;
+            }
+            if (securityGateResult.status() != PermissionGateResult.Status.ALLOW) {
+                status = statusForGateResult(securityGateResult);
+                finalResult = permissionGateError(request.toolUseId(), securityGateResult);
+                return finalResult;
+            }
+            if (shouldSkipForAbort(tool, toolContext)) {
+                status = ToolExecutionStatus.CANCELLED;
+                finalResult = errorResult(request.toolUseId(), "工具调用已中止。");
+                return finalResult;
+            }
             ToolResult<?> result = executeTool(request, tool, input, toolContext, started.progressSink());
             rawResult = applyAfterInterceptor(request, tool, toolContext, result);
             finalResult = resultBudgeter.apply(request.toolUseId(), tool.name(), rawResult, tool.maxResultSize());
@@ -357,6 +364,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 Map.of("toolName", tool.name())
             );
         }
+    }
+
+    private ToolExecutionStatus statusForGateResult(PermissionGateResult result) {
+        return result.status() == PermissionGateResult.Status.ABORT
+            ? ToolExecutionStatus.CANCELLED
+            : ToolExecutionStatus.FAILED;
     }
 
     private ToolResult<?> executeTool(
@@ -418,12 +431,6 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             metadata.put("truncated", true);
             metadata.put("truncationReason", "budgeted");
         }
-        result.replacement().ifPresent(replacement -> {
-            metadata.put("truncated", true);
-            metadata.put("truncationReason", "budgeted");
-            metadata.put("replacementPreview", replacement.preview());
-            metadata.put("replacementPath", replacement.persistedPath().toString());
-        });
         return new ToolOutputRef(
             "toolout_" + sessionId + "_" + toolUseId,
             sessionId,
