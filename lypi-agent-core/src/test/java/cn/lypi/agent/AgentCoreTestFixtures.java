@@ -262,9 +262,14 @@ final class AgentCoreTestFixtures {
     static final class StubToolRuntime implements ToolRuntimePort {
         final List<List<ToolUseRequest>> requests = new ArrayList<>();
         private final List<List<ToolResult<?>>> results = new ArrayList<>();
+        private final List<RuntimeException> failures = new ArrayList<>();
 
         void enqueue(List<ToolResult<?>> result) {
             results.add(result);
+        }
+
+        void failWith(RuntimeException failure) {
+            failures.add(failure);
         }
 
         @Override
@@ -284,6 +289,9 @@ final class AgentCoreTestFixtures {
         @Override
         public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
             this.requests.add(List.copyOf(requests));
+            if (!failures.isEmpty()) {
+                throw failures.removeFirst();
+            }
             if (results.isEmpty()) {
                 return List.of();
             }

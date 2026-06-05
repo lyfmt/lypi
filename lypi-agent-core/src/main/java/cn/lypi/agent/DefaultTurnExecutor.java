@@ -4,6 +4,7 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
@@ -22,6 +23,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 public final class DefaultTurnExecutor implements TurnExecutor {
     private final AgentCoreRuntimePorts ports;
@@ -50,18 +52,21 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
         publishMessageStart(request.sessionId(), user.id());
-        ports.sessionEngine().appendMessage(user);
+        String contextLeafId = ports.sessionEngine().appendMessage(user).leafId();
         publishMessageEnd(request.sessionId(), user.id());
         newMessages.add(user);
 
         ContextSnapshot context = null;
         int toolRound = 0;
         try {
-            context = buildContext(request);
+            context = buildContext(request, Optional.of(contextLeafId));
             AgentMessage assistant = runModel(request, context);
-            ports.sessionEngine().appendMessage(assistant);
+            contextLeafId = ports.sessionEngine().appendMessage(assistant).leafId();
             publishMessageEnd(request.sessionId(), assistant.id());
             newMessages.add(assistant);
+            if (isAssistantError(assistant, request)) {
+                return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
+            }
 
             while (!request.abortSignal().aborted()) {
                 List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
@@ -72,15 +77,18 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 List<ToolResult<?>> toolResults = executeTools(request.sessionId(), toolRequests, context);
                 for (ToolResult<?> toolResult : toolResults) {
                     for (AgentMessage toolMessage : toolResult.newMessages()) {
-                        ports.sessionEngine().appendMessage(toolMessage);
+                        contextLeafId = ports.sessionEngine().appendMessage(toolMessage).leafId();
                         newMessages.add(toolMessage);
                     }
                 }
-                context = buildContext(request);
+                context = buildContext(request, Optional.of(contextLeafId));
                 assistant = runModel(request, context);
-                ports.sessionEngine().appendMessage(assistant);
+                contextLeafId = ports.sessionEngine().appendMessage(assistant).leafId();
                 publishMessageEnd(request.sessionId(), assistant.id());
                 newMessages.add(assistant);
+                if (isAssistantError(assistant, request)) {
+                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
+                }
             }
         } catch (RuntimeException failure) {
             AgentCoreExceptionHandler.Failure handled = exceptionHandler.handle(
@@ -90,16 +98,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             );
             ports.sessionEngine().appendMessage(handled.message());
             newMessages.add(handled.message());
-            TurnState failedState = new TurnState(
-                turnId,
-                request.sessionId(),
-                context,
-                List.copyOf(newMessages),
-                toolRound,
-                TurnStatus.FAILED
-            );
-            ports.eventBus().publish(new TurnEndEvent(request.sessionId(), turnId, TurnStatus.FAILED.name(), clock.instant()));
-            return failedState;
+            return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
         }
 
         TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
@@ -119,10 +118,35 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         }
     }
 
-    private ContextSnapshot buildContext(TurnRequest request) {
+    private boolean isAssistantError(AgentMessage assistant, TurnRequest request) {
+        return !request.abortSignal().aborted()
+            && assistant.content().stream().anyMatch(block -> block.kind() == ContentBlockKind.ERROR);
+    }
+
+    private TurnState failedState(
+        String turnId,
+        String sessionId,
+        ContextSnapshot context,
+        List<AgentMessage> newMessages,
+        int toolRound
+    ) {
+        TurnState state = new TurnState(
+            turnId,
+            sessionId,
+            context,
+            List.copyOf(newMessages),
+            toolRound,
+            TurnStatus.FAILED
+        );
+        ports.eventBus().publish(new TurnEndEvent(sessionId, turnId, TurnStatus.FAILED.name(), clock.instant()));
+        return state;
+    }
+
+    private ContextSnapshot buildContext(TurnRequest request, Optional<String> leafEntryId) {
         ContextAssembly assembly = ports.contextAssembler().build(new ContextBuildRequest(
             request.sessionId(),
-            request.parentEntryId(),
+            leafEntryId,
+            // NOTE: TurnRequest 暂未携带 cwd；boot/session 接入后应改为传入真实工作目录。
             Path.of("."),
             true
         ));
@@ -154,7 +178,15 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         for (ToolUseRequest toolRequest : toolRequests) {
             ports.eventBus().publish(new ToolStartEvent(sessionId, toolRequest.toolUseId(), toolRequest.toolName(), clock.instant()));
         }
-        List<ToolResult<?>> results = ports.toolRuntime().execute(toolRequests, context);
+        List<ToolResult<?>> results;
+        try {
+            results = ports.toolRuntime().execute(toolRequests, context);
+        } catch (RuntimeException failure) {
+            for (ToolUseRequest request : toolRequests) {
+                ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), true, clock.instant()));
+            }
+            throw failure;
+        }
         for (int index = 0; index < toolRequests.size(); index++) {
             ToolUseRequest request = toolRequests.get(index);
             boolean error = index < results.size() && results.get(index).isError();

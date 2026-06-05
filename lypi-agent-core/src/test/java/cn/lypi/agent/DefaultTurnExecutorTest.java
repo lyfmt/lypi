@@ -16,6 +16,7 @@ import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
@@ -228,6 +229,58 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void publishesToolEndErrorEventsWhenToolRuntimeThrows() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), true),
+            new ToolCallDelta("toolu-2", "grep", Map.of("pattern", "agent"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        tools.failWith(new RuntimeException("tool runtime down"));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback", "msg-error"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "run tools", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(tools.requests.getFirst()).extracting(request -> request.toolUseId())
+            .containsExactly("toolu-1", "toolu-2");
+        assertThat(eventBus.events.stream()
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event) + ":" + toolError(event))
+            .toList())
+            .containsExactly(
+                "ToolStartEvent:toolu-1:false",
+                "ToolStartEvent:toolu-2:false",
+                "ToolEndEvent:toolu-1:true",
+                "ToolEndEvent:toolu-2:true"
+            );
+    }
+
+    @Test
     void runsCompactionPreflightBeforeModelCall() {
         AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
@@ -408,6 +461,99 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void failsTurnWhenProviderStreamEmitsAssistantError() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        AgentCoreTestFixtures.RecordingMemoryExtractionWorker memory = new AgentCoreTestFixtures.RecordingMemoryExtractionWorker();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-error"),
+            new AssistantError("provider-error", "provider stream failed")
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                memory
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-error");
+        assertThat(session.messages().getLast().kind()).isEqualTo(cn.lypi.contracts.context.MessageKind.ERROR);
+        assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
+        assertThat(memory.calls).isZero();
+    }
+
+    @Test
+    void failsTurnWhenProviderStreamEmitsToolCallAndAssistantError() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        AgentCoreTestFixtures.RecordingMemoryExtractionWorker memory = new AgentCoreTestFixtures.RecordingMemoryExtractionWorker();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-error"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), true),
+            new AssistantError("provider-error", "provider stream failed")
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                memory
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(tools.requests).isEmpty();
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-error");
+        assertThat(eventBus.events.stream()
+            .filter(MessageEndEvent.class::isInstance)
+            .map(MessageEndEvent.class::cast)
+            .map(MessageEndEvent::messageId)
+            .toList())
+            .containsExactly("msg-user", "msg-error");
+        assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
+        assertThat(memory.calls).isZero();
+    }
+
+    @Test
     void appendsTurnMessagesUnderRequestedParentEntryId() {
         AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
         session.openOrCreate("session-1");
@@ -450,6 +596,48 @@ class DefaultTurnExecutorTest {
         MessageEntry assistantEntry = (MessageEntry) session.entry("entry-msg-assistant");
         assertThat(userEntry.parentId()).isEqualTo(requestedParent);
         assertThat(assistantEntry.parentId()).isEqualTo("entry-msg-user");
+    }
+
+    @Test
+    void buildsFirstModelContextFromNewBranchLeafWhenParentEntryIdProvided() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        session.openOrCreate("session-1");
+        session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
+        String requestedParent = session.leafId();
+        session.appendMessage(AgentCoreTestFixtures.assistantMessage("msg-other", "other branch"));
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            session,
+            AgentCoreTestFixtures.fixedResourceRuntime("system"),
+            new ContextBudgetEstimator()
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "hello", Optional.of(requestedParent), () -> false));
+
+        assertThat(provider.contexts).hasSize(1);
+        assertThat(provider.contexts.getFirst().messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-root", "msg-user");
     }
 
     @Test
@@ -502,5 +690,12 @@ class DefaultTurnExecutorTest {
             return toolEnd.toolUseId();
         }
         return "";
+    }
+
+    private boolean toolError(AgentEvent event) {
+        if (event instanceof ToolEndEvent toolEnd) {
+            return toolEnd.error();
+        }
+        return false;
     }
 }
