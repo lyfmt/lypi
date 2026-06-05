@@ -71,6 +71,16 @@ final class TestTools {
         };
     }
 
+    static Tool<Map<String, Object>, String> progressEcho(String name, String progressMessage) {
+        return new EchoTool(name, List.of(), true, true, false, Duration.ZERO) {
+            @Override
+            public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+                progress.progress(progressMessage);
+                return super.execute(input, context, progress);
+            }
+        };
+    }
+
     static Tool<Map<String, Object>, String> countingTool(
         String name,
         InterruptBehavior interruptBehavior,

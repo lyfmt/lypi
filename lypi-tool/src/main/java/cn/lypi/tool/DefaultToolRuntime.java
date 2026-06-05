@@ -37,8 +37,6 @@ import java.util.concurrent.Semaphore;
 public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrator {
     private static final String METADATA_ORIGINAL_TOOL_NAME = "originalToolName";
     private static final String METADATA_TOOL_USE_ID = "toolUseId";
-    private static final ProgressSink NOOP_PROGRESS = message -> {
-    };
 
     private final ToolRegistry registry;
     private final ToolSchemaValidator schemaValidator;
@@ -48,6 +46,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final ToolExecutionInterceptor interceptor;
     private final SecurityRuntimePort securityRuntime;
     private final PermissionGate permissionGate;
+    private final ToolExecutionEventPublisher eventPublisher;
     private final int maxConcurrency;
 
     public DefaultToolRuntime(SecurityRuntimePort securityRuntime) {
@@ -64,6 +63,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             ToolExecutionInterceptors.noop(),
             securityRuntime,
             PermissionGate.denying(),
+            ToolExecutionEventPublisher.noop(),
             normalizeOptions(options).maxConcurrency()
         );
     }
@@ -86,6 +86,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             interceptor,
             securityRuntime,
             PermissionGate.denying(),
+            ToolExecutionEventPublisher.noop(),
             ToolRuntimeOptions.defaults().maxConcurrency()
         );
     }
@@ -109,6 +110,32 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             interceptor,
             securityRuntime,
             permissionGate,
+            ToolExecutionEventPublisher.noop(),
+            ToolRuntimeOptions.defaults().maxConcurrency()
+        );
+    }
+
+    DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        ToolExecutionEventPublisher eventPublisher
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            permissionGate,
+            eventPublisher,
             ToolRuntimeOptions.defaults().maxConcurrency()
         );
     }
@@ -122,6 +149,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolExecutionInterceptor interceptor,
         SecurityRuntimePort securityRuntime,
         PermissionGate permissionGate,
+        ToolExecutionEventPublisher eventPublisher,
         int maxConcurrency
     ) {
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
@@ -132,6 +160,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.interceptor = interceptor == null ? ToolExecutionInterceptors.noop() : interceptor;
         this.securityRuntime = Objects.requireNonNull(securityRuntime, "securityRuntime must not be null");
         this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
+        this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
         this.maxConcurrency = Math.max(1, maxConcurrency);
     }
 
@@ -265,10 +294,27 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 return errorResult(request.toolUseId(), "工具调用已中止。");
             }
 
-            ToolResult<?> result = executeTool(request, tool, input, toolContext);
-            return applyAfterInterceptorAndBudget(request, tool, toolContext, result);
+            return executeStartedCall(request, tool, input, toolContext);
         } catch (RuntimeException exception) {
             return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
+        }
+    }
+
+    private ToolResult<?> executeStartedCall(
+        ToolUseRequest request,
+        Tool<Map<String, Object>, ?> tool,
+        Map<String, Object> input,
+        ToolUseContext toolContext
+    ) {
+        ProgressSink progress = eventPublisher.start(toolContext.sessionId(), request.toolUseId(), tool.name());
+        boolean error = true;
+        try {
+            ToolResult<?> result = executeTool(request, tool, input, toolContext, progress);
+            ToolResult<?> finalResult = applyAfterInterceptorAndBudget(request, tool, toolContext, result);
+            error = finalResult.isError();
+            return finalResult;
+        } finally {
+            eventPublisher.end(toolContext.sessionId(), request.toolUseId(), error);
         }
     }
 
@@ -276,10 +322,11 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolUseRequest request,
         Tool<Map<String, Object>, ?> tool,
         Map<String, Object> input,
-        ToolUseContext toolContext
+        ToolUseContext toolContext,
+        ProgressSink progress
     ) {
         try {
-            return tool.execute(input, toolContext, NOOP_PROGRESS);
+            return tool.execute(input, toolContext, progress);
         } catch (RuntimeException exception) {
             return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
         }
