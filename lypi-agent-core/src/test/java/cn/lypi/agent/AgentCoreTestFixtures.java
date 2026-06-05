@@ -209,6 +209,10 @@ final class AgentCoreTestFixtures {
                 .toList();
         }
 
+        SessionEntry entry(String entryId) {
+            return entries.get(entryId);
+        }
+
         SessionHandle handle() {
             return new SessionHandle(sessionId, Path.of("test-session.jsonl"), leafId, Map.copyOf(entries));
         }
@@ -289,10 +293,14 @@ final class AgentCoreTestFixtures {
 
     static final class RecordingMemoryExtractionWorker implements MemoryExtractionWorker {
         int calls;
+        RuntimeException failure;
 
         @Override
         public MemoryExtractionResult extractAfterTurn(cn.lypi.contracts.agent.TurnState state) {
             calls++;
+            if (failure != null) {
+                throw failure;
+            }
             return new MemoryExtractionResult(List.of(), List.of(), List.of(), Optional.empty());
         }
     }

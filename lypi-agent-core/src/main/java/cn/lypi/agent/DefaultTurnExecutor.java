@@ -45,6 +45,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         String turnId = ids.newTurnId();
         List<AgentMessage> newMessages = new ArrayList<>();
         ports.sessionEngine().openOrCreate(request.sessionId());
+        request.parentEntryId().ifPresent(parentEntryId -> ports.sessionEngine().switchLeaf(parentEntryId));
         ports.eventBus().publish(new TurnStartEvent(request.sessionId(), turnId, clock.instant()));
 
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
@@ -104,10 +105,18 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
         TurnState state = new TurnState(turnId, request.sessionId(), context, List.copyOf(newMessages), toolRound, status);
         if (status == TurnStatus.COMPLETED) {
-            ports.memoryExtractionWorker().extractAfterTurn(state);
+            extractMemorySafely(state);
         }
         ports.eventBus().publish(new TurnEndEvent(request.sessionId(), turnId, status.name(), clock.instant()));
         return state;
+    }
+
+    private void extractMemorySafely(TurnState state) {
+        try {
+            ports.memoryExtractionWorker().extractAfterTurn(state);
+        } catch (RuntimeException ignored) {
+            // NOTE: 记忆提取是 turn 后置任务，失败不得改变 turn 结果。
+        }
     }
 
     private ContextSnapshot buildContext(TurnRequest request) {
