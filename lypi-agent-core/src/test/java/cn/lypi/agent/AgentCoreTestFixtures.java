@@ -231,15 +231,23 @@ final class AgentCoreTestFixtures {
 
     static final class StubAiProvider implements AiProviderRuntimePort {
         private final List<AssistantEventStream> streams = new ArrayList<>();
+        private final List<RuntimeException> failures = new ArrayList<>();
         final List<ContextSnapshot> contexts = new ArrayList<>();
 
         void enqueue(List<AssistantStreamEvent> events) {
             streams.add(new ListAssistantEventStream(events));
         }
 
+        void failWith(RuntimeException failure) {
+            failures.add(failure);
+        }
+
         @Override
         public AssistantEventStream stream(ContextSnapshot context, AbortSignal signal) {
             contexts.add(context);
+            if (!failures.isEmpty()) {
+                throw failures.removeFirst();
+            }
             if (streams.isEmpty()) {
                 throw new AssertionError("没有可用的测试模型流");
             }

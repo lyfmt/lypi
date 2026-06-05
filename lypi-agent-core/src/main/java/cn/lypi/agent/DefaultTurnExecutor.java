@@ -29,6 +29,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private final Clock clock;
     private final AgentMessageFactory messageFactory;
     private final ToolCallMapper toolCallMapper;
+    private final AgentCoreExceptionHandler exceptionHandler;
 
     public DefaultTurnExecutor(AgentCoreRuntimePorts ports, TurnIds ids, Clock clock) {
         this.ports = ports;
@@ -36,6 +37,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         this.clock = clock;
         this.messageFactory = new AgentMessageFactory(clock);
         this.toolCallMapper = new ToolCallMapper();
+        this.exceptionHandler = new AgentCoreExceptionHandler(ports.eventBus(), messageFactory, clock);
     }
 
     @Override
@@ -51,31 +53,52 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         publishMessageEnd(request.sessionId(), user.id());
         newMessages.add(user);
 
-        ContextSnapshot context = buildContext(request);
-        AgentMessage assistant = runModel(request, context);
-        ports.sessionEngine().appendMessage(assistant);
-        publishMessageEnd(request.sessionId(), assistant.id());
-        newMessages.add(assistant);
-
+        ContextSnapshot context = null;
         int toolRound = 0;
-        while (!request.abortSignal().aborted()) {
-            List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
-            if (toolRequests.isEmpty()) {
-                break;
-            }
-            toolRound++;
-            List<ToolResult<?>> toolResults = executeTools(request.sessionId(), toolRequests, context);
-            for (ToolResult<?> toolResult : toolResults) {
-                for (AgentMessage toolMessage : toolResult.newMessages()) {
-                    ports.sessionEngine().appendMessage(toolMessage);
-                    newMessages.add(toolMessage);
-                }
-            }
+        try {
             context = buildContext(request);
-            assistant = runModel(request, context);
+            AgentMessage assistant = runModel(request, context);
             ports.sessionEngine().appendMessage(assistant);
             publishMessageEnd(request.sessionId(), assistant.id());
             newMessages.add(assistant);
+
+            while (!request.abortSignal().aborted()) {
+                List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
+                if (toolRequests.isEmpty()) {
+                    break;
+                }
+                toolRound++;
+                List<ToolResult<?>> toolResults = executeTools(request.sessionId(), toolRequests, context);
+                for (ToolResult<?> toolResult : toolResults) {
+                    for (AgentMessage toolMessage : toolResult.newMessages()) {
+                        ports.sessionEngine().appendMessage(toolMessage);
+                        newMessages.add(toolMessage);
+                    }
+                }
+                context = buildContext(request);
+                assistant = runModel(request, context);
+                ports.sessionEngine().appendMessage(assistant);
+                publishMessageEnd(request.sessionId(), assistant.id());
+                newMessages.add(assistant);
+            }
+        } catch (RuntimeException failure) {
+            AgentCoreExceptionHandler.Failure handled = exceptionHandler.handle(
+                request.sessionId(),
+                ids.newMessageId(),
+                failure
+            );
+            ports.sessionEngine().appendMessage(handled.message());
+            newMessages.add(handled.message());
+            TurnState failedState = new TurnState(
+                turnId,
+                request.sessionId(),
+                context,
+                List.copyOf(newMessages),
+                toolRound,
+                TurnStatus.FAILED
+            );
+            ports.eventBus().publish(new TurnEndEvent(request.sessionId(), turnId, TurnStatus.FAILED.name(), clock.instant()));
+            return failedState;
         }
 
         TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
