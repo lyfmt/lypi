@@ -341,6 +341,11 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             finalResult = resultBudgeter.apply(request.toolUseId(), tool.name(), rawResult, tool.maxResultSize());
             status = finalResult.isError() ? ToolExecutionStatus.FAILED : ToolExecutionStatus.SUCCEEDED;
             return finalResult;
+        } catch (RuntimeException exception) {
+            finalResult = errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
+            rawResult = finalResult;
+            status = ToolExecutionStatus.FAILED;
+            return finalResult;
         } finally {
             Instant endedAt = Instant.now();
             ToolResult<?> eventResult = rawResult == null ? finalResult : rawResult;
@@ -421,7 +426,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             return null;
         }
         String outputText = outputText(result);
-        if (outputText.isEmpty() && !budgeted && result.replacement().isEmpty()) {
+        if (!budgeted && result.replacement().isEmpty()) {
             return null;
         }
         Map<String, Object> metadata = new LinkedHashMap<>();

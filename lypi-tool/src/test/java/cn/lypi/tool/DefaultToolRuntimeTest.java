@@ -312,6 +312,7 @@ class DefaultToolRuntimeTest {
         assertEquals("done", end.resultSummary().summary());
         assertFalse(end.resultSummary().error());
         assertEquals(4L, end.resultSummary().outputBytes());
+        assertEquals(null, end.resultRef());
         assertEquals(end.endedAt(), end.timestamp());
         assertTrue(end.durationMillis() >= 0);
     }
@@ -356,6 +357,8 @@ class DefaultToolRuntimeTest {
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
         assertEquals(ToolExecutionStatus.FAILED, end.status());
         assertTrue(end.resultSummary().error());
+        assertTrue(end.resultSummary().summary().contains("工具执行失败: after boom"));
+        assertEquals(result.newMessages().getFirst().content().getFirst().text(), end.resultSummary().summary());
     }
 
     @Test
