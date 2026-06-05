@@ -10,10 +10,14 @@ import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
+import cn.lypi.contracts.event.ToolEndEvent;
+import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.TextDelta;
+import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
@@ -24,12 +28,14 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private final TurnIds ids;
     private final Clock clock;
     private final AgentMessageFactory messageFactory;
+    private final ToolCallMapper toolCallMapper;
 
     public DefaultTurnExecutor(AgentCoreRuntimePorts ports, TurnIds ids, Clock clock) {
         this.ports = ports;
         this.ids = ids;
         this.clock = clock;
         this.messageFactory = new AgentMessageFactory(clock);
+        this.toolCallMapper = new ToolCallMapper();
     }
 
     @Override
@@ -45,6 +51,43 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         publishMessageEnd(request.sessionId(), user.id());
         newMessages.add(user);
 
+        ContextSnapshot context = buildContext(request);
+        AgentMessage assistant = runModel(request, context);
+        ports.sessionEngine().appendMessage(assistant);
+        publishMessageEnd(request.sessionId(), assistant.id());
+        newMessages.add(assistant);
+
+        int toolRound = 0;
+        while (!request.abortSignal().aborted()) {
+            List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
+            if (toolRequests.isEmpty()) {
+                break;
+            }
+            toolRound++;
+            List<ToolResult<?>> toolResults = executeTools(request.sessionId(), toolRequests, context);
+            for (ToolResult<?> toolResult : toolResults) {
+                for (AgentMessage toolMessage : toolResult.newMessages()) {
+                    ports.sessionEngine().appendMessage(toolMessage);
+                    newMessages.add(toolMessage);
+                }
+            }
+            context = buildContext(request);
+            assistant = runModel(request, context);
+            ports.sessionEngine().appendMessage(assistant);
+            publishMessageEnd(request.sessionId(), assistant.id());
+            newMessages.add(assistant);
+        }
+
+        TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
+        TurnState state = new TurnState(turnId, request.sessionId(), context, List.copyOf(newMessages), toolRound, status);
+        if (status == TurnStatus.COMPLETED) {
+            ports.memoryExtractionWorker().extractAfterTurn(state);
+        }
+        ports.eventBus().publish(new TurnEndEvent(request.sessionId(), turnId, status.name(), clock.instant()));
+        return state;
+    }
+
+    private ContextSnapshot buildContext(TurnRequest request) {
         ContextAssembly assembly = ports.contextAssembler().build(new ContextBuildRequest(
             request.sessionId(),
             request.parentEntryId(),
@@ -52,8 +95,10 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             true
         ));
         CompactionDecision compaction = ports.compactionCoordinator().preflight(assembly.snapshot());
-        ContextSnapshot context = compaction.context();
+        return compaction.context();
+    }
 
+    private AgentMessage runModel(TurnRequest request, ContextSnapshot context) {
         AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
         try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
@@ -70,18 +115,20 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             }
         }
 
-        AgentMessage assistant = accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
-        ports.sessionEngine().appendMessage(assistant);
-        publishMessageEnd(request.sessionId(), assistant.id());
-        newMessages.add(assistant);
+        return accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
+    }
 
-        TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
-        TurnState state = new TurnState(turnId, request.sessionId(), context, List.copyOf(newMessages), 0, status);
-        if (status == TurnStatus.COMPLETED) {
-            ports.memoryExtractionWorker().extractAfterTurn(state);
+    private List<ToolResult<?>> executeTools(String sessionId, List<ToolUseRequest> toolRequests, ContextSnapshot context) {
+        for (ToolUseRequest toolRequest : toolRequests) {
+            ports.eventBus().publish(new ToolStartEvent(sessionId, toolRequest.toolUseId(), toolRequest.toolName(), clock.instant()));
         }
-        ports.eventBus().publish(new TurnEndEvent(request.sessionId(), turnId, status.name(), clock.instant()));
-        return state;
+        List<ToolResult<?>> results = ports.toolRuntime().execute(toolRequests, context);
+        for (int index = 0; index < toolRequests.size(); index++) {
+            ToolUseRequest request = toolRequests.get(index);
+            boolean error = index < results.size() && results.get(index).isError();
+            ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), error, clock.instant()));
+        }
+        return results;
     }
 
     private String currentAssistantId(AssistantStreamAccumulator accumulator) {
