@@ -21,8 +21,12 @@ import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionEnginePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
@@ -95,6 +99,38 @@ final class AgentCoreTestFixtures {
             cn.lypi.contracts.security.AgentMode.EXECUTE,
             cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE,
             new cn.lypi.contracts.context.ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0, 0, java.math.BigDecimal.ZERO)
+        );
+    }
+
+    static SecurityRuntimePort allowAllSecurityRuntime() {
+        return (request, context) -> new PermissionDecision(
+            PermissionBehavior.ALLOW,
+            PermissionDecisionReason.MODE_DEFAULT,
+            "allowed",
+            Optional.empty(),
+            Map.of()
+        );
+    }
+
+    static AgentCoreRuntimePorts ports(
+        InMemorySessionEngine session,
+        StubAiProvider aiProvider,
+        StubToolRuntime toolRuntime,
+        RecordingEventBus eventBus,
+        ContextAssembler contextAssembler,
+        CompactionCoordinator compactionCoordinator,
+        MemoryExtractionWorker memoryExtractionWorker
+    ) {
+        return new AgentCoreRuntimePorts(
+            session,
+            aiProvider,
+            toolRuntime,
+            allowAllSecurityRuntime(),
+            fixedResourceRuntime("system"),
+            eventBus,
+            contextAssembler,
+            compactionCoordinator,
+            memoryExtractionWorker
         );
     }
 

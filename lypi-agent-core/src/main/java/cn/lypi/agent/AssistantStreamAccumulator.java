@@ -98,6 +98,10 @@ public final class AssistantStreamAccumulator {
         return stopReason;
     }
 
+    public Optional<String> messageId() {
+        return Optional.ofNullable(messageId).filter(id -> !id.isBlank());
+    }
+
     private MessageKind kind(List<ContentBlock> content) {
         if (content.stream().anyMatch(ToolCallContentBlock.class::isInstance)) {
             return MessageKind.TOOL_CALL;
