@@ -22,6 +22,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 import static cn.lypi.agent.AgentCoreTestFixtures.NOW;
@@ -197,5 +198,56 @@ class DefaultTurnExecutorTest {
         executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
 
         assertThat(provider.contexts).containsExactly(compactedContext);
+    }
+
+    @Test
+    void abortsAndPersistsPartialAssistant() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        AgentCoreTestFixtures.RecordingMemoryExtractionWorker memory = new AgentCoreTestFixtures.RecordingMemoryExtractionWorker();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        AtomicBoolean aborted = new AtomicBoolean();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-partial"),
+            new TextDelta("partial"),
+            new TextDelta("ignored")
+        ));
+
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                memory
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest(
+            "session-1",
+            "hello",
+            Optional.empty(),
+            () -> aborted.getAndSet(true)
+        ));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.ABORTED);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-partial");
+        assertThat(session.messages().getLast().content().getFirst().text()).isEqualTo("partial");
+        assertThat(session.messages().getLast().stopReason()).contains("aborted");
+        assertThat(memory.calls).isZero();
     }
 }

@@ -279,6 +279,16 @@ final class AgentCoreTestFixtures {
         }
     }
 
+    static final class RecordingMemoryExtractionWorker implements MemoryExtractionWorker {
+        int calls;
+
+        @Override
+        public MemoryExtractionResult extractAfterTurn(cn.lypi.contracts.agent.TurnState state) {
+            calls++;
+            return new MemoryExtractionResult(List.of(), List.of(), List.of(), Optional.empty());
+        }
+    }
+
     static final class ListAssistantEventStream implements AssistantEventStream {
         private final List<AssistantStreamEvent> events;
         private boolean closed;
