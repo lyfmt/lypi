@@ -5,6 +5,10 @@ import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionOption;
+import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.security.PermissionOptionPolicy;
+import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -20,11 +24,19 @@ import java.util.Optional;
  */
 public final class EventPublishingPermissionGate implements PermissionGate {
     private final EventBus eventBus;
-    private final PermissionGate delegate;
+    private final PermissionGate legacyDelegate;
+    private final PermissionResponseGate responseDelegate;
 
     public EventPublishingPermissionGate(EventBus eventBus, PermissionGate delegate) {
         this.eventBus = Objects.requireNonNull(eventBus, "eventBus must not be null");
-        this.delegate = delegate == null ? PermissionGate.denying() : delegate;
+        this.legacyDelegate = delegate == null ? PermissionGate.denying() : delegate;
+        this.responseDelegate = null;
+    }
+
+    public EventPublishingPermissionGate(EventBus eventBus, PermissionResponseGate delegate) {
+        this.eventBus = Objects.requireNonNull(eventBus, "eventBus must not be null");
+        this.legacyDelegate = null;
+        this.responseDelegate = delegate == null ? requestEvent -> fallbackDenyResponse(requestEvent) : delegate;
     }
 
     @Override
@@ -36,27 +48,79 @@ public final class EventPublishingPermissionGate implements PermissionGate {
     ) {
         String renderedToolUse = renderToolUse(request, tool);
         String message = decisionMessage(decision);
-        eventBus.publish(new PermissionRequestEvent(
+        PermissionOptionPolicy.Options optionPolicy = PermissionOptionPolicy.fromDecision(decision);
+        PermissionRequestEvent requestEvent = new PermissionRequestEvent(
             context.sessionId(),
+            requestId(request),
             request.toolUseId(),
             tool.name(),
+            message,
             renderedToolUse,
             message,
             decision,
+            optionPolicy.options(),
+            optionPolicy.defaultOptionId(),
+            optionPolicy.cancelOptionId(),
+            Map.of("toolName", tool.name()),
             Instant.now()
-        ));
+        );
+        eventBus.publish(requestEvent);
 
-        PermissionGateResult result = Optional.ofNullable(delegate.request(request, tool, context, decision))
-            .orElseGet(() -> PermissionGateResult.deny(message));
+        PermissionResponse response = Optional.ofNullable(response(requestEvent, request, tool, context, decision))
+            .orElseGet(() -> fallbackDenyResponse(requestEvent));
+        boolean responseMatches = responseMatches(requestEvent, response);
+        if (!responseMatches) {
+            response = fallbackDenyResponse(requestEvent);
+        }
+        PermissionOption selectedOption = selectedOption(requestEvent, response);
+        PermissionGateResult result = resultFromOption(selectedOption, response, message);
         eventBus.publish(new PermissionDecisionEvent(
             context.sessionId(),
+            requestEvent.requestId(),
             request.toolUseId(),
             tool.name(),
             renderedToolUse,
-            decisionFromResult(result, decision),
+            selectedOption.optionId(),
+            decisionFromResult(result, selectedOption, decision),
+            Optional.empty(),
+            decisionMetadata(selectedOption, responseMatches),
             Instant.now()
         ));
         return result;
+    }
+
+    private PermissionResponse response(
+        PermissionRequestEvent requestEvent,
+        ToolUseRequest request,
+        Tool<?, ?> tool,
+        ToolUseContext context,
+        PermissionDecision decision
+    ) {
+        if (responseDelegate != null) {
+            return responseDelegate.request(requestEvent);
+        }
+        return responseFromLegacyGate(requestEvent, request, tool, context, decision);
+    }
+
+    private PermissionResponse responseFromLegacyGate(
+        PermissionRequestEvent requestEvent,
+        ToolUseRequest request,
+        Tool<?, ?> tool,
+        ToolUseContext context,
+        PermissionDecision decision
+    ) {
+        PermissionGateResult result = Optional.ofNullable(legacyDelegate.request(request, tool, context, decision))
+            .orElseGet(() -> PermissionGateResult.deny(requestEvent.message()));
+        String optionId = switch (result.status()) {
+            case ALLOW -> result.permissionUpdate().isPresent() ? rememberOptionId(requestEvent) : "allow_once";
+            case DENY -> "deny";
+            case ABORT -> requestEvent.cancelOptionId();
+        };
+        return new PermissionResponse(requestEvent.sessionId(), requestEvent.requestId(), optionId, false, Instant.now());
+    }
+
+    private PermissionResponse fallbackDenyResponse(PermissionRequestEvent requestEvent) {
+        return new PermissionResponse(requestEvent.sessionId(), requestEvent.requestId(), "deny", false, Instant.now());
     }
 
     @SuppressWarnings("unchecked")
@@ -67,6 +131,14 @@ public final class EventPublishingPermissionGate implements PermissionGate {
     }
 
     private PermissionDecision decisionFromResult(PermissionGateResult result, PermissionDecision originalDecision) {
+        return decisionFromResult(result, null, originalDecision);
+    }
+
+    private PermissionDecision decisionFromResult(
+        PermissionGateResult result,
+        PermissionOption selectedOption,
+        PermissionDecision originalDecision
+    ) {
         PermissionBehavior behavior = switch (result.status()) {
             case ALLOW -> PermissionBehavior.ALLOW;
             case DENY, ABORT -> PermissionBehavior.DENY;
@@ -75,9 +147,69 @@ public final class EventPublishingPermissionGate implements PermissionGate {
             behavior,
             originalDecision.reason(),
             result.message().orElse(decisionMessage(originalDecision)),
-            result.permissionUpdate().or(() -> originalDecision.suggestedUpdate()),
+            result.permissionUpdate()
+                .or(() -> selectedOption == null ? Optional.empty() : selectedOption.permissionUpdate())
+                .or(() -> originalDecision.suggestedUpdate()),
             originalDecision.metadata()
         );
+    }
+
+    private PermissionOption selectedOption(PermissionRequestEvent requestEvent, PermissionResponse response) {
+        if (response.fromKeyboardCancel()) {
+            return requestEvent.options().stream()
+                .filter(option -> option.optionId().equals(requestEvent.cancelOptionId()))
+                .findFirst()
+                .orElseGet(() -> requestEvent.options().stream()
+                    .filter(option -> option.kind() == PermissionOptionKind.DENY)
+                    .findFirst()
+                    .orElse(requestEvent.options().getFirst()));
+        }
+        return requestEvent.options().stream()
+            .filter(option -> option.optionId().equals(response.selectedOptionId()))
+            .findFirst()
+            .orElseGet(() -> requestEvent.options().stream()
+                .filter(option -> option.kind() == PermissionOptionKind.DENY)
+                .findFirst()
+                .orElse(requestEvent.options().getFirst()));
+    }
+
+    private PermissionGateResult resultFromOption(PermissionOption selectedOption, PermissionResponse response, String message) {
+        if (response.fromKeyboardCancel() || selectedOption.kind() == PermissionOptionKind.CANCEL) {
+            return PermissionGateResult.abort(message);
+        }
+        return switch (selectedOption.kind()) {
+            case ALLOW_ONCE -> PermissionGateResult.allow();
+            case ALLOW_AND_REMEMBER -> PermissionGateResult.allow(selectedOption.permissionUpdate());
+            case DENY -> PermissionGateResult.deny(message);
+            case CANCEL -> PermissionGateResult.abort(message);
+        };
+    }
+
+    private boolean responseMatches(PermissionRequestEvent requestEvent, PermissionResponse response) {
+        return Objects.equals(requestEvent.sessionId(), response.sessionId())
+            && Objects.equals(requestEvent.requestId(), response.requestId());
+    }
+
+    private Map<String, Object> decisionMetadata(PermissionOption selectedOption, boolean responseMatches) {
+        if (!responseMatches) {
+            return Map.of("updateStatus", "response_mismatch");
+        }
+        if (selectedOption.kind() == PermissionOptionKind.ALLOW_AND_REMEMBER) {
+            return Map.of("updateStatus", "pending_external_application");
+        }
+        return Map.of("updateStatus", "selected");
+    }
+
+    private String rememberOptionId(PermissionRequestEvent requestEvent) {
+        return requestEvent.options().stream()
+            .filter(option -> option.kind() == PermissionOptionKind.ALLOW_AND_REMEMBER)
+            .map(PermissionOption::optionId)
+            .findFirst()
+            .orElse("allow_once");
+    }
+
+    private String requestId(ToolUseRequest request) {
+        return "perm_" + request.toolUseId();
     }
 
     private String decisionMessage(PermissionDecision decision) {
