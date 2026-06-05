@@ -6,6 +6,7 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.memory.MemoryCandidate;
 import cn.lypi.contracts.memory.MemoryWriteRequest;
 import cn.lypi.contracts.session.CompactionPlan;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ class AgentCoreContractCompilationTest {
         ContextBuildRequest request = new ContextBuildRequest(
             "session-1",
             Optional.of("leaf-entry"),
+            Path.of("."),
             true
         );
         ContextAssembly assembly = new ContextAssembly(

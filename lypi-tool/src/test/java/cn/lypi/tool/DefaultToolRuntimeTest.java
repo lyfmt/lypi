@@ -23,6 +23,7 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -201,6 +202,22 @@ class DefaultToolRuntimeTest {
         ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
 
         assertEquals(1, maxActive.get());
+    }
+
+    @Test
+    void exposesSameCwdAsToolContextFactory() {
+        Path cwd = Path.of("/workspace/project").toAbsolutePath().normalize();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(cwd).build()),
+            ToolExecutionInterceptors.noop(),
+            allowAllSecurity()
+        );
+
+        assertEquals(cwd, runtime.cwd());
     }
 
     @Test

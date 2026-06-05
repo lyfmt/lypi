@@ -4,6 +4,7 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -20,6 +21,10 @@ public final class ToolRuntimeContextFactory {
 
     public ToolRuntimeContextFactory(ToolRuntimeOptions options) {
         this.options = options == null ? ToolRuntimeOptions.defaults() : options;
+    }
+
+    public Path cwd() {
+        return options.cwd();
     }
 
     /**
