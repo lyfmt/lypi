@@ -265,6 +265,10 @@ final class AgentCoreTestFixtures {
             streams.add(new ListAssistantEventStream(events));
         }
 
+        void enqueueFailingAfter(List<AssistantStreamEvent> events, RuntimeException failure) {
+            streams.add(new FailingAssistantEventStream(events, failure));
+        }
+
         void failWith(RuntimeException failure) {
             failures.add(failure);
         }
@@ -357,6 +361,46 @@ final class AgentCoreTestFixtures {
         @Override
         public Iterator<AssistantStreamEvent> iterator() {
             return events.iterator();
+        }
+
+        @Override
+        public AssistantStreamResult result() {
+            return new AssistantStreamResult("", events, Optional.empty(), Optional.empty(), !closed, false, Optional.empty());
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+    }
+
+    static final class FailingAssistantEventStream implements AssistantEventStream {
+        private final List<AssistantStreamEvent> events;
+        private final RuntimeException failure;
+        private boolean closed;
+
+        FailingAssistantEventStream(List<AssistantStreamEvent> events, RuntimeException failure) {
+            this.events = List.copyOf(events);
+            this.failure = failure;
+        }
+
+        @Override
+        public Iterator<AssistantStreamEvent> iterator() {
+            Iterator<AssistantStreamEvent> delegate = events.iterator();
+            return new Iterator<>() {
+                @Override
+                public boolean hasNext() {
+                    if (delegate.hasNext()) {
+                        return true;
+                    }
+                    throw failure;
+                }
+
+                @Override
+                public AssistantStreamEvent next() {
+                    return delegate.next();
+                }
+            };
         }
 
         @Override

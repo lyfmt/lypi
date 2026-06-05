@@ -24,8 +24,14 @@ class ToolCallMapperTest {
             MessageKind.TOOL_CALL,
             List.of(
                 new TextContentBlock("checking"),
-                new ToolCallContentBlock("toolu-1", "read", "", Map.of("input", Map.of("path", "pom.xml"))),
-                new ToolCallContentBlock("toolu-2", "bash", "", Map.of("input", Map.of("timeout", 10L, "trusted", true)))
+                new ToolCallContentBlock("toolu-1", "read", "", Map.of(
+                    "input", Map.of("path", "pom.xml"),
+                    "complete", true
+                )),
+                new ToolCallContentBlock("toolu-2", "bash", "", Map.of(
+                    "input", Map.of("timeout", 10L, "trusted", true),
+                    "complete", true
+                ))
             ),
             NOW,
             Optional.empty(),
@@ -51,6 +57,26 @@ class ToolCallMapperTest {
     }
 
     @Test
+    void ignoresIncompleteToolCallBlocks() {
+        AgentMessage assistant = new AgentMessage(
+            "msg-a",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new ToolCallContentBlock(
+                "toolu-1",
+                "read",
+                "",
+                Map.of("input", Map.of("path", "pom.xml"), "complete", false)
+            )),
+            NOW,
+            Optional.empty(),
+            Optional.of("tool_calls")
+        );
+
+        assertThat(new ToolCallMapper().requestsFrom(assistant)).isEmpty();
+    }
+
+    @Test
     void keepsNestedStructuredInputFromMetadata() {
         Map<String, Object> input = Map.of(
             "options", Map.of("encoding", "utf-8"),
@@ -61,7 +87,10 @@ class ToolCallMapperTest {
             "msg-a",
             MessageRole.ASSISTANT,
             MessageKind.TOOL_CALL,
-            List.of(new ToolCallContentBlock("toolu-1", "read", "", Map.of("input", input))),
+            List.of(new ToolCallContentBlock("toolu-1", "read", "", Map.of(
+                "input", input,
+                "complete", true
+            ))),
             NOW,
             Optional.empty(),
             Optional.of("tool_calls")

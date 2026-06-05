@@ -11,7 +11,7 @@ public final class ToolCallMapper {
     public List<ToolUseRequest> requestsFrom(AgentMessage assistant) {
         List<ToolUseRequest> requests = new ArrayList<>();
         for (cn.lypi.contracts.context.ContentBlock block : assistant.content()) {
-            if (block instanceof ToolCallContentBlock toolCall) {
+            if (block instanceof ToolCallContentBlock toolCall && complete(toolCall)) {
                 requests.add(new ToolUseRequest(
                     toolCall.toolUseId(),
                     toolCall.toolName(),
@@ -21,6 +21,11 @@ public final class ToolCallMapper {
             }
         }
         return List.copyOf(requests);
+    }
+
+    private boolean complete(ToolCallContentBlock toolCall) {
+        Object complete = toolCall.metadata().get("complete");
+        return Boolean.TRUE.equals(complete);
     }
 
     private Map<String, Object> inputFrom(ToolCallContentBlock toolCall) {

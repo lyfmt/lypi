@@ -51,9 +51,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ports.eventBus().publish(new TurnStartEvent(request.sessionId(), turnId, clock.instant()));
 
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
-        publishMessageStart(request.sessionId(), user.id());
-        String contextLeafId = ports.sessionEngine().appendMessage(user).leafId();
-        publishMessageEnd(request.sessionId(), user.id());
+        String contextLeafId = appendNewMessage(request.sessionId(), user);
         newMessages.add(user);
 
         ContextSnapshot context = null;
@@ -61,8 +59,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         try {
             context = buildContext(request, Optional.of(contextLeafId));
             AgentMessage assistant = runModel(request, context);
-            contextLeafId = ports.sessionEngine().appendMessage(assistant).leafId();
-            publishMessageEnd(request.sessionId(), assistant.id());
+            contextLeafId = appendStartedMessage(request.sessionId(), assistant);
             newMessages.add(assistant);
             if (isAssistantError(assistant, request)) {
                 return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
@@ -79,7 +76,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         "max-tool-rounds-exceeded",
                         "已达到工具调用轮数上限 " + request.maxToolRounds() + "，终止本轮执行以避免无限循环。"
                     );
-                    ports.sessionEngine().appendMessage(error);
+                    appendNewMessage(request.sessionId(), error);
                     newMessages.add(error);
                     return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
                 }
@@ -87,14 +84,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 List<ToolResult<?>> toolResults = executeTools(request.sessionId(), toolRequests, context);
                 for (ToolResult<?> toolResult : toolResults) {
                     for (AgentMessage toolMessage : toolResult.newMessages()) {
-                        contextLeafId = ports.sessionEngine().appendMessage(toolMessage).leafId();
+                        contextLeafId = appendNewMessage(request.sessionId(), toolMessage);
                         newMessages.add(toolMessage);
                     }
                 }
                 context = buildContext(request, Optional.of(contextLeafId));
                 assistant = runModel(request, context);
-                contextLeafId = ports.sessionEngine().appendMessage(assistant).leafId();
-                publishMessageEnd(request.sessionId(), assistant.id());
+                contextLeafId = appendStartedMessage(request.sessionId(), assistant);
                 newMessages.add(assistant);
                 if (isAssistantError(assistant, request)) {
                     return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
@@ -106,7 +102,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 ids.newMessageId(),
                 failure
             );
-            ports.sessionEngine().appendMessage(handled.message());
+            appendNewMessage(request.sessionId(), handled.message());
             newMessages.add(handled.message());
             return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
         }
@@ -166,11 +162,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private AgentMessage runModel(TurnRequest request, ContextSnapshot context) {
         AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
+        Optional<String> startedAssistantMessageId = Optional.empty();
         try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
                 accumulator.accept(event);
                 if (event instanceof AssistantStart start) {
                     publishMessageStart(request.sessionId(), start.messageId());
+                    startedAssistantMessageId = Optional.of(start.messageId());
                 }
                 if (event instanceof TextDelta delta) {
                     ports.eventBus().publish(new MessageDeltaEvent(request.sessionId(), currentAssistantId(accumulator), delta.text(), clock.instant()));
@@ -179,6 +177,9 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     break;
                 }
             }
+        } catch (RuntimeException failure) {
+            startedAssistantMessageId.ifPresent(messageId -> publishMessageEnd(request.sessionId(), messageId));
+            throw failure;
         }
 
         return accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
@@ -225,6 +226,17 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         for (ToolUseRequest request : toolRequests) {
             ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), true, clock.instant()));
         }
+    }
+
+    private String appendNewMessage(String sessionId, AgentMessage message) {
+        publishMessageStart(sessionId, message.id());
+        return appendStartedMessage(sessionId, message);
+    }
+
+    private String appendStartedMessage(String sessionId, AgentMessage message) {
+        String leafId = ports.sessionEngine().appendMessage(message).leafId();
+        publishMessageEnd(sessionId, message.id());
+        return leafId;
     }
 
     private String currentAssistantId(AssistantStreamAccumulator accumulator) {
