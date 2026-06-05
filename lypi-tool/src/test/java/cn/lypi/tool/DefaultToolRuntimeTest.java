@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
@@ -293,7 +294,8 @@ class DefaultToolRuntimeTest {
         ToolProgressEvent progress = assertInstanceOf(ToolProgressEvent.class, events.events.get(1));
         assertEquals("ses_1", progress.sessionId());
         assertEquals("toolu_1", progress.toolUseId());
-        assertEquals("executor progress", progress.message());
+        assertEquals(ToolProgressKind.STATUS, progress.progress().kind());
+        assertEquals("executor progress", progress.progress().title());
 
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(2));
         assertEquals("ses_1", end.sessionId());
