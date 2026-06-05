@@ -18,7 +18,11 @@ import java.time.Instant;
     @JsonSubTypes.Type(value = BranchSummaryEntry.class, name = "branch_summary"),
     @JsonSubTypes.Type(value = CustomMessageEntry.class, name = "custom_message"),
     @JsonSubTypes.Type(value = LabelEntry.class, name = "label"),
-    @JsonSubTypes.Type(value = SessionInfoEntry.class, name = "session_info")
+    @JsonSubTypes.Type(value = SessionInfoEntry.class, name = "session_info"),
+    @JsonSubTypes.Type(value = PermissionDecisionEntry.class, name = "permission_decision"),
+    @JsonSubTypes.Type(value = CommandEntry.class, name = "command"),
+    @JsonSubTypes.Type(value = ToolUseAuditEntry.class, name = "tool_use_audit"),
+    @JsonSubTypes.Type(value = ToolOutputEntry.class, name = "tool_output")
 })
 public interface SessionEntry {
     String id();

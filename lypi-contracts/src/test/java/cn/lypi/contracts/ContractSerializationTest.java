@@ -42,8 +42,13 @@ import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.session.CommandEntry;
+import cn.lypi.contracts.session.CommandKind;
 import cn.lypi.contracts.session.CustomMessageEntry;
+import cn.lypi.contracts.session.PermissionDecisionEntry;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.ToolOutputEntry;
+import cn.lypi.contracts.session.ToolUseAuditEntry;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolResultSummary;
@@ -76,6 +81,116 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"type\":\"custom_message\""));
         assertInstanceOf(CustomMessageEntry.class, restored);
         assertEquals("ent_01", restored.id());
+    }
+
+    @Test
+    void replayableSessionEntriesRoundTripWithStableTypeNames() throws Exception {
+        Instant timestamp = Instant.parse("2026-06-01T12:00:00Z");
+        PermissionDecision decision = new PermissionDecision(
+            PermissionBehavior.ALLOW,
+            PermissionDecisionReason.TOOL_SPECIFIC,
+            "允许本次 bash",
+            Optional.empty(),
+            Map.of("source", "test")
+        );
+        ToolResultSummary summary = new ToolResultSummary(
+            "bash succeeded",
+            "hello",
+            false,
+            0,
+            false,
+            42L,
+            Map.of("toolName", "bash")
+        );
+        ToolOutputRef ref = new ToolOutputRef(
+            "toolout_01",
+            "ses_01",
+            "toolu_01",
+            "text/plain; charset=utf-8",
+            "session_blob",
+            ".lypi/tool-output/toolout_01.txt",
+            "sha256:abc123",
+            42L,
+            Map.of("truncated", false)
+        );
+
+        assertSessionEntryType(
+            new PermissionDecisionEntry(
+                "ent_permission",
+                "ent_parent",
+                "toolu_01",
+                "bash",
+                "echo hello",
+                decision,
+                timestamp
+            ),
+            "permission_decision",
+            PermissionDecisionEntry.class
+        );
+        assertSessionEntryType(
+            new CommandEntry(
+                "ent_command",
+                "ent_permission",
+                CommandKind.STATE_CHANGE,
+                "/model gpt-5.4",
+                "model",
+                Map.of("model", "gpt-5.4"),
+                timestamp
+            ),
+            "command",
+            CommandEntry.class
+        );
+        assertSessionEntryType(
+            new ToolUseAuditEntry(
+                "ent_tool",
+                "ent_command",
+                "toolu_01",
+                "msg_parent",
+                "turn_01",
+                "bash",
+                "Bash",
+                "echo hello",
+                ToolExecutionStatus.SUCCEEDED,
+                0,
+                summary,
+                ref,
+                timestamp,
+                timestamp.plusSeconds(1),
+                1000L,
+                Map.of("cwd", "/tmp"),
+                timestamp.plusSeconds(1)
+            ),
+            "tool_use_audit",
+            ToolUseAuditEntry.class
+        );
+        assertSessionEntryType(
+            new ToolOutputEntry(
+                "ent_output",
+                "ent_tool",
+                "toolu_01",
+                ref,
+                summary,
+                "sha256:abc123",
+                42L,
+                Map.of("preview", "hello"),
+                timestamp.plusSeconds(1)
+            ),
+            "tool_output",
+            ToolOutputEntry.class
+        );
+    }
+
+    private void assertSessionEntryType(
+        SessionEntry entry,
+        String expectedType,
+        Class<? extends SessionEntry> expectedClass
+    ) throws Exception {
+        String json = mapper.writeValueAsString(entry);
+        SessionEntry restored = mapper.readValue(json, SessionEntry.class);
+
+        assertTrue(json.contains("\"type\":\"" + expectedType + "\""));
+        assertInstanceOf(expectedClass, restored);
+        assertEquals(entry.id(), restored.id());
     }
 
     @Test

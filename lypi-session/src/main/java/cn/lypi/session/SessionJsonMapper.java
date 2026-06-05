@@ -2,6 +2,7 @@ package cn.lypi.session;
 
 import cn.lypi.contracts.memory.MemoryWriteEntry;
 import cn.lypi.contracts.session.BranchSummaryEntry;
+import cn.lypi.contracts.session.CommandEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.FileChangeEntry;
@@ -9,11 +10,14 @@ import cn.lypi.contracts.session.LabelEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
+import cn.lypi.contracts.session.PermissionDecisionEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.session.ToolOutputEntry;
+import cn.lypi.contracts.session.ToolUseAuditEntry;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -43,7 +47,11 @@ final class SessionJsonMapper {
         Map.entry("file_change", FileChangeEntry.class),
         Map.entry("custom_message", CustomMessageEntry.class),
         Map.entry("label", LabelEntry.class),
-        Map.entry("session_info", SessionInfoEntry.class)
+        Map.entry("session_info", SessionInfoEntry.class),
+        Map.entry("permission_decision", PermissionDecisionEntry.class),
+        Map.entry("command", CommandEntry.class),
+        Map.entry("tool_use_audit", ToolUseAuditEntry.class),
+        Map.entry("tool_output", ToolOutputEntry.class)
     );
     private final Map<Class<? extends SessionEntry>, String> typeNames = Map.ofEntries(
         Map.entry(MessageEntry.class, "message"),
@@ -57,7 +65,11 @@ final class SessionJsonMapper {
         Map.entry(FileChangeEntry.class, "file_change"),
         Map.entry(CustomMessageEntry.class, "custom_message"),
         Map.entry(LabelEntry.class, "label"),
-        Map.entry(SessionInfoEntry.class, "session_info")
+        Map.entry(SessionInfoEntry.class, "session_info"),
+        Map.entry(PermissionDecisionEntry.class, "permission_decision"),
+        Map.entry(CommandEntry.class, "command"),
+        Map.entry(ToolUseAuditEntry.class, "tool_use_audit"),
+        Map.entry(ToolOutputEntry.class, "tool_output")
     );
 
     SessionJsonMapper() {
@@ -66,6 +78,10 @@ final class SessionJsonMapper {
         objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
         objectMapper.registerModule(new Jdk8Module());
         objectMapper.registerModule(new JavaTimeModule());
+    }
+
+    ObjectMapper objectMapper() {
+        return objectMapper.copy();
     }
 
     /**
