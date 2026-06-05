@@ -21,13 +21,18 @@ import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
+import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
+import cn.lypi.contracts.tool.ToolOutputRef;
+import cn.lypi.contracts.tool.ToolResultSummary;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -94,6 +99,121 @@ class ContractSerializationTest {
         assertEquals("扫描文件", progress.progress().title());
         assertEquals(3L, progress.progress().current());
         assertEquals(10L, progress.progress().total());
+    }
+
+    @Test
+    void toolLifecycleContractsRoundTripKeepsStructuredSummaryAndRef() throws Exception {
+        ToolOutputRef ref = new ToolOutputRef(
+            "toolout_01",
+            "ses_01",
+            "toolu_01",
+            "text/plain; charset=utf-8",
+            "pending",
+            "",
+            "sha256:abc123",
+            42L,
+            Map.of("preview", "hello")
+        );
+        ToolResultSummary summary = new ToolResultSummary(
+            "bash succeeded",
+            "hello",
+            false,
+            0,
+            false,
+            42L,
+            Map.of("toolName", "bash")
+        );
+
+        String refJson = mapper.writeValueAsString(ref);
+        ToolOutputRef restoredRef = mapper.readValue(refJson, ToolOutputRef.class);
+        assertEquals("toolout_01", restoredRef.refId());
+        assertEquals("pending", restoredRef.storageKind());
+        assertEquals("sha256:abc123", restoredRef.contentHash());
+
+        String summaryJson = mapper.writeValueAsString(summary);
+        ToolResultSummary restoredSummary = mapper.readValue(summaryJson, ToolResultSummary.class);
+        assertEquals("bash succeeded", restoredSummary.title());
+        assertEquals(0, restoredSummary.exitCode());
+        assertEquals(42L, restoredSummary.outputBytes());
+
+        String statusJson = mapper.writeValueAsString(ToolExecutionStatus.TIMED_OUT);
+        assertEquals(ToolExecutionStatus.TIMED_OUT, mapper.readValue(statusJson, ToolExecutionStatus.class));
+    }
+
+    @Test
+    void toolStartEventRoundTripKeepsDisplayAndTimingFields() throws Exception {
+        AgentEvent event = new ToolStartEvent(
+            "ses_01",
+            "toolu_01",
+            "msg_parent",
+            "turn_01",
+            "bash",
+            "Bash",
+            "echo hello",
+            Map.of("command", "echo hello"),
+            Instant.parse("2026-06-01T12:00:00Z"),
+            Instant.parse("2026-06-01T12:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"tool_start\""));
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, restored);
+        assertEquals("msg_parent", start.parentMessageId());
+        assertEquals("turn_01", start.turnId());
+        assertEquals("Bash", start.displayTitle());
+        assertEquals(start.startedAt(), start.timestamp());
+    }
+
+    @Test
+    void toolEndEventRoundTripKeepsStatusSummaryRefAndTimingFields() throws Exception {
+        Instant startedAt = Instant.parse("2026-06-01T12:00:00Z");
+        Instant endedAt = Instant.parse("2026-06-01T12:00:03Z");
+        ToolResultSummary summary = new ToolResultSummary(
+            "bash failed",
+            "exit 2",
+            true,
+            2,
+            false,
+            128L,
+            Map.of("toolName", "bash")
+        );
+        ToolOutputRef ref = new ToolOutputRef(
+            "toolout_01",
+            "ses_01",
+            "toolu_01",
+            "text/plain; charset=utf-8",
+            "pending",
+            "",
+            "sha256:abc123",
+            128L,
+            Map.of("truncated", true)
+        );
+        AgentEvent event = new ToolEndEvent(
+            "ses_01",
+            "toolu_01",
+            ToolExecutionStatus.FAILED,
+            2,
+            summary,
+            ref,
+            startedAt,
+            endedAt,
+            3000L,
+            Map.of("interrupted", false),
+            endedAt
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"tool_end\""));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, restored);
+        assertEquals(ToolExecutionStatus.FAILED, end.status());
+        assertEquals(2, end.exitCode());
+        assertEquals("bash failed", end.resultSummary().title());
+        assertEquals("toolout_01", end.resultRef().refId());
+        assertEquals(end.endedAt(), end.timestamp());
     }
 
     @Test

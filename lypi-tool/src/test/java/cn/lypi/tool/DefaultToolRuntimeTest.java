@@ -21,6 +21,8 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.InterruptBehavior;
+import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.time.Duration;
@@ -289,7 +291,12 @@ class DefaultToolRuntimeTest {
         ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, events.events.get(0));
         assertEquals("ses_1", start.sessionId());
         assertEquals("toolu_1", start.toolUseId());
+        assertEquals("msg_1", start.parentMessageId());
+        assertEquals("turn_1", start.turnId());
         assertEquals("bash", start.toolName());
+        assertEquals("Bash", start.displayTitle());
+        assertEquals("bash {text=done}", start.inputSummary());
+        assertEquals(start.startedAt(), start.timestamp());
 
         ToolProgressEvent progress = assertInstanceOf(ToolProgressEvent.class, events.events.get(1));
         assertEquals("ses_1", progress.sessionId());
@@ -300,7 +307,13 @@ class DefaultToolRuntimeTest {
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(2));
         assertEquals("ses_1", end.sessionId());
         assertEquals("toolu_1", end.toolUseId());
-        assertFalse(end.error());
+        assertEquals(ToolExecutionStatus.SUCCEEDED, end.status());
+        assertEquals("bash succeeded", end.resultSummary().title());
+        assertEquals("done", end.resultSummary().summary());
+        assertFalse(end.resultSummary().error());
+        assertEquals(4L, end.resultSummary().outputBytes());
+        assertEquals(end.endedAt(), end.timestamp());
+        assertTrue(end.durationMillis() >= 0);
     }
 
     @Test
@@ -318,7 +331,9 @@ class DefaultToolRuntimeTest {
         assertEquals(2, events.events.size());
         assertInstanceOf(ToolStartEvent.class, events.events.get(0));
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
-        assertTrue(end.error());
+        assertEquals(ToolExecutionStatus.FAILED, end.status());
+        assertTrue(end.resultSummary().error());
+        assertTrue(end.resultSummary().summary().contains("工具执行失败"));
     }
 
     @Test
@@ -339,7 +354,47 @@ class DefaultToolRuntimeTest {
         assertEquals(2, events.events.size());
         assertInstanceOf(ToolStartEvent.class, events.events.get(0));
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
-        assertTrue(end.error());
+        assertEquals(ToolExecutionStatus.FAILED, end.status());
+        assertTrue(end.resultSummary().error());
+    }
+
+    @Test
+    void publishesEndWithOutputRefForBudgetedLongOutput() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .sessionId("ses_1")
+                .metadata(Map.of("turnId", "turn_1"))
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            allowAllSecurity(),
+            PermissionGate.denying(),
+            ToolExecutionEventPublisher.eventBus(events)
+        );
+        runtime.register(smallBudgetEcho("bash", 12));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "0123456789abcdef"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals(ToolExecutionStatus.SUCCEEDED, end.status());
+        assertEquals(16L, end.resultSummary().outputBytes());
+        assertEquals("toolout_ses_1_toolu_1", end.resultRef().refId());
+        assertEquals("ses_1", end.resultRef().sessionId());
+        assertEquals("toolu_1", end.resultRef().toolUseId());
+        assertEquals("pending", end.resultRef().storageKind());
+        assertEquals("", end.resultRef().location());
+        assertEquals(16L, end.resultRef().byteLength());
+        assertTrue(end.resultRef().contentHash().startsWith("sha256:"));
+        assertEquals("0123456789ab", end.resultRef().metadata().get("preview"));
+        assertEquals("budgeted", end.resultRef().metadata().get("truncationReason"));
     }
 
     @Test
@@ -440,6 +495,86 @@ class DefaultToolRuntimeTest {
         return runtimeWithEvents(eventBus, security, ToolExecutionInterceptors.noop());
     }
 
+    private Tool<Map<String, Object>, String> smallBudgetEcho(String name, int maxResultSize) {
+        Tool<Map<String, Object>, String> delegate = TestTools.echo(name, List.of(), true, true, false);
+        return new Tool<>() {
+            @Override
+            public String name() {
+                return delegate.name();
+            }
+
+            @Override
+            public List<String> aliases() {
+                return delegate.aliases();
+            }
+
+            @Override
+            public cn.lypi.contracts.common.JsonSchema inputSchema() {
+                return delegate.inputSchema();
+            }
+
+            @Override
+            public cn.lypi.contracts.common.ValidationResult validateInput(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context
+            ) {
+                return delegate.validateInput(input, context);
+            }
+
+            @Override
+            public cn.lypi.contracts.security.PermissionDecision checkPermissions(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context
+            ) {
+                return delegate.checkPermissions(input, context);
+            }
+
+            @Override
+            public ToolResult<String> execute(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context,
+                cn.lypi.contracts.common.ProgressSink progress
+            ) {
+                return delegate.execute(input, context, progress);
+            }
+
+            @Override
+            public InterruptBehavior interruptBehavior() {
+                return delegate.interruptBehavior();
+            }
+
+            @Override
+            public boolean isReadOnly(Map<String, Object> input) {
+                return delegate.isReadOnly(input);
+            }
+
+            @Override
+            public boolean isConcurrencySafe(Map<String, Object> input) {
+                return delegate.isConcurrencySafe(input);
+            }
+
+            @Override
+            public boolean isDestructive(Map<String, Object> input) {
+                return delegate.isDestructive(input);
+            }
+
+            @Override
+            public int maxResultSize() {
+                return maxResultSize;
+            }
+
+            @Override
+            public String renderForUser(Map<String, Object> input) {
+                return delegate.renderForUser(input);
+            }
+
+            @Override
+            public cn.lypi.contracts.context.AgentMessage serializeForContext(String output) {
+                return delegate.serializeForContext(output);
+            }
+        };
+    }
+
     private DefaultToolRuntime runtimeWithEvents(
         EventBus eventBus,
         SecurityRuntimePort security,
@@ -450,7 +585,10 @@ class DefaultToolRuntimeTest {
             new ToolSchemaValidator(),
             new ToolExecutionPlanner(),
             new ToolResultBudgeter(),
-            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().sessionId("ses_1").build()),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .sessionId("ses_1")
+                .metadata(Map.of("turnId", "turn_1"))
+                .build()),
             interceptor,
             security,
             PermissionGate.denying(),

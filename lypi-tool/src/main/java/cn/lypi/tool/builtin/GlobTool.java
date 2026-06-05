@@ -2,6 +2,7 @@ package cn.lypi.tool.builtin;
 
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -51,18 +52,35 @@ public final class GlobTool extends AbstractFileTool {
             if (!Files.exists(root)) {
                 return error(toolUseId, "匹配路径不存在: " + relativePath(root, context));
             }
+            progress.progress(ToolProgress.phase("scanning", "扫描文件"));
             List<PathMatcher> matchers = matchers(pattern);
-            List<String> matches;
+            List<Path> files;
             try (var walk = Files.walk(root)) {
-                matches = walk.filter(Files::isRegularFile)
+                files = walk.filter(Files::isRegularFile)
                     .filter(path -> realPathInsideWorkspace(path, context))
                     .filter(path -> !ignored(path))
+                    .toList();
+            }
+            progress.progress(ToolProgress.counter("files", files.size(), files.size()));
+            List<String> matches;
+            matches = files.stream()
                     .filter(path -> matchesAny(matchers, root.relativize(path)))
                     .map(path -> relativePath(path, context))
                     .sorted()
                     .limit(maxResults)
                     .toList();
-            }
+            progress.progress(new ToolProgress(
+                cn.lypi.contracts.common.ToolProgressKind.STATUS,
+                "matched",
+                String.join("\n", matches),
+                null,
+                null,
+                null,
+                (long) matches.size(),
+                (long) maxResults,
+                null,
+                Map.of()
+            ));
             return success(toolUseId, String.join("\n", matches));
         } catch (IllegalArgumentException exception) {
             return error(toolUseId, exception.getMessage());

@@ -2,6 +2,7 @@ package cn.lypi.tool.builtin;
 
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -85,8 +86,10 @@ public final class EditTool extends AbstractFileTool {
             if (second >= 0) {
                 return error(toolUseId, "oldString 在文件中出现多次，请提供更具体上下文。");
             }
+            progress.progress(ToolProgress.phase("editing", "编辑文件"));
             String updated = content.replace(oldString, newString);
             writeAtomically(path, updated);
+            progress.progress(ToolProgress.status("changed", relativePath(path, context)));
             return success(toolUseId, diff(relativePath(path, context), oldString, newString));
         } catch (IllegalArgumentException exception) {
             return error(toolUseId, exception.getMessage());
