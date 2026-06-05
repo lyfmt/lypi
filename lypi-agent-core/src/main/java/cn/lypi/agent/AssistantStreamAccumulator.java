@@ -16,17 +16,16 @@ import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.model.ToolCallDelta;
 import java.time.Clock;
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.TreeMap;
 
 public final class AssistantStreamAccumulator {
     private final AgentMessageFactory messageFactory;
     private final StringBuilder text = new StringBuilder();
     private final StringBuilder thinking = new StringBuilder();
-    private final List<ToolCallContentBlock> toolCalls = new ArrayList<>();
+    private final Map<String, ToolCallState> toolCalls = new LinkedHashMap<>();
     private String messageId;
     private Optional<TokenUsage> usage = Optional.empty();
     private Optional<String> stopReason = Optional.empty();
@@ -42,11 +41,9 @@ public final class AssistantStreamAccumulator {
             case AssistantStart start -> messageId = start.messageId();
             case TextDelta delta -> text.append(delta.text());
             case ThinkingDelta delta -> thinking.append(delta.text());
-            case ToolCallDelta delta -> toolCalls.add(new ToolCallContentBlock(
-                delta.toolUseId(),
-                delta.toolName(),
-                toJson(delta.partialInput())
-            ));
+            case ToolCallDelta delta -> toolCalls
+                .computeIfAbsent(delta.toolUseId(), ignored -> new ToolCallState(delta.toolUseId(), delta.toolName()))
+                .merge(delta);
             case AssistantDone done -> {
                 usage = done.usage();
                 stopReason = done.stopReason();
@@ -68,7 +65,7 @@ public final class AssistantStreamAccumulator {
         if (!text.isEmpty()) {
             content.add(new TextContentBlock(text.toString()));
         }
-        content.addAll(toolCalls);
+        content.addAll(toolCalls.values().stream().map(ToolCallState::toBlock).toList());
         error.ifPresent(assistantError -> content.add(
             new cn.lypi.contracts.context.ErrorContentBlock(assistantError.errorId(), assistantError.message())
         ));
@@ -115,24 +112,32 @@ public final class AssistantStreamAccumulator {
         return MessageKind.TEXT;
     }
 
-    private String toJson(Map<String, Object> input) {
-        return new TreeMap<>(input).entrySet().stream()
-            .sorted(Comparator.comparing(Map.Entry::getKey))
-            .map(entry -> "\"" + escape(entry.getKey()) + "\":" + valueToJson(entry.getValue()))
-            .collect(java.util.stream.Collectors.joining(",", "{", "}"));
-    }
+    private static final class ToolCallState {
+        private final String toolUseId;
+        private final String toolName;
+        private final Map<String, Object> input = new LinkedHashMap<>();
+        private boolean complete;
 
-    private String valueToJson(Object value) {
-        if (value == null) {
-            return "null";
+        private ToolCallState(String toolUseId, String toolName) {
+            this.toolUseId = toolUseId;
+            this.toolName = toolName;
         }
-        if (value instanceof Number || value instanceof Boolean) {
-            return value.toString();
-        }
-        return "\"" + escape(value.toString()) + "\"";
-    }
 
-    private String escape(String value) {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+        private void merge(ToolCallDelta delta) {
+            input.putAll(delta.partialInput());
+            complete = complete || delta.complete();
+        }
+
+        private ToolCallContentBlock toBlock() {
+            return new ToolCallContentBlock(
+                toolUseId,
+                toolName,
+                "",
+                Map.of(
+                    "input", Map.copyOf(input),
+                    "complete", complete
+                )
+            );
+        }
     }
 }

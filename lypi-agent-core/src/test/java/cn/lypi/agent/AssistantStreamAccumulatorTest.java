@@ -11,6 +11,7 @@ import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.model.ToolCallDelta;
 import java.time.Clock;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -55,9 +56,35 @@ class AssistantStreamAccumulatorTest {
         assertThat(message.kind()).isEqualTo(MessageKind.TOOL_CALL);
         assertThat(message.content()).extracting(block -> block.kind())
             .containsExactly(ContentBlockKind.THINKING, ContentBlockKind.TOOL_CALL);
-        assertThat(message.content().get(1).text()).isEqualTo("{\"path\":\"pom.xml\"}");
+        assertThat(message.content().get(1).metadata()).containsEntry("input", Map.of("path", "pom.xml"));
         assertThat(accumulator.hasToolCalls()).isTrue();
         assertThat(accumulator.stopReason()).contains("tool_calls");
+    }
+
+    @Test
+    void mergesToolCallDeltasByToolUseIdAndKeepsStructuredInput() {
+        AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
+
+        accumulator.accept(new AssistantStart("msg-a"));
+        accumulator.accept(new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), false));
+        accumulator.accept(new ToolCallDelta("toolu-1", "read", Map.of(
+            "path", "pom.xml",
+            "options", Map.of("encoding", "utf-8"),
+            "ranges", List.of(1, 2, 3),
+            "ratio", 1.5
+        ), true));
+        accumulator.accept(new AssistantDone(Optional.empty(), Optional.of("tool_calls")));
+
+        AgentMessage message = accumulator.toMessage("fallback", false);
+
+        assertThat(message.content()).filteredOn(block -> block.kind() == ContentBlockKind.TOOL_CALL).hasSize(1);
+        assertThat(message.content().getFirst().metadata()).containsEntry("complete", true);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> input = (Map<String, Object>) message.content().getFirst().metadata().get("input");
+        assertThat(input)
+            .containsEntry("options", Map.of("encoding", "utf-8"))
+            .containsEntry("ranges", List.of(1, 2, 3))
+            .containsEntry("ratio", 1.5);
     }
 
     @Test

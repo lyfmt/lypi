@@ -7,6 +7,7 @@ import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -23,8 +24,8 @@ class ToolCallMapperTest {
             MessageKind.TOOL_CALL,
             List.of(
                 new TextContentBlock("checking"),
-                new ToolCallContentBlock("toolu-1", "read", "{\"path\":\"pom.xml\"}"),
-                new ToolCallContentBlock("toolu-2", "bash", "{\"timeout\":10,\"trusted\":true}")
+                new ToolCallContentBlock("toolu-1", "read", "", Map.of("input", Map.of("path", "pom.xml"))),
+                new ToolCallContentBlock("toolu-2", "bash", "", Map.of("input", Map.of("timeout", 10L, "trusted", true)))
             ),
             NOW,
             Optional.empty(),
@@ -47,5 +48,28 @@ class ToolCallMapperTest {
         AgentMessage assistant = assistantMessage("msg-a", "hello");
 
         assertThat(new ToolCallMapper().requestsFrom(assistant)).isEmpty();
+    }
+
+    @Test
+    void keepsNestedStructuredInputFromMetadata() {
+        Map<String, Object> input = Map.of(
+            "options", Map.of("encoding", "utf-8"),
+            "ranges", List.of(1, 2, 3),
+            "ratio", 1.5
+        );
+        AgentMessage assistant = new AgentMessage(
+            "msg-a",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new ToolCallContentBlock("toolu-1", "read", "", Map.of("input", input))),
+            NOW,
+            Optional.empty(),
+            Optional.of("tool_calls")
+        );
+
+        List<ToolUseRequest> requests = new ToolCallMapper().requestsFrom(assistant);
+
+        assertThat(requests).hasSize(1);
+        assertThat(requests.getFirst().input()).containsAllEntriesOf(input);
     }
 }
