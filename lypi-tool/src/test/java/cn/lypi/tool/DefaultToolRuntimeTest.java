@@ -2,10 +2,19 @@ package cn.lypi.tool;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ToolResultContentBlock;
+import cn.lypi.contracts.event.AgentEvent;
+import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.event.EventConsumer;
+import cn.lypi.contracts.event.EventFilter;
+import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.ToolEndEvent;
+import cn.lypi.contracts.event.ToolProgressEvent;
+import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -16,6 +25,7 @@ import cn.lypi.contracts.tool.ToolUseRequest;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -263,6 +273,110 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void publishesToolStartProgressAndEndAroundExecution() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(TestTools.progressEcho("bash", "executor progress"));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(3, events.events.size());
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        assertEquals("ses_1", start.sessionId());
+        assertEquals("toolu_1", start.toolUseId());
+        assertEquals("bash", start.toolName());
+
+        ToolProgressEvent progress = assertInstanceOf(ToolProgressEvent.class, events.events.get(1));
+        assertEquals("ses_1", progress.sessionId());
+        assertEquals("toolu_1", progress.toolUseId());
+        assertEquals("executor progress", progress.message());
+
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(2));
+        assertEquals("ses_1", end.sessionId());
+        assertEquals("toolu_1", end.toolUseId());
+        assertFalse(end.error());
+    }
+
+    @Test
+    void publishesEndWithErrorWhenToolThrows() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(TestTools.throwingExecute("throwing"));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "throwing", Map.of(), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertEquals(2, events.events.size());
+        assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertTrue(end.error());
+    }
+
+    @Test
+    void publishesEndWithErrorWhenAfterInterceptorThrows() {
+        RecordingEventBus events = new RecordingEventBus();
+        ToolExecutionInterceptor interceptor = ToolExecutionInterceptor.after((request, tool, context, result) -> {
+            throw new IllegalStateException("after boom");
+        });
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity(), interceptor);
+        runtime.register(TestTools.echo("echo", List.of(), true, true, false));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "echo", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertEquals(2, events.events.size());
+        assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertTrue(end.error());
+    }
+
+    @Test
+    void doesNotPublishToolExecutionEventsWhenPermissionDeniedBeforeExecution() {
+        RecordingEventBus events = new RecordingEventBus();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.DENY, "hard deny");
+        DefaultToolRuntime runtime = runtimeWithEvents(events, security);
+        runtime.register(TestTools.progressEcho("bash", "executor progress"));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertEquals(0, events.events.size());
+    }
+
+    @Test
+    void publishesProgressForParallelToolsWithoutChangingResultOrder() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(TestTools.progressEcho("first", "first progress"));
+        runtime.register(TestTools.progressEcho("second", "second progress"));
+
+        List<ToolResult<?>> results = runtime.execute(List.of(
+            new ToolUseRequest("toolu_1", "first", Map.of("text", "one"), "msg_1"),
+            new ToolUseRequest("toolu_2", "second", Map.of("text", "two"), "msg_1")
+        ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
+
+        assertEquals("one", results.get(0).newMessages().getFirst().content().getFirst().text());
+        assertEquals("two", results.get(1).newMessages().getFirst().content().getFirst().text());
+        assertEquals(6, events.events.size());
+        assertEquals(2, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
+        assertEquals(2, events.events.stream().filter(ToolProgressEvent.class::isInstance).count());
+        assertEquals(2, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
+    }
+
+    @Test
     void abortSignalStopsBeforeToolExecution() {
         AbortSignal signal = () -> true;
         DefaultToolRuntime runtime = new DefaultToolRuntime(
@@ -318,5 +432,42 @@ class DefaultToolRuntimeTest {
             security,
             gate
         );
+    }
+
+    private DefaultToolRuntime runtimeWithEvents(EventBus eventBus, SecurityRuntimePort security) {
+        return runtimeWithEvents(eventBus, security, ToolExecutionInterceptors.noop());
+    }
+
+    private DefaultToolRuntime runtimeWithEvents(
+        EventBus eventBus,
+        SecurityRuntimePort security,
+        ToolExecutionInterceptor interceptor
+    ) {
+        return new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().sessionId("ses_1").build()),
+            interceptor,
+            security,
+            PermissionGate.denying(),
+            ToolExecutionEventPublisher.eventBus(eventBus)
+        );
+    }
+
+    private static final class RecordingEventBus implements EventBus {
+        private final List<AgentEvent> events = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void publish(AgentEvent event) {
+            events.add(event);
+        }
+
+        @Override
+        public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
+            return () -> {
+            };
+        }
     }
 }
