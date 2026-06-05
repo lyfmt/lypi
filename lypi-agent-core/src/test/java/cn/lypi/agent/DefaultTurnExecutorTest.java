@@ -4,6 +4,7 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.MessageDeltaEvent;
@@ -148,5 +149,53 @@ class DefaultTurnExecutorTest {
             .containsExactly("msg-user", "msg-tool-call", "msg-tool-result", "msg-final");
         assertThat(session.messages()).extracting(AgentMessage::role)
             .containsExactly(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL_RESULT, MessageRole.ASSISTANT);
+    }
+
+    @Test
+    void runsCompactionPreflightBeforeModelCall() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextSnapshot originalContext = AgentCoreTestFixtures.minimalContext(List.of());
+        ContextSnapshot compactedContext = AgentCoreTestFixtures.minimalContext(List.of(
+            AgentCoreTestFixtures.summaryMessage("summary-1", "summary")
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            originalContext,
+            List.of(),
+            List.of(),
+            List.of(),
+            true
+        );
+        CompactionCoordinator compaction = context -> new CompactionDecision(
+            compactedContext,
+            Optional.empty(),
+            true,
+            "test compacted"
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                compaction,
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(provider.contexts).containsExactly(compactedContext);
     }
 }
