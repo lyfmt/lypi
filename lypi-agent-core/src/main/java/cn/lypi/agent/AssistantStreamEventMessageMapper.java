@@ -21,19 +21,20 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public final class AssistantStreamEventMessageMapper {
     private final String sessionId;
     private final Clock clock;
     private final Instant fixedTimestamp;
     private final LinkedHashMap<String, BlockAccumulator> blocks = new LinkedHashMap<>();
-    private final Map<String, String> fallbackToolCallBlockIds = new LinkedHashMap<>();
+    private final Map<String, String> activeFallbackToolCallBlockIds = new LinkedHashMap<>();
     private String messageId;
     private int fallbackToolCallIndex;
 
     public AssistantStreamEventMessageMapper(String sessionId, Clock clock) {
         this.sessionId = sessionId;
-        this.clock = clock;
+        this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.fixedTimestamp = null;
     }
 
@@ -57,7 +58,7 @@ public final class AssistantStreamEventMessageMapper {
     private List<AgentEvent> start(AssistantStart start) {
         messageId = start.messageId();
         blocks.clear();
-        fallbackToolCallBlockIds.clear();
+        activeFallbackToolCallBlockIds.clear();
         fallbackToolCallIndex = 0;
         return List.of(new MessageStartEvent(
             sessionId,
@@ -113,6 +114,7 @@ public final class AssistantStreamEventMessageMapper {
         Map<String, Object> metadata = toolCallMetadata(delta, blockId);
         BlockAccumulator block = block(blockId, ContentBlockKind.TOOL_CALL, metadata);
         block.replaceMetadata(metadata);
+        releaseFallbackToolCallBlockId(delta);
         return List.of(new MessageDeltaEvent(
             sessionId,
             messageId,
@@ -160,10 +162,23 @@ public final class AssistantStreamEventMessageMapper {
         String fallbackKey = delta.toolName() == null || delta.toolName().isBlank()
             ? "__unknown_tool_call__"
             : delta.toolName();
-        return fallbackToolCallBlockIds.computeIfAbsent(
+        return activeFallbackToolCallBlockIds.computeIfAbsent(
             fallbackKey,
             ignored -> messageId + ":tool_call:" + fallbackToolCallIndex++
         );
+    }
+
+    private void releaseFallbackToolCallBlockId(ToolCallDelta delta) {
+        if (delta.toolUseId() != null && !delta.toolUseId().isBlank()) {
+            return;
+        }
+        if (!delta.complete()) {
+            return;
+        }
+        String fallbackKey = delta.toolName() == null || delta.toolName().isBlank()
+            ? "__unknown_tool_call__"
+            : delta.toolName();
+        activeFallbackToolCallBlockIds.remove(fallbackKey);
     }
 
     private Map<String, Object> toolCallMetadata(ToolCallDelta delta, String blockId) {

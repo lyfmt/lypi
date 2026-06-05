@@ -110,6 +110,31 @@ class AssistantStreamEventMessageMapperTest {
     }
 
     @Test
+    void allocatesNewFallbackBlockIdAfterUnnamedToolCallCompletes() {
+        AssistantStreamEventMessageMapper mapper = new AssistantStreamEventMessageMapper(
+            "ses_01",
+            Instant.parse("2026-06-01T12:00:00Z")
+        );
+
+        mapper.map(new AssistantStart("msg_01"));
+        MessageDeltaEvent first = (MessageDeltaEvent) mapper.map(
+            new ToolCallDelta(null, "read", Map.of("path", "a.txt"), true)
+        ).getFirst();
+        MessageDeltaEvent second = (MessageDeltaEvent) mapper.map(
+            new ToolCallDelta(null, "read", Map.of("path", "b.txt"), true)
+        ).getFirst();
+        MessageEndEvent end = (MessageEndEvent) mapper.map(
+            new AssistantDone(Optional.empty(), Optional.of("stop"))
+        ).getFirst();
+
+        assertThat(first.blockId()).isEqualTo("msg_01:tool_call:0");
+        assertThat(second.blockId()).isEqualTo("msg_01:tool_call:1");
+        assertThat(end.blocks())
+            .extracting(block -> block.blockId())
+            .containsExactly("msg_01:tool_call:0", "msg_01:tool_call:1");
+    }
+
+    @Test
     void messageEndKindReflectsPureThinkingMessages() {
         AssistantStreamEventMessageMapper mapper = new AssistantStreamEventMessageMapper(
             "ses_01",
