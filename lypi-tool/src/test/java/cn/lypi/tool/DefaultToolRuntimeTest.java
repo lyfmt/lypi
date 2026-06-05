@@ -412,6 +412,8 @@ class DefaultToolRuntimeTest {
         assertTrue(end.resultRef().contentHash().startsWith("sha256:"));
         assertEquals("0123456789ab", end.resultRef().metadata().get("preview"));
         assertEquals("budgeted", end.resultRef().metadata().get("truncationReason"));
+        assertFalse(end.resultRef().metadata().containsKey("replacementPath"));
+        assertFalse(end.resultRef().metadata().containsKey("replacementPreview"));
     }
 
     @Test
@@ -466,6 +468,72 @@ class DefaultToolRuntimeTest {
 
         assertTrue(result.isError());
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("工具调用已中止"));
+    }
+
+    @Test
+    void publishesCancelledEndWhenAbortSignalSkipsToolExecution() {
+        RecordingEventBus events = new RecordingEventBus();
+        AbortSignal signal = () -> true;
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .sessionId("ses_1")
+                .metadata(Map.of("abortSignal", signal, "turnId", "turn_1"))
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            allowAllSecurity(),
+            PermissionGate.denying(),
+            ToolExecutionEventPublisher.eventBus(events)
+        );
+        runtime.register(TestTools.echo("echo", List.of(), true, true, false));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "echo", Map.of("text", "hello"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertEquals(2, events.events.size());
+        assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals(ToolExecutionStatus.CANCELLED, end.status());
+        assertTrue(end.resultSummary().error());
+    }
+
+    @Test
+    void publishesCancelledEndWhenPermissionGateAborts() {
+        RecordingEventBus events = new RecordingEventBus();
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.abort("user aborted");
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .sessionId("ses_1")
+                .metadata(Map.of("turnId", "turn_1"))
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            allowAllSecurity(),
+            gate,
+            ToolExecutionEventPublisher.eventBus(events)
+        );
+        runtime.register(TestTools.permission("write", PermissionBehavior.ASK));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertEquals(2, events.events.size());
+        assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals(ToolExecutionStatus.CANCELLED, end.status());
+        assertTrue(end.resultSummary().summary().contains("user aborted"));
     }
 
     @Test
