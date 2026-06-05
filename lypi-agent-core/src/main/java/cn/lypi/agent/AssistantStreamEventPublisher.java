@@ -24,10 +24,12 @@ public final class AssistantStreamEventPublisher {
     }
 
     public void publish(AssistantEventStream stream) {
-        for (AssistantStreamEvent streamEvent : Objects.requireNonNull(stream, "stream must not be null")) {
-            List<AgentEvent> events = mapper.map(streamEvent);
-            for (AgentEvent event : events) {
-                eventBus.publish(event);
+        try (AssistantEventStream closeableStream = Objects.requireNonNull(stream, "stream must not be null")) {
+            for (AssistantStreamEvent streamEvent : closeableStream) {
+                List<AgentEvent> events = mapper.map(streamEvent);
+                for (AgentEvent event : events) {
+                    eventBus.publish(event);
+                }
             }
         }
     }

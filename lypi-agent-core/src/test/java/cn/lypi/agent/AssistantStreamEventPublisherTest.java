@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 class AssistantStreamEventPublisherTest {
@@ -33,7 +34,7 @@ class AssistantStreamEventPublisherTest {
             eventBus,
             Instant.parse("2026-06-01T12:00:00Z")
         );
-        AssistantEventStream stream = new TestAssistantEventStream(List.of(
+        TestAssistantEventStream stream = new TestAssistantEventStream(List.of(
             new AssistantStart("msg_01"),
             new TextDelta("hello"),
             new AssistantDone(Optional.empty(), Optional.of("stop"))
@@ -44,6 +45,25 @@ class AssistantStreamEventPublisherTest {
         assertThat(eventBus.events())
             .hasExactlyElementsOfTypes(MessageStartEvent.class, MessageDeltaEvent.class, MessageEndEvent.class);
         assertThat(((MessageDeltaEvent) eventBus.events().get(1)).delta()).isEqualTo("hello");
+        assertThat(stream.closed()).isTrue();
+    }
+
+    @Test
+    void closesAssistantStreamWhenPublishingFails() {
+        FailingEventBus eventBus = new FailingEventBus();
+        AssistantStreamEventPublisher publisher = new AssistantStreamEventPublisher(
+            "ses_01",
+            eventBus,
+            Instant.parse("2026-06-01T12:00:00Z")
+        );
+        TestAssistantEventStream stream = new TestAssistantEventStream(List.of(
+            new AssistantStart("msg_01"),
+            new TextDelta("hello")
+        ));
+
+        Assertions.assertThrows(IllegalStateException.class, () -> publisher.publish(stream));
+
+        assertThat(stream.closed()).isTrue();
     }
 
     private static final class RecordingEventBus implements EventBus {
@@ -64,8 +84,21 @@ class AssistantStreamEventPublisherTest {
         }
     }
 
+    private static final class FailingEventBus implements EventBus {
+        @Override
+        public void publish(AgentEvent event) {
+            throw new IllegalStateException("publish failed");
+        }
+
+        @Override
+        public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
+            throw new UnsupportedOperationException("not used");
+        }
+    }
+
     private static final class TestAssistantEventStream implements AssistantEventStream {
         private final List<AssistantStreamEvent> events;
+        private boolean closed;
 
         private TestAssistantEventStream(List<AssistantStreamEvent> events) {
             this.events = events;
@@ -97,6 +130,11 @@ class AssistantStreamEventPublisherTest {
 
         @Override
         public void close() {
+            closed = true;
+        }
+
+        private boolean closed() {
+            return closed;
         }
 
         @Override
