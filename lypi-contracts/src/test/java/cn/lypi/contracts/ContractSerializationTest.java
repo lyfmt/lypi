@@ -461,6 +461,55 @@ class ContractSerializationTest {
     }
 
     @Test
+    void messageEventsCanReadLegacyJsonWithSemanticDefaults() throws Exception {
+        String startJson = """
+            {
+              "type": "message_start",
+              "sessionId": "ses_01",
+              "messageId": "msg_01",
+              "timestamp": "2026-06-01T12:00:00Z"
+            }
+            """;
+        String deltaJson = """
+            {
+              "type": "message_delta",
+              "sessionId": "ses_01",
+              "messageId": "msg_01",
+              "delta": "legacy text",
+              "timestamp": "2026-06-01T12:00:01Z"
+            }
+            """;
+        String endJson = """
+            {
+              "type": "message_end",
+              "sessionId": "ses_01",
+              "messageId": "msg_01",
+              "timestamp": "2026-06-01T12:00:02Z"
+            }
+            """;
+
+        MessageStartEvent start = assertInstanceOf(MessageStartEvent.class, mapper.readValue(startJson, AgentEvent.class));
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, mapper.readValue(deltaJson, AgentEvent.class));
+        MessageEndEvent end = assertInstanceOf(MessageEndEvent.class, mapper.readValue(endJson, AgentEvent.class));
+
+        assertEquals(MessageRole.ASSISTANT, start.role());
+        assertEquals(MessageKind.TEXT, start.kind());
+        assertTrue(start.metadata().isEmpty());
+        assertEquals(MessageRole.ASSISTANT, delta.role());
+        assertEquals(MessageKind.TEXT, delta.kind());
+        assertEquals("msg_01:text:0", delta.blockId());
+        assertEquals(ContentBlockKind.TEXT, delta.blockKind());
+        assertEquals(false, delta.isFinal());
+        assertTrue(delta.metadata().isEmpty());
+        assertEquals(MessageRole.ASSISTANT, end.role());
+        assertEquals(MessageKind.TEXT, end.kind());
+        assertTrue(end.blocks().isEmpty());
+        assertTrue(end.usage().isEmpty());
+        assertTrue(end.stopReason().isEmpty());
+        assertTrue(end.metadata().isEmpty());
+    }
+
+    @Test
     void permissionRequestEventRoundTripContainsRenderableToolContext() throws Exception {
         PermissionDecision decision = new PermissionDecision(
             PermissionBehavior.ASK,

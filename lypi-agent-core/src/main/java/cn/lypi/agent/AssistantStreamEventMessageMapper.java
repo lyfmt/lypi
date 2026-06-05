@@ -27,7 +27,9 @@ public final class AssistantStreamEventMessageMapper {
     private final Clock clock;
     private final Instant fixedTimestamp;
     private final LinkedHashMap<String, BlockAccumulator> blocks = new LinkedHashMap<>();
+    private final Map<String, String> fallbackToolCallBlockIds = new LinkedHashMap<>();
     private String messageId;
+    private int fallbackToolCallIndex;
 
     public AssistantStreamEventMessageMapper(String sessionId, Clock clock) {
         this.sessionId = sessionId;
@@ -55,6 +57,8 @@ public final class AssistantStreamEventMessageMapper {
     private List<AgentEvent> start(AssistantStart start) {
         messageId = start.messageId();
         blocks.clear();
+        fallbackToolCallBlockIds.clear();
+        fallbackToolCallIndex = 0;
         return List.of(new MessageStartEvent(
             sessionId,
             messageId,
@@ -105,13 +109,8 @@ public final class AssistantStreamEventMessageMapper {
 
     private List<AgentEvent> toolCallDelta(ToolCallDelta delta) {
         ensureMessageId();
-        String blockId = delta.toolUseId();
-        Map<String, Object> metadata = Map.of(
-            "toolUseId", delta.toolUseId(),
-            "toolName", delta.toolName(),
-            "partialInput", delta.partialInput(),
-            "complete", delta.complete()
-        );
+        String blockId = toolCallBlockId(delta);
+        Map<String, Object> metadata = toolCallMetadata(delta, blockId);
         BlockAccumulator block = block(blockId, ContentBlockKind.TOOL_CALL, metadata);
         block.replaceMetadata(metadata);
         return List.of(new MessageDeltaEvent(
@@ -137,7 +136,7 @@ public final class AssistantStreamEventMessageMapper {
             sessionId,
             messageId,
             MessageRole.ASSISTANT,
-            MessageKind.TEXT,
+            messageKind(snapshots),
             snapshots,
             done.usage(),
             done.stopReason(),
@@ -152,6 +151,52 @@ public final class AssistantStreamEventMessageMapper {
 
     private BlockAccumulator block(String blockId, ContentBlockKind blockKind, Map<String, Object> metadata) {
         return blocks.computeIfAbsent(blockId, id -> new BlockAccumulator(id, blockKind, metadata));
+    }
+
+    private String toolCallBlockId(ToolCallDelta delta) {
+        if (delta.toolUseId() != null && !delta.toolUseId().isBlank()) {
+            return delta.toolUseId();
+        }
+        String fallbackKey = delta.toolName() == null || delta.toolName().isBlank()
+            ? "__unknown_tool_call__"
+            : delta.toolName();
+        return fallbackToolCallBlockIds.computeIfAbsent(
+            fallbackKey,
+            ignored -> messageId + ":tool_call:" + fallbackToolCallIndex++
+        );
+    }
+
+    private Map<String, Object> toolCallMetadata(ToolCallDelta delta, String blockId) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("toolUseId", blockId);
+        metadata.put("toolName", delta.toolName() == null ? "" : delta.toolName());
+        metadata.put("partialInput", delta.partialInput() == null ? Map.of() : delta.partialInput());
+        metadata.put("complete", delta.complete());
+        return metadata;
+    }
+
+    private MessageKind messageKind(List<MessageBlockSnapshot> snapshots) {
+        if (snapshots.isEmpty()) {
+            return MessageKind.TEXT;
+        }
+        boolean hasText = false;
+        boolean hasThinking = false;
+        boolean hasToolCall = false;
+        for (MessageBlockSnapshot snapshot : snapshots) {
+            hasText = hasText || snapshot.blockKind() == ContentBlockKind.TEXT;
+            hasThinking = hasThinking || snapshot.blockKind() == ContentBlockKind.THINKING;
+            hasToolCall = hasToolCall || snapshot.blockKind() == ContentBlockKind.TOOL_CALL;
+        }
+        if (hasText) {
+            return MessageKind.TEXT;
+        }
+        if (hasToolCall) {
+            return MessageKind.TOOL_CALL;
+        }
+        if (hasThinking) {
+            return MessageKind.THINKING;
+        }
+        return MessageKind.TEXT;
     }
 
     private void ensureMessageId() {
