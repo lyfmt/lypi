@@ -7,7 +7,9 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.ErrorEvent;
@@ -97,6 +99,18 @@ class DefaultTurnExecutorTest {
                 MessageEndEvent.class,
                 TurnEndEvent.class
             );
+        MessageStartEvent userStart = (MessageStartEvent) eventBus.events.get(1);
+        assertThat(userStart.role()).isEqualTo(MessageRole.USER);
+        assertThat(userStart.kind()).isEqualTo(MessageKind.TEXT);
+        MessageDeltaEvent assistantDelta = (MessageDeltaEvent) eventBus.events.get(4);
+        assertThat(assistantDelta.role()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(assistantDelta.blockKind()).isEqualTo(ContentBlockKind.TEXT);
+        assertThat(assistantDelta.blockId()).isEqualTo("msg-assistant:text:0");
+        MessageEndEvent assistantEnd = (MessageEndEvent) eventBus.events.get(5);
+        assertThat(assistantEnd.role()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(assistantEnd.blocks()).hasSize(1);
+        assertThat(assistantEnd.blocks().getFirst().text()).isEqualTo("hi");
+        assertThat(assistantEnd.stopReason()).contains("end_turn");
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
     }
 

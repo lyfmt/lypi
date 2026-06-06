@@ -6,9 +6,11 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
@@ -26,6 +28,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public final class DefaultTurnExecutor implements TurnExecutor {
@@ -194,18 +197,30 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             for (AssistantStreamEvent event : stream) {
                 accumulator.accept(event);
                 if (event instanceof AssistantStart start) {
-                    publishMessageStart(request.sessionId(), start.messageId());
+                    publishAssistantMessageStart(request.sessionId(), start.messageId());
                     startedAssistantMessageId = Optional.of(start.messageId());
                 }
                 if (event instanceof TextDelta delta) {
-                    ports.eventBus().publish(new MessageDeltaEvent(request.sessionId(), currentAssistantId(accumulator), delta.text(), clock.instant()));
+                    String messageId = currentAssistantId(accumulator);
+                    ports.eventBus().publish(new MessageDeltaEvent(
+                        request.sessionId(),
+                        messageId,
+                        cn.lypi.contracts.context.MessageRole.ASSISTANT,
+                        cn.lypi.contracts.context.MessageKind.TEXT,
+                        textBlockId(messageId),
+                        ContentBlockKind.TEXT,
+                        delta.text(),
+                        false,
+                        Map.of(),
+                        clock.instant()
+                    ));
                 }
                 if (request.abortSignal().aborted()) {
                     break;
                 }
             }
         } catch (RuntimeException failure) {
-            startedAssistantMessageId.ifPresent(messageId -> publishMessageEnd(request.sessionId(), messageId));
+            startedAssistantMessageId.ifPresent(messageId -> publishAssistantMessageEnd(request.sessionId(), messageId));
             throw failure;
         }
 
@@ -256,13 +271,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private String appendNewMessage(String sessionId, AgentMessage message) {
-        publishMessageStart(sessionId, message.id());
+        publishMessageStart(sessionId, message);
         return appendStartedMessage(sessionId, message);
     }
 
     private String appendStartedMessage(String sessionId, AgentMessage message) {
         String leafId = ports.sessionManager().appendMessage(message).leafId();
-        publishMessageEnd(sessionId, message.id());
+        publishMessageEnd(sessionId, message);
         return leafId;
     }
 
@@ -270,11 +285,78 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return accumulator.messageId().orElse("streaming");
     }
 
-    private void publishMessageStart(String sessionId, String messageId) {
-        ports.eventBus().publish(new MessageStartEvent(sessionId, messageId, clock.instant()));
+    private void publishAssistantMessageStart(String sessionId, String messageId) {
+        ports.eventBus().publish(new MessageStartEvent(
+            sessionId,
+            messageId,
+            cn.lypi.contracts.context.MessageRole.ASSISTANT,
+            cn.lypi.contracts.context.MessageKind.TEXT,
+            Map.of("streaming", true),
+            clock.instant()
+        ));
     }
 
-    private void publishMessageEnd(String sessionId, String messageId) {
-        ports.eventBus().publish(new MessageEndEvent(sessionId, messageId, clock.instant()));
+    private void publishMessageStart(String sessionId, AgentMessage message) {
+        ports.eventBus().publish(new MessageStartEvent(
+            sessionId,
+            message.id(),
+            message.role(),
+            message.kind(),
+            Map.of(),
+            clock.instant()
+        ));
+    }
+
+    private void publishMessageEnd(String sessionId, AgentMessage message) {
+        ports.eventBus().publish(new MessageEndEvent(
+            sessionId,
+            message.id(),
+            message.role(),
+            message.kind(),
+            blockSnapshots(message),
+            message.usage(),
+            message.stopReason(),
+            Map.of(),
+            clock.instant()
+        ));
+    }
+
+    private void publishAssistantMessageEnd(String sessionId, String messageId) {
+        ports.eventBus().publish(new MessageEndEvent(
+            sessionId,
+            messageId,
+            cn.lypi.contracts.context.MessageRole.ASSISTANT,
+            cn.lypi.contracts.context.MessageKind.TEXT,
+            List.of(),
+            Optional.empty(),
+            Optional.of("error"),
+            Map.of("streaming", true),
+            clock.instant()
+        ));
+    }
+
+    private List<MessageBlockSnapshot> blockSnapshots(AgentMessage message) {
+        if (message.content() == null || message.content().isEmpty()) {
+            return List.of();
+        }
+        List<MessageBlockSnapshot> snapshots = new ArrayList<>();
+        for (int index = 0; index < message.content().size(); index++) {
+            ContentBlock block = message.content().get(index);
+            snapshots.add(new MessageBlockSnapshot(
+                blockId(message.id(), block.kind(), index),
+                block.kind(),
+                block.text(),
+                block.metadata()
+            ));
+        }
+        return List.copyOf(snapshots);
+    }
+
+    private String textBlockId(String messageId) {
+        return messageId + ":text:0";
+    }
+
+    private String blockId(String messageId, ContentBlockKind kind, int index) {
+        return messageId + ":" + kind.name().toLowerCase() + ":" + index;
     }
 }

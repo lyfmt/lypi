@@ -18,4 +18,22 @@ public record ToolStartEvent(
     public ToolStartEvent {
         inputMetadata = inputMetadata == null ? Map.of() : Map.copyOf(inputMetadata);
     }
+
+    /**
+     * NOTE: 兼容旧发布端；新代码应提供 parent message、turn 和输入摘要。
+     */
+    public ToolStartEvent(String sessionId, String toolUseId, String toolName, Instant timestamp) {
+        this(
+            sessionId,
+            toolUseId,
+            null,
+            null,
+            toolName,
+            toolName,
+            toolName,
+            Map.of(),
+            timestamp,
+            timestamp
+        );
+    }
 }

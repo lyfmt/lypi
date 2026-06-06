@@ -10,6 +10,8 @@ import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ErrorContentBlock;
+import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ThinkingContentBlock;
 import cn.lypi.contracts.context.ToolCallContentBlock;
@@ -19,6 +21,10 @@ import cn.lypi.contracts.error.LyPiException;
 import cn.lypi.contracts.error.ToolValidationException;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventEnvelope;
+import cn.lypi.contracts.event.MessageBlockSnapshot;
+import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.MessageEndEvent;
+import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
@@ -42,6 +48,7 @@ import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolResultSummary;
@@ -139,6 +146,69 @@ class ContractSerializationTest {
         assertEquals("扫描文件", progress.progress().title());
         assertEquals(3L, progress.progress().current());
         assertEquals(10L, progress.progress().total());
+    }
+
+    @Test
+    void semanticMessageEventsRoundTripKeepsRoleBlocksAndMetadata() throws Exception {
+        Instant timestamp = Instant.parse("2026-06-01T12:00:00Z");
+        AgentEvent start = new MessageStartEvent(
+            "ses_01",
+            "msg_01",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            Map.of("phase", "stream"),
+            timestamp
+        );
+        AgentEvent delta = new MessageDeltaEvent(
+            "ses_01",
+            "msg_01",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_01",
+            ContentBlockKind.TEXT,
+            "hello",
+            true,
+            Map.of("index", 0),
+            timestamp
+        );
+        AgentEvent end = new MessageEndEvent(
+            "ses_01",
+            "msg_01",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot("block_01", ContentBlockKind.TEXT, "hello", Map.of("index", 0))),
+            Optional.of(new TokenUsage(10, 5, 0, 0)),
+            Optional.of("end_turn"),
+            Map.of("final", true),
+            timestamp
+        );
+
+        MessageStartEvent restoredStart = assertInstanceOf(
+            MessageStartEvent.class,
+            mapper.readValue(mapper.writeValueAsString(start), AgentEvent.class)
+        );
+        assertEquals(MessageRole.ASSISTANT, restoredStart.role());
+        assertEquals(MessageKind.TEXT, restoredStart.kind());
+        assertEquals("stream", restoredStart.metadata().get("phase"));
+
+        MessageDeltaEvent restoredDelta = assertInstanceOf(
+            MessageDeltaEvent.class,
+            mapper.readValue(mapper.writeValueAsString(delta), AgentEvent.class)
+        );
+        assertEquals("block_01", restoredDelta.blockId());
+        assertEquals(ContentBlockKind.TEXT, restoredDelta.blockKind());
+        assertEquals("hello", restoredDelta.delta());
+        assertTrue(restoredDelta.isFinal());
+
+        MessageEndEvent restoredEnd = assertInstanceOf(
+            MessageEndEvent.class,
+            mapper.readValue(mapper.writeValueAsString(end), AgentEvent.class)
+        );
+        assertEquals("block_01", restoredEnd.blocks().getFirst().blockId());
+        assertEquals("hello", restoredEnd.blocks().getFirst().text());
+        assertEquals(10, restoredEnd.usage().orElseThrow().inputTokens());
+        assertEquals("end_turn", restoredEnd.stopReason().orElseThrow());
+        assertEquals(true, restoredEnd.metadata().get("final"));
     }
 
     @Test
