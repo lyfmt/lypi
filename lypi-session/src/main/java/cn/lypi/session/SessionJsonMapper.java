@@ -1,10 +1,9 @@
 package cn.lypi.session;
 
-import cn.lypi.contracts.memory.MemoryWriteEntry;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
+import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
-import cn.lypi.contracts.session.FileChangeEntry;
 import cn.lypi.contracts.session.LabelEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
@@ -39,8 +38,7 @@ final class SessionJsonMapper {
         Map.entry("permission_mode_change", PermissionModeChangeEntry.class),
         Map.entry("compaction", CompactionEntry.class),
         Map.entry("branch_summary", BranchSummaryEntry.class),
-        Map.entry("memory_write", MemoryWriteEntry.class),
-        Map.entry("file_change", FileChangeEntry.class),
+        Map.entry("custom", CustomEntry.class),
         Map.entry("custom_message", CustomMessageEntry.class),
         Map.entry("label", LabelEntry.class),
         Map.entry("session_info", SessionInfoEntry.class)
@@ -53,8 +51,7 @@ final class SessionJsonMapper {
         Map.entry(PermissionModeChangeEntry.class, "permission_mode_change"),
         Map.entry(CompactionEntry.class, "compaction"),
         Map.entry(BranchSummaryEntry.class, "branch_summary"),
-        Map.entry(MemoryWriteEntry.class, "memory_write"),
-        Map.entry(FileChangeEntry.class, "file_change"),
+        Map.entry(CustomEntry.class, "custom"),
         Map.entry(CustomMessageEntry.class, "custom_message"),
         Map.entry(LabelEntry.class, "label"),
         Map.entry(SessionInfoEntry.class, "session_info")

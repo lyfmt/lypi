@@ -2,11 +2,13 @@ package cn.lypi.contracts.runtime;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionView;
 import java.util.List;
 
-public interface SessionEnginePort {
+public interface SessionManagerPort {
     /**
      * 打开或创建 session。
      *
@@ -29,11 +31,29 @@ public interface SessionEnginePort {
     SessionHandle switchLeaf(String leafId);
 
     /**
-     * 查询从 leaf 到 root 的分支路径。
-     *
-     * ContextAssembler 使用该路径构建当前上下文视图。
+     * 查询 root-to-leaf 分支路径。
      */
-    List<SessionEntry> pathToRoot(String leafId);
+    List<SessionEntry> branch(String leafId);
+
+    /**
+     * 返回当前 session 最小视图。
+     */
+    SessionView currentView();
+
+    /**
+     * 返回指定 leaf 的最小视图。
+     */
+    SessionView view(String leafId);
+
+    /**
+     * 返回指定 leaf 的 transcript 消息序列。
+     */
+    List<AgentMessage> transcript(String leafId);
+
+    /**
+     * 返回指定 leaf 的 LLM session context。
+     */
+    SessionContext context(String leafId);
 
     /**
      * 追加一条消息 entry。

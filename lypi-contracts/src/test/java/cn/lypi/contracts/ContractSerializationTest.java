@@ -26,12 +26,18 @@ import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.session.BranchSummaryEntry;
+import cn.lypi.contracts.session.CompactionEntry;
+import cn.lypi.contracts.session.CompactionKind;
+import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.SessionInfoEntry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -56,6 +62,33 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"type\":\"custom_message\""));
         assertInstanceOf(CustomMessageEntry.class, restored);
         assertEquals("ent_01", restored.id());
+    }
+
+    @Test
+    void sessionEntriesRoundTripOnlyForConversationPathFacts() throws Exception {
+        Instant now = Instant.parse("2026-06-01T12:00:00Z");
+        List<SessionEntry> entries = List.of(
+            new CustomEntry("entry-custom", null, "demo.extension", Map.of("enabled", true), now),
+            new BranchSummaryEntry("entry-branch", "entry-custom", "branch summary", now),
+            new CustomMessageEntry("entry-custom-message", "entry-branch", "hello", now),
+            new CompactionEntry(
+                "entry-compact",
+                "entry-custom-message",
+                "summary",
+                "entry-custom-message",
+                100,
+                20,
+                CompactionKind.SESSION,
+                now
+            ),
+            new SessionInfoEntry("entry-info", "entry-compact", Map.of("name", "demo"), now)
+        );
+
+        for (SessionEntry entry : entries) {
+            String json = mapper.writeValueAsString(entry);
+            SessionEntry restored = mapper.readValue(json, SessionEntry.class);
+            assertEquals(entry, restored);
+        }
     }
 
     @Test

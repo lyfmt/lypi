@@ -5,14 +5,14 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
-import cn.lypi.contracts.runtime.SessionEnginePort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import java.nio.file.Path;
 import java.util.Objects;
 
 public record AgentCoreRuntimePorts(
     Path cwd,
-    SessionEnginePort sessionEngine,
+    SessionManagerPort sessionManager,
     AiProviderRuntimePort aiProvider,
     ToolRuntimePort toolRuntime,
     SecurityRuntimePort securityRuntime,

@@ -23,13 +23,13 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class SessionEngineImplTest {
+class SessionManagerImplTest {
     @TempDir
     Path tempDir;
 
     @Test
     void openOrCreateCreatesHeaderAndRestoresAppendedEntries() throws Exception {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
 
         SessionHandle created = engine.openOrCreate("ses_main");
         SessionEntry first = new CustomMessageEntry("entry_1", null, "hello", Instant.parse("2026-06-01T00:00:00Z"));
@@ -41,20 +41,20 @@ class SessionEngineImplTest {
         assertThat(afterSecond.leafId()).isEqualTo("entry_2");
         assertThat(Files.readAllLines(created.sessionFile())).hasSize(3);
 
-        SessionEngine reopenedEngine = new SessionEngineImpl(tempDir);
+        SessionManager reopenedEngine = new SessionManagerImpl(tempDir);
         SessionHandle reopened = reopenedEngine.openOrCreate("ses_main");
 
         assertThat(reopened.sessionId()).isEqualTo("ses_main");
         assertThat(reopened.leafId()).isEqualTo("entry_2");
         assertThat(reopened.byId()).containsKeys("entry_1", "entry_2");
-        assertThat(reopenedEngine.pathToRoot("entry_2"))
+        assertThat(reopenedEngine.branch("entry_2"))
             .extracting(SessionEntry::id)
-            .containsExactly("entry_2", "entry_1");
+            .containsExactly("entry_1", "entry_2");
     }
 
     @Test
     void openOrCreateRejectsSessionIdsThatEscapeSessionDirectory() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
 
         assertThatThrownBy(() -> engine.openOrCreate("../escape"))
             .isInstanceOf(SessionEngineException.class)
@@ -65,7 +65,7 @@ class SessionEngineImplTest {
 
     @Test
     void openOrCreateRejectsBlankOrUnsafeSessionIds() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
 
         assertThatThrownBy(() -> engine.openOrCreate(""))
             .isInstanceOf(SessionEngineException.class)
@@ -91,7 +91,7 @@ class SessionEngineImplTest {
                 Instant.parse("2026-06-01T00:00:00Z")
             )
         );
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
 
         assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
             .isInstanceOf(SessionEngineException.class)
@@ -104,7 +104,7 @@ class SessionEngineImplTest {
         store.create(sessionHeader("ses_main"));
         store.append("ses_main", new CustomMessageEntry("entry_1", null, "first", Instant.parse("2026-06-01T00:01:00Z")));
         store.append("ses_main", new CustomMessageEntry("entry_1", null, "duplicate", Instant.parse("2026-06-01T00:02:00Z")));
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
 
         assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
             .isInstanceOf(SessionEngineException.class)
@@ -116,7 +116,7 @@ class SessionEngineImplTest {
         JsonlSessionStore store = new JsonlSessionStore(tempDir);
         store.create(sessionHeader("ses_main"));
         store.append("ses_main", new CustomMessageEntry("entry_1", "missing", "orphan", Instant.parse("2026-06-01T00:01:00Z")));
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
 
         assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
             .isInstanceOf(SessionEngineException.class)
@@ -128,7 +128,7 @@ class SessionEngineImplTest {
         Path sessionFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_main.jsonl");
         Files.createDirectories(sessionFile.getParent());
         Files.writeString(sessionFile, "{\"type\":\"message\",\"version\":1,\"id\":\"ses_main\"}\n");
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
 
         assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
             .isInstanceOf(SessionEngineException.class)
@@ -146,7 +146,7 @@ class SessionEngineImplTest {
             not-json
             """.formatted(tempDir.toString())
         );
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
 
         assertThatThrownBy(() -> engine.openOrCreate("ses_main"))
             .isInstanceOf(SessionEngineException.class)
@@ -156,7 +156,7 @@ class SessionEngineImplTest {
 
     @Test
     void appendRejectsDuplicateIdsToPreserveAppendOnlyHistory() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         SessionEntry first = new CustomMessageEntry("entry_1", null, "hello", Instant.parse("2026-06-01T00:00:00Z"));
         SessionEntry duplicate = new CustomMessageEntry("entry_1", null, "changed", Instant.parse("2026-06-01T00:01:00Z"));
@@ -170,7 +170,7 @@ class SessionEngineImplTest {
 
     @Test
     void appendRejectsMissingParent() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         SessionEntry orphan = new CustomMessageEntry(
             "entry_1",
@@ -186,7 +186,7 @@ class SessionEngineImplTest {
 
     @Test
     void appendRequiresOpenSession() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         SessionEntry first = new CustomMessageEntry("entry_1", null, "hello", Instant.parse("2026-06-01T00:00:00Z"));
 
         assertThatThrownBy(() -> engine.append(first))
@@ -196,7 +196,7 @@ class SessionEngineImplTest {
 
     @Test
     void appendAllowsBranchingFromHistoricalParentAndMovesLeaf() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
@@ -206,13 +206,13 @@ class SessionEngineImplTest {
         );
 
         assertThat(branched.leafId()).isEqualTo("right");
-        assertThat(engine.pathToRoot("right")).extracting(SessionEntry::id).containsExactly("right", "root");
-        assertThat(engine.pathToRoot("left")).extracting(SessionEntry::id).containsExactly("left", "root");
+        assertThat(engine.branch("right")).extracting(SessionEntry::id).containsExactly("root", "right");
+        assertThat(engine.branch("left")).extracting(SessionEntry::id).containsExactly("root", "left");
     }
 
     @Test
     void switchLeafMovesCurrentBranchWithoutAppendingHistory() throws Exception {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         SessionHandle opened = engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
@@ -226,12 +226,12 @@ class SessionEngineImplTest {
         assertThat(switched.leafId()).isEqualTo("root");
         assertThat(Files.readAllLines(opened.sessionFile())).hasSize(lineCountBeforeSwitch + 1);
         assertThat(branched.leafId()).isEqualTo("right");
-        assertThat(engine.pathToRoot(branched.leafId())).extracting(SessionEntry::id).containsExactly("right", "root");
+        assertThat(engine.branch(branched.leafId())).extracting(SessionEntry::id).containsExactly("root", "right");
     }
 
     @Test
     void switchLeafDoesNotAppendJsonlLine() throws Exception {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         SessionHandle opened = engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         int before = Files.readAllLines(opened.sessionFile()).size();
@@ -243,7 +243,7 @@ class SessionEngineImplTest {
 
     @Test
     void switchLeafRejectsUnknownEntry() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
 
         assertThatThrownBy(() -> engine.switchLeaf("missing"))
@@ -252,16 +252,32 @@ class SessionEngineImplTest {
     }
 
     @Test
-    void pathToRootWithNullLeafReturnsEmptyPath() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+    void branchReturnsRootToLeafPath() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_main");
+        manager.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        manager.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
+        manager.append(new CustomMessageEntry("right", "root", "right", Instant.parse("2026-06-01T00:02:00Z")));
+
+        assertThat(manager.branch("left"))
+            .extracting(SessionEntry::id)
+            .containsExactly("root", "left");
+        assertThat(manager.branch("right"))
+            .extracting(SessionEntry::id)
+            .containsExactly("root", "right");
+    }
+
+    @Test
+    void branchWithNullLeafReturnsEmptyPath() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
 
-        assertThat(engine.pathToRoot(null)).isEmpty();
+        assertThat(engine.branch(null)).isEmpty();
     }
 
     @Test
     void switchLeafAllowsNullToAppendNewRoot() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root_a", null, "root a", Instant.parse("2026-06-01T00:00:00Z")));
 
@@ -271,12 +287,12 @@ class SessionEngineImplTest {
         );
 
         assertThat(secondRoot.leafId()).isEqualTo("root_b");
-        assertThat(engine.pathToRoot("root_b")).extracting(SessionEntry::id).containsExactly("root_b");
+        assertThat(engine.branch("root_b")).extracting(SessionEntry::id).containsExactly("root_b");
     }
 
     @Test
     void appendMessageCreatesMessageEntryThroughAppendSemantics() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         AgentMessage message = textMessage("msg_1", "hello");
 
@@ -289,7 +305,7 @@ class SessionEngineImplTest {
 
     @Test
     void appendMessageUsesStableEntryIdPrefix() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
 
         SessionHandle handle = engine.appendMessage(textMessage("msg_1", "hello"));
@@ -299,7 +315,7 @@ class SessionEngineImplTest {
 
     @Test
     void forkCopiesPathToForkPointIntoTargetCwdSessionStore() throws Exception {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
@@ -315,7 +331,7 @@ class SessionEngineImplTest {
             .isInstanceOfSatisfying(SessionInfoEntry.class, entry -> assertThat(entry.parentId()).isEqualTo("left"));
         assertThat(Files.readString(forked.sessionFile())).contains("\"parentSessionId\":\"ses_main\"");
 
-        SessionEngine targetEngine = new SessionEngineImpl(targetCwd);
+        SessionManager targetEngine = new SessionManagerImpl(targetCwd);
         SessionHandle reopened = targetEngine.openOrCreate(forked.sessionId());
         assertThat(reopened.leafId()).isEqualTo(forked.leafId());
         assertThat(reopened.byId()).containsKeys("root", "left", forked.leafId());
@@ -323,7 +339,7 @@ class SessionEngineImplTest {
 
     @Test
     void forkPersistsReasonAsSessionInfoWithoutCopyingSiblingBranches() throws Exception {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
@@ -346,26 +362,26 @@ class SessionEngineImplTest {
 
     @Test
     void appendAfterForkUsesForkInfoAsParent() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
         Path targetCwd = tempDir.resolve("fork-cwd");
 
         SessionHandle forked = engine.fork(new ForkRequest("ses_main", "left", targetCwd, "explore branch"));
-        SessionEngine targetEngine = new SessionEngineImpl(targetCwd);
+        SessionManager targetEngine = new SessionManagerImpl(targetCwd);
         targetEngine.openOrCreate(forked.sessionId());
 
         SessionHandle afterMessage = targetEngine.appendMessage(textMessage("msg_after_fork", "continue"));
 
-        assertThat(targetEngine.pathToRoot(afterMessage.leafId()))
+        assertThat(targetEngine.branch(afterMessage.leafId()))
             .extracting(SessionEntry::id)
-            .containsExactly(afterMessage.leafId(), forked.leafId(), "left", "root");
+            .containsExactly("root", "left", forked.leafId(), afterMessage.leafId());
     }
 
     @Test
     void forkRejectsBlankReasonWithSessionEngineException() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
 
@@ -379,7 +395,7 @@ class SessionEngineImplTest {
 
     @Test
     void forkRejectsMissingRequestFieldsWithSessionEngineException() {
-        SessionEngine engine = new SessionEngineImpl(tempDir);
+        SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");
         engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
 

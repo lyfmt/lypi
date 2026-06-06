@@ -1,4 +1,4 @@
-package cn.lypi.agent;
+package cn.lypi.session;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
@@ -15,19 +15,16 @@ import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-final class ContextEntryProjector {
-    Projection project(List<SessionEntry> leafToRootPath) {
-        List<SessionEntry> entries = new ArrayList<>(leafToRootPath);
-        Collections.reverse(entries);
-
+final class SessionReplayProjector {
+    SessionContext context(List<SessionEntry> branch) {
         ModelSelection model = new ModelSelection("default", "default", ThinkingLevel.MEDIUM);
         ThinkingLevel thinkingLevel = ThinkingLevel.MEDIUM;
         AgentMode mode = AgentMode.EXECUTE;
@@ -36,7 +33,7 @@ final class ContextEntryProjector {
         List<String> branchEntryIds = new ArrayList<>();
         CompactionEntry latestCompaction = null;
 
-        for (SessionEntry entry : entries) {
+        for (SessionEntry entry : branch) {
             branchEntryIds.add(entry.id());
             if (entry instanceof MessageEntry messageEntry) {
                 messages.add(messageEntry.message());
@@ -48,6 +45,7 @@ final class ContextEntryProjector {
                 model = modelChange.model();
             } else if (entry instanceof ThinkingChangeEntry thinkingChange) {
                 thinkingLevel = thinkingChange.thinkingLevel();
+                model = withThinkingLevel(model, thinkingLevel);
             } else if (entry instanceof ModeChangeEntry modeChange) {
                 mode = modeChange.agentMode();
             } else if (entry instanceof PermissionModeChangeEntry permissionChange) {
@@ -59,11 +57,11 @@ final class ContextEntryProjector {
 
         List<String> appliedCompactionEntryIds = List.of();
         if (latestCompaction != null) {
-            messages = applyCompaction(messages, entries, latestCompaction);
+            messages = applyCompaction(messages, branch, latestCompaction);
             appliedCompactionEntryIds = List.of(latestCompaction.id());
         }
 
-        return new Projection(
+        return new SessionContext(
             List.copyOf(messages),
             List.copyOf(branchEntryIds),
             appliedCompactionEntryIds,
@@ -74,14 +72,18 @@ final class ContextEntryProjector {
         );
     }
 
+    List<AgentMessage> transcript(List<SessionEntry> branch) {
+        return context(branch).messages();
+    }
+
     private List<AgentMessage> applyCompaction(
-        List<AgentMessage> messages,
-        List<SessionEntry> entries,
+        List<AgentMessage> originalMessages,
+        List<SessionEntry> branch,
         CompactionEntry compaction
     ) {
         List<AgentMessage> kept = new ArrayList<>();
         boolean keep = false;
-        for (SessionEntry entry : entries) {
+        for (SessionEntry entry : branch) {
             if (entry.id().equals(compaction.firstKeptEntryId())) {
                 keep = true;
             }
@@ -90,32 +92,15 @@ final class ContextEntryProjector {
             }
         }
 
-        AgentMessage summary = new AgentMessage(
-            "summary-" + compaction.id(),
-            MessageRole.SYSTEM_LOCAL,
-            MessageKind.SUMMARY,
-            List.of(new TextContentBlock(compaction.summary())),
-            Optional.ofNullable(compaction.timestamp()).orElse(Instant.EPOCH),
-            Optional.empty(),
-            Optional.empty()
-        );
-
         List<AgentMessage> projected = new ArrayList<>();
-        projected.add(summary);
-        projected.addAll(kept.isEmpty() ? messages : kept);
+        projected.add(systemLocalMessage(
+            "summary-" + compaction.id(),
+            MessageKind.SUMMARY,
+            compaction.summary(),
+            compaction.timestamp()
+        ));
+        projected.addAll(kept.isEmpty() ? originalMessages : kept);
         return projected;
-    }
-
-    private AgentMessage systemLocalMessage(String id, MessageKind kind, String text, Instant timestamp) {
-        return new AgentMessage(
-            id,
-            MessageRole.SYSTEM_LOCAL,
-            kind,
-            List.of(new TextContentBlock(text)),
-            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
-            Optional.empty(),
-            Optional.empty()
-        );
     }
 
     private Optional<AgentMessage> project(SessionEntry entry) {
@@ -149,13 +134,19 @@ final class ContextEntryProjector {
         );
     }
 
-    record Projection(
-        List<AgentMessage> messages,
-        List<String> branchEntryIds,
-        List<String> appliedCompactionEntryIds,
-        ModelSelection model,
-        ThinkingLevel thinkingLevel,
-        AgentMode mode,
-        PermissionMode permissionMode
-    ) {}
+    private AgentMessage systemLocalMessage(String id, MessageKind kind, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.SYSTEM_LOCAL,
+            kind,
+            List.of(new TextContentBlock(text)),
+            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private ModelSelection withThinkingLevel(ModelSelection model, ThinkingLevel thinkingLevel) {
+        return new ModelSelection(model.provider(), model.modelId(), thinkingLevel);
+    }
 }

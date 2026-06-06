@@ -1,18 +1,20 @@
 package cn.lypi.session;
 
 import cn.lypi.contracts.context.AgentMessage;
-import cn.lypi.contracts.runtime.SessionEnginePort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionView;
 import java.util.List;
 
 /**
  * 管理 session JSONL 历史和分支状态。
  *
- * NOTE: 该接口只负责历史事实读写，不构建 ContextSnapshot。
+ * NOTE: 该接口只负责 session tree 与 replay，不构建 system prompt 或 budget。
  */
-public interface SessionEngine extends SessionEnginePort {
+public interface SessionManager extends SessionManagerPort {
     /**
      * 打开已有 session 或创建新 session。
      */
@@ -36,10 +38,34 @@ public interface SessionEngine extends SessionEnginePort {
     SessionHandle switchLeaf(String leafId);
 
     /**
-     * 返回从 leaf 到 root 的 entry 路径。
+     * 返回 root-to-leaf 的 entry 路径。
      */
     @Override
-    List<SessionEntry> pathToRoot(String leafId);
+    List<SessionEntry> branch(String leafId);
+
+    /**
+     * 返回当前 session 最小视图。
+     */
+    @Override
+    SessionView currentView();
+
+    /**
+     * 返回指定 leaf 的最小视图。
+     */
+    @Override
+    SessionView view(String leafId);
+
+    /**
+     * 返回指定 leaf 的 transcript 消息序列。
+     */
+    @Override
+    List<AgentMessage> transcript(String leafId);
+
+    /**
+     * 返回指定 leaf 的 LLM session context。
+     */
+    @Override
+    SessionContext context(String leafId);
 
     /**
      * 将 AgentMessage 包装为 MessageEntry 并追加。

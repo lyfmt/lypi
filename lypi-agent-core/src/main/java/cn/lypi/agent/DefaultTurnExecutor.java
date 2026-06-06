@@ -49,8 +49,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     public TurnState execute(TurnRequest request) {
         String turnId = ids.newTurnId();
         List<AgentMessage> newMessages = new ArrayList<>();
-        ports.sessionEngine().openOrCreate(request.sessionId());
-        request.parentEntryId().ifPresent(parentEntryId -> ports.sessionEngine().switchLeaf(parentEntryId));
+        ports.sessionManager().openOrCreate(request.sessionId());
+        request.parentEntryId().ifPresent(parentEntryId -> ports.sessionManager().switchLeaf(parentEntryId));
         ports.eventBus().publish(new TurnStartEvent(request.sessionId(), turnId, clock.instant()));
 
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
@@ -261,7 +261,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private String appendStartedMessage(String sessionId, AgentMessage message) {
-        String leafId = ports.sessionEngine().appendMessage(message).leafId();
+        String leafId = ports.sessionManager().appendMessage(message).leafId();
         publishMessageEnd(sessionId, message.id());
         return leafId;
     }

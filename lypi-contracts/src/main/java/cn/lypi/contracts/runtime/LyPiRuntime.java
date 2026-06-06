@@ -5,7 +5,7 @@ import java.util.List;
 
 public record LyPiRuntime(
     AppEntry appEntry,
-    SessionEnginePort sessionEngine,
+    SessionManagerPort sessionManager,
     AgentCorePort agentCore,
     AiProviderRuntimePort aiProvider,
     ToolRuntimePort toolRuntime,
@@ -13,4 +13,3 @@ public record LyPiRuntime(
     ResourceRuntimePort resourceRuntime,
     List<TransportAdapter> transports
 ) {}
-

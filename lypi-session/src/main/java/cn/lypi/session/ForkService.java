@@ -7,8 +7,6 @@ import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,8 +29,7 @@ final class ForkService {
      */
     SessionHandle fork(ForkRequest request, EntryTreeIndex sourceIndex) {
         validateRequest(request);
-        List<SessionEntry> path = new ArrayList<>(sourceIndex.pathToRoot(request.forkPointEntryId()));
-        Collections.reverse(path);
+        List<SessionEntry> path = sourceIndex.branch(request.forkPointEntryId());
         String forkSessionId = "ses_" + UUID.randomUUID().toString().replace("-", "");
         SessionHeader header = new SessionHeader(
             "session",
