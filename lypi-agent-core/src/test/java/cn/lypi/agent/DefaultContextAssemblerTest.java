@@ -5,9 +5,11 @@ import static cn.lypi.agent.AgentCoreTestFixtures.userMessage;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.SessionContext;
@@ -36,6 +38,7 @@ class DefaultContextAssemblerTest {
     @Test
     void buildsContextFromSessionManagerContextAndResourceRuntime() {
         AgentMessage userMessage = userMessage("msg-user", "hello");
+        String systemPrompt = "system prompt with enough characters";
         StubSessionManager sessionManager = new StubSessionManager(new SessionContext(
             List.of(userMessage),
             List.of("entry-user"),
@@ -47,7 +50,7 @@ class DefaultContextAssemblerTest {
         ));
         DefaultContextAssembler assembler = new DefaultContextAssembler(
             sessionManager,
-            fixedResourceRuntime("system"),
+            fixedResourceRuntime(systemPrompt),
             new ContextBudgetEstimator()
         );
 
@@ -60,7 +63,9 @@ class DefaultContextAssemblerTest {
 
         assertThat(sessionManager.requestedLeafId).isEqualTo("entry-user");
         assertThat(assembly.snapshot().messages()).containsExactly(userMessage);
-        assertThat(assembly.snapshot().systemPrompt().content()).isEqualTo("system");
+        assertThat(assembly.snapshot().systemPrompt().content()).isEqualTo(systemPrompt);
+        assertThat(assembly.snapshot().budget().estimatedContextTokens())
+            .isEqualTo(estimateTokens(assembly.snapshot().systemPrompt(), assembly.snapshot().messages()));
         assertThat(assembly.snapshot().model().modelId()).isEqualTo("gpt-test");
         assertThat(assembly.snapshot().thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(assembly.snapshot().mode()).isEqualTo(AgentMode.PLAN);
@@ -117,5 +122,23 @@ class DefaultContextAssemblerTest {
         public List<SessionEntry> branch(String leafId) {
             return List.of();
         }
+    }
+
+    private static int estimateTokens(SystemPrompt systemPrompt, List<AgentMessage> messages) {
+        int systemTokens = systemPrompt == null ? 0 : estimateText(systemPrompt.content());
+        int messageTokens = messages.stream()
+            .flatMap(message -> message.content().stream())
+            .mapToInt(DefaultContextAssemblerTest::estimateBlock)
+            .sum();
+        return systemTokens + messageTokens;
+    }
+
+    private static int estimateBlock(ContentBlock block) {
+        return estimateText(block.text());
+    }
+
+    private static int estimateText(String text) {
+        String safeText = text == null ? "" : text;
+        return Math.max(1, safeText.length() / 4);
     }
 }

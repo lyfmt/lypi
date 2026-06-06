@@ -32,8 +32,7 @@ public final class DefaultContextAssembler implements ContextAssembler {
         ResourceSnapshot resources = resourceRuntime.load(request.cwd());
         SystemPrompt systemPrompt = request.includeSystemPrompt() ? resourceRuntime.buildSystemPrompt(resources) : null;
         SessionContext sessionContext = sessionManager.context(leafId);
-        ContextBudget budget = budgetEstimator.estimate(sessionContext.messages());
-
+        ContextBudget budget = budgetEstimator.estimate(systemPrompt, sessionContext.messages());
         ContextSnapshot snapshot = new ContextSnapshot(
             systemPrompt,
             sessionContext.messages(),
