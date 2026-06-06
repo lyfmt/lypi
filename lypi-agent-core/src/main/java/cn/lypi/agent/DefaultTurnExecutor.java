@@ -9,6 +9,7 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
@@ -17,9 +18,12 @@ import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
+import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.TextDelta;
+import cn.lypi.contracts.model.ThinkingDelta;
+import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
@@ -190,16 +194,16 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private AgentMessage runModel(TurnRequest request, ContextSnapshot context) {
         AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
-        Optional<String> startedAssistantMessageId = Optional.empty();
+        AssistantStartPublisher startPublisher = new AssistantStartPublisher(request.sessionId());
         try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
                 accumulator.accept(event);
                 if (event instanceof AssistantStart start) {
-                    publishAssistantMessageStart(request.sessionId(), start.messageId());
-                    startedAssistantMessageId = Optional.of(start.messageId());
+                    startPublisher.messageId(start.messageId());
                 }
                 if (event instanceof TextDelta delta) {
                     String messageId = currentAssistantId(accumulator);
+                    startPublisher.publish(messageId, MessageKind.TEXT);
                     ports.eventBus().publish(new MessageDeltaEvent(
                         request.sessionId(),
                         messageId,
@@ -213,16 +217,28 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         clock.instant()
                     ));
                 }
+                if (event instanceof ToolCallDelta) {
+                    startPublisher.publish(currentAssistantId(accumulator), MessageKind.TOOL_CALL);
+                }
+                if (event instanceof ThinkingDelta) {
+                    startPublisher.publish(currentAssistantId(accumulator), MessageKind.THINKING);
+                }
+                if (event instanceof AssistantError) {
+                    startPublisher.publish(currentAssistantId(accumulator), MessageKind.ERROR);
+                }
                 if (request.abortSignal().aborted()) {
                     break;
                 }
             }
         } catch (RuntimeException failure) {
-            startedAssistantMessageId.ifPresent(messageId -> publishAssistantMessageEnd(request.sessionId(), messageId));
+            startPublisher.publishIfStarted(MessageKind.ERROR);
+            startPublisher.messageId().ifPresent(messageId -> publishAssistantMessageEnd(request.sessionId(), messageId));
             throw failure;
         }
 
-        return accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
+        AgentMessage message = accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
+        startPublisher.publish(message.id(), message.kind());
+        return message;
     }
 
     private List<ToolResult<?>> executeTools(String sessionId, List<ToolUseRequest> toolRequests, ContextSnapshot context) {
@@ -259,12 +275,12 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return accumulator.messageId().orElse("streaming");
     }
 
-    private void publishAssistantMessageStart(String sessionId, String messageId) {
+    private void publishAssistantMessageStart(String sessionId, String messageId, MessageKind kind) {
         ports.eventBus().publish(new MessageStartEvent(
             sessionId,
             messageId,
             cn.lypi.contracts.context.MessageRole.ASSISTANT,
-            cn.lypi.contracts.context.MessageKind.TEXT,
+            kind,
             Map.of("streaming", true),
             clock.instant()
         ));
@@ -332,5 +348,38 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private String blockId(String messageId, ContentBlockKind kind, int index) {
         return messageId + ":" + kind.name().toLowerCase() + ":" + index;
+    }
+
+    private final class AssistantStartPublisher {
+        private final String sessionId;
+        private String messageId;
+        private boolean published;
+
+        private AssistantStartPublisher(String sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        private void messageId(String messageId) {
+            if (messageId != null && !messageId.isBlank()) {
+                this.messageId = messageId;
+            }
+        }
+
+        private Optional<String> messageId() {
+            return Optional.ofNullable(messageId).filter(id -> !id.isBlank());
+        }
+
+        private void publish(String messageId, MessageKind kind) {
+            messageId(messageId);
+            publishIfStarted(kind);
+        }
+
+        private void publishIfStarted(MessageKind kind) {
+            if (published || messageId == null || messageId.isBlank()) {
+                return;
+            }
+            publishAssistantMessageStart(sessionId, messageId, kind);
+            published = true;
+        }
     }
 }

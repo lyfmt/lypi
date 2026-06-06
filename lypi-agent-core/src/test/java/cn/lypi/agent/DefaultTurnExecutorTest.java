@@ -175,6 +175,20 @@ class DefaultTurnExecutorTest {
             .containsExactly("msg-user", "msg-tool-call", "msg-tool-result", "msg-final");
         assertThat(session.messages()).extracting(AgentMessage::role)
             .containsExactly(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL_RESULT, MessageRole.ASSISTANT);
+        MessageStartEvent toolCallStart = eventBus.events.stream()
+            .filter(MessageStartEvent.class::isInstance)
+            .map(MessageStartEvent.class::cast)
+            .filter(event -> event.messageId().equals("msg-tool-call"))
+            .findFirst()
+            .orElseThrow();
+        MessageEndEvent toolCallEnd = eventBus.events.stream()
+            .filter(MessageEndEvent.class::isInstance)
+            .map(MessageEndEvent.class::cast)
+            .filter(event -> event.messageId().equals("msg-tool-call"))
+            .findFirst()
+            .orElseThrow();
+        assertThat(toolCallStart.kind()).isEqualTo(MessageKind.TOOL_CALL);
+        assertThat(toolCallEnd.kind()).isEqualTo(MessageKind.TOOL_CALL);
     }
 
     @Test

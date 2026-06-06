@@ -377,21 +377,19 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             }
 
             PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
-            if (isDeny(securityDecision)) {
-                return permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(securityDecision)));
-            }
-
             PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
-            PermissionGateResult toolGateResult = resolvePermission(request, tool, toolContext, toolDecision);
-
-            PermissionGateResult securityGateResult = resolvePermission(request, tool, toolContext, securityDecision);
+            PermissionDecision effectiveDecision = effectiveDecision(toolDecision, securityDecision);
+            if (isDeny(effectiveDecision)) {
+                return permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(effectiveDecision)));
+            }
+            PermissionGateResult permissionResult = resolvePermission(request, tool, toolContext, effectiveDecision);
 
             ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
             if (beforeResult != null && beforeResult.blocked()) {
                 return errorResult(request.toolUseId(), beforeResult.message());
             }
 
-            return executeStartedCall(request, tool, input, toolContext, toolGateResult, securityGateResult);
+            return executeStartedCall(request, tool, input, toolContext, permissionResult);
         } catch (RuntimeException exception) {
             return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
         }
@@ -402,8 +400,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         Tool<Map<String, Object>, ?> tool,
         Map<String, Object> input,
         ToolUseContext toolContext,
-        PermissionGateResult toolGateResult,
-        PermissionGateResult securityGateResult
+        PermissionGateResult permissionResult
     ) {
         ToolExecutionEventPublisher.StartedToolExecution started = eventPublisher.start(
             toolContext.sessionId(),
@@ -419,14 +416,9 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolResult<?> finalResult = null;
         ToolExecutionStatus status = ToolExecutionStatus.FAILED;
         try {
-            if (toolGateResult.status() != PermissionGateResult.Status.ALLOW) {
-                status = statusForGateResult(toolGateResult);
-                finalResult = permissionGateError(request.toolUseId(), toolGateResult);
-                return finalResult;
-            }
-            if (securityGateResult.status() != PermissionGateResult.Status.ALLOW) {
-                status = statusForGateResult(securityGateResult);
-                finalResult = permissionGateError(request.toolUseId(), securityGateResult);
+            if (permissionResult.status() != PermissionGateResult.Status.ALLOW) {
+                status = statusForGateResult(permissionResult);
+                finalResult = permissionGateError(request.toolUseId(), permissionResult);
                 return finalResult;
             }
             if (shouldSkipForAbort(tool, toolContext)) {
@@ -703,8 +695,28 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return result == null ? PermissionGateResult.deny("权限请求未获允许。") : result;
     }
 
+    private PermissionDecision effectiveDecision(PermissionDecision toolDecision, PermissionDecision securityDecision) {
+        if (isDeny(securityDecision)) {
+            return securityDecision;
+        }
+        if (isDeny(toolDecision)) {
+            return toolDecision;
+        }
+        if (isAsk(securityDecision)) {
+            return securityDecision;
+        }
+        if (isAsk(toolDecision)) {
+            return toolDecision;
+        }
+        return securityDecision == null ? toolDecision : securityDecision;
+    }
+
     private boolean isDeny(PermissionDecision decision) {
         return decision == null || decision.behavior() == PermissionBehavior.DENY;
+    }
+
+    private boolean isAsk(PermissionDecision decision) {
+        return decision != null && decision.behavior() == PermissionBehavior.ASK;
     }
 
     private ToolResult<?> permissionGateError(String toolUseId, PermissionGateResult result) {

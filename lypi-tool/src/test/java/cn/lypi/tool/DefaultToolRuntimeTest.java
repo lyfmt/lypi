@@ -437,6 +437,43 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void asksPermissionOnceWhenToolAndSecurityBothRequireConfirmation() {
+        RecordingEventBus events = new RecordingEventBus();
+        AtomicInteger responseRequests = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        PermissionResponseGate responseGate = requestEvent -> {
+            responseRequests.incrementAndGet();
+            return new PermissionResponse(
+                requestEvent.sessionId(),
+                requestEvent.requestId(),
+                "allow_once",
+                false,
+                requestEvent.timestamp()
+            );
+        };
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder()
+                .sessionId("ses_public")
+                .metadata(Map.of("turnId", "turn_public"))
+                .build(),
+            security,
+            responseGate,
+            events
+        );
+        runtime.register(TestTools.permission("write", PermissionBehavior.ASK));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_public", "write", Map.of("text", "done"), "msg_parent")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(1, responseRequests.get());
+        assertEquals(1, events.events.stream().filter(PermissionRequestEvent.class::isInstance).count());
+        assertEquals(1, events.events.stream().filter(PermissionDecisionEvent.class::isInstance).count());
+    }
+
+    @Test
     void publishesEndWithErrorWhenToolThrows() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
