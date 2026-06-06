@@ -3,9 +3,11 @@ package cn.lypi.session;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
+import cn.lypi.contracts.session.SessionView;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -13,22 +15,23 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * SessionEngine 的默认实现。
+ * SessionManager 的默认实现。
  *
  * NOTE: 该实现编排 JSONL store、entry tree 和 fork 服务，不处理模型或工具执行。
  */
-public final class SessionEngineImpl implements SessionEngine {
+public final class SessionManagerImpl implements SessionManager {
     private final Path cwd;
     private final JsonlSessionStore store;
     private final Clock clock;
+    private final SessionReplayProjector replayProjector = new SessionReplayProjector();
     private String sessionId;
     private EntryTreeIndex index;
 
-    public SessionEngineImpl(Path cwd) {
+    public SessionManagerImpl(Path cwd) {
         this(cwd, Clock.systemUTC());
     }
 
-    SessionEngineImpl(Path cwd, Clock clock) {
+    SessionManagerImpl(Path cwd, Clock clock) {
         this.cwd = cwd;
         this.clock = clock;
         this.store = new JsonlSessionStore(cwd);
@@ -71,12 +74,41 @@ public final class SessionEngineImpl implements SessionEngine {
     }
 
     /**
-     * 查询指定 leaf 到 root 的路径。
+     * 查询指定 leaf 的 root-to-leaf 路径。
      */
     @Override
-    public List<SessionEntry> pathToRoot(String leafId) {
+    public List<SessionEntry> branch(String leafId) {
         ensureOpen();
-        return index.pathToRoot(leafId);
+        return index.branch(leafId);
+    }
+
+    List<SessionEntry> leafToRootPath(String leafId) {
+        ensureOpen();
+        return index.leafToRootPath(leafId);
+    }
+
+    @Override
+    public SessionView currentView() {
+        ensureOpen();
+        return view(index.leafId());
+    }
+
+    @Override
+    public SessionView view(String leafId) {
+        ensureOpen();
+        return new SessionView(sessionId, leafId);
+    }
+
+    @Override
+    public List<AgentMessage> transcript(String leafId) {
+        ensureOpen();
+        return replayProjector.transcript(branch(leafId));
+    }
+
+    @Override
+    public SessionContext context(String leafId) {
+        ensureOpen();
+        return replayProjector.context(branch(leafId));
     }
 
     /**

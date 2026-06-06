@@ -22,7 +22,7 @@ import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
-import cn.lypi.contracts.runtime.SessionEnginePort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
@@ -133,12 +133,16 @@ class CommonContractTest {
     @Test
     void runtimePortsExposeDocumentedCrossModuleCapabilities() {
         assertAll(
-            () -> assertMethod(SessionEnginePort.class, "openOrCreate", 1),
-            () -> assertMethod(SessionEnginePort.class, "append", 1),
-            () -> assertMethod(SessionEnginePort.class, "switchLeaf", 1),
-            () -> assertMethod(SessionEnginePort.class, "pathToRoot", 1),
-            () -> assertMethod(SessionEnginePort.class, "appendMessage", 1),
-            () -> assertMethod(SessionEnginePort.class, "fork", 1),
+            () -> assertMethod(SessionManagerPort.class, "openOrCreate", 1),
+            () -> assertMethod(SessionManagerPort.class, "append", 1),
+            () -> assertMethod(SessionManagerPort.class, "switchLeaf", 1),
+            () -> assertMethod(SessionManagerPort.class, "branch", 1),
+            () -> assertMethod(SessionManagerPort.class, "currentView", 0),
+            () -> assertMethod(SessionManagerPort.class, "view", 1),
+            () -> assertMethod(SessionManagerPort.class, "transcript", 1),
+            () -> assertMethod(SessionManagerPort.class, "context", 1),
+            () -> assertMethod(SessionManagerPort.class, "appendMessage", 1),
+            () -> assertMethod(SessionManagerPort.class, "fork", 1),
             () -> assertMethod(AiProviderRuntimePort.class, "stream", 2),
             () -> assertMethod(ToolRuntimePort.class, "register", 1),
             () -> assertMethod(ToolRuntimePort.class, "resolve", 1),

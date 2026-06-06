@@ -4,7 +4,7 @@ public interface ContextAssembler {
     /**
      * 构建模型上下文快照。
      *
-     * NOTE: 从 session 分支路径恢复消息、模式、权限、压缩摘要和预算视图，不改写 transcript。
+     * NOTE: session replay 由 SessionManager 完成；这里只拼装 system prompt 和预算视图。
      */
     ContextAssembly build(ContextBuildRequest request);
 }

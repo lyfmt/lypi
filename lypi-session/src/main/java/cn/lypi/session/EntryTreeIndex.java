@@ -2,6 +2,7 @@ package cn.lypi.session;
 
 import cn.lypi.contracts.session.SessionEntry;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,7 +69,7 @@ final class EntryTreeIndex {
     /**
      * 返回从 leaf 到 root 的路径。
      */
-    List<SessionEntry> pathToRoot(String leafId) {
+    List<SessionEntry> leafToRootPath(String leafId) {
         List<SessionEntry> path = new ArrayList<>();
         String currentId = leafId;
         while (currentId != null) {
@@ -79,6 +80,15 @@ final class EntryTreeIndex {
             path.add(entry);
             currentId = entry.parentId();
         }
+        return List.copyOf(path);
+    }
+
+    /**
+     * 返回 root-to-leaf 的路径。
+     */
+    List<SessionEntry> branch(String leafId) {
+        List<SessionEntry> path = new ArrayList<>(leafToRootPath(leafId));
+        Collections.reverse(path);
         return List.copyOf(path);
     }
 }

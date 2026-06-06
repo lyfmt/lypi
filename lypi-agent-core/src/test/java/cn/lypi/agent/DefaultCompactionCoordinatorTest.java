@@ -30,7 +30,7 @@ class DefaultCompactionCoordinatorTest {
 
     @Test
     void appendsCompactionEntryAndReturnsRebuiltContext() {
-        AgentCoreTestFixtures.InMemorySessionEngine session = sessionWithLongBranch();
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
@@ -61,7 +61,7 @@ class DefaultCompactionCoordinatorTest {
 
     @Test
     void fallsBackToOriginalContextWhenSummarizerFails() {
-        AgentCoreTestFixtures.InMemorySessionEngine session = sessionWithLongBranch();
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
@@ -89,7 +89,7 @@ class DefaultCompactionCoordinatorTest {
 
     @Test
     void doesNotDependOnRebuildAfterAppendingCompactionEntry() {
-        AgentCoreTestFixtures.InMemorySessionEngine session = sessionWithLongBranch();
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
@@ -116,8 +116,8 @@ class DefaultCompactionCoordinatorTest {
             .hasSize(1);
     }
 
-    private static AgentCoreTestFixtures.InMemorySessionEngine sessionWithLongBranch() {
-        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+    private static AgentCoreTestFixtures.InMemorySessionManager sessionWithLongBranch() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         session.openOrCreate("session-1");
         session.append(new MessageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long enough to count"), NOW));
         session.append(new MessageEntry("entry-assistant-1", "entry-user-1", assistantMessage("msg-assistant-1", "assistant one long enough"), NOW));
@@ -125,7 +125,7 @@ class DefaultCompactionCoordinatorTest {
         return session;
     }
 
-    private static DefaultContextAssembler lowBudgetAssembler(AgentCoreTestFixtures.InMemorySessionEngine session) {
+    private static DefaultContextAssembler lowBudgetAssembler(AgentCoreTestFixtures.InMemorySessionManager session) {
         return new DefaultContextAssembler(
             session,
             fixedResourceRuntime("system"),
@@ -133,12 +133,12 @@ class DefaultCompactionCoordinatorTest {
         );
     }
 
-    private static ContextBuildRequest buildRequest(AgentCoreTestFixtures.InMemorySessionEngine session) {
+    private static ContextBuildRequest buildRequest(AgentCoreTestFixtures.InMemorySessionManager session) {
         return new ContextBuildRequest("session-1", Optional.of(session.leafId()), Path.of("."), true);
     }
 
     private static CompactionRequest request(
-        AgentCoreTestFixtures.InMemorySessionEngine session,
+        AgentCoreTestFixtures.InMemorySessionManager session,
         ContextBuildRequest buildRequest,
         ContextAssembly assembly
     ) {

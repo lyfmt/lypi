@@ -23,15 +23,22 @@ import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
-import cn.lypi.contracts.runtime.SessionEnginePort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.ModeChangeEntry;
+import cn.lypi.contracts.session.ModelChangeEntry;
+import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
@@ -39,6 +46,7 @@ import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -114,7 +122,7 @@ final class AgentCoreTestFixtures {
     }
 
     static AgentCoreRuntimePorts ports(
-        InMemorySessionEngine session,
+        InMemorySessionManager session,
         StubAiProvider aiProvider,
         StubToolRuntime toolRuntime,
         RecordingEventBus eventBus,
@@ -136,7 +144,7 @@ final class AgentCoreTestFixtures {
 
     static AgentCoreRuntimePorts ports(
         Path cwd,
-        InMemorySessionEngine session,
+        InMemorySessionManager session,
         StubAiProvider aiProvider,
         StubToolRuntime toolRuntime,
         RecordingEventBus eventBus,
@@ -170,7 +178,7 @@ final class AgentCoreTestFixtures {
         );
     }
 
-    static final class InMemorySessionEngine implements SessionEnginePort {
+    static class InMemorySessionManager implements SessionManagerPort {
         private String sessionId;
         private String leafId = "";
         private final Map<String, SessionEntry> entries = new LinkedHashMap<>();
@@ -195,7 +203,7 @@ final class AgentCoreTestFixtures {
         }
 
         @Override
-        public List<SessionEntry> pathToRoot(String leafId) {
+        public List<SessionEntry> branch(String leafId) {
             List<SessionEntry> path = new ArrayList<>();
             String current = leafId;
             while (current != null && !current.isBlank()) {
@@ -206,7 +214,65 @@ final class AgentCoreTestFixtures {
                 path.add(entry);
                 current = entry.parentId();
             }
-            return path;
+            Collections.reverse(path);
+            return List.copyOf(path);
+        }
+
+        @Override
+        public SessionView currentView() {
+            return view(leafId);
+        }
+
+        @Override
+        public SessionView view(String leafId) {
+            return new SessionView(sessionId, leafId);
+        }
+
+        @Override
+        public List<AgentMessage> transcript(String leafId) {
+            return context(leafId).messages();
+        }
+
+        @Override
+        public SessionContext context(String leafId) {
+            ModelSelection model = new ModelSelection("default", "default", ThinkingLevel.MEDIUM);
+            ThinkingLevel thinkingLevel = ThinkingLevel.MEDIUM;
+            cn.lypi.contracts.security.AgentMode mode = cn.lypi.contracts.security.AgentMode.EXECUTE;
+            cn.lypi.contracts.security.PermissionMode permissionMode = cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE;
+            List<AgentMessage> messages = new ArrayList<>();
+            List<String> entryIds = new ArrayList<>();
+            CompactionEntry latestCompaction = null;
+            for (SessionEntry entry : branch(leafId)) {
+                entryIds.add(entry.id());
+                if (entry instanceof MessageEntry messageEntry) {
+                    messages.add(messageEntry.message());
+                } else if (entry instanceof CompactionEntry compactionEntry) {
+                    latestCompaction = compactionEntry;
+                } else if (entry instanceof ModelChangeEntry modelChange) {
+                    model = modelChange.model();
+                } else if (entry instanceof ThinkingChangeEntry thinkingChange) {
+                    thinkingLevel = thinkingChange.thinkingLevel();
+                    model = new ModelSelection(model.provider(), model.modelId(), thinkingLevel);
+                } else if (entry instanceof ModeChangeEntry modeChange) {
+                    mode = modeChange.agentMode();
+                } else if (entry instanceof PermissionModeChangeEntry permissionChange) {
+                    permissionMode = permissionChange.permissionMode();
+                }
+            }
+            List<String> appliedCompactionEntryIds = List.of();
+            if (latestCompaction != null) {
+                messages = applyCompaction(messages, branch(leafId), latestCompaction);
+                appliedCompactionEntryIds = List.of(latestCompaction.id());
+            }
+            return new SessionContext(
+                List.copyOf(messages),
+                List.copyOf(entryIds),
+                appliedCompactionEntryIds,
+                model,
+                thinkingLevel,
+                mode,
+                permissionMode
+            );
         }
 
         @Override
@@ -239,6 +305,27 @@ final class AgentCoreTestFixtures {
 
         SessionHandle handle() {
             return new SessionHandle(sessionId, Path.of("test-session.jsonl"), leafId, Map.copyOf(entries));
+        }
+
+        private List<AgentMessage> applyCompaction(
+            List<AgentMessage> originalMessages,
+            List<SessionEntry> branch,
+            CompactionEntry compaction
+        ) {
+            List<AgentMessage> kept = new ArrayList<>();
+            boolean keep = false;
+            for (SessionEntry entry : branch) {
+                if (entry.id().equals(compaction.firstKeptEntryId())) {
+                    keep = true;
+                }
+                if (keep && entry instanceof MessageEntry messageEntry) {
+                    kept.add(messageEntry.message());
+                }
+            }
+            List<AgentMessage> replay = new ArrayList<>();
+            replay.add(summaryMessage("summary-" + compaction.id(), compaction.summary()));
+            replay.addAll(kept.isEmpty() ? originalMessages : kept);
+            return replay;
         }
     }
 
