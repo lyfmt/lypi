@@ -4,6 +4,5 @@ lypi:
     default-model:
     compaction-summary:
       enabled: false
-      thinking-level: off
       fallback-policy: fallback_deterministic
     providers: {}

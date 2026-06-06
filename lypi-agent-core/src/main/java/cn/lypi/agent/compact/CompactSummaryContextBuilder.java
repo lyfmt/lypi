@@ -23,7 +23,7 @@ public final class CompactSummaryContextBuilder {
             summarySystemPrompt(current.systemPrompt()),
             List.copyOf(messages),
             current.model(),
-            options.thinkingLevel(),
+            current.thinkingLevel(),
             current.mode(),
             current.permissionMode(),
             estimateBudget(current.budget(), messages)

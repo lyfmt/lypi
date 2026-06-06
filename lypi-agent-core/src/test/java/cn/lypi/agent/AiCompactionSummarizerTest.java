@@ -15,7 +15,6 @@ import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.TextDelta;
-import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CompactionPlan;
@@ -120,7 +119,7 @@ class AiCompactionSummarizerTest {
         provider.failWith(new IllegalStateException("provider down"));
         AiCompactionSummarizer summarizer = summarizer(
             provider,
-            new CompactionSummaryOptions(ThinkingLevel.OFF, CompactionSummaryFallbackPolicy.SKIP_COMPACTION)
+            new CompactionSummaryOptions(CompactionSummaryFallbackPolicy.SKIP_COMPACTION)
         );
 
         assertThatThrownBy(() -> summarizer.summarize(request(() -> false)))

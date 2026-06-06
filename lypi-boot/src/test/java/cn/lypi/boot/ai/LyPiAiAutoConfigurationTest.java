@@ -12,7 +12,6 @@ import cn.lypi.agent.compact.AiCompactionSummarizer;
 import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
 import cn.lypi.agent.compact.DefaultCompactionSummarizer;
-import cn.lypi.contracts.model.ThinkingLevel;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -140,14 +139,12 @@ class LyPiAiAutoConfigurationTest {
             .withUserConfiguration(LyPiAiAutoConfiguration.class)
             .withPropertyValues(
                 "lypi.ai.compaction-summary.enabled=true",
-                "lypi.ai.compaction-summary.thinking-level=low",
                 "lypi.ai.compaction-summary.fallback-policy=skip_compaction"
             )
             .run(context -> {
                 LyPiAiProperties properties = context.getBean(LyPiAiProperties.class);
 
                 assertThat(properties.getCompactionSummary().isEnabled()).isTrue();
-                assertThat(properties.getCompactionSummary().getThinkingLevel()).isEqualTo(ThinkingLevel.LOW);
                 assertThat(properties.getCompactionSummary().getFallbackPolicy())
                     .isEqualTo(CompactionSummaryFallbackPolicy.SKIP_COMPACTION);
             });

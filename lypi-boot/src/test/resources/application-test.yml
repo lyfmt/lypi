@@ -4,7 +4,6 @@ lypi:
     default-model: gpt-5-mini
     compaction-summary:
       enabled: true
-      thinking-level: low
       fallback-policy: fallback_deterministic
     providers:
       openai:

@@ -8,7 +8,6 @@ import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageRole;
-import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CompactionPlan;
 import cn.lypi.contracts.session.MessageEntry;
@@ -55,7 +54,7 @@ class CompactSummaryContextBuilderTest {
         assertThat(instruction.role()).isIn(MessageRole.USER, MessageRole.SYSTEM_LOCAL);
         assertThat(instruction.content().getFirst().text()).contains("compact summary", "不要调用工具");
         assertThat(summaryContext.model()).isEqualTo(currentContext.model());
-        assertThat(summaryContext.thinkingLevel()).isEqualTo(ThinkingLevel.OFF);
+        assertThat(summaryContext.thinkingLevel()).isEqualTo(currentContext.thinkingLevel());
     }
 
     @Test

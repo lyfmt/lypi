@@ -6,7 +6,6 @@ import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
 import cn.lypi.agent.compact.CompactionSummaryOptions;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextSnapshot;
-import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CompactionPlan;
@@ -46,7 +45,6 @@ class CompactSummaryContractTest {
         assertThat(result.summary()).isEqualTo("summary");
         assertThat(result.usage().inputTokens()).isEqualTo(10);
         assertThat(options.fallbackPolicy()).isEqualTo(CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC);
-        assertThat(options.thinkingLevel()).isEqualTo(ThinkingLevel.OFF);
     }
 
     @Test

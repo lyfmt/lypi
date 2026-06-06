@@ -94,7 +94,7 @@ public class LyPiAiAutoConfiguration {
             modelPort,
             new CompactSummaryContextBuilder(new CompactSummaryInstructionFactory()),
             deterministic,
-            new CompactionSummaryOptions(summary.getThinkingLevel(), summary.getFallbackPolicy())
+            new CompactionSummaryOptions(summary.getFallbackPolicy())
         );
     }
 

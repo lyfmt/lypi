@@ -4,7 +4,6 @@ import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
 import cn.lypi.contracts.model.ApiStyle;
-import cn.lypi.contracts.model.ThinkingLevel;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Duration;
@@ -55,7 +54,6 @@ public class LyPiAiProperties {
 
     public static class CompactionSummaryProperties {
         private boolean enabled;
-        private ThinkingLevel thinkingLevel = ThinkingLevel.OFF;
         private CompactionSummaryFallbackPolicy fallbackPolicy = CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC;
 
         public boolean isEnabled() {
@@ -64,14 +62,6 @@ public class LyPiAiProperties {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
-        }
-
-        public ThinkingLevel getThinkingLevel() {
-            return thinkingLevel;
-        }
-
-        public void setThinkingLevel(ThinkingLevel thinkingLevel) {
-            this.thinkingLevel = thinkingLevel == null ? ThinkingLevel.OFF : thinkingLevel;
         }
 
         public CompactionSummaryFallbackPolicy getFallbackPolicy() {
