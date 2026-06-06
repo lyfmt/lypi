@@ -4,7 +4,6 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
-import cn.lypi.contracts.prompt.SystemPrompt;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -15,30 +14,18 @@ public final class CompactSummaryContextBuilder {
         this.instructionFactory = instructionFactory;
     }
 
-    public ContextSnapshot build(CompactSummaryRequest request, CompactionSummaryOptions options) {
+    public ContextSnapshot build(CompactSummaryRequest request) {
         ContextSnapshot current = request.context();
         List<AgentMessage> messages = new ArrayList<>(current.messages());
         messages.add(instructionFactory.instructionMessage());
         return new ContextSnapshot(
-            summarySystemPrompt(current.systemPrompt()),
+            current.systemPrompt(),
             List.copyOf(messages),
             current.model(),
             current.thinkingLevel(),
             current.mode(),
             current.permissionMode(),
             estimateBudget(current.budget(), messages)
-        );
-    }
-
-    private SystemPrompt summarySystemPrompt(SystemPrompt currentSystemPrompt) {
-        List<String> sourceNames = new ArrayList<>(currentSystemPrompt.sourceNames());
-        sourceNames.add("compact-summary");
-        return new SystemPrompt(
-            currentSystemPrompt.content()
-                + "\n\n"
-                + "你是负责总结会话以支持 compact 的 AI。只生成摘要，不要调用工具。",
-            List.copyOf(sourceNames),
-            currentSystemPrompt.contentHash() + ":compact-summary"
         );
     }
 

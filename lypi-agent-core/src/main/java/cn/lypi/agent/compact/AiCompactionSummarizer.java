@@ -47,7 +47,7 @@ public final class AiCompactionSummarizer implements CompactionSummarizer {
     private CompactSummaryResult summarizeWithAi(CompactSummaryRequest request) {
         StringBuilder text = new StringBuilder();
         TokenUsage usage = ZERO_USAGE;
-        try (AssistantEventStream stream = provider.stream(contextBuilder.build(request, options), request.abortSignal())) {
+        try (AssistantEventStream stream = provider.stream(contextBuilder.build(request), request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
                 if (event instanceof TextDelta delta) {
                     text.append(delta.text());

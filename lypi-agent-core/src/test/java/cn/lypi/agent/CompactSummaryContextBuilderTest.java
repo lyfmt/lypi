@@ -3,7 +3,6 @@ package cn.lypi.agent;
 import cn.lypi.agent.compact.CompactSummaryContextBuilder;
 import cn.lypi.agent.compact.CompactSummaryInstructionFactory;
 import cn.lypi.agent.compact.CompactSummaryRequest;
-import cn.lypi.agent.compact.CompactionSummaryOptions;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;
@@ -43,8 +42,7 @@ class CompactSummaryContextBuilderTest {
         );
 
         ContextSnapshot summaryContext = builder.build(
-            new CompactSummaryRequest(currentContext, plan, branchEntries, () -> false),
-            CompactionSummaryOptions.defaults()
+            new CompactSummaryRequest(currentContext, plan, branchEntries, () -> false)
         );
 
         assertThat(summaryContext.messages().subList(0, currentContext.messages().size()))
@@ -74,15 +72,10 @@ class CompactSummaryContextBuilderTest {
         );
 
         ContextSnapshot summaryContext = builder.build(
-            new CompactSummaryRequest(currentContext, plan, branchEntries, () -> false),
-            CompactionSummaryOptions.defaults()
+            new CompactSummaryRequest(currentContext, plan, branchEntries, () -> false)
         );
 
-        assertThat(summaryContext.systemPrompt().content())
-            .contains(currentContext.systemPrompt().content())
-            .contains("只生成摘要", "不要调用工具");
-        assertThat(summaryContext.systemPrompt().sourceNames())
-            .contains("test", "compact-summary");
+        assertThat(summaryContext.systemPrompt()).isEqualTo(currentContext.systemPrompt());
         assertThat(summaryContext.budget().estimatedContextTokens())
             .isEqualTo(new ContextBudgetEstimator()
                 .estimate(summaryContext.messages())
