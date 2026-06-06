@@ -1,5 +1,6 @@
 package cn.lypi.agent;
 
+import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;

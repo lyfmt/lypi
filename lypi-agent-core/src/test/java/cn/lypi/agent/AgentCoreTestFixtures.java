@@ -1,5 +1,6 @@
 package cn.lypi.agent;
 
+import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;

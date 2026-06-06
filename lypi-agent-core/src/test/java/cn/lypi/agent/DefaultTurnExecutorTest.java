@@ -1,5 +1,8 @@
 package cn.lypi.agent;
 
+import cn.lypi.agent.compact.CompactionCoordinator;
+import cn.lypi.agent.compact.CompactionDecision;
+import cn.lypi.agent.compact.NoopCompactionCoordinator;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -29,6 +32,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
@@ -597,17 +601,21 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             originalContext,
-            List.of(),
+            List.of("entry-msg-user"),
             List.of(),
             List.of(),
             true
         );
-        CompactionCoordinator compaction = context -> new CompactionDecision(
-            compactedContext,
-            Optional.empty(),
-            true,
-            "test compacted"
-        );
+        AtomicReference<cn.lypi.agent.compact.CompactionRequest> compactionRequest = new AtomicReference<>();
+        CompactionCoordinator compaction = request -> {
+            compactionRequest.set(request);
+            return new CompactionDecision(
+                compactedContext,
+                Optional.empty(),
+                true,
+                "test compacted"
+            );
+        };
         DefaultTurnExecutor executor = new DefaultTurnExecutor(
             AgentCoreTestFixtures.ports(
                 session,
@@ -624,6 +632,10 @@ class DefaultTurnExecutorTest {
 
         executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
 
+        assertThat(compactionRequest.get().sessionId()).isEqualTo("session-1");
+        assertThat(compactionRequest.get().leafEntryId()).contains("entry-msg-user");
+        assertThat(compactionRequest.get().contextBuildRequest().includeSystemPrompt()).isTrue();
+        assertThat(compactionRequest.get().assembly().snapshot()).isSameAs(originalContext);
         assertThat(provider.contexts).containsExactly(compactedContext);
     }
 

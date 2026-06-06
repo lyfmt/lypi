@@ -1,11 +1,11 @@
-package cn.lypi.agent;
+package cn.lypi.agent.compact;
 
-import cn.lypi.contracts.context.ContextSnapshot;
 import java.util.Optional;
 
 public final class NoopCompactionCoordinator implements CompactionCoordinator {
     @Override
-    public CompactionDecision preflight(ContextSnapshot context) {
+    public CompactionDecision preflight(CompactionRequest request) {
+        var context = request.assembly().snapshot();
         boolean exceeded = context.budget().estimatedContextTokens() > context.budget().autoCompactThreshold();
         return new CompactionDecision(
             context,

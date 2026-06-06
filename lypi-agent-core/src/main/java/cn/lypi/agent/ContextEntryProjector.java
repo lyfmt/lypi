@@ -8,7 +8,9 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
+import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
@@ -38,6 +40,10 @@ final class ContextEntryProjector {
             branchEntryIds.add(entry.id());
             if (entry instanceof MessageEntry messageEntry) {
                 messages.add(messageEntry.message());
+            } else if (entry instanceof BranchSummaryEntry branchSummary) {
+                messages.add(project(branchSummary));
+            } else if (entry instanceof CustomMessageEntry customMessage) {
+                messages.add(project(customMessage));
             } else if (entry instanceof ModelChangeEntry modelChange) {
                 model = modelChange.model();
             } else if (entry instanceof ThinkingChangeEntry thinkingChange) {
@@ -79,8 +85,8 @@ final class ContextEntryProjector {
             if (entry.id().equals(compaction.firstKeptEntryId())) {
                 keep = true;
             }
-            if (keep && entry instanceof MessageEntry messageEntry) {
-                kept.add(messageEntry.message());
+            if (keep) {
+                project(entry).ifPresent(kept::add);
             }
         }
 
@@ -98,6 +104,49 @@ final class ContextEntryProjector {
         projected.add(summary);
         projected.addAll(kept.isEmpty() ? messages : kept);
         return projected;
+    }
+
+    private AgentMessage systemLocalMessage(String id, MessageKind kind, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.SYSTEM_LOCAL,
+            kind,
+            List.of(new TextContentBlock(text)),
+            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private Optional<AgentMessage> project(SessionEntry entry) {
+        if (entry instanceof MessageEntry messageEntry) {
+            return Optional.of(messageEntry.message());
+        }
+        if (entry instanceof BranchSummaryEntry branchSummary) {
+            return Optional.of(project(branchSummary));
+        }
+        if (entry instanceof CustomMessageEntry customMessage) {
+            return Optional.of(project(customMessage));
+        }
+        return Optional.empty();
+    }
+
+    private AgentMessage project(BranchSummaryEntry branchSummary) {
+        return systemLocalMessage(
+            "branch-summary-" + branchSummary.id(),
+            MessageKind.SUMMARY,
+            branchSummary.summary(),
+            branchSummary.timestamp()
+        );
+    }
+
+    private AgentMessage project(CustomMessageEntry customMessage) {
+        return systemLocalMessage(
+            "custom-message-" + customMessage.id(),
+            MessageKind.TEXT,
+            customMessage.content(),
+            customMessage.timestamp()
+        );
     }
 
     record Projection(

@@ -1,4 +1,4 @@
-package cn.lypi.agent;
+package cn.lypi.agent.compact;
 
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.session.CompactionPlan;
