@@ -7,6 +7,7 @@ import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.tui.SessionFileView;
 import java.util.List;
 
 /**
@@ -60,6 +61,11 @@ public interface SessionManager extends SessionManagerPort {
      */
     @Override
     List<AgentMessage> transcript(String leafId);
+
+    /**
+     * 从指定 branch 的 assistant tool call 派生文件操作视图。
+     */
+    List<SessionFileView> files(String leafId);
 
     /**
      * 返回指定 leaf 的 LLM session context。

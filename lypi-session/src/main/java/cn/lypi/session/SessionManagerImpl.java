@@ -8,6 +8,7 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.tui.SessionFileView;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -24,6 +25,7 @@ public final class SessionManagerImpl implements SessionManager {
     private final JsonlSessionStore store;
     private final Clock clock;
     private final SessionReplayProjector replayProjector = new SessionReplayProjector();
+    private final SessionFileQuery fileQuery = new SessionFileQuery();
     private String sessionId;
     private EntryTreeIndex index;
 
@@ -103,6 +105,12 @@ public final class SessionManagerImpl implements SessionManager {
     public List<AgentMessage> transcript(String leafId) {
         ensureOpen();
         return replayProjector.transcript(branch(leafId));
+    }
+
+    @Override
+    public List<SessionFileView> files(String leafId) {
+        ensureOpen();
+        return fileQuery.files(branch(leafId));
     }
 
     @Override
