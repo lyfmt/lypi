@@ -87,6 +87,35 @@ class DefaultCompactionCoordinatorTest {
             .isEmpty();
     }
 
+    @Test
+    void doesNotDependOnRebuildAfterAppendingCompactionEntry() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = lowBudgetAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        ContextAssembler failingRebuildAssembler = request -> {
+            throw new IllegalStateException("rebuild should not run after append");
+        };
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            failingRebuildAssembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            (branchEntries, plan, context) -> "summary text",
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(decision.context().messages())
+            .extracting(AgentMessage::kind)
+            .startsWith(MessageKind.SUMMARY);
+        assertThat(session.handle().byId().values())
+            .filteredOn(CompactionEntry.class::isInstance)
+            .hasSize(1);
+    }
+
     private static AgentCoreTestFixtures.InMemorySessionEngine sessionWithLongBranch() {
         AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
         session.openOrCreate("session-1");

@@ -223,4 +223,34 @@ class DefaultContextAssemblerTest {
             .extracting(message -> message.content().getFirst().text())
             .containsExactly("left branch summary", "local instruction");
     }
+
+    @Test
+    void keepsProjectedEntriesAfterCompactionWhenFirstKeptEntryIsNotMessageEntry() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        session.openOrCreate("session-1");
+        session.append(new MessageEntry("entry-old", "", userMessage("msg-old", "old"), NOW));
+        session.append(new BranchSummaryEntry("entry-branch-summary", "entry-old", "left branch summary", NOW));
+        session.append(new CompactionEntry("entry-compact", "entry-branch-summary", "summary text", "entry-branch-summary", 100, 20, CompactionKind.SESSION, NOW));
+        session.append(new CustomMessageEntry("entry-custom", "entry-compact", "local instruction", NOW));
+
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            session,
+            fixedResourceRuntime("system"),
+            new ContextBudgetEstimator()
+        );
+
+        ContextAssembly assembly = assembler.build(new ContextBuildRequest(
+            "session-1",
+            Optional.of(session.leafId()),
+            Path.of("."),
+            true
+        ));
+
+        assertThat(assembly.snapshot().messages())
+            .extracting(AgentMessage::id)
+            .containsExactly("summary-entry-compact", "branch-summary-entry-branch-summary", "custom-message-entry-custom");
+        assertThat(assembly.snapshot().messages())
+            .extracting(message -> message.content().getFirst().text())
+            .containsExactly("summary text", "left branch summary", "local instruction");
+    }
 }
