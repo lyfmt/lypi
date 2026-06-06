@@ -2,4 +2,8 @@ lypi:
   ai:
     default-provider:
     default-model:
+    compaction-summary:
+      enabled: false
+      thinking-level: off
+      fallback-policy: fallback_deterministic
     providers: {}

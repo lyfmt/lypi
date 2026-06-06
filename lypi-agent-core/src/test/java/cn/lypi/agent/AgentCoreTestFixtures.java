@@ -29,7 +29,9 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
+import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
@@ -246,6 +248,10 @@ final class AgentCoreTestFixtures {
                 entryIds.add(entry.id());
                 if (entry instanceof MessageEntry messageEntry) {
                     messages.add(messageEntry.message());
+                } else if (entry instanceof BranchSummaryEntry branchSummary) {
+                    messages.add(summaryMessage("branch-summary-" + branchSummary.id(), branchSummary.summary()));
+                } else if (entry instanceof CustomMessageEntry customMessage) {
+                    messages.add(textMessage("custom-message-" + customMessage.id(), MessageRole.SYSTEM_LOCAL, MessageKind.TEXT, customMessage.content()));
                 } else if (entry instanceof CompactionEntry compactionEntry) {
                     latestCompaction = compactionEntry;
                 } else if (entry instanceof ModelChangeEntry modelChange) {
@@ -318,8 +324,14 @@ final class AgentCoreTestFixtures {
                 if (entry.id().equals(compaction.firstKeptEntryId())) {
                     keep = true;
                 }
-                if (keep && entry instanceof MessageEntry messageEntry) {
-                    kept.add(messageEntry.message());
+                if (keep) {
+                    if (entry instanceof MessageEntry messageEntry) {
+                        kept.add(messageEntry.message());
+                    } else if (entry instanceof BranchSummaryEntry branchSummary) {
+                        kept.add(summaryMessage("branch-summary-" + branchSummary.id(), branchSummary.summary()));
+                    } else if (entry instanceof CustomMessageEntry customMessage) {
+                        kept.add(textMessage("custom-message-" + customMessage.id(), MessageRole.SYSTEM_LOCAL, MessageKind.TEXT, customMessage.content()));
+                    }
                 }
             }
             List<AgentMessage> replay = new ArrayList<>();
@@ -348,6 +360,7 @@ final class AgentCoreTestFixtures {
         private final List<AssistantEventStream> streams = new ArrayList<>();
         private final List<RuntimeException> failures = new ArrayList<>();
         final List<ContextSnapshot> contexts = new ArrayList<>();
+        final List<AbortSignal> abortSignals = new ArrayList<>();
 
         void enqueue(List<AssistantStreamEvent> events) {
             streams.add(new ListAssistantEventStream(events));
@@ -364,6 +377,7 @@ final class AgentCoreTestFixtures {
         @Override
         public AssistantEventStream stream(ContextSnapshot context, AbortSignal signal) {
             contexts.add(context);
+            abortSignals.add(signal);
             if (!failures.isEmpty()) {
                 throw failures.removeFirst();
             }

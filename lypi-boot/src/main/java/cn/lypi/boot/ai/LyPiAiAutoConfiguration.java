@@ -17,6 +17,12 @@ import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.model.StaticModelDescriptorSource;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
 import cn.lypi.ai.provider.openai.OpenAiProviderConfig;
+import cn.lypi.agent.compact.AiCompactionSummarizer;
+import cn.lypi.agent.compact.CompactSummaryContextBuilder;
+import cn.lypi.agent.compact.CompactSummaryInstructionFactory;
+import cn.lypi.agent.compact.CompactionSummarizer;
+import cn.lypi.agent.compact.CompactionSummaryOptions;
+import cn.lypi.agent.compact.DefaultCompactionSummarizer;
 import cn.lypi.ai.transport.HttpSseProviderTransport;
 import cn.lypi.ai.transport.WebSocketProviderTransport;
 import cn.lypi.boot.ai.LyPiAiProperties.ModelProperties;
@@ -74,6 +80,22 @@ public class LyPiAiAutoConfiguration {
     @ConditionalOnMissingBean
     public RemoteModelDiscoveryClient remoteModelDiscoveryClient() {
         return new RemoteModelDiscoveryClient();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CompactionSummarizer compactionSummarizer(ModelPort modelPort, LyPiAiProperties properties) {
+        DefaultCompactionSummarizer deterministic = new DefaultCompactionSummarizer();
+        LyPiAiProperties.CompactionSummaryProperties summary = properties.getCompactionSummary();
+        if (!summary.isEnabled()) {
+            return deterministic;
+        }
+        return new AiCompactionSummarizer(
+            modelPort,
+            new CompactSummaryContextBuilder(new CompactSummaryInstructionFactory()),
+            deterministic,
+            new CompactionSummaryOptions(summary.getThinkingLevel(), summary.getFallbackPolicy())
+        );
     }
 
     private ModelDescriptorSource modelDescriptorSource(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {

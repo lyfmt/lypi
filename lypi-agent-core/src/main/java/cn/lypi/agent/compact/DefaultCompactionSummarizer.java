@@ -2,9 +2,9 @@ package cn.lypi.agent.compact;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
-import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
+import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.session.CompactionPlan;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
@@ -14,13 +14,16 @@ import java.util.Set;
 
 public final class DefaultCompactionSummarizer implements CompactionSummarizer {
     private static final int MAX_BLOCK_PREVIEW_LENGTH = 1_000;
+    private static final TokenUsage ZERO_USAGE = new TokenUsage(0, 0, 0, 0);
 
     @Override
-    public String summarize(List<SessionEntry> branchEntries, CompactionPlan plan, ContextSnapshot context) {
+    public CompactSummaryResult summarize(CompactSummaryRequest request) {
+        List<SessionEntry> branchEntries = request.branchEntries();
+        CompactionPlan plan = request.plan();
         List<MessageEntry> summarizedMessages = summarizedMessages(branchEntries, plan);
         String details = messageDetails(summarizedMessages);
 
-        return """
+        String summary = """
             ## Goal
 
             - Summarize prior session history so the agent can continue from the compacted context.
@@ -45,6 +48,7 @@ public final class DefaultCompactionSummarizer implements CompactionSummarizer {
 
             %s
             """.formatted(blankWhenEmpty(details), plan.firstKeptEntryId(), blankWhenEmpty(details)).strip();
+        return new CompactSummaryResult(summary, ZERO_USAGE);
     }
 
     private List<MessageEntry> summarizedMessages(List<SessionEntry> branchEntries, CompactionPlan plan) {

@@ -182,7 +182,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             leafEntryId,
             ports.cwd(),
             contextBuildRequest,
-            assembly
+            assembly,
+            request.abortSignal()
         ));
         return compaction.context();
     }

@@ -1,6 +1,8 @@
 package cn.lypi.agent;
 
 import cn.lypi.agent.compact.DefaultCompactionSummarizer;
+import cn.lypi.agent.compact.CompactSummaryRequest;
+import cn.lypi.agent.compact.CompactSummaryResult;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
@@ -39,9 +41,14 @@ class DefaultCompactionSummarizerTest {
             CompactionKind.SESSION
         );
 
-        String summary = summarizer.summarize(branchEntries, plan, minimalContext(List.of()));
+        CompactSummaryResult result = summarizer.summarize(new CompactSummaryRequest(
+            minimalContext(List.of()),
+            plan,
+            branchEntries,
+            () -> false
+        ));
 
-        assertThat(summary).contains(
+        assertThat(result.summary()).contains(
             "## Goal",
             "## Constraints & Preferences",
             "## Progress",
@@ -49,10 +56,11 @@ class DefaultCompactionSummarizerTest {
             "## Next Steps",
             "## Critical Context"
         );
-        assertThat(summary).contains("USER TEXT", "Need inspect pom.xml");
-        assertThat(summary).contains("ASSISTANT TOOL_CALL", "tool=read_file", "pom.xml");
-        assertThat(summary).contains("TOOL_RESULT TOOL_RESULT", "toolUseId=call-read", "lypi-agent-core");
-        assertThat(summary).doesNotContain("msg-kept");
+        assertThat(result.summary()).contains("USER TEXT", "Need inspect pom.xml");
+        assertThat(result.summary()).contains("ASSISTANT TOOL_CALL", "tool=read_file", "pom.xml");
+        assertThat(result.summary()).contains("TOOL_RESULT TOOL_RESULT", "toolUseId=call-read", "lypi-agent-core");
+        assertThat(result.summary()).doesNotContain("msg-kept");
+        assertThat(result.usage().inputTokens()).isZero();
     }
 
     private static MessageEntry messageEntry(String id, String parentId, AgentMessage message) {

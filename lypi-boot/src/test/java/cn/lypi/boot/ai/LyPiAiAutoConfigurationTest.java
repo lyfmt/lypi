@@ -8,6 +8,11 @@ import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
+import cn.lypi.agent.compact.AiCompactionSummarizer;
+import cn.lypi.agent.compact.CompactionSummarizer;
+import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
+import cn.lypi.agent.compact.DefaultCompactionSummarizer;
+import cn.lypi.contracts.model.ThinkingLevel;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -126,6 +131,48 @@ class LyPiAiAutoConfigurationTest {
 
                 assertThat(properties.getProviders().get("openai").getRequestStyle()).isEqualTo(RequestStyle.RESPONSES);
                 assertThat(properties.getProviders().get("openai").getFallbackRequestStyle()).isEqualTo(RequestStyle.RESPONSES);
+            });
+    }
+
+    @Test
+    void bindsCompactionSummaryPropertiesWithoutSummaryModelOverride() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.ai.compaction-summary.enabled=true",
+                "lypi.ai.compaction-summary.thinking-level=low",
+                "lypi.ai.compaction-summary.fallback-policy=skip_compaction"
+            )
+            .run(context -> {
+                LyPiAiProperties properties = context.getBean(LyPiAiProperties.class);
+
+                assertThat(properties.getCompactionSummary().isEnabled()).isTrue();
+                assertThat(properties.getCompactionSummary().getThinkingLevel()).isEqualTo(ThinkingLevel.LOW);
+                assertThat(properties.getCompactionSummary().getFallbackPolicy())
+                    .isEqualTo(CompactionSummaryFallbackPolicy.SKIP_COMPACTION);
+            });
+    }
+
+    @Test
+    void createsDefaultCompactionSummarizerWhenSummaryDisabled() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .run(context -> {
+                assertThat(context).hasSingleBean(CompactionSummarizer.class);
+                assertThat(context.getBean(CompactionSummarizer.class))
+                    .isInstanceOf(DefaultCompactionSummarizer.class);
+            });
+    }
+
+    @Test
+    void createsAiCompactionSummarizerWhenSummaryEnabled() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues("lypi.ai.compaction-summary.enabled=true")
+            .run(context -> {
+                assertThat(context).hasSingleBean(CompactionSummarizer.class);
+                assertThat(context.getBean(CompactionSummarizer.class))
+                    .isInstanceOf(AiCompactionSummarizer.class);
             });
     }
 
