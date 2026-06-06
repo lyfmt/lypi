@@ -360,15 +360,8 @@ class DefaultTurnExecutorTest {
         assertThat(session.messages()).extracting(AgentMessage::id)
             .containsExactly("msg-user", "msg-tool-call", "msg-tool-result-1", "msg-tool-result-2", "msg-final");
         assertThat(eventBus.events.stream()
-            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
-            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event))
-            .toList())
-            .containsExactly(
-                "ToolStartEvent:toolu-1",
-                "ToolStartEvent:toolu-2",
-                "ToolEndEvent:toolu-1",
-                "ToolEndEvent:toolu-2"
-            );
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
+            .isEmpty();
     }
 
     @Test
@@ -429,7 +422,7 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
-    void publishesToolEndErrorEventsWhenToolRuntimeThrows() {
+    void doesNotPublishToolLifecycleEventsWhenToolRuntimeThrows() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
@@ -469,19 +462,12 @@ class DefaultTurnExecutorTest {
         assertThat(tools.requests.getFirst()).extracting(request -> request.toolUseId())
             .containsExactly("toolu-1", "toolu-2");
         assertThat(eventBus.events.stream()
-            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
-            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event) + ":" + toolError(event))
-            .toList())
-            .containsExactly(
-                "ToolStartEvent:toolu-1:false",
-                "ToolStartEvent:toolu-2:false",
-                "ToolEndEvent:toolu-1:true",
-                "ToolEndEvent:toolu-2:true"
-            );
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
+            .isEmpty();
     }
 
     @Test
-    void failsTurnAndClosesToolEventsWhenToolRuntimeReturnsTooFewResults() {
+    void failsTurnWithoutPublishingToolLifecycleEventsWhenToolRuntimeReturnsTooFewResults() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
@@ -525,19 +511,12 @@ class DefaultTurnExecutorTest {
         assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
         assertThat(provider.contexts).hasSize(1);
         assertThat(eventBus.events.stream()
-            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
-            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event) + ":" + toolError(event))
-            .toList())
-            .containsExactly(
-                "ToolStartEvent:toolu-1:false",
-                "ToolStartEvent:toolu-2:false",
-                "ToolEndEvent:toolu-1:true",
-                "ToolEndEvent:toolu-2:true"
-            );
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
+            .isEmpty();
     }
 
     @Test
-    void failsTurnAndClosesToolEventsWhenToolRuntimeReturnsTooManyResults() {
+    void failsTurnWithoutPublishingToolLifecycleEventsWhenToolRuntimeReturnsTooManyResults() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
@@ -588,13 +567,8 @@ class DefaultTurnExecutorTest {
         assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
         assertThat(provider.contexts).hasSize(1);
         assertThat(eventBus.events.stream()
-            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
-            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event) + ":" + toolError(event))
-            .toList())
-            .containsExactly(
-                "ToolStartEvent:toolu-1:false",
-                "ToolEndEvent:toolu-1:true"
-            );
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
+            .isEmpty();
     }
 
     @Test

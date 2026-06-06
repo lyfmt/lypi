@@ -13,6 +13,8 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.PermissionDecisionEvent;
+import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
@@ -332,6 +334,67 @@ class DefaultToolRuntimeTest {
         assertEquals(null, end.resultRef());
         assertEquals(end.endedAt(), end.timestamp());
         assertTrue(end.durationMillis() >= 0);
+    }
+
+    @Test
+    void publicConstructorPublishesToolLifecycleEventsThroughEventBus() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder()
+                .sessionId("ses_public")
+                .metadata(Map.of("turnId", "turn_public"))
+                .build(),
+            allowAllSecurity(),
+            PermissionGate.denying(),
+            events
+        );
+        runtime.register(TestTools.echo("bash", List.of(), true, true, false));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_public", "bash", Map.of("text", "done"), "msg_parent")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(2, events.events.size());
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals("msg_parent", start.parentMessageId());
+        assertEquals("turn_public", start.turnId());
+        assertEquals("bash {text=done}", start.inputSummary());
+        assertEquals(ToolExecutionStatus.SUCCEEDED, end.status());
+        assertEquals("bash succeeded", end.resultSummary().title());
+    }
+
+    @Test
+    void publicConstructorPublishesPermissionProtocolEvents() {
+        RecordingEventBus events = new RecordingEventBus();
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder()
+                .sessionId("ses_public")
+                .metadata(Map.of("turnId", "turn_public"))
+                .build(),
+            allowAllSecurity(),
+            gate,
+            events
+        );
+        runtime.register(TestTools.permission("write", PermissionBehavior.ASK));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_public", "write", Map.of("text", "done"), "msg_parent")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(4, events.events.size());
+        PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, events.events.get(0));
+        PermissionDecisionEvent decision = assertInstanceOf(PermissionDecisionEvent.class, events.events.get(1));
+        assertInstanceOf(ToolStartEvent.class, events.events.get(2));
+        assertInstanceOf(ToolEndEvent.class, events.events.get(3));
+        assertEquals("toolu_public", request.toolUseId());
+        assertEquals("write", request.toolName());
+        assertEquals("allow_once", decision.selectedOptionId());
     }
 
     @Test

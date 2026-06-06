@@ -16,8 +16,6 @@ import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
-import cn.lypi.contracts.event.ToolEndEvent;
-import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
@@ -229,29 +227,11 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private List<ToolResult<?>> executeTools(String sessionId, List<ToolUseRequest> toolRequests, ContextSnapshot context) {
         ensureToolRuntimeCwdMatches();
-        for (ToolUseRequest toolRequest : toolRequests) {
-            ports.eventBus().publish(new ToolStartEvent(sessionId, toolRequest.toolUseId(), toolRequest.toolName(), clock.instant()));
-        }
-        List<ToolResult<?>> results;
-        boolean toolEndErrorsPublished = false;
-        try {
-            results = ports.toolRuntime().execute(toolRequests, context);
-            if (results.size() != toolRequests.size()) {
-                publishToolEndErrors(sessionId, toolRequests);
-                toolEndErrorsPublished = true;
-                throw new IllegalStateException(
-                    "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
-                );
-            }
-        } catch (RuntimeException failure) {
-            if (!toolEndErrorsPublished) {
-                publishToolEndErrors(sessionId, toolRequests);
-            }
-            throw failure;
-        }
-        for (int index = 0; index < toolRequests.size(); index++) {
-            ToolUseRequest request = toolRequests.get(index);
-            ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), results.get(index).isError(), clock.instant()));
+        List<ToolResult<?>> results = ports.toolRuntime().execute(toolRequests, context);
+        if (results.size() != toolRequests.size()) {
+            throw new IllegalStateException(
+                "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
+            );
         }
         return results;
     }
@@ -261,12 +241,6 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         Path toolCwd = ports.toolRuntime().cwd().toAbsolutePath().normalize();
         if (!agentCwd.equals(toolCwd)) {
             throw new IllegalStateException("工具运行目录不一致: agent cwd=" + agentCwd + ", tool cwd=" + toolCwd);
-        }
-    }
-
-    private void publishToolEndErrors(String sessionId, List<ToolUseRequest> toolRequests) {
-        for (ToolUseRequest request : toolRequests) {
-            ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), true, clock.instant()));
         }
     }
 

@@ -8,6 +8,7 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolResultContentBlock;
+import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
@@ -79,6 +80,26 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     }
 
     public DefaultToolRuntime(
+        ToolRuntimeOptions options,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        EventBus eventBus
+    ) {
+        this(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(normalizeOptions(options)),
+            ToolExecutionInterceptors.noop(),
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionGate),
+            eventPublisher(eventBus),
+            normalizeOptions(options)
+        );
+    }
+
+    public DefaultToolRuntime(
         ToolRegistry registry,
         ToolSchemaValidator schemaValidator,
         ToolExecutionPlanner executionPlanner,
@@ -97,6 +118,31 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             securityRuntime,
             PermissionGate.denying(),
             ToolExecutionEventPublisher.noop(),
+            ToolRuntimeOptions.defaults()
+        );
+    }
+
+    public DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        EventBus eventBus
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionGate),
+            eventPublisher(eventBus),
             ToolRuntimeOptions.defaults()
         );
     }
@@ -573,6 +619,15 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
     private static ToolRuntimeOptions normalizeOptions(ToolRuntimeOptions options) {
         return options == null ? ToolRuntimeOptions.defaults() : options;
+    }
+
+    private static PermissionGate eventPublishingPermissionGate(EventBus eventBus, PermissionGate permissionGate) {
+        PermissionGate safeGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
+        return eventBus == null ? safeGate : new EventPublishingPermissionGate(eventBus, safeGate);
+    }
+
+    private static ToolExecutionEventPublisher eventPublisher(EventBus eventBus) {
+        return eventBus == null ? ToolExecutionEventPublisher.noop() : ToolExecutionEventPublisher.eventBus(eventBus);
     }
 
     private boolean shouldSkipForAbort(Tool<Map<String, Object>, ?> tool, ToolUseContext context) {

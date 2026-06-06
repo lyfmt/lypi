@@ -21,7 +21,11 @@ public final class PermissionOptionPolicy {
         List<PermissionOption> options = update
             .map(permissionUpdate -> List.of(allowOnce(), remember(permissionUpdate), deny(), cancel()))
             .orElseGet(() -> List.of(allowOnce(), deny(), cancel()));
-        return new Options(options, defaultOptionId(decision), "cancel");
+        return new Options(
+            options,
+            optionIdOrFallback(defaultOptionId(decision), options, "allow_once"),
+            optionIdOrFallback("cancel", options, fallbackCancelOptionId(options))
+        );
     }
 
     /**
@@ -48,6 +52,35 @@ public final class PermissionOptionPolicy {
             return "deny";
         }
         return "allow_once";
+    }
+
+    private static String optionIdOrFallback(String optionId, List<PermissionOption> options, String fallbackOptionId) {
+        if (hasOption(optionId, options)) {
+            return optionId;
+        }
+        if (hasOption(fallbackOptionId, options)) {
+            return fallbackOptionId;
+        }
+        return options.getFirst().optionId();
+    }
+
+    private static String fallbackCancelOptionId(List<PermissionOption> options) {
+        return options.stream()
+            .filter(option -> option.kind() == PermissionOptionKind.CANCEL)
+            .map(PermissionOption::optionId)
+            .findFirst()
+            .orElseGet(() -> options.stream()
+                .filter(option -> option.kind() == PermissionOptionKind.DENY)
+                .map(PermissionOption::optionId)
+                .findFirst()
+                .orElse(options.getFirst().optionId()));
+    }
+
+    private static boolean hasOption(String optionId, List<PermissionOption> options) {
+        if (optionId == null || optionId.isBlank()) {
+            return false;
+        }
+        return options.stream().anyMatch(option -> option.optionId().equals(optionId));
     }
 
     private static PermissionOption allowOnce() {
