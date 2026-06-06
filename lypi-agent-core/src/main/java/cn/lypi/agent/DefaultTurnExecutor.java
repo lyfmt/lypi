@@ -18,12 +18,9 @@ import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
-import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.TextDelta;
-import cn.lypi.contracts.model.ThinkingDelta;
-import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
@@ -194,18 +191,19 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private AgentMessage runModel(TurnRequest request, ContextSnapshot context) {
         AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
-        AssistantStartPublisher startPublisher = new AssistantStartPublisher(request.sessionId());
+        String sessionId = request.sessionId();
+        List<MessageDeltaEvent> pendingDeltas = new ArrayList<>();
+        Optional<String> startedAssistantMessageId = Optional.empty();
         try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
                 accumulator.accept(event);
                 if (event instanceof AssistantStart start) {
-                    startPublisher.messageId(start.messageId());
+                    startedAssistantMessageId = Optional.of(start.messageId());
                 }
                 if (event instanceof TextDelta delta) {
                     String messageId = currentAssistantId(accumulator);
-                    startPublisher.publish(messageId, MessageKind.TEXT);
-                    ports.eventBus().publish(new MessageDeltaEvent(
-                        request.sessionId(),
+                    pendingDeltas.add(new MessageDeltaEvent(
+                        sessionId,
                         messageId,
                         cn.lypi.contracts.context.MessageRole.ASSISTANT,
                         cn.lypi.contracts.context.MessageKind.TEXT,
@@ -217,27 +215,23 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         clock.instant()
                     ));
                 }
-                if (event instanceof ToolCallDelta) {
-                    startPublisher.publish(currentAssistantId(accumulator), MessageKind.TOOL_CALL);
-                }
-                if (event instanceof ThinkingDelta) {
-                    startPublisher.publish(currentAssistantId(accumulator), MessageKind.THINKING);
-                }
-                if (event instanceof AssistantError) {
-                    startPublisher.publish(currentAssistantId(accumulator), MessageKind.ERROR);
-                }
                 if (request.abortSignal().aborted()) {
                     break;
                 }
             }
         } catch (RuntimeException failure) {
-            startPublisher.publishIfStarted(MessageKind.ERROR);
-            startPublisher.messageId().ifPresent(messageId -> publishAssistantMessageEnd(request.sessionId(), messageId));
+            startedAssistantMessageId.ifPresent(messageId -> {
+                MessageKind kind = streamFailureKind(pendingDeltas);
+                publishAssistantMessageStart(sessionId, messageId, kind);
+                publishPendingDeltas(pendingDeltas);
+                publishAssistantMessageEnd(sessionId, messageId, kind);
+            });
             throw failure;
         }
 
         AgentMessage message = accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
-        startPublisher.publish(message.id(), message.kind());
+        publishAssistantMessageStart(sessionId, message.id(), message.kind());
+        publishPendingDeltas(pendingDeltas);
         return message;
     }
 
@@ -312,11 +306,15 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private void publishAssistantMessageEnd(String sessionId, String messageId) {
+        publishAssistantMessageEnd(sessionId, messageId, cn.lypi.contracts.context.MessageKind.TEXT);
+    }
+
+    private void publishAssistantMessageEnd(String sessionId, String messageId, MessageKind kind) {
         ports.eventBus().publish(new MessageEndEvent(
             sessionId,
             messageId,
             cn.lypi.contracts.context.MessageRole.ASSISTANT,
-            cn.lypi.contracts.context.MessageKind.TEXT,
+            kind,
             List.of(),
             Optional.empty(),
             Optional.of("error"),
@@ -350,36 +348,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return messageId + ":" + kind.name().toLowerCase() + ":" + index;
     }
 
-    private final class AssistantStartPublisher {
-        private final String sessionId;
-        private String messageId;
-        private boolean published;
-
-        private AssistantStartPublisher(String sessionId) {
-            this.sessionId = sessionId;
+    private void publishPendingDeltas(List<MessageDeltaEvent> pendingDeltas) {
+        for (MessageDeltaEvent pendingDelta : pendingDeltas) {
+            ports.eventBus().publish(pendingDelta);
         }
+    }
 
-        private void messageId(String messageId) {
-            if (messageId != null && !messageId.isBlank()) {
-                this.messageId = messageId;
-            }
-        }
-
-        private Optional<String> messageId() {
-            return Optional.ofNullable(messageId).filter(id -> !id.isBlank());
-        }
-
-        private void publish(String messageId, MessageKind kind) {
-            messageId(messageId);
-            publishIfStarted(kind);
-        }
-
-        private void publishIfStarted(MessageKind kind) {
-            if (published || messageId == null || messageId.isBlank()) {
-                return;
-            }
-            publishAssistantMessageStart(sessionId, messageId, kind);
-            published = true;
-        }
+    private MessageKind streamFailureKind(List<MessageDeltaEvent> pendingDeltas) {
+        return pendingDeltas.isEmpty() ? MessageKind.ERROR : MessageKind.TEXT;
     }
 }

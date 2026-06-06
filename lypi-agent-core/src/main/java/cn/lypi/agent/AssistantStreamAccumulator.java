@@ -100,11 +100,11 @@ public final class AssistantStreamAccumulator {
     }
 
     private MessageKind kind(List<ContentBlock> content) {
-        if (content.stream().anyMatch(ToolCallContentBlock.class::isInstance)) {
-            return MessageKind.TOOL_CALL;
-        }
         if (content.stream().anyMatch(c -> c.kind() == cn.lypi.contracts.context.ContentBlockKind.ERROR)) {
             return MessageKind.ERROR;
+        }
+        if (content.stream().anyMatch(ToolCallContentBlock.class::isInstance)) {
+            return MessageKind.TOOL_CALL;
         }
         if (content.stream().anyMatch(ThinkingContentBlock.class::isInstance) && text.isEmpty()) {
             return MessageKind.THINKING;

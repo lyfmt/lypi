@@ -24,6 +24,7 @@ import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.TextDelta;
+import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.tool.ToolResult;
@@ -880,7 +881,50 @@ class DefaultTurnExecutorTest {
                 "MessageStartEvent:msg-error",
                 "MessageEndEvent:msg-error"
             );
+        assertThat(messageStartKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
+        assertThat(messageEndKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
         assertThat(memory.calls).isZero();
+    }
+
+    @Test
+    void publishesConsistentTextKindWhenAssistantStreamStartsWithThinkingThenText() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new ThinkingDelta("thinking"),
+            new TextDelta("answer"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(messageStartKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
+        assertThat(messageEndKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
     }
 
     @Test
@@ -922,6 +966,8 @@ class DefaultTurnExecutorTest {
         assertThat(session.messages()).extracting(AgentMessage::id)
             .containsExactly("msg-user", "msg-error");
         assertThat(session.messages().getLast().kind()).isEqualTo(cn.lypi.contracts.context.MessageKind.ERROR);
+        assertThat(messageStartKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
+        assertThat(messageEndKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
         assertThat(memory.calls).isZero();
     }
@@ -972,6 +1018,8 @@ class DefaultTurnExecutorTest {
             .map(MessageEndEvent::messageId)
             .toList())
             .containsExactly("msg-user", "msg-error");
+        assertThat(messageStartKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
+        assertThat(messageEndKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
         assertThat(memory.calls).isZero();
     }
@@ -1130,5 +1178,25 @@ class DefaultTurnExecutorTest {
             return messageEnd.messageId();
         }
         return "";
+    }
+
+    private MessageKind messageStartKind(AgentCoreTestFixtures.RecordingEventBus eventBus, String messageId) {
+        return eventBus.events.stream()
+            .filter(MessageStartEvent.class::isInstance)
+            .map(MessageStartEvent.class::cast)
+            .filter(event -> event.messageId().equals(messageId))
+            .map(MessageStartEvent::kind)
+            .findFirst()
+            .orElseThrow();
+    }
+
+    private MessageKind messageEndKind(AgentCoreTestFixtures.RecordingEventBus eventBus, String messageId) {
+        return eventBus.events.stream()
+            .filter(MessageEndEvent.class::isInstance)
+            .map(MessageEndEvent.class::cast)
+            .filter(event -> event.messageId().equals(messageId))
+            .map(MessageEndEvent::kind)
+            .findFirst()
+            .orElseThrow();
     }
 }
