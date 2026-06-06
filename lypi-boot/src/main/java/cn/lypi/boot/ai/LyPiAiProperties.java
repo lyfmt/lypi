@@ -2,6 +2,7 @@ package cn.lypi.boot.ai;
 
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
+import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
 import cn.lypi.contracts.model.ApiStyle;
 import java.math.BigDecimal;
 import java.net.URI;
@@ -17,6 +18,7 @@ public class LyPiAiProperties {
     private String defaultProvider;
     private String defaultModel;
     private Map<String, ProviderProperties> providers = new LinkedHashMap<>();
+    private CompactionSummaryProperties compactionSummary = new CompactionSummaryProperties();
 
     public String getDefaultProvider() {
         return defaultProvider;
@@ -40,6 +42,37 @@ public class LyPiAiProperties {
 
     public void setProviders(Map<String, ProviderProperties> providers) {
         this.providers = providers == null ? new LinkedHashMap<>() : new LinkedHashMap<>(providers);
+    }
+
+    public CompactionSummaryProperties getCompactionSummary() {
+        return compactionSummary;
+    }
+
+    public void setCompactionSummary(CompactionSummaryProperties compactionSummary) {
+        this.compactionSummary = compactionSummary == null ? new CompactionSummaryProperties() : compactionSummary;
+    }
+
+    public static class CompactionSummaryProperties {
+        private boolean enabled;
+        private CompactionSummaryFallbackPolicy fallbackPolicy = CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public CompactionSummaryFallbackPolicy getFallbackPolicy() {
+            return fallbackPolicy;
+        }
+
+        public void setFallbackPolicy(CompactionSummaryFallbackPolicy fallbackPolicy) {
+            this.fallbackPolicy = fallbackPolicy == null
+                ? CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC
+                : fallbackPolicy;
+        }
     }
 
     public static class ProviderProperties {

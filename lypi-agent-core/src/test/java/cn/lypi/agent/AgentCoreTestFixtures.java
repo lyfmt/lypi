@@ -385,6 +385,7 @@ final class AgentCoreTestFixtures {
         private final List<AssistantEventStream> streams = new ArrayList<>();
         private final List<RuntimeException> failures = new ArrayList<>();
         final List<ContextSnapshot> contexts = new ArrayList<>();
+        final List<AbortSignal> abortSignals = new ArrayList<>();
 
         void enqueue(List<AssistantStreamEvent> events) {
             streams.add(new ListAssistantEventStream(events));
@@ -401,6 +402,7 @@ final class AgentCoreTestFixtures {
         @Override
         public AssistantEventStream stream(ContextSnapshot context, AbortSignal signal) {
             contexts.add(context);
+            abortSignals.add(signal);
             if (!failures.isEmpty()) {
                 throw failures.removeFirst();
             }

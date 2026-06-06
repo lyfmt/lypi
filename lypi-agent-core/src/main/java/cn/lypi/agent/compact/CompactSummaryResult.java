@@ -1,6 +1,7 @@
 package cn.lypi.agent.compact;
 
 import cn.lypi.contracts.model.TokenUsage;
+import java.util.Objects;
 
 /**
  * 表示 compact 摘要生成结果。
@@ -11,4 +12,11 @@ import cn.lypi.contracts.model.TokenUsage;
 public record CompactSummaryResult(
     String summary,
     TokenUsage usage
-) {}
+) {
+    public CompactSummaryResult {
+        if (summary == null || summary.isBlank()) {
+            throw new IllegalArgumentException("summary must not be blank");
+        }
+        usage = Objects.requireNonNull(usage, "usage");
+    }
+}

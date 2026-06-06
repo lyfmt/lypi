@@ -65,7 +65,8 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
             CompactSummaryResult result = summarizer.summarize(new CompactSummaryRequest(
                 assembly.snapshot(),
                 plan.orElseThrow(),
-                branchEntries
+                branchEntries,
+                request.abortSignal()
             ));
             String summary = summaryText(result);
             int tokensAfter = estimateCompactedTokens(assembly.snapshot(), branchEntries, plan.orElseThrow(), summary);
