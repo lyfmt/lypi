@@ -22,6 +22,7 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -395,6 +396,44 @@ class DefaultToolRuntimeTest {
         assertEquals("toolu_public", request.toolUseId());
         assertEquals("write", request.toolName());
         assertEquals("allow_once", decision.selectedOptionId());
+    }
+
+    @Test
+    void publicConstructorUsesStructuredPermissionResponseGateWithoutDoublePublishing() {
+        RecordingEventBus events = new RecordingEventBus();
+        AtomicInteger responseRequests = new AtomicInteger();
+        PermissionResponseGate responseGate = requestEvent -> {
+            responseRequests.incrementAndGet();
+            return new PermissionResponse(
+                requestEvent.sessionId(),
+                requestEvent.requestId(),
+                "allow_once",
+                false,
+                requestEvent.timestamp()
+            );
+        };
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder()
+                .sessionId("ses_public")
+                .metadata(Map.of("turnId", "turn_public"))
+                .build(),
+            allowAllSecurity(),
+            responseGate,
+            events
+        );
+        runtime.register(TestTools.permission("write", PermissionBehavior.ASK));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_public", "write", Map.of("text", "done"), "msg_parent")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(1, responseRequests.get());
+        assertEquals(1, events.events.stream().filter(PermissionRequestEvent.class::isInstance).count());
+        assertEquals(1, events.events.stream().filter(PermissionDecisionEvent.class::isInstance).count());
+        assertEquals(1, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
+        assertEquals(1, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
     }
 
     @Test

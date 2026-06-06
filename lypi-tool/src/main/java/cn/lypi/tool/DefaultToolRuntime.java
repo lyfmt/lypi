@@ -100,6 +100,26 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     }
 
     public DefaultToolRuntime(
+        ToolRuntimeOptions options,
+        SecurityRuntimePort securityRuntime,
+        PermissionResponseGate permissionResponseGate,
+        EventBus eventBus
+    ) {
+        this(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(normalizeOptions(options)),
+            ToolExecutionInterceptors.noop(),
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionResponseGate),
+            eventPublisher(eventBus),
+            normalizeOptions(options)
+        );
+    }
+
+    public DefaultToolRuntime(
         ToolRegistry registry,
         ToolSchemaValidator schemaValidator,
         ToolExecutionPlanner executionPlanner,
@@ -118,6 +138,31 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             securityRuntime,
             PermissionGate.denying(),
             ToolExecutionEventPublisher.noop(),
+            ToolRuntimeOptions.defaults()
+        );
+    }
+
+    public DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionResponseGate permissionResponseGate,
+        EventBus eventBus
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionResponseGate),
+            eventPublisher(eventBus),
             ToolRuntimeOptions.defaults()
         );
     }
@@ -623,7 +668,15 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
     private static PermissionGate eventPublishingPermissionGate(EventBus eventBus, PermissionGate permissionGate) {
         PermissionGate safeGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
-        return eventBus == null ? safeGate : new EventPublishingPermissionGate(eventBus, safeGate);
+        return eventBus == null || safeGate instanceof EventPublishingPermissionGate
+            ? safeGate
+            : new EventPublishingPermissionGate(eventBus, safeGate);
+    }
+
+    private static PermissionGate eventPublishingPermissionGate(EventBus eventBus, PermissionResponseGate permissionResponseGate) {
+        return eventBus == null
+            ? PermissionGate.denying()
+            : new EventPublishingPermissionGate(eventBus, permissionResponseGate);
     }
 
     private static ToolExecutionEventPublisher eventPublisher(EventBus eventBus) {
