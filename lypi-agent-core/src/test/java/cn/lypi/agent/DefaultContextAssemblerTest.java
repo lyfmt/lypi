@@ -2,12 +2,15 @@ package cn.lypi.agent;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
+import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
@@ -96,6 +99,36 @@ class DefaultContextAssemblerTest {
     }
 
     @Test
+    void restoresStateEntriesAfterCompaction() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        session.openOrCreate("session-1");
+        session.append(new ModelChangeEntry("entry-model", "", new ModelSelection("openai", "gpt-test", ThinkingLevel.HIGH), "test", NOW));
+        session.append(new ThinkingChangeEntry("entry-thinking", "entry-model", ThinkingLevel.HIGH, "test", NOW));
+        session.append(new ModeChangeEntry("entry-mode", "entry-thinking", AgentMode.PLAN, "test", NOW));
+        session.append(new PermissionModeChangeEntry("entry-permission", "entry-mode", PermissionMode.PLAN, "test", NOW));
+        session.append(new MessageEntry("entry-kept", "entry-permission", userMessage("msg-kept", "kept"), NOW));
+        session.append(new CompactionEntry("entry-compact", "entry-kept", "summary text", "entry-kept", 100, 20, CompactionKind.SESSION, NOW));
+
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            session,
+            fixedResourceRuntime("system"),
+            new ContextBudgetEstimator()
+        );
+
+        ContextAssembly assembly = assembler.build(new ContextBuildRequest(
+            "session-1",
+            Optional.of(session.leafId()),
+            Path.of("."),
+            false
+        ));
+
+        assertThat(assembly.snapshot().model().modelId()).isEqualTo("gpt-test");
+        assertThat(assembly.snapshot().thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
+        assertThat(assembly.snapshot().mode()).isEqualTo(AgentMode.PLAN);
+        assertThat(assembly.snapshot().permissionMode()).isEqualTo(PermissionMode.PLAN);
+    }
+
+    @Test
     void appliesLatestCompactionSummaryAndKeepsMessagesFromFirstKeptEntry() {
         AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
         session.openOrCreate("session-1");
@@ -124,5 +157,70 @@ class DefaultContextAssemblerTest {
         assertThat(assembly.snapshot().messages())
             .extracting(AgentMessage::id)
             .containsExactly("summary-entry-compact", "msg-kept", "msg-after");
+    }
+
+    @Test
+    void appliesOnlyLatestCompactionSummary() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        session.openOrCreate("session-1");
+        session.append(new MessageEntry("entry-old", "", userMessage("msg-old", "old"), NOW));
+        session.append(new MessageEntry("entry-kept-1", "entry-old", userMessage("msg-kept-1", "kept 1"), NOW));
+        session.append(new CompactionEntry("entry-compact-1", "entry-kept-1", "summary one", "entry-kept-1", 100, 20, CompactionKind.SESSION, NOW));
+        session.append(new MessageEntry("entry-middle", "entry-compact-1", assistantMessage("msg-middle", "middle"), NOW));
+        session.append(new MessageEntry("entry-kept-2", "entry-middle", userMessage("msg-kept-2", "kept 2"), NOW));
+        session.append(new CompactionEntry("entry-compact-2", "entry-kept-2", "summary two", "entry-kept-2", 80, 18, CompactionKind.SESSION, NOW));
+
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            session,
+            fixedResourceRuntime("system"),
+            new ContextBudgetEstimator()
+        );
+
+        ContextAssembly assembly = assembler.build(new ContextBuildRequest(
+            "session-1",
+            Optional.of(session.leafId()),
+            Path.of("."),
+            true
+        ));
+
+        assertThat(assembly.appliedCompactionEntryIds()).containsExactly("entry-compact-2");
+        assertThat(assembly.snapshot().messages())
+            .extracting(AgentMessage::id)
+            .containsExactly("summary-entry-compact-2", "msg-kept-2");
+        assertThat(assembly.snapshot().messages().getFirst().content().getFirst().text()).isEqualTo("summary two");
+    }
+
+    @Test
+    void projectsBranchSummaryAndCustomMessageEntries() {
+        AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
+        session.openOrCreate("session-1");
+        session.append(new BranchSummaryEntry("entry-branch-summary", "", "left branch summary", NOW));
+        session.append(new CustomMessageEntry("entry-custom", "entry-branch-summary", "local instruction", NOW));
+
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            session,
+            fixedResourceRuntime("system"),
+            new ContextBudgetEstimator()
+        );
+
+        ContextAssembly assembly = assembler.build(new ContextBuildRequest(
+            "session-1",
+            Optional.of(session.leafId()),
+            Path.of("."),
+            true
+        ));
+
+        assertThat(assembly.snapshot().messages())
+            .extracting(AgentMessage::id)
+            .containsExactly("branch-summary-entry-branch-summary", "custom-message-entry-custom");
+        assertThat(assembly.snapshot().messages())
+            .extracting(AgentMessage::kind)
+            .containsExactly(MessageKind.SUMMARY, MessageKind.TEXT);
+        assertThat(assembly.snapshot().messages())
+            .extracting(AgentMessage::role)
+            .containsExactly(MessageRole.SYSTEM_LOCAL, MessageRole.SYSTEM_LOCAL);
+        assertThat(assembly.snapshot().messages())
+            .extracting(message -> message.content().getFirst().text())
+            .containsExactly("left branch summary", "local instruction");
     }
 }

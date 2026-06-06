@@ -8,7 +8,9 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
+import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
@@ -38,6 +40,20 @@ final class ContextEntryProjector {
             branchEntryIds.add(entry.id());
             if (entry instanceof MessageEntry messageEntry) {
                 messages.add(messageEntry.message());
+            } else if (entry instanceof BranchSummaryEntry branchSummary) {
+                messages.add(systemLocalMessage(
+                    "branch-summary-" + branchSummary.id(),
+                    MessageKind.SUMMARY,
+                    branchSummary.summary(),
+                    branchSummary.timestamp()
+                ));
+            } else if (entry instanceof CustomMessageEntry customMessage) {
+                messages.add(systemLocalMessage(
+                    "custom-message-" + customMessage.id(),
+                    MessageKind.TEXT,
+                    customMessage.content(),
+                    customMessage.timestamp()
+                ));
             } else if (entry instanceof ModelChangeEntry modelChange) {
                 model = modelChange.model();
             } else if (entry instanceof ThinkingChangeEntry thinkingChange) {
@@ -98,6 +114,18 @@ final class ContextEntryProjector {
         projected.add(summary);
         projected.addAll(kept.isEmpty() ? messages : kept);
         return projected;
+    }
+
+    private AgentMessage systemLocalMessage(String id, MessageKind kind, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.SYSTEM_LOCAL,
+            kind,
+            List.of(new TextContentBlock(text)),
+            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
+            Optional.empty(),
+            Optional.empty()
+        );
     }
 
     record Projection(
