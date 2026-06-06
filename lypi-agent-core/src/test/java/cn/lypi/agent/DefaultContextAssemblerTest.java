@@ -14,6 +14,7 @@ import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -24,6 +25,20 @@ import static cn.lypi.agent.AgentCoreTestFixtures.userMessage;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class DefaultContextAssemblerTest {
+    @Test
+    void usesConfiguredBudgetThresholds() {
+        ContextBudgetEstimator estimator = new ContextBudgetEstimator(64, 10, 8, 4);
+
+        var budget = estimator.estimate(List.of(userMessage(
+            "msg-user",
+            "01234567890123456789012345678901234567890123"
+        )));
+
+        assertThat(budget.effectiveContextWindow()).isEqualTo(64);
+        assertThat(budget.autoCompactThreshold()).isEqualTo(10);
+        assertThat(budget.estimatedContextTokens()).isGreaterThan(10);
+    }
+
     @Test
     void buildsContextFromCurrentBranchInChronologicalOrder() {
         AgentCoreTestFixtures.InMemorySessionEngine session = new AgentCoreTestFixtures.InMemorySessionEngine();
