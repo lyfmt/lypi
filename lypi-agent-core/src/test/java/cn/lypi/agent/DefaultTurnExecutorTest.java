@@ -1,5 +1,8 @@
 package cn.lypi.agent;
 
+import cn.lypi.agent.compact.CompactionCoordinator;
+import cn.lypi.agent.compact.CompactionDecision;
+import cn.lypi.agent.compact.NoopCompactionCoordinator;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;

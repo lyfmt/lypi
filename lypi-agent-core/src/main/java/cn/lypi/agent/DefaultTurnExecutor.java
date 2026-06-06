@@ -1,5 +1,7 @@
 package cn.lypi.agent;
 
+import cn.lypi.agent.compact.CompactionDecision;
+import cn.lypi.agent.compact.CompactionRequest;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -167,14 +169,21 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private ContextSnapshot buildContext(TurnRequest request, Optional<String> leafEntryId) {
-        ContextAssembly assembly = ports.contextAssembler().build(new ContextBuildRequest(
+        ContextBuildRequest contextBuildRequest = new ContextBuildRequest(
             request.sessionId(),
             leafEntryId,
             // NOTE: lypi-resource 负责从 cwd 探索 project root 和资源层级；agent-core 只传入启动层确定的 cwd 起点。
             ports.cwd(),
             true
+        );
+        ContextAssembly assembly = ports.contextAssembler().build(contextBuildRequest);
+        CompactionDecision compaction = ports.compactionCoordinator().preflight(new CompactionRequest(
+            request.sessionId(),
+            leafEntryId,
+            ports.cwd(),
+            contextBuildRequest,
+            assembly
         ));
-        CompactionDecision compaction = ports.compactionCoordinator().preflight(assembly.snapshot());
         return compaction.context();
     }
 

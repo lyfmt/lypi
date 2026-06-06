@@ -1,5 +1,8 @@
 package cn.lypi.agent;
 
+import cn.lypi.agent.compact.CompactionCoordinator;
+import cn.lypi.agent.compact.CompactionDecision;
+import cn.lypi.agent.compact.CompactionRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;
@@ -45,9 +48,15 @@ class AgentCoreContractCompilationTest {
             "within budget"
         );
 
-        CompactionCoordinator coordinator = context -> decision;
+        CompactionCoordinator coordinator = request -> decision;
 
-        assertThat(coordinator.preflight(null).compacted()).isFalse();
+        assertThat(coordinator.preflight(new CompactionRequest(
+            "session-1",
+            Optional.empty(),
+            Path.of("."),
+            null,
+            new ContextAssembly(null, List.of(), List.of(), List.of(), false)
+        )).compacted()).isFalse();
         assertThat(decision.reason()).isEqualTo("within budget");
     }
 
