@@ -22,7 +22,6 @@ import cn.lypi.agent.compact.CompactSummaryContextBuilder;
 import cn.lypi.agent.compact.CompactSummaryInstructionFactory;
 import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.CompactionSummaryOptions;
-import cn.lypi.agent.compact.DefaultCompactionSummarizer;
 import cn.lypi.ai.transport.HttpSseProviderTransport;
 import cn.lypi.ai.transport.WebSocketProviderTransport;
 import cn.lypi.boot.ai.LyPiAiProperties.ModelProperties;
@@ -85,17 +84,21 @@ public class LyPiAiAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public CompactionSummarizer compactionSummarizer(ModelPort modelPort, LyPiAiProperties properties) {
-        DefaultCompactionSummarizer deterministic = new DefaultCompactionSummarizer();
         LyPiAiProperties.CompactionSummaryProperties summary = properties.getCompactionSummary();
         if (!summary.isEnabled()) {
-            return deterministic;
+            return unavailableCompactionSummarizer();
         }
         return new AiCompactionSummarizer(
             modelPort,
             new CompactSummaryContextBuilder(new CompactSummaryInstructionFactory()),
-            deterministic,
             new CompactionSummaryOptions(summary.getFallbackPolicy())
         );
+    }
+
+    private CompactionSummarizer unavailableCompactionSummarizer() {
+        return request -> {
+            throw new IllegalStateException("AI compaction summary is disabled");
+        };
     }
 
     private ModelDescriptorSource modelDescriptorSource(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {

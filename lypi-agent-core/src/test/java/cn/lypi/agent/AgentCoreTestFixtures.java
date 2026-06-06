@@ -28,10 +28,10 @@ import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
-import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.BranchSummaryEntry;
-import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
+import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
@@ -249,9 +249,9 @@ final class AgentCoreTestFixtures {
                 if (entry instanceof MessageEntry messageEntry) {
                     messages.add(messageEntry.message());
                 } else if (entry instanceof BranchSummaryEntry branchSummary) {
-                    messages.add(summaryMessage("branch-summary-" + branchSummary.id(), branchSummary.summary()));
+                    messages.add(branchSummaryMessage(branchSummary));
                 } else if (entry instanceof CustomMessageEntry customMessage) {
-                    messages.add(textMessage("custom-message-" + customMessage.id(), MessageRole.SYSTEM_LOCAL, MessageKind.TEXT, customMessage.content()));
+                    messages.add(customMessage(customMessage));
                 } else if (entry instanceof CompactionEntry compactionEntry) {
                     latestCompaction = compactionEntry;
                 } else if (entry instanceof ModelChangeEntry modelChange) {
@@ -325,19 +325,44 @@ final class AgentCoreTestFixtures {
                     keep = true;
                 }
                 if (keep) {
-                    if (entry instanceof MessageEntry messageEntry) {
-                        kept.add(messageEntry.message());
-                    } else if (entry instanceof BranchSummaryEntry branchSummary) {
-                        kept.add(summaryMessage("branch-summary-" + branchSummary.id(), branchSummary.summary()));
-                    } else if (entry instanceof CustomMessageEntry customMessage) {
-                        kept.add(textMessage("custom-message-" + customMessage.id(), MessageRole.SYSTEM_LOCAL, MessageKind.TEXT, customMessage.content()));
-                    }
+                    project(entry).ifPresent(kept::add);
                 }
             }
             List<AgentMessage> replay = new ArrayList<>();
             replay.add(summaryMessage("summary-" + compaction.id(), compaction.summary()));
             replay.addAll(kept.isEmpty() ? originalMessages : kept);
             return replay;
+        }
+
+        private Optional<AgentMessage> project(SessionEntry entry) {
+            if (entry instanceof MessageEntry messageEntry) {
+                return Optional.of(messageEntry.message());
+            }
+            if (entry instanceof BranchSummaryEntry branchSummary) {
+                return Optional.of(branchSummaryMessage(branchSummary));
+            }
+            if (entry instanceof CustomMessageEntry customMessage) {
+                return Optional.of(customMessage(customMessage));
+            }
+            return Optional.empty();
+        }
+
+        private AgentMessage branchSummaryMessage(BranchSummaryEntry branchSummary) {
+            return textMessage(
+                "branch-summary-" + branchSummary.id(),
+                MessageRole.SYSTEM_LOCAL,
+                MessageKind.SUMMARY,
+                branchSummary.summary()
+            );
+        }
+
+        private AgentMessage customMessage(CustomMessageEntry customMessage) {
+            return textMessage(
+                "custom-message-" + customMessage.id(),
+                MessageRole.SYSTEM_LOCAL,
+                MessageKind.TEXT,
+                customMessage.content()
+            );
         }
     }
 

@@ -17,18 +17,15 @@ public final class AiCompactionSummarizer implements CompactionSummarizer {
 
     private final AiProviderRuntimePort provider;
     private final CompactSummaryContextBuilder contextBuilder;
-    private final CompactionSummarizer deterministicFallback;
     private final CompactionSummaryOptions options;
 
     public AiCompactionSummarizer(
         AiProviderRuntimePort provider,
         CompactSummaryContextBuilder contextBuilder,
-        CompactionSummarizer deterministicFallback,
         CompactionSummaryOptions options
     ) {
         this.provider = provider;
         this.contextBuilder = contextBuilder;
-        this.deterministicFallback = deterministicFallback;
         this.options = options;
     }
 
@@ -73,10 +70,8 @@ public final class AiCompactionSummarizer implements CompactionSummarizer {
     }
 
     private CompactSummaryResult fallback(CompactSummaryRequest request, RuntimeException cause) {
-        if (options.fallbackPolicy() == CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC) {
-            return deterministicFallback.summarize(request);
-        }
-        throw new IllegalStateException("AI compaction summary failed: " + cause.getMessage(), cause);
+        String policy = options.fallbackPolicy().name();
+        throw new IllegalStateException("AI compaction summary failed with policy " + policy + ": " + cause.getMessage(), cause);
     }
 
     private String cleanSummary(String raw) {

@@ -2,6 +2,7 @@ package cn.lypi.agent.compact;
 
 import cn.lypi.agent.ContextAssembler;
 import cn.lypi.agent.ContextAssembly;
+import cn.lypi.agent.ContextBudgetEstimator;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
@@ -20,6 +21,7 @@ import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -27,10 +29,10 @@ import java.util.UUID;
 
 public final class DefaultCompactionCoordinator implements CompactionCoordinator {
     private final SessionManagerPort sessionManager;
-    private final ContextAssembler contextAssembler;
     private final EventBus eventBus;
     private final CompactionPlanner planner;
     private final CompactionSummarizer summarizer;
+    private final ContextBudgetEstimator budgetEstimator;
     private final Clock clock;
 
     public DefaultCompactionCoordinator(
@@ -42,10 +44,10 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
         Clock clock
     ) {
         this.sessionManager = sessionManager;
-        this.contextAssembler = contextAssembler;
         this.eventBus = eventBus;
         this.planner = planner;
         this.summarizer = summarizer;
+        this.budgetEstimator = new ContextBudgetEstimator();
         this.clock = clock;
     }
 
@@ -66,11 +68,12 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
                 branchEntries,
                 request.abortSignal()
             ));
-            int tokensAfter = estimateCompactedContextTokens(result.summary(), plan.orElseThrow(), branchEntries);
+            String summary = summaryText(result);
+            int tokensAfter = estimateCompactedTokens(assembly.snapshot(), branchEntries, plan.orElseThrow(), summary);
             CompactionEntry compactionEntry = new CompactionEntry(
                 "entry-compact-" + UUID.randomUUID(),
                 request.leafEntryId().orElse(""),
-                result.summary(),
+                summary,
                 plan.orElseThrow().firstKeptEntryId(),
                 assembly.snapshot().budget().estimatedContextTokens(),
                 tokensAfter,
@@ -93,42 +96,56 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
         return sessionManager.branch(request.leafEntryId().orElseThrow());
     }
 
-    private int estimateCompactedContextTokens(
-        String summary,
+    private String summaryText(CompactSummaryResult result) {
+        if (result == null) {
+            throw new IllegalStateException("summary result is null");
+        }
+        if (result.summary() == null || result.summary().isBlank()) {
+            throw new IllegalStateException("summary is empty");
+        }
+        return result.summary().strip();
+    }
+
+    private int estimateCompactedTokens(
+        ContextSnapshot snapshot,
+        List<SessionEntry> branchEntries,
         CompactionPlan plan,
-        List<SessionEntry> branchEntries
+        String summary
     ) {
-        List<AgentMessage> messages = new ArrayList<>();
-        messages.add(new AgentMessage(
-            "summary-estimate",
-            MessageRole.SYSTEM_LOCAL,
+        List<AgentMessage> compactedMessages = new ArrayList<>();
+        compactedMessages.add(systemLocalMessage(
+            "summary-entry-compact-preview",
             MessageKind.SUMMARY,
-            List.of(new TextContentBlock(summary)),
-            clock.instant(),
-            Optional.empty(),
-            Optional.empty()
+            summary,
+            clock.instant()
         ));
+
+        List<AgentMessage> keptMessages = keptProjectedMessages(branchEntries, plan.firstKeptEntryId());
+        compactedMessages.addAll(keptMessages.isEmpty() ? snapshot.messages() : keptMessages);
+        ContextSnapshot compactedSnapshot = new ContextSnapshot(
+            snapshot.systemPrompt(),
+            compactedMessages,
+            snapshot.model(),
+            snapshot.thinkingLevel(),
+            snapshot.mode(),
+            snapshot.permissionMode(),
+            snapshot.budget()
+        );
+        return budgetEstimator.estimate(compactedSnapshot).estimatedContextTokens();
+    }
+
+    private List<AgentMessage> keptProjectedMessages(List<SessionEntry> branchEntries, String firstKeptEntryId) {
+        List<AgentMessage> kept = new ArrayList<>();
         boolean keep = false;
-        int keptMessageStart = messages.size();
         for (SessionEntry entry : branchEntries) {
-            if (entry.id().equals(plan.firstKeptEntryId())) {
+            if (entry.id().equals(firstKeptEntryId)) {
                 keep = true;
             }
             if (keep) {
-                project(entry).ifPresent(messages::add);
+                project(entry).ifPresent(kept::add);
             }
         }
-        if (messages.size() == keptMessageStart) {
-            messages.addAll(originalMessages(branchEntries));
-        }
-        return estimateMessages(messages);
-    }
-
-    private List<AgentMessage> originalMessages(List<SessionEntry> branchEntries) {
-        return branchEntries.stream()
-            .map(this::project)
-            .flatMap(Optional::stream)
-            .toList();
+        return kept;
     }
 
     private Optional<AgentMessage> project(SessionEntry entry) {
@@ -154,32 +171,16 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
         return Optional.empty();
     }
 
-    private AgentMessage systemLocalMessage(
-        String id,
-        MessageKind kind,
-        String text,
-        java.time.Instant timestamp
-    ) {
+    private AgentMessage systemLocalMessage(String id, MessageKind kind, String text, Instant timestamp) {
         return new AgentMessage(
             id,
             MessageRole.SYSTEM_LOCAL,
             kind,
             List.of(new TextContentBlock(text)),
-            timestamp == null ? java.time.Instant.EPOCH : timestamp,
+            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
             Optional.empty(),
             Optional.empty()
         );
-    }
-
-    private int estimateMessages(List<AgentMessage> messages) {
-        int total = 0;
-        for (AgentMessage message : messages) {
-            total += message.content().stream()
-                .map(block -> block.text() == null ? "" : block.text())
-                .mapToInt(text -> Math.max(1, text.length() / 4))
-                .sum();
-        }
-        return Math.max(1, total);
     }
 
     private ContextSnapshot compactedContext(

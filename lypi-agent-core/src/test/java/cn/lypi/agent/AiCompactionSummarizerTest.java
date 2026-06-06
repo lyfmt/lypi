@@ -7,7 +7,6 @@ import cn.lypi.agent.compact.CompactSummaryRequest;
 import cn.lypi.agent.compact.CompactSummaryResult;
 import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
 import cn.lypi.agent.compact.CompactionSummaryOptions;
-import cn.lypi.agent.compact.DefaultCompactionSummarizer;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;
@@ -56,37 +55,42 @@ class AiCompactionSummarizerTest {
     }
 
     @Test
-    void fallsBackWhenProviderThrows() {
+    void throwsWhenProviderThrows() {
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         provider.failWith(new IllegalStateException("provider down"));
         AiCompactionSummarizer summarizer = summarizer(provider, CompactionSummaryOptions.defaults());
 
-        CompactSummaryResult result = summarizer.summarize(request(() -> false));
-
-        assertThat(result.summary()).contains("Need compact");
-        assertThat(result.usage()).isEqualTo(new TokenUsage(0, 0, 0, 0));
+        assertThatThrownBy(() -> summarizer.summarize(request(() -> false)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("AI compaction summary failed")
+            .hasMessageContaining("FALLBACK_DETERMINISTIC")
+            .hasMessageContaining("provider down");
     }
 
     @Test
-    void fallsBackWhenProviderReturnsEmptyText() {
+    void throwsWhenProviderReturnsEmptyText() {
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         provider.enqueue(List.of(new AssistantDone(Optional.empty(), Optional.of("stop"))));
         AiCompactionSummarizer summarizer = summarizer(provider, CompactionSummaryOptions.defaults());
 
-        CompactSummaryResult result = summarizer.summarize(request(() -> false));
-
-        assertThat(result.summary()).contains("Need compact");
+        assertThatThrownBy(() -> summarizer.summarize(request(() -> false)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("AI compaction summary failed")
+            .hasMessageContaining("FALLBACK_DETERMINISTIC")
+            .hasMessageContaining("empty output");
     }
 
     @Test
-    void fallsBackWhenProviderSendsAssistantError() {
+    void throwsWhenProviderSendsAssistantError() {
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         provider.enqueue(List.of(new AssistantError("err-1", "bad stream")));
         AiCompactionSummarizer summarizer = summarizer(provider, CompactionSummaryOptions.defaults());
 
-        CompactSummaryResult result = summarizer.summarize(request(() -> false));
-
-        assertThat(result.summary()).contains("Need compact");
+        assertThatThrownBy(() -> summarizer.summarize(request(() -> false)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("AI compaction summary failed")
+            .hasMessageContaining("FALLBACK_DETERMINISTIC")
+            .hasMessageContaining("bad stream");
     }
 
     @Test
@@ -124,6 +128,7 @@ class AiCompactionSummarizerTest {
 
         assertThatThrownBy(() -> summarizer.summarize(request(() -> false)))
             .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("SKIP_COMPACTION")
             .hasMessageContaining("provider down");
     }
 
@@ -157,7 +162,6 @@ class AiCompactionSummarizerTest {
         return new AiCompactionSummarizer(
             provider,
             new CompactSummaryContextBuilder(new CompactSummaryInstructionFactory()),
-            new DefaultCompactionSummarizer(),
             options
         );
     }

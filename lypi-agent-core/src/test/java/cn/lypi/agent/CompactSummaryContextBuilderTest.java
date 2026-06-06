@@ -78,7 +78,7 @@ class CompactSummaryContextBuilderTest {
         assertThat(summaryContext.systemPrompt()).isEqualTo(currentContext.systemPrompt());
         assertThat(summaryContext.budget().estimatedContextTokens())
             .isEqualTo(new ContextBudgetEstimator()
-                .estimate(summaryContext.messages())
+                .estimate(summaryContext.systemPrompt(), summaryContext.messages())
                 .estimatedContextTokens());
     }
 }

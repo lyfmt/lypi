@@ -8,10 +8,10 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * 表示一次 compact summary 模型调用请求。
+ * 表示一次 compact 摘要生成请求。
  *
- * NOTE: context.messages() 是 summary 请求主体消息前缀；branchEntries 仅用于审计、
- * fallback 和 compact 后虚拟 replay，不替代 context.messages()。
+ * NOTE: context.messages() 是 AI 摘要请求的主体消息前缀；plan 和 branchEntries
+ * 只用于边界记录、审计和调试，不要求模型根据 entry id 判断摘要范围。
  */
 public record CompactSummaryRequest(
     ContextSnapshot context,
@@ -20,10 +20,9 @@ public record CompactSummaryRequest(
     AbortSignal abortSignal
 ) {
     public CompactSummaryRequest {
-        Objects.requireNonNull(context, "context");
-        Objects.requireNonNull(plan, "plan");
-        Objects.requireNonNull(branchEntries, "branchEntries");
-        Objects.requireNonNull(abortSignal, "abortSignal");
-        branchEntries = List.copyOf(branchEntries);
+        context = Objects.requireNonNull(context, "context");
+        plan = Objects.requireNonNull(plan, "plan");
+        branchEntries = List.copyOf(Objects.requireNonNull(branchEntries, "branchEntries"));
+        abortSignal = Objects.requireNonNull(abortSignal, "abortSignal");
     }
 }

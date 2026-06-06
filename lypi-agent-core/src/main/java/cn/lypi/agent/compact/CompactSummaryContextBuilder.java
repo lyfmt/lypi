@@ -25,15 +25,19 @@ public final class CompactSummaryContextBuilder {
             current.thinkingLevel(),
             current.mode(),
             current.permissionMode(),
-            estimateBudget(current.budget(), messages)
+            estimateBudget(current, messages)
         );
     }
 
-    private ContextBudget estimateBudget(ContextBudget currentBudget, List<AgentMessage> messages) {
+    private ContextBudget estimateBudget(ContextSnapshot current, List<AgentMessage> messages) {
+        ContextBudget currentBudget = current.budget();
+        int systemPromptTokens = current.systemPrompt() == null
+            ? 0
+            : estimateText(current.systemPrompt().content());
         int estimatedTokens = messages.stream()
             .flatMap(message -> message.content().stream())
             .mapToInt(this::estimateBlock)
-            .sum();
+            .sum() + systemPromptTokens;
         return new ContextBudget(
             estimatedTokens,
             currentBudget.effectiveContextWindow(),
@@ -47,7 +51,11 @@ public final class CompactSummaryContextBuilder {
     }
 
     private int estimateBlock(ContentBlock block) {
-        String text = block.text() == null ? "" : block.text();
-        return Math.max(1, text.length() / 4);
+        return estimateText(block.text());
+    }
+
+    private int estimateText(String text) {
+        String safeText = text == null ? "" : text;
+        return Math.max(1, safeText.length() / 4);
     }
 }

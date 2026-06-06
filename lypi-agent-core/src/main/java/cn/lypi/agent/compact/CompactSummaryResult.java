@@ -4,9 +4,10 @@ import cn.lypi.contracts.model.TokenUsage;
 import java.util.Objects;
 
 /**
- * 表示 compact summary 模型调用结果。
+ * 表示 compact 摘要生成结果。
  *
- * usage 仅表示 summary 调用本身的消耗，不代表 compact 后上下文大小。
+ * summary 会直接写入 CompactionEntry.summary；usage 仅表示本次摘要调用消耗，
+ * 不表示 compact 后上下文大小。
  */
 public record CompactSummaryResult(
     String summary,
