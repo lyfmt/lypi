@@ -68,6 +68,11 @@ class DefaultCompactionCoordinatorTest {
         assertThat(eventBus.events)
             .extracting(Object::getClass)
             .containsSubsequence(CompactStartEvent.class, CompactEndEvent.class);
+        assertThat(eventBus.events)
+            .filteredOn(CompactEndEvent.class::isInstance)
+            .singleElement()
+            .extracting(event -> ((CompactEndEvent) event).compactionEntryId())
+            .isEqualTo(session.leafId());
     }
 
     @Test
@@ -152,13 +157,14 @@ class DefaultCompactionCoordinatorTest {
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
         CompactionSummarizer failingSummarizer = request -> {
             throw new IllegalStateException("summary unavailable");
         };
         DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
             session,
             assembler,
-            new AgentCoreTestFixtures.RecordingEventBus(),
+            eventBus,
             new DefaultCompactionPlanner(4),
             failingSummarizer,
             CLOCK
@@ -172,6 +178,14 @@ class DefaultCompactionCoordinatorTest {
         assertThat(session.handle().byId().values())
             .filteredOn(CompactionEntry.class::isInstance)
             .isEmpty();
+        assertThat(eventBus.events)
+            .extracting(Object::getClass)
+            .containsSubsequence(CompactStartEvent.class, CompactEndEvent.class);
+        assertThat(eventBus.events)
+            .filteredOn(CompactEndEvent.class::isInstance)
+            .singleElement()
+            .extracting(event -> ((CompactEndEvent) event).compactionEntryId())
+            .isEqualTo("");
     }
 
     @Test
