@@ -7,7 +7,9 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.ErrorEvent;
@@ -25,6 +27,7 @@ import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
+import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.tool.ToolResult;
@@ -100,6 +103,18 @@ class DefaultTurnExecutorTest {
                 MessageEndEvent.class,
                 TurnEndEvent.class
             );
+        MessageStartEvent userStart = (MessageStartEvent) eventBus.events.get(1);
+        assertThat(userStart.role()).isEqualTo(MessageRole.USER);
+        assertThat(userStart.kind()).isEqualTo(MessageKind.TEXT);
+        MessageDeltaEvent assistantDelta = (MessageDeltaEvent) eventBus.events.get(4);
+        assertThat(assistantDelta.role()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(assistantDelta.blockKind()).isEqualTo(ContentBlockKind.TEXT);
+        assertThat(assistantDelta.blockId()).isEqualTo("msg-assistant:text:0");
+        MessageEndEvent assistantEnd = (MessageEndEvent) eventBus.events.get(5);
+        assertThat(assistantEnd.role()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(assistantEnd.blocks()).hasSize(1);
+        assertThat(assistantEnd.blocks().getFirst().text()).isEqualTo("hi");
+        assertThat(assistantEnd.stopReason()).contains("end_turn");
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
     }
 
@@ -373,6 +388,20 @@ class DefaultTurnExecutorTest {
             .containsExactly("msg-user", "msg-tool-call", "msg-tool-result", "msg-final");
         assertThat(session.messages()).extracting(AgentMessage::role)
             .containsExactly(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL_RESULT, MessageRole.ASSISTANT);
+        MessageStartEvent toolCallStart = eventBus.events.stream()
+            .filter(MessageStartEvent.class::isInstance)
+            .map(MessageStartEvent.class::cast)
+            .filter(event -> event.messageId().equals("msg-tool-call"))
+            .findFirst()
+            .orElseThrow();
+        MessageEndEvent toolCallEnd = eventBus.events.stream()
+            .filter(MessageEndEvent.class::isInstance)
+            .map(MessageEndEvent.class::cast)
+            .filter(event -> event.messageId().equals("msg-tool-call"))
+            .findFirst()
+            .orElseThrow();
+        assertThat(toolCallStart.kind()).isEqualTo(MessageKind.TOOL_CALL);
+        assertThat(toolCallEnd.kind()).isEqualTo(MessageKind.TOOL_CALL);
     }
 
     @Test
@@ -1090,7 +1119,57 @@ class DefaultTurnExecutorTest {
                 "MessageStartEvent:msg-error",
                 "MessageEndEvent:msg-error"
             );
+        assertThat(messageStartKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
+        assertThat(messageEndKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
         assertThat(memory.calls).isZero();
+    }
+
+    @Test
+    void publishesConsistentTextKindWhenAssistantStreamStartsWithThinkingThenText() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new ThinkingDelta("thinking"),
+            new TextDelta("answer"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(messageStartKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
+        assertThat(messageEndKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
+        assertThat(messageDeltas(eventBus, "msg-assistant"))
+            .extracting(MessageDeltaEvent::blockKind)
+            .containsExactly(ContentBlockKind.THINKING, ContentBlockKind.TEXT);
+        MessageDeltaEvent thinkingDelta = messageDeltas(eventBus, "msg-assistant").getFirst();
+        assertThat(thinkingDelta.kind()).isEqualTo(MessageKind.THINKING);
+        assertThat(thinkingDelta.blockId()).isEqualTo("msg-assistant:thinking:0");
+        assertThat(thinkingDelta.delta()).isEqualTo("thinking");
     }
 
     @Test
@@ -1132,6 +1211,14 @@ class DefaultTurnExecutorTest {
         assertThat(session.messages()).extracting(AgentMessage::id)
             .containsExactly("msg-user", "msg-error");
         assertThat(session.messages().getLast().kind()).isEqualTo(cn.lypi.contracts.context.MessageKind.ERROR);
+        assertThat(messageStartKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
+        assertThat(messageEndKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
+        MessageDeltaEvent errorDelta = messageDeltas(eventBus, "msg-error").getFirst();
+        assertThat(errorDelta.kind()).isEqualTo(MessageKind.ERROR);
+        assertThat(errorDelta.blockKind()).isEqualTo(ContentBlockKind.ERROR);
+        assertThat(errorDelta.blockId()).isEqualTo("msg-error:error:0");
+        assertThat(errorDelta.delta()).isEqualTo("provider stream failed");
+        assertThat(errorDelta.metadata()).containsEntry("errorId", "provider-error");
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
         assertThat(memory.calls).isZero();
     }
@@ -1182,6 +1269,8 @@ class DefaultTurnExecutorTest {
             .map(MessageEndEvent::messageId)
             .toList())
             .containsExactly("msg-user", "msg-error");
+        assertThat(messageStartKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
+        assertThat(messageEndKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
         assertThat(memory.calls).isZero();
     }
@@ -1340,5 +1429,33 @@ class DefaultTurnExecutorTest {
             return messageEnd.messageId();
         }
         return "";
+    }
+
+    private MessageKind messageStartKind(AgentCoreTestFixtures.RecordingEventBus eventBus, String messageId) {
+        return eventBus.events.stream()
+            .filter(MessageStartEvent.class::isInstance)
+            .map(MessageStartEvent.class::cast)
+            .filter(event -> event.messageId().equals(messageId))
+            .map(MessageStartEvent::kind)
+            .findFirst()
+            .orElseThrow();
+    }
+
+    private MessageKind messageEndKind(AgentCoreTestFixtures.RecordingEventBus eventBus, String messageId) {
+        return eventBus.events.stream()
+            .filter(MessageEndEvent.class::isInstance)
+            .map(MessageEndEvent.class::cast)
+            .filter(event -> event.messageId().equals(messageId))
+            .map(MessageEndEvent::kind)
+            .findFirst()
+            .orElseThrow();
+    }
+
+    private List<MessageDeltaEvent> messageDeltas(AgentCoreTestFixtures.RecordingEventBus eventBus, String messageId) {
+        return eventBus.events.stream()
+            .filter(MessageDeltaEvent.class::isInstance)
+            .map(MessageDeltaEvent.class::cast)
+            .filter(event -> event.messageId().equals(messageId))
+            .toList();
     }
 }

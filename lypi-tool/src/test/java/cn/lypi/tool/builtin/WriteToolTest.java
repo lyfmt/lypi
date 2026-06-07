@@ -4,9 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.util.ArrayList;
+import java.util.List;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -20,15 +24,19 @@ class WriteToolTest {
     @Test
     void writesNewFileAndReturnsAuditSummary() throws Exception {
         WriteTool tool = new WriteTool();
+        List<ToolProgress> progresses = new ArrayList<>();
 
-        ToolResult<String> result = tool.execute(Map.of("path", "a.txt", "content", "hello"), context(), message -> {
-        });
+        ToolResult<String> result = tool.execute(Map.of("path", "a.txt", "content", "hello"), context(), progresses::add);
 
         assertFalse(result.isError());
         assertEquals("hello", Files.readString(tempDir.resolve("a.txt")));
         assertTrue(result.output().contains("path=a.txt"));
         assertTrue(result.output().contains("bytes=5"));
         assertTrue(result.output().contains("overwritten=false"));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.PHASE && "writing".equals(progress.phase())));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.STATUS && "written bytes".equals(progress.title()) && progress.current() == 5L));
     }
 
     @Test

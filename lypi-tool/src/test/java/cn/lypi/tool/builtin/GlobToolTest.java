@@ -3,8 +3,12 @@ package cn.lypi.tool.builtin;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.util.ArrayList;
+import java.util.List;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -22,14 +26,20 @@ class GlobToolTest {
         Files.writeString(tempDir.resolve("src/a.txt"), "a");
         Files.writeString(tempDir.resolve("src/nested/b.txt"), "b");
         GlobTool tool = new GlobTool();
+        List<ToolProgress> progresses = new ArrayList<>();
 
-        ToolResult<String> result = tool.execute(Map.of("pattern", "src/**/*.txt", "maxResults", 2), context(), message -> {
-        });
+        ToolResult<String> result = tool.execute(Map.of("pattern", "src/**/*.txt", "maxResults", 2), context(), progresses::add);
 
         assertFalse(result.isError());
         assertTrue(result.output().contains("src/a.txt"));
         assertTrue(result.output().contains("src/nested/b.txt"));
         assertFalse(result.output().contains("src/z.txt"));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.PHASE && "scanning".equals(progress.phase())));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.COUNTER && "files".equals(progress.title()) && progress.current() == 3L));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.STATUS && "matched".equals(progress.title()) && progress.current() == 2L));
     }
 
     @Test

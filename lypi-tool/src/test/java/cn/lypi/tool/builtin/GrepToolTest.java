@@ -3,8 +3,12 @@ package cn.lypi.tool.builtin;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.util.ArrayList;
+import java.util.List;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -20,14 +24,20 @@ class GrepToolTest {
         Files.writeString(tempDir.resolve("b.txt"), "needle b\n");
         Files.writeString(tempDir.resolve("a.txt"), "needle a\nneedle again\n");
         GrepTool tool = new GrepTool();
+        List<ToolProgress> progresses = new ArrayList<>();
 
-        ToolResult<String> result = tool.execute(Map.of("pattern", "needle", "maxResults", 2), context(), message -> {
-        });
+        ToolResult<String> result = tool.execute(Map.of("pattern", "needle", "maxResults", 2), context(), progresses::add);
 
         assertFalse(result.isError());
         assertTrue(result.output().contains("a.txt:1:needle a"));
         assertTrue(result.output().contains("a.txt:2:needle again"));
         assertFalse(result.output().contains("b.txt:1:needle b"));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.PHASE && "scanning".equals(progress.phase())));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.COUNTER && "files".equals(progress.title()) && progress.current() == 2L));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.STATUS && "matched".equals(progress.title())));
     }
 
     @Test

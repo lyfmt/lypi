@@ -10,6 +10,8 @@ import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ErrorContentBlock;
+import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ThinkingContentBlock;
 import cn.lypi.contracts.context.ToolCallContentBlock;
@@ -19,15 +21,28 @@ import cn.lypi.contracts.error.LyPiException;
 import cn.lypi.contracts.error.ToolValidationException;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventEnvelope;
+import cn.lypi.contracts.event.MessageBlockSnapshot;
+import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.MessageEndEvent;
+import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
+import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionOption;
+import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.security.PermissionResponse;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
@@ -35,13 +50,29 @@ import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.model.TokenUsage;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
+import cn.lypi.contracts.tool.ToolOutputRef;
+import cn.lypi.contracts.tool.ToolResultSummary;
+import cn.lypi.contracts.tui.DiffView;
+import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.SessionFileView;
+import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.TuiErrorBlock;
+import cn.lypi.contracts.tui.TuiMessageBlock;
+import cn.lypi.contracts.tui.TuiThinkingBlock;
+import cn.lypi.contracts.tui.TuiToolBlock;
+import cn.lypi.contracts.tui.TuiToolState;
+import cn.lypi.contracts.tui.TuiViewModel;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ContractSerializationTest {
@@ -155,6 +186,184 @@ class ContractSerializationTest {
     }
 
     @Test
+    void semanticMessageEventsRoundTripKeepsRoleBlocksAndMetadata() throws Exception {
+        Instant timestamp = Instant.parse("2026-06-01T12:00:00Z");
+        AgentEvent start = new MessageStartEvent(
+            "ses_01",
+            "msg_01",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            Map.of("phase", "stream"),
+            timestamp
+        );
+        AgentEvent delta = new MessageDeltaEvent(
+            "ses_01",
+            "msg_01",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_01",
+            ContentBlockKind.TEXT,
+            "hello",
+            true,
+            Map.of("index", 0),
+            timestamp
+        );
+        AgentEvent end = new MessageEndEvent(
+            "ses_01",
+            "msg_01",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot("block_01", ContentBlockKind.TEXT, "hello", Map.of("index", 0))),
+            Optional.of(new TokenUsage(10, 5, 0, 0)),
+            Optional.of("end_turn"),
+            Map.of("final", true),
+            timestamp
+        );
+
+        MessageStartEvent restoredStart = assertInstanceOf(
+            MessageStartEvent.class,
+            mapper.readValue(mapper.writeValueAsString(start), AgentEvent.class)
+        );
+        assertEquals(MessageRole.ASSISTANT, restoredStart.role());
+        assertEquals(MessageKind.TEXT, restoredStart.kind());
+        assertEquals("stream", restoredStart.metadata().get("phase"));
+
+        MessageDeltaEvent restoredDelta = assertInstanceOf(
+            MessageDeltaEvent.class,
+            mapper.readValue(mapper.writeValueAsString(delta), AgentEvent.class)
+        );
+        assertEquals("block_01", restoredDelta.blockId());
+        assertEquals(ContentBlockKind.TEXT, restoredDelta.blockKind());
+        assertEquals("hello", restoredDelta.delta());
+        assertTrue(restoredDelta.isFinal());
+
+        MessageEndEvent restoredEnd = assertInstanceOf(
+            MessageEndEvent.class,
+            mapper.readValue(mapper.writeValueAsString(end), AgentEvent.class)
+        );
+        assertEquals("block_01", restoredEnd.blocks().getFirst().blockId());
+        assertEquals("hello", restoredEnd.blocks().getFirst().text());
+        assertEquals(10, restoredEnd.usage().orElseThrow().inputTokens());
+        assertEquals("end_turn", restoredEnd.stopReason().orElseThrow());
+        assertEquals(true, restoredEnd.metadata().get("final"));
+    }
+
+    @Test
+    void toolLifecycleContractsRoundTripKeepsStructuredSummaryAndRef() throws Exception {
+        ToolOutputRef ref = new ToolOutputRef(
+            "toolout_01",
+            "ses_01",
+            "toolu_01",
+            "text/plain; charset=utf-8",
+            "pending",
+            "",
+            "sha256:abc123",
+            42L,
+            Map.of("preview", "hello")
+        );
+        ToolResultSummary summary = new ToolResultSummary(
+            "bash succeeded",
+            "hello",
+            false,
+            0,
+            false,
+            42L,
+            Map.of("toolName", "bash")
+        );
+
+        String refJson = mapper.writeValueAsString(ref);
+        ToolOutputRef restoredRef = mapper.readValue(refJson, ToolOutputRef.class);
+        assertEquals("toolout_01", restoredRef.refId());
+        assertEquals("pending", restoredRef.storageKind());
+        assertEquals("sha256:abc123", restoredRef.contentHash());
+
+        String summaryJson = mapper.writeValueAsString(summary);
+        ToolResultSummary restoredSummary = mapper.readValue(summaryJson, ToolResultSummary.class);
+        assertEquals("bash succeeded", restoredSummary.title());
+        assertEquals(0, restoredSummary.exitCode());
+        assertEquals(42L, restoredSummary.outputBytes());
+
+        String statusJson = mapper.writeValueAsString(ToolExecutionStatus.TIMED_OUT);
+        assertEquals(ToolExecutionStatus.TIMED_OUT, mapper.readValue(statusJson, ToolExecutionStatus.class));
+    }
+
+    @Test
+    void toolStartEventRoundTripKeepsDisplayAndTimingFields() throws Exception {
+        AgentEvent event = new ToolStartEvent(
+            "ses_01",
+            "toolu_01",
+            "msg_parent",
+            "turn_01",
+            "bash",
+            "Bash",
+            "echo hello",
+            Map.of("command", "echo hello"),
+            Instant.parse("2026-06-01T12:00:00Z"),
+            Instant.parse("2026-06-01T12:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"tool_start\""));
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, restored);
+        assertEquals("msg_parent", start.parentMessageId());
+        assertEquals("turn_01", start.turnId());
+        assertEquals("Bash", start.displayTitle());
+        assertEquals(start.startedAt(), start.timestamp());
+    }
+
+    @Test
+    void toolEndEventRoundTripKeepsStatusSummaryRefAndTimingFields() throws Exception {
+        Instant startedAt = Instant.parse("2026-06-01T12:00:00Z");
+        Instant endedAt = Instant.parse("2026-06-01T12:00:03Z");
+        ToolResultSummary summary = new ToolResultSummary(
+            "bash failed",
+            "exit 2",
+            true,
+            2,
+            false,
+            128L,
+            Map.of("toolName", "bash")
+        );
+        ToolOutputRef ref = new ToolOutputRef(
+            "toolout_01",
+            "ses_01",
+            "toolu_01",
+            "text/plain; charset=utf-8",
+            "pending",
+            "",
+            "sha256:abc123",
+            128L,
+            Map.of("truncated", true)
+        );
+        AgentEvent event = new ToolEndEvent(
+            "ses_01",
+            "toolu_01",
+            ToolExecutionStatus.FAILED,
+            2,
+            summary,
+            ref,
+            startedAt,
+            endedAt,
+            3000L,
+            Map.of("interrupted", false),
+            endedAt
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"tool_end\""));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, restored);
+        assertEquals(ToolExecutionStatus.FAILED, end.status());
+        assertEquals(2, end.exitCode());
+        assertEquals("bash failed", end.resultSummary().title());
+        assertEquals("toolout_01", end.resultRef().refId());
+        assertEquals(end.endedAt(), end.timestamp());
+    }
+
+    @Test
     void permissionRequestEventRoundTripContainsRenderableToolContext() throws Exception {
         PermissionDecision decision = new PermissionDecision(
             PermissionBehavior.ASK,
@@ -186,6 +395,172 @@ class ContractSerializationTest {
     }
 
     @Test
+    void permissionOptionRoundTripPreservesRememberUpdate() throws Exception {
+        PermissionUpdate update = permissionUpdate(PermissionRuleSource.SESSION);
+        PermissionOption option = new PermissionOption(
+            "allow_remember_session",
+            PermissionOptionKind.ALLOW_AND_REMEMBER,
+            "允许并记住",
+            "本次会话内允许相同工具调用。",
+            Optional.of(update),
+            Map.of("scope", "session")
+        );
+
+        String json = mapper.writeValueAsString(option);
+        PermissionOption restored = mapper.readValue(json, PermissionOption.class);
+
+        assertEquals(PermissionOptionKind.ALLOW_AND_REMEMBER, restored.kind());
+        assertEquals(update, restored.permissionUpdate().orElseThrow());
+        assertEquals("session", restored.metadata().get("scope"));
+    }
+
+    @Test
+    void permissionResponseRoundTripPreservesKeyboardCancel() throws Exception {
+        PermissionResponse response = new PermissionResponse(
+            "ses_01",
+            "perm_01",
+            "cancel",
+            true,
+            Instant.parse("2026-06-01T12:00:01Z")
+        );
+
+        String json = mapper.writeValueAsString(response);
+        PermissionResponse restored = mapper.readValue(json, PermissionResponse.class);
+
+        assertEquals("perm_01", restored.requestId());
+        assertEquals("cancel", restored.selectedOptionId());
+        assertTrue(restored.fromKeyboardCancel());
+    }
+
+    @Test
+    void structuredPermissionRequestEventRoundTripContainsOptionsAndDefaults() throws Exception {
+        PermissionDecision policyDecision = new PermissionDecision(
+            PermissionBehavior.ASK,
+            PermissionDecisionReason.BASH_RISK,
+            "command needs approval",
+            Optional.empty(),
+            Map.of("risk", "destructive")
+        );
+        AgentEvent event = new PermissionRequestEvent(
+            "ses_01",
+            "perm_01",
+            "toolu_01",
+            "bash",
+            "Bash 命令需要确认",
+            "bash {command=rm -rf target}",
+            policyDecision,
+            List.of(
+                new PermissionOption(
+                    "allow_once",
+                    PermissionOptionKind.ALLOW_ONCE,
+                    "允许一次",
+                    "仅允许当前工具调用。",
+                    Optional.empty(),
+                    Map.of()
+                ),
+                new PermissionOption(
+                    "deny",
+                    PermissionOptionKind.DENY,
+                    "拒绝",
+                    "拒绝当前工具调用。",
+                    Optional.empty(),
+                    Map.of()
+                ),
+                new PermissionOption(
+                    "cancel",
+                    PermissionOptionKind.CANCEL,
+                    "取消",
+                    "取消权限请求。",
+                    Optional.empty(),
+                    Map.of()
+                )
+            ),
+            "deny",
+            "cancel",
+            Map.of("source", "policy"),
+            Instant.parse("2026-06-01T12:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"permission_request\""));
+        PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, restored);
+        assertEquals("perm_01", request.requestId());
+        assertEquals("Bash 命令需要确认", request.displayTitle());
+        assertEquals(PermissionBehavior.ASK, request.policyDecision().behavior());
+        assertEquals(3, request.options().size());
+        assertEquals("deny", request.defaultOptionId());
+        assertEquals("cancel", request.cancelOptionId());
+        assertEquals("policy", request.metadata().get("source"));
+    }
+
+    @Test
+    void structuredPermissionDecisionEventRoundTripContainsSelectedOptionAndAppliedUpdate() throws Exception {
+        PermissionUpdate update = permissionUpdate(PermissionRuleSource.SESSION);
+        PermissionDecision decision = new PermissionDecision(
+            PermissionBehavior.ALLOW,
+            PermissionDecisionReason.BASH_RISK,
+            "allowed",
+            Optional.empty(),
+            Map.of("risk", "medium")
+        );
+        AgentEvent event = new PermissionDecisionEvent(
+            "ses_01",
+            "perm_01",
+            "toolu_01",
+            "bash",
+            "allow_remember_session",
+            decision,
+            Optional.of(update),
+            Map.of("updateStatus", "applied"),
+            Instant.parse("2026-06-01T12:00:02Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"permission_decision\""));
+        PermissionDecisionEvent permissionDecision = assertInstanceOf(PermissionDecisionEvent.class, restored);
+        assertEquals("perm_01", permissionDecision.requestId());
+        assertEquals("allow_remember_session", permissionDecision.selectedOptionId());
+        assertEquals(update, permissionDecision.appliedUpdate().orElseThrow());
+        assertEquals("applied", permissionDecision.metadata().get("updateStatus"));
+    }
+
+    @Test
+    void permissionOptionRejectsRememberWithoutUpdate() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> new PermissionOption(
+            "allow_remember",
+            PermissionOptionKind.ALLOW_AND_REMEMBER,
+            "允许并记住",
+            "缺少更新时应拒绝。",
+            Optional.empty(),
+            Map.of()
+        ));
+    }
+
+    @Test
+    void permissionOptionRejectsSystemRuleSourcesForRemember() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> new PermissionOption(
+            "allow_platform",
+            PermissionOptionKind.ALLOW_AND_REMEMBER,
+            "允许并记住",
+            "不能写入平台规则。",
+            Optional.of(permissionUpdate(PermissionRuleSource.PLATFORM)),
+            Map.of()
+        ));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> new PermissionOption(
+            "allow_cli",
+            PermissionOptionKind.ALLOW_AND_REMEMBER,
+            "允许并记住",
+            "不能写入 CLI 覆盖规则。",
+            Optional.of(permissionUpdate(PermissionRuleSource.CLI_OVERRIDE)),
+            Map.of()
+        ));
+    }
+
+    @Test
     void permissionRequestEventCanReadLegacyJson() throws Exception {
         String json = """
             {
@@ -204,6 +579,11 @@ class ContractSerializationTest {
         assertEquals("legacy approval", request.message());
         assertEquals("unknown", request.toolName());
         assertEquals("", request.renderedToolUse());
+        assertEquals("toolu_01", request.requestId());
+        assertEquals("legacy approval", request.displayTitle());
+        assertEquals(3, request.options().size());
+        assertEquals("allow_once", request.defaultOptionId());
+        assertEquals("cancel", request.cancelOptionId());
     }
 
     @Test
@@ -231,6 +611,21 @@ class ContractSerializationTest {
         assertEquals("unknown", decision.toolName());
         assertEquals("", decision.renderedToolUse());
         assertEquals(PermissionBehavior.ALLOW, decision.decision().behavior());
+        assertEquals("toolu_01", decision.requestId());
+        assertEquals("legacy", decision.selectedOptionId());
+        assertTrue(decision.appliedUpdate().isEmpty());
+    }
+
+    private PermissionUpdate permissionUpdate(PermissionRuleSource source) {
+        return new PermissionUpdate(
+            source,
+            new PermissionRule(
+                source,
+                PermissionBehavior.ALLOW,
+                new PermissionRuleValue("bash", "git status *"),
+                "allow status"
+            )
+        );
     }
 
     @Test
@@ -301,6 +696,53 @@ class ContractSerializationTest {
         assertInstanceOf(ToolValidationException.class, restored);
         assertEquals("bad tool input", restored.getMessage());
         assertEquals(ErrorSeverity.WARNING, restored.severity());
+    }
+
+    @Test
+    void tuiViewModelRoundTripKeepsLightweightBlockTypes() throws Exception {
+        TuiViewModel viewModel = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock(
+                    "block_msg",
+                    "msg_01",
+                    "assistant",
+                    "hello",
+                    false
+                ),
+                new TuiThinkingBlock("block_thinking", "msg_01", "considering", true, true),
+                new TuiToolBlock(
+                    "block_tool",
+                    "toolu_01",
+                    "bash",
+                    TuiToolState.RUNNING,
+                    "Bash",
+                    true
+                ),
+                new TuiErrorBlock("block_error", "boom")
+            ),
+            new StatusBarState("ses_01", "gpt-5.4", "running", "main"),
+            List.of(new SessionFileView(Path.of("src/App.java"), Set.of(), Instant.parse("2026-06-01T12:00:00Z"), Map.of())),
+            Optional.of(new PermissionPromptView("toolu_01", "Need approval", "allow_once", "allow_once", "cancel")),
+            Optional.of(new DiffView("src/App.java", "diff://ses_01/src/App.java"))
+        );
+
+        String json = mapper.writeValueAsString(viewModel);
+        TuiViewModel restored = mapper.readValue(json, TuiViewModel.class);
+
+        assertTrue(json.contains("\"type\":\"message\""));
+        assertTrue(json.contains("\"type\":\"thinking\""));
+        assertTrue(json.contains("\"type\":\"tool\""));
+        assertTrue(json.contains("\"type\":\"error\""));
+        assertInstanceOf(TuiMessageBlock.class, restored.blocks().get(0));
+        assertInstanceOf(TuiThinkingBlock.class, restored.blocks().get(1));
+        assertInstanceOf(TuiToolBlock.class, restored.blocks().get(2));
+        assertInstanceOf(TuiErrorBlock.class, restored.blocks().get(3));
+        TuiToolBlock tool = (TuiToolBlock) restored.blocks().get(2);
+        assertEquals(TuiToolState.RUNNING, tool.state());
+        assertTrue(tool.active());
+        assertTrue(restored.files().getFirst().path().endsWith(Path.of("src/App.java")));
+        assertEquals("cancel", restored.permissionPrompt().orElseThrow().cancelOptionId());
+        assertEquals("diff://ses_01/src/App.java", restored.diffView().orElseThrow().diffRef());
     }
 
     private <T extends ContentBlock> void assertContentBlockRoundTrip(

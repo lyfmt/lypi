@@ -6,9 +6,12 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
@@ -16,19 +19,20 @@ import cn.lypi.contracts.event.RetryEndEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
-import cn.lypi.contracts.event.ToolEndEvent;
-import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
+import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
+import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public final class DefaultTurnExecutor implements TurnExecutor {
@@ -193,6 +197,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private AgentMessage runModel(TurnRequest request, ContextSnapshot context) {
         AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
+        String sessionId = request.sessionId();
+        List<MessageDeltaEvent> pendingDeltas = new ArrayList<>();
         Optional<String> startedAssistantMessageId = Optional.empty();
         Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
         try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
@@ -215,11 +221,46 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 }
                 accumulator.accept(event);
                 if (event instanceof AssistantStart start) {
-                    publishMessageStart(request.sessionId(), start.messageId());
                     startedAssistantMessageId = Optional.of(start.messageId());
                 }
                 if (event instanceof TextDelta delta) {
-                    ports.eventBus().publish(new MessageDeltaEvent(request.sessionId(), currentAssistantId(accumulator), delta.text(), clock.instant()));
+                    String messageId = currentAssistantId(accumulator);
+                    pendingDeltas.add(assistantDelta(
+                        sessionId,
+                        messageId,
+                        MessageKind.TEXT,
+                        textBlockId(messageId),
+                        ContentBlockKind.TEXT,
+                        delta.text(),
+                        false,
+                        Map.of()
+                    ));
+                }
+                if (event instanceof ThinkingDelta delta) {
+                    String messageId = currentAssistantId(accumulator);
+                    pendingDeltas.add(assistantDelta(
+                        sessionId,
+                        messageId,
+                        MessageKind.THINKING,
+                        thinkingBlockId(messageId),
+                        ContentBlockKind.THINKING,
+                        delta.text(),
+                        false,
+                        Map.of()
+                    ));
+                }
+                if (event instanceof AssistantError error) {
+                    String messageId = currentAssistantId(accumulator);
+                    pendingDeltas.add(assistantDelta(
+                        sessionId,
+                        messageId,
+                        MessageKind.ERROR,
+                        errorBlockId(messageId),
+                        ContentBlockKind.ERROR,
+                        error.message(),
+                        true,
+                        Map.of("errorId", error.errorId())
+                    ));
                 }
                 if (request.abortSignal().aborted()) {
                     pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
@@ -228,13 +269,21 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 }
             }
         } catch (RuntimeException failure) {
-            pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
-            startedAssistantMessageId.ifPresent(messageId -> publishMessageEnd(request.sessionId(), messageId));
+            pendingRetry.ifPresent(notice -> publishRetryEnd(sessionId, notice, false));
+            startedAssistantMessageId.ifPresent(messageId -> {
+                MessageKind kind = streamFailureKind(pendingDeltas);
+                publishAssistantMessageStart(sessionId, messageId, kind);
+                publishPendingDeltas(pendingDeltas);
+                publishAssistantMessageEnd(sessionId, messageId, kind);
+            });
             throw failure;
         }
         pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
 
-        return accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
+        AgentMessage message = accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
+        publishAssistantMessageStart(sessionId, message.id(), message.kind());
+        publishPendingDeltas(pendingDeltas);
+        return message;
     }
 
     private void publishRetryEnd(String sessionId, ProviderRetryNotice notice, boolean success) {
@@ -249,7 +298,12 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private List<ToolResult<?>> executeTools(String sessionId, List<ToolUseRequest> toolRequests, ContextSnapshot context) {
         ensureToolRuntimeCwdMatches();
         for (ToolUseRequest toolRequest : toolRequests) {
-            ports.eventBus().publish(new ToolStartEvent(sessionId, toolRequest.toolUseId(), toolRequest.toolName(), clock.instant()));
+            ports.eventBus().publish(new cn.lypi.contracts.event.ToolStartEvent(
+                sessionId,
+                toolRequest.toolUseId(),
+                toolRequest.toolName(),
+                clock.instant()
+            ));
         }
         List<ToolResult<?>> results;
         boolean toolEndErrorsPublished = false;
@@ -270,9 +324,25 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         }
         for (int index = 0; index < toolRequests.size(); index++) {
             ToolUseRequest request = toolRequests.get(index);
-            ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), results.get(index).isError(), clock.instant()));
+            ports.eventBus().publish(new cn.lypi.contracts.event.ToolEndEvent(
+                sessionId,
+                request.toolUseId(),
+                results.get(index).isError(),
+                clock.instant()
+            ));
         }
         return results;
+    }
+
+    private void publishToolEndErrors(String sessionId, List<ToolUseRequest> toolRequests) {
+        for (ToolUseRequest request : toolRequests) {
+            ports.eventBus().publish(new cn.lypi.contracts.event.ToolEndEvent(
+                sessionId,
+                request.toolUseId(),
+                true,
+                clock.instant()
+            ));
+        }
     }
 
     private void ensureToolRuntimeCwdMatches() {
@@ -283,20 +353,14 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         }
     }
 
-    private void publishToolEndErrors(String sessionId, List<ToolUseRequest> toolRequests) {
-        for (ToolUseRequest request : toolRequests) {
-            ports.eventBus().publish(new ToolEndEvent(sessionId, request.toolUseId(), true, clock.instant()));
-        }
-    }
-
     private String appendNewMessage(String sessionId, AgentMessage message) {
-        publishMessageStart(sessionId, message.id());
+        publishMessageStart(sessionId, message);
         return appendStartedMessage(sessionId, message);
     }
 
     private String appendStartedMessage(String sessionId, AgentMessage message) {
         String leafId = ports.sessionManager().appendMessage(message).leafId();
-        publishMessageEnd(sessionId, message.id());
+        publishMessageEnd(sessionId, message);
         return leafId;
     }
 
@@ -304,11 +368,127 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return accumulator.messageId().orElse("streaming");
     }
 
-    private void publishMessageStart(String sessionId, String messageId) {
-        ports.eventBus().publish(new MessageStartEvent(sessionId, messageId, clock.instant()));
+    private void publishAssistantMessageStart(String sessionId, String messageId, MessageKind kind) {
+        ports.eventBus().publish(new MessageStartEvent(
+            sessionId,
+            messageId,
+            cn.lypi.contracts.context.MessageRole.ASSISTANT,
+            kind,
+            Map.of("streaming", true),
+            clock.instant()
+        ));
     }
 
-    private void publishMessageEnd(String sessionId, String messageId) {
-        ports.eventBus().publish(new MessageEndEvent(sessionId, messageId, clock.instant()));
+    private void publishMessageStart(String sessionId, AgentMessage message) {
+        ports.eventBus().publish(new MessageStartEvent(
+            sessionId,
+            message.id(),
+            message.role(),
+            message.kind(),
+            Map.of(),
+            clock.instant()
+        ));
+    }
+
+    private void publishMessageEnd(String sessionId, AgentMessage message) {
+        ports.eventBus().publish(new MessageEndEvent(
+            sessionId,
+            message.id(),
+            message.role(),
+            message.kind(),
+            blockSnapshots(message),
+            message.usage(),
+            message.stopReason(),
+            Map.of(),
+            clock.instant()
+        ));
+    }
+
+    private void publishAssistantMessageEnd(String sessionId, String messageId) {
+        publishAssistantMessageEnd(sessionId, messageId, cn.lypi.contracts.context.MessageKind.TEXT);
+    }
+
+    private void publishAssistantMessageEnd(String sessionId, String messageId, MessageKind kind) {
+        ports.eventBus().publish(new MessageEndEvent(
+            sessionId,
+            messageId,
+            cn.lypi.contracts.context.MessageRole.ASSISTANT,
+            kind,
+            List.of(),
+            Optional.empty(),
+            Optional.of("error"),
+            Map.of("streaming", true),
+            clock.instant()
+        ));
+    }
+
+    private List<MessageBlockSnapshot> blockSnapshots(AgentMessage message) {
+        if (message.content() == null || message.content().isEmpty()) {
+            return List.of();
+        }
+        List<MessageBlockSnapshot> snapshots = new ArrayList<>();
+        for (int index = 0; index < message.content().size(); index++) {
+            ContentBlock block = message.content().get(index);
+            snapshots.add(new MessageBlockSnapshot(
+                blockId(message.id(), block.kind(), index),
+                block.kind(),
+                block.text(),
+                block.metadata()
+            ));
+        }
+        return List.copyOf(snapshots);
+    }
+
+    private String textBlockId(String messageId) {
+        return messageId + ":text:0";
+    }
+
+    private String thinkingBlockId(String messageId) {
+        return messageId + ":thinking:0";
+    }
+
+    private String errorBlockId(String messageId) {
+        return messageId + ":error:0";
+    }
+
+    private String blockId(String messageId, ContentBlockKind kind, int index) {
+        return messageId + ":" + kind.name().toLowerCase() + ":" + index;
+    }
+
+    private void publishPendingDeltas(List<MessageDeltaEvent> pendingDeltas) {
+        for (MessageDeltaEvent pendingDelta : pendingDeltas) {
+            ports.eventBus().publish(pendingDelta);
+        }
+    }
+
+    private MessageKind streamFailureKind(List<MessageDeltaEvent> pendingDeltas) {
+        if (pendingDeltas.stream().anyMatch(delta -> delta.blockKind() == ContentBlockKind.ERROR)) {
+            return MessageKind.ERROR;
+        }
+        return pendingDeltas.isEmpty() ? MessageKind.ERROR : MessageKind.TEXT;
+    }
+
+    private MessageDeltaEvent assistantDelta(
+        String sessionId,
+        String messageId,
+        MessageKind kind,
+        String blockId,
+        ContentBlockKind blockKind,
+        String delta,
+        boolean isFinal,
+        Map<String, Object> metadata
+    ) {
+        return new MessageDeltaEvent(
+            sessionId,
+            messageId,
+            cn.lypi.contracts.context.MessageRole.ASSISTANT,
+            kind,
+            blockId,
+            blockKind,
+            delta,
+            isFinal,
+            metadata,
+            clock.instant()
+        );
     }
 }

@@ -2,6 +2,7 @@ package cn.lypi.tool.mcp;
 
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
@@ -72,6 +73,10 @@ public final class McpToolAdapter implements Tool<Map<String, Object>, Object> {
         String toolUseId = toolUseId(context);
         try {
             Map<String, Object> arguments = input == null ? Map.of() : input;
+            progress.progress(ToolProgress.custom(
+                "mcp tool invoking",
+                Map.of("serverName", schema.serverName(), "toolName", schema.toolName())
+            ));
             Object output = invoker.invoke(schema.serverName(), schema.toolName(), arguments, context, progress);
             return result(toolUseId, output, false);
         } catch (RuntimeException exception) {

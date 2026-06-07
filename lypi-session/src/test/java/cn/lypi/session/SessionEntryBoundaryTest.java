@@ -37,6 +37,7 @@ class SessionEntryBoundaryTest {
     @Test
     void fileChangeAndMemoryWriteAreNotSessionEntries() {
         assertThat(classExists("cn.lypi.contracts.session.FileChangeEntry")).isFalse();
+        assertThat(classExists("cn.lypi.contracts.tui.FileChangeView")).isFalse();
         assertThat(SessionEntry.class.isAssignableFrom(MemoryWriteEntry.class)).isFalse();
     }
 

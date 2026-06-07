@@ -6,7 +6,12 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
+import cn.lypi.contracts.tool.ToolOutputRef;
+import cn.lypi.contracts.tool.ToolResultSummary;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -42,27 +47,80 @@ final class ToolExecutionEventPublisher {
     /**
      * 发布工具开始事件并返回进度 sink。
      */
-    ProgressSink start(String sessionId, String toolUseId, String toolName) {
+    StartedToolExecution start(
+        String sessionId,
+        String toolUseId,
+        String parentMessageId,
+        String turnId,
+        String toolName,
+        String displayTitle,
+        String inputSummary,
+        Map<String, Object> inputMetadata
+    ) {
+        Instant startedAt = Instant.now();
+        ProgressSink progress = progressSink(sessionId, toolUseId);
+        if (eventBus == null) {
+            return new StartedToolExecution(startedAt, progress);
+        }
+        safePublish(new ToolStartEvent(
+            sessionId,
+            toolUseId,
+            parentMessageId,
+            turnId,
+            toolName,
+            displayTitle,
+            inputSummary,
+            inputMetadata,
+            startedAt,
+            startedAt
+        ));
+        return new StartedToolExecution(startedAt, progress);
+    }
+
+    /**
+     * 发布工具结束事件。
+     */
+    void end(
+        String sessionId,
+        String toolUseId,
+        ToolExecutionStatus status,
+        Integer exitCode,
+        ToolResultSummary resultSummary,
+        ToolOutputRef resultRef,
+        Instant startedAt,
+        Instant endedAt,
+        Map<String, Object> metadata
+    ) {
+        if (eventBus == null) {
+            return;
+        }
+        Instant safeEndedAt = endedAt == null ? Instant.now() : endedAt;
+        long durationMillis = startedAt == null ? 0L : Math.max(0L, Duration.between(startedAt, safeEndedAt).toMillis());
+        safePublish(new ToolEndEvent(
+            sessionId,
+            toolUseId,
+            status,
+            exitCode,
+            resultSummary,
+            resultRef,
+            startedAt,
+            safeEndedAt,
+            durationMillis,
+            metadata,
+            safeEndedAt
+        ));
+    }
+
+    private ProgressSink progressSink(String sessionId, String toolUseId) {
         if (eventBus == null) {
             return NOOP_PROGRESS;
         }
-        safePublish(new ToolStartEvent(sessionId, toolUseId, toolName, Instant.now()));
         return progress -> {
             if (progress == null) {
                 return;
             }
             safePublish(new ToolProgressEvent(sessionId, toolUseId, progress, Instant.now()));
         };
-    }
-
-    /**
-     * 发布工具结束事件。
-     */
-    void end(String sessionId, String toolUseId, boolean error) {
-        if (eventBus == null) {
-            return;
-        }
-        safePublish(new ToolEndEvent(sessionId, toolUseId, error, Instant.now()));
     }
 
     private void safePublish(AgentEvent event) {
@@ -72,4 +130,6 @@ final class ToolExecutionEventPublisher {
             // NOTE: 事件总线故障不能改变工具执行结果。
         }
     }
+
+    record StartedToolExecution(Instant startedAt, ProgressSink progressSink) {}
 }
