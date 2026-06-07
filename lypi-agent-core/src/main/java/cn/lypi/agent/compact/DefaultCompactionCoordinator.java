@@ -60,32 +60,40 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
             return new CompactionDecision(assembly.snapshot(), Optional.empty(), false, "within budget or no safe compaction plan");
         }
 
+        CompactionPlan compactionPlan = plan.orElseThrow();
         try {
-            eventBus.publish(new CompactStartEvent(request.sessionId(), plan.orElseThrow().kind().name(), clock.instant()));
+            eventBus.publish(new CompactStartEvent(request.sessionId(), compactionPlan.kind().name(), clock.instant()));
+        } catch (RuntimeException exception) {
+            return new CompactionDecision(assembly.snapshot(), plan, false, "compaction failed: " + exception.getMessage());
+        }
+        String compactionEntryId = "";
+        try {
             CompactSummaryResult result = summarizer.summarize(new CompactSummaryRequest(
                 assembly.snapshot(),
-                plan.orElseThrow(),
+                compactionPlan,
                 branchEntries,
                 request.abortSignal()
             ));
             String summary = summaryText(result);
-            int tokensAfter = estimateCompactedTokens(assembly.snapshot(), branchEntries, plan.orElseThrow(), summary);
+            int tokensAfter = estimateCompactedTokens(assembly.snapshot(), branchEntries, compactionPlan, summary);
             CompactionEntry compactionEntry = new CompactionEntry(
                 "entry-compact-" + UUID.randomUUID(),
                 request.leafEntryId().orElse(""),
                 summary,
-                plan.orElseThrow().firstKeptEntryId(),
+                compactionPlan.firstKeptEntryId(),
                 assembly.snapshot().budget().estimatedContextTokens(),
                 tokensAfter,
-                plan.orElseThrow().kind(),
+                compactionPlan.kind(),
                 clock.instant()
             );
             sessionManager.append(compactionEntry);
+            compactionEntryId = compactionEntry.id();
             ContextSnapshot compactedContext = compactedContext(assembly, compactionEntry);
-            publishCompactEnd(request, compactionEntry);
             return new CompactionDecision(compactedContext, plan, true, "compacted");
         } catch (RuntimeException exception) {
             return new CompactionDecision(assembly.snapshot(), plan, false, "compaction failed: " + exception.getMessage());
+        } finally {
+            publishCompactEnd(request, compactionEntryId);
         }
     }
 
@@ -211,11 +219,11 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
         );
     }
 
-    private void publishCompactEnd(CompactionRequest request, CompactionEntry compactionEntry) {
+    private void publishCompactEnd(CompactionRequest request, String compactionEntryId) {
         try {
-            eventBus.publish(new CompactEndEvent(request.sessionId(), compactionEntry.id(), clock.instant()));
+            eventBus.publish(new CompactEndEvent(request.sessionId(), compactionEntryId, clock.instant()));
         } catch (RuntimeException ignored) {
-            // NOTE: Compaction has already been committed; event delivery failure must not undo the decision.
+            // NOTE: Event delivery failure must not alter the already computed compaction decision.
         }
     }
 
