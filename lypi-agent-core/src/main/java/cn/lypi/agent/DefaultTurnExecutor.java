@@ -18,9 +18,11 @@ import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
+import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.TextDelta;
+import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
@@ -202,17 +204,41 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 }
                 if (event instanceof TextDelta delta) {
                     String messageId = currentAssistantId(accumulator);
-                    pendingDeltas.add(new MessageDeltaEvent(
+                    pendingDeltas.add(assistantDelta(
                         sessionId,
                         messageId,
-                        cn.lypi.contracts.context.MessageRole.ASSISTANT,
-                        cn.lypi.contracts.context.MessageKind.TEXT,
+                        MessageKind.TEXT,
                         textBlockId(messageId),
                         ContentBlockKind.TEXT,
                         delta.text(),
                         false,
-                        Map.of(),
-                        clock.instant()
+                        Map.of()
+                    ));
+                }
+                if (event instanceof ThinkingDelta delta) {
+                    String messageId = currentAssistantId(accumulator);
+                    pendingDeltas.add(assistantDelta(
+                        sessionId,
+                        messageId,
+                        MessageKind.THINKING,
+                        thinkingBlockId(messageId),
+                        ContentBlockKind.THINKING,
+                        delta.text(),
+                        false,
+                        Map.of()
+                    ));
+                }
+                if (event instanceof AssistantError error) {
+                    String messageId = currentAssistantId(accumulator);
+                    pendingDeltas.add(assistantDelta(
+                        sessionId,
+                        messageId,
+                        MessageKind.ERROR,
+                        errorBlockId(messageId),
+                        ContentBlockKind.ERROR,
+                        error.message(),
+                        true,
+                        Map.of("errorId", error.errorId())
                     ));
                 }
                 if (request.abortSignal().aborted()) {
@@ -344,6 +370,14 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return messageId + ":text:0";
     }
 
+    private String thinkingBlockId(String messageId) {
+        return messageId + ":thinking:0";
+    }
+
+    private String errorBlockId(String messageId) {
+        return messageId + ":error:0";
+    }
+
     private String blockId(String messageId, ContentBlockKind kind, int index) {
         return messageId + ":" + kind.name().toLowerCase() + ":" + index;
     }
@@ -355,6 +389,33 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private MessageKind streamFailureKind(List<MessageDeltaEvent> pendingDeltas) {
+        if (pendingDeltas.stream().anyMatch(delta -> delta.blockKind() == ContentBlockKind.ERROR)) {
+            return MessageKind.ERROR;
+        }
         return pendingDeltas.isEmpty() ? MessageKind.ERROR : MessageKind.TEXT;
+    }
+
+    private MessageDeltaEvent assistantDelta(
+        String sessionId,
+        String messageId,
+        MessageKind kind,
+        String blockId,
+        ContentBlockKind blockKind,
+        String delta,
+        boolean isFinal,
+        Map<String, Object> metadata
+    ) {
+        return new MessageDeltaEvent(
+            sessionId,
+            messageId,
+            cn.lypi.contracts.context.MessageRole.ASSISTANT,
+            kind,
+            blockId,
+            blockKind,
+            delta,
+            isFinal,
+            metadata,
+            clock.instant()
+        );
     }
 }

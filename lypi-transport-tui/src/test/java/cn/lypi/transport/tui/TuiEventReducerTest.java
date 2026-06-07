@@ -191,6 +191,29 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void messageErrorDeltaCreatesErrorBlock() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_error",
+            MessageRole.ASSISTANT,
+            MessageKind.ERROR,
+            "msg_error:error:0",
+            ContentBlockKind.ERROR,
+            "provider stream failed",
+            true,
+            Map.of("errorId", "provider-error"),
+            NOW
+        ));
+
+        TuiErrorBlock error = assertInstanceOf(TuiErrorBlock.class, reducer.view().blocks().getFirst());
+        assertEquals(TuiBlockKind.ERROR, error.kind());
+        assertEquals("msg_error:error:0", error.blockId());
+        assertEquals("provider stream failed", error.message());
+    }
+
+    @Test
     void replayInitializationCreatesEmptyFirstScreenWhenOnlySessionPointerExists() {
         TuiEventReducer reducer = TuiEventReducer.fromSessionView(new SessionView("ses_1", "leaf_1"));
 
