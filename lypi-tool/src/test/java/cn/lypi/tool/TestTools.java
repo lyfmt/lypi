@@ -101,6 +101,25 @@ final class TestTools {
         };
     }
 
+    static Tool<Map<String, Object>, String> permissionCountingTool(
+        String name,
+        PermissionBehavior behavior,
+        AtomicInteger calls
+    ) {
+        return new EchoTool(name, List.of(), false, false, true, Duration.ZERO) {
+            @Override
+            public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
+                return decision(behavior, "tool permission");
+            }
+
+            @Override
+            public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+                calls.incrementAndGet();
+                return super.execute(input, context, progress);
+            }
+        };
+    }
+
     static ToolResult<String> result(String toolUseId, String text, boolean error) {
         AgentMessage message = new AgentMessage(
             "msg_" + toolUseId,
