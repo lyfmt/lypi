@@ -143,6 +143,7 @@ class LyPiAiAutoConfigurationTest {
 
                 assertThat(properties.getProviders().get("openai").getRequestStyle()).isEqualTo(RequestStyle.RESPONSES);
                 assertThat(properties.getProviders().get("openai").getFallbackRequestStyle()).isEqualTo(RequestStyle.RESPONSES);
+                assertThat(properties.getProviders().get("openai").getMaxRetries()).isEqualTo(3);
             });
     }
 

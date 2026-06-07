@@ -12,6 +12,8 @@ import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
+import cn.lypi.contracts.event.RetryEndEvent;
+import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
@@ -19,6 +21,7 @@ import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -191,8 +194,25 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private AgentMessage runModel(TurnRequest request, ContextSnapshot context) {
         AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
         Optional<String> startedAssistantMessageId = Optional.empty();
+        Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
         try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
+                if (event instanceof ProviderRetryNotice notice) {
+                    pendingRetry.ifPresent(previous -> publishRetryEnd(request.sessionId(), previous, false));
+                    ports.eventBus().publish(new RetryStartEvent(
+                        request.sessionId(),
+                        notice.attempt(),
+                        notice.retryableErrorId(),
+                        clock.instant()
+                    ));
+                    pendingRetry = Optional.of(notice);
+                    continue;
+                }
+                if (pendingRetry.isPresent()) {
+                    ProviderRetryNotice notice = pendingRetry.get();
+                    publishRetryEnd(request.sessionId(), notice, !(event instanceof cn.lypi.contracts.model.AssistantError));
+                    pendingRetry = Optional.empty();
+                }
                 accumulator.accept(event);
                 if (event instanceof AssistantStart start) {
                     publishMessageStart(request.sessionId(), start.messageId());
@@ -202,15 +222,28 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     ports.eventBus().publish(new MessageDeltaEvent(request.sessionId(), currentAssistantId(accumulator), delta.text(), clock.instant()));
                 }
                 if (request.abortSignal().aborted()) {
+                    pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
+                    pendingRetry = Optional.empty();
                     break;
                 }
             }
         } catch (RuntimeException failure) {
+            pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
             startedAssistantMessageId.ifPresent(messageId -> publishMessageEnd(request.sessionId(), messageId));
             throw failure;
         }
+        pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
 
         return accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
+    }
+
+    private void publishRetryEnd(String sessionId, ProviderRetryNotice notice, boolean success) {
+        ports.eventBus().publish(new RetryEndEvent(
+            sessionId,
+            notice.attempt(),
+            success,
+            clock.instant()
+        ));
     }
 
     private List<ToolResult<?>> executeTools(String sessionId, List<ToolUseRequest> toolRequests, ContextSnapshot context) {
