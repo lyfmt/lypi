@@ -10,10 +10,18 @@ import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.PermissionDecisionEntry;
+import cn.lypi.contracts.session.PermissionPendingEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.security.PendingPermission;
+import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionResponse;
+import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -50,6 +58,51 @@ class SessionManagerImplTest {
         assertThat(reopenedEngine.branch("entry_2"))
             .extracting(SessionEntry::id)
             .containsExactly("entry_1", "entry_2");
+    }
+
+    @Test
+    void persistsAndRestoresPermissionEntries() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("assistant", null, "tool call", Instant.parse("2026-06-01T00:00:00Z")));
+        PendingPermission pendingPermission = pendingPermission();
+        engine.append(new PermissionPendingEntry(
+            "pending",
+            "assistant",
+            pendingPermission,
+            "assistant",
+            2,
+            3,
+            Instant.parse("2026-06-01T00:01:00Z")
+        ));
+        engine.append(new PermissionDecisionEntry(
+            "decision",
+            "pending",
+            new PermissionResponse(
+                "ses_main",
+                "turn-1",
+                "toolu-1",
+                PermissionBehavior.DENY,
+                Optional.of("no"),
+                Optional.empty()
+            ),
+            Instant.parse("2026-06-01T00:02:00Z")
+        ));
+
+        SessionManager reopenedEngine = new SessionManagerImpl(tempDir);
+        reopenedEngine.openOrCreate("ses_main");
+
+        assertThat(reopenedEngine.branch("decision")).satisfiesExactly(
+            entry -> assertThat(entry).isInstanceOf(CustomMessageEntry.class),
+            entry -> assertThat(entry).isInstanceOfSatisfying(PermissionPendingEntry.class, pending -> {
+                assertThat(pending.pendingPermission().toolUseId()).isEqualTo("toolu-1");
+                assertThat(pending.contextLeafId()).isEqualTo("assistant");
+                assertThat(pending.currentToolRound()).isEqualTo(2);
+                assertThat(pending.maxToolRounds()).isEqualTo(3);
+            }),
+            entry -> assertThat(entry).isInstanceOfSatisfying(PermissionDecisionEntry.class, decision ->
+                assertThat(decision.response().feedback()).contains("no"))
+        );
     }
 
     @Test
@@ -451,6 +504,30 @@ class SessionManagerImplTest {
             tempDir,
             Optional.empty(),
             Instant.parse("2026-06-01T00:00:00Z")
+        );
+    }
+
+    private static PendingPermission pendingPermission() {
+        ToolUseRequest request = new ToolUseRequest(
+            "toolu-1",
+            "write",
+            Map.of("path", "README.md"),
+            "msg-tool-call"
+        );
+        return new PendingPermission(
+            "turn-1",
+            "toolu-1",
+            "write",
+            "write README.md",
+            "需要权限",
+            new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.TOOL_SPECIFIC,
+                "需要权限",
+                Optional.empty(),
+                Map.of()
+            ),
+            request
         );
     }
 }

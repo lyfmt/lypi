@@ -16,7 +16,9 @@ import java.time.Instant;
     @JsonSubTypes.Type(value = CustomEntry.class, name = "custom"),
     @JsonSubTypes.Type(value = CustomMessageEntry.class, name = "custom_message"),
     @JsonSubTypes.Type(value = LabelEntry.class, name = "label"),
-    @JsonSubTypes.Type(value = SessionInfoEntry.class, name = "session_info")
+    @JsonSubTypes.Type(value = SessionInfoEntry.class, name = "session_info"),
+    @JsonSubTypes.Type(value = PermissionPendingEntry.class, name = "permission_pending"),
+    @JsonSubTypes.Type(value = PermissionDecisionEntry.class, name = "permission_decision")
 })
 public interface SessionEntry {
     String id();

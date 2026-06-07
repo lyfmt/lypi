@@ -55,7 +55,16 @@ final class TestTools {
     }
 
     static Tool<Map<String, Object>, String> permission(String name, PermissionBehavior behavior) {
-        return new EchoTool(name, List.of(), false, false, true, Duration.ZERO) {
+        return permission(name, behavior, false, false);
+    }
+
+    static Tool<Map<String, Object>, String> permission(
+        String name,
+        PermissionBehavior behavior,
+        boolean readOnly,
+        boolean concurrencySafe
+    ) {
+        return new EchoTool(name, List.of(), readOnly, concurrencySafe, !readOnly, Duration.ZERO) {
             @Override
             public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
                 return decision(behavior, "tool permission");

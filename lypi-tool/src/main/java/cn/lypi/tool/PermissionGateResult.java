@@ -49,9 +49,17 @@ public record PermissionGateResult(
         return new PermissionGateResult(Status.ABORT, Optional.empty(), Optional.ofNullable(message));
     }
 
+    /**
+     * 返回等待外部权限响应的结果。
+     */
+    public static PermissionGateResult pending(String message) {
+        return new PermissionGateResult(Status.PENDING, Optional.empty(), Optional.ofNullable(message));
+    }
+
     public enum Status {
         ALLOW,
         DENY,
-        ABORT
+        ABORT,
+        PENDING
     }
 }

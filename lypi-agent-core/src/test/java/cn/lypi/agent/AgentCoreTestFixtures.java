@@ -21,6 +21,7 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.runtime.PendingToolPermissionException;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -28,6 +29,7 @@ import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
@@ -415,16 +417,24 @@ final class AgentCoreTestFixtures {
 
     static final class StubToolRuntime implements ToolRuntimePort {
         final List<List<ToolUseRequest>> requests = new ArrayList<>();
+        final List<ToolUseRequest> resumeRequests = new ArrayList<>();
+        final List<PermissionResponse> resumeResponses = new ArrayList<>();
         private final List<List<ToolResult<?>>> results = new ArrayList<>();
-        private final List<RuntimeException> failures = new ArrayList<>();
+        private final List<ToolResult<?>> resumeResults = new ArrayList<>();
+        private final List<Object> executeOutcomes = new ArrayList<>();
+        private final List<RuntimeException> resumeFailures = new ArrayList<>();
         private Path cwd = Path.of(".").toAbsolutePath().normalize();
 
         void enqueue(List<ToolResult<?>> result) {
-            results.add(result);
+            executeOutcomes.add(List.copyOf(result));
         }
 
         void failWith(RuntimeException failure) {
-            failures.add(failure);
+            executeOutcomes.add(failure);
+        }
+
+        void enqueueResume(ToolResult<?> result) {
+            resumeResults.add(result);
         }
 
         void cwd(Path cwd) {
@@ -453,13 +463,34 @@ final class AgentCoreTestFixtures {
         @Override
         public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
             this.requests.add(List.copyOf(requests));
-            if (!failures.isEmpty()) {
-                throw failures.removeFirst();
-            }
-            if (results.isEmpty()) {
+            if (executeOutcomes.isEmpty()) {
                 return List.of();
             }
-            return results.removeFirst();
+            Object outcome = executeOutcomes.removeFirst();
+            if (outcome instanceof RuntimeException failure) {
+                throw failure;
+            }
+            @SuppressWarnings("unchecked")
+            List<ToolResult<?>> result = (List<ToolResult<?>>) outcome;
+            return result;
+        }
+
+        @Override
+        public ToolResult<?> resume(ToolUseRequest request, ContextSnapshot context, PermissionResponse response) {
+            resumeRequests.add(request);
+            resumeResponses.add(response);
+            if (!resumeFailures.isEmpty()) {
+                throw resumeFailures.removeFirst();
+            }
+            if (resumeResults.isEmpty()) {
+                return new ToolResult<>(
+                    "",
+                    false,
+                    List.of(toolResultMessage("msg_" + request.toolUseId(), request.toolUseId(), "", false)),
+                    Optional.empty()
+                );
+            }
+            return resumeResults.removeFirst();
         }
     }
 

@@ -1,6 +1,7 @@
 package cn.lypi.contracts.runtime;
 
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
@@ -44,4 +45,13 @@ public interface ToolRuntimePort {
      * NOTE: 必须完成解析、校验、权限、并发规划、执行和结果预算处理。
      */
     List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context);
+
+    /**
+     * 恢复一次等待用户确认的工具调用。
+     *
+     * NOTE: 仅恢复 `request.toolUseId()` 对应的单个调用，不得重新执行同批次其他工具。
+     */
+    default ToolResult<?> resume(ToolUseRequest request, ContextSnapshot context, PermissionResponse response) {
+        throw new UnsupportedOperationException("工具运行时暂不支持权限恢复。");
+    }
 }

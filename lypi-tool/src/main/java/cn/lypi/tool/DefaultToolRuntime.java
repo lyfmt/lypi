@@ -8,9 +8,12 @@ import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.PendingToolPermissionException;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PendingPermission;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
@@ -26,6 +29,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -226,6 +230,19 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return List.copyOf(results);
     }
 
+    @Override
+    public ToolResult<?> resume(ToolUseRequest request, ContextSnapshot context, PermissionResponse response) {
+        Objects.requireNonNull(request, "request must not be null");
+        Objects.requireNonNull(response, "response must not be null");
+        Optional<Tool<?, ?>> tool = registry.resolve(request.toolName());
+        if (tool.isEmpty()) {
+            return errorResult(request.toolUseId(), "未知工具: " + request.toolName());
+        }
+        Tool<Map<String, Object>, ?> resolvedTool = castTool(tool.get());
+        ToolUseRequest canonicalRequest = canonicalRequest(request, resolvedTool);
+        return executeCall(canonicalRequest, request.toolName(), resolvedTool, context, Optional.of(response));
+    }
+
     private void executeBatch(
         ToolExecutionPlanner.Batch batch,
         List<IndexedCall> indexedBatch,
@@ -234,21 +251,44 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     ) {
         if (!batch.parallel()) {
             IndexedCall indexedCall = indexedBatch.getFirst();
-            results.set(indexedCall.index(), executeCall(indexedCall.request(), indexedCall.originalToolName(), indexedCall.tool(), context));
+            results.set(indexedCall.index(), executeCall(
+                indexedCall.request(),
+                indexedCall.originalToolName(),
+                indexedCall.tool(),
+                context,
+                Optional.empty()
+            ));
             return;
         }
 
         try (BoundedVirtualExecutor executor = new BoundedVirtualExecutor(maxConcurrency)) {
             List<CompletableFuture<IndexedResult>> futures = indexedBatch.stream()
                 .map(call -> CompletableFuture.supplyAsync(
-                    () -> new IndexedResult(call.index(), executeCall(call.request(), call.originalToolName(), call.tool(), context)),
+                    () -> new IndexedResult(call.index(), executeCall(
+                        call.request(),
+                        call.originalToolName(),
+                        call.tool(),
+                        context,
+                        Optional.empty()
+                    )),
                     executor
                 ))
                 .toList();
             for (CompletableFuture<IndexedResult> future : futures) {
-                IndexedResult result = future.join();
+                IndexedResult result = joinIndexedResult(future);
                 results.set(result.index(), result.result());
             }
+        }
+    }
+
+    private IndexedResult joinIndexedResult(CompletableFuture<IndexedResult> future) {
+        try {
+            return future.join();
+        } catch (CompletionException exception) {
+            if (exception.getCause() instanceof PendingToolPermissionException pending) {
+                throw pending;
+            }
+            throw exception;
         }
     }
 
@@ -256,7 +296,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolUseRequest request,
         String originalToolName,
         Tool<Map<String, Object>, ?> tool,
-        ContextSnapshot context
+        ContextSnapshot context,
+        Optional<PermissionResponse> permissionResponse
     ) {
         Map<String, Object> input = request.input() == null ? Map.of() : request.input();
         ToolUseContext toolContext = contextWithCallMetadata(
@@ -282,12 +323,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             }
 
             PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
-            PermissionGateResult toolGateResult = resolvePermission(request, tool, toolContext, toolDecision);
+            PermissionGateResult toolGateResult = resolvePermission(request, tool, toolContext, toolDecision, permissionResponse);
             if (toolGateResult.status() != PermissionGateResult.Status.ALLOW) {
                 return permissionGateError(request.toolUseId(), toolGateResult);
             }
 
-            PermissionGateResult securityGateResult = resolvePermission(request, tool, toolContext, securityDecision);
+            PermissionGateResult securityGateResult = resolvePermission(request, tool, toolContext, securityDecision, permissionResponse);
             if (securityGateResult.status() != PermissionGateResult.Status.ALLOW) {
                 return permissionGateError(request.toolUseId(), securityGateResult);
             }
@@ -302,6 +343,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             }
 
             return executeStartedCall(request, tool, input, toolContext);
+        } catch (PendingToolPermissionException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
             return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
         }
@@ -393,7 +436,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolUseRequest request,
         Tool<Map<String, Object>, ?> tool,
         ToolUseContext context,
-        PermissionDecision decision
+        PermissionDecision decision,
+        Optional<PermissionResponse> permissionResponse
     ) {
         if (decision == null || decision.behavior() == PermissionBehavior.DENY) {
             return PermissionGateResult.deny(decisionMessage(decision));
@@ -401,8 +445,18 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         if (decision.behavior() == PermissionBehavior.ALLOW) {
             return PermissionGateResult.allow();
         }
+        if (decision.behavior() == PermissionBehavior.ABORT) {
+            return PermissionGateResult.abort(decisionMessage(decision));
+        }
+        if (permissionResponse.isPresent()) {
+            return gateResultFromResponse(permissionResponse.get(), decision);
+        }
         PermissionGateResult result = permissionGate.request(request, tool, context, decision);
-        return result == null ? PermissionGateResult.deny("权限请求未获允许。") : result;
+        result = result == null ? PermissionGateResult.deny("权限请求未获允许。") : result;
+        if (result.status() == PermissionGateResult.Status.PENDING) {
+            throw pendingPermission(request, tool, context, decision, result);
+        }
+        return result;
     }
 
     private boolean isDeny(PermissionDecision decision) {
@@ -415,6 +469,38 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             return errorResult(toolUseId, "工具权限请求已中断: " + message);
         }
         return errorResult(toolUseId, "权限请求未获允许: " + message);
+    }
+
+    private PermissionGateResult gateResultFromResponse(PermissionResponse response, PermissionDecision decision) {
+        String message = response.feedback().orElse(decisionMessage(decision));
+        return switch (response.behavior()) {
+            case ALLOW -> PermissionGateResult.allow(response.permissionUpdate());
+            case ABORT -> PermissionGateResult.abort(message);
+            case DENY, ASK -> PermissionGateResult.deny(message);
+        };
+    }
+
+    private PendingToolPermissionException pendingPermission(
+        ToolUseRequest request,
+        Tool<Map<String, Object>, ?> tool,
+        ToolUseContext context,
+        PermissionDecision decision,
+        PermissionGateResult result
+    ) {
+        String turnId = result.message()
+            .or(() -> Optional.ofNullable(context.metadata().get("turnId")).map(Object::toString))
+            .orElse("unknown-turn");
+        String renderedToolUse = tool.renderForUser(request.input() == null ? Map.of() : request.input());
+        PendingPermission pendingPermission = new PendingPermission(
+            turnId,
+            request.toolUseId(),
+            tool.name(),
+            renderedToolUse,
+            decisionMessage(decision),
+            decision,
+            request
+        );
+        return new PendingToolPermissionException(pendingPermission);
     }
 
     private String decisionMessage(PermissionDecision decision) {

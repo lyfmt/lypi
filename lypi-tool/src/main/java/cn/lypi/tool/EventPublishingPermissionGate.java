@@ -69,6 +69,7 @@ public final class EventPublishingPermissionGate implements PermissionGate {
     private PermissionDecision decisionFromResult(PermissionGateResult result, PermissionDecision originalDecision) {
         PermissionBehavior behavior = switch (result.status()) {
             case ALLOW -> PermissionBehavior.ALLOW;
+            case PENDING -> PermissionBehavior.ASK;
             case DENY, ABORT -> PermissionBehavior.DENY;
         };
         return new PermissionDecision(

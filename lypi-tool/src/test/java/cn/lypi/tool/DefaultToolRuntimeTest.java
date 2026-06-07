@@ -16,10 +16,13 @@ import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.runtime.PendingToolPermissionException;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.security.PendingPermission;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -27,10 +30,13 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DefaultToolRuntimeTest {
     @Test
@@ -91,6 +97,92 @@ class DefaultToolRuntimeTest {
 
         assertTrue(result.isError());
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("权限请求未获允许"));
+    }
+
+    @Test
+    void pendingGateThrowsPendingPermissionWhenToolPermissionRequiresAsk() {
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.pending("turn-1"), allowAllSecurity());
+        runtime.register(TestTools.permission("write", PermissionBehavior.ASK));
+
+        PendingToolPermissionException exception = assertThrows(PendingToolPermissionException.class, () ->
+            runtime.execute(
+                List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "pending"), "msg_1")),
+                TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            )
+        );
+
+        PendingPermission pending = exception.pendingPermission();
+        assertEquals("turn-1", pending.turnId());
+        assertEquals("toolu_1", pending.toolUseId());
+        assertEquals("write", pending.toolName());
+        assertEquals(PermissionBehavior.ASK, pending.decision().behavior());
+        assertEquals("pending", pending.request().input().get("text"));
+    }
+
+    @Test
+    void parallelPendingPermissionIsNotWrappedAsGenericRuntimeFailure() {
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.pending("turn-1"), allowAllSecurity());
+        runtime.register(TestTools.permission("read", PermissionBehavior.ASK, true, true));
+
+        PendingToolPermissionException exception = assertThrows(PendingToolPermissionException.class, () ->
+            runtime.execute(
+                List.of(new ToolUseRequest("toolu_1", "read", Map.of("text", "pending"), "msg_1")),
+                TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            )
+        );
+
+        assertEquals("toolu_1", exception.pendingPermission().toolUseId());
+    }
+
+    @Test
+    void resumeAllowContinuesAfterPendingAskDecision() {
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.pending("turn-1"), allowAllSecurity());
+        runtime.register(TestTools.permission("write", PermissionBehavior.ASK));
+
+        ToolResult<?> result = runtime.resume(
+            new ToolUseRequest("toolu_1", "write", Map.of("text", "approved"), "msg_1"),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new PermissionResponse("ses_1", "turn-1", "toolu_1", PermissionBehavior.ALLOW, Optional.empty(), Optional.empty())
+        );
+
+        assertFalse(result.isError());
+        assertEquals("approved", result.newMessages().getFirst().content().getFirst().text());
+    }
+
+    @Test
+    void resumeDenyReturnsPermissionToolErrorWithoutExecuting() {
+        AtomicInteger calls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.pending("turn-1"), security);
+        runtime.register(TestTools.countingTool("write", InterruptBehavior.CANCEL, calls));
+
+        ToolResult<?> result = runtime.resume(
+            new ToolUseRequest("toolu_1", "write", Map.of("text", "blocked"), "msg_1"),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new PermissionResponse("ses_1", "turn-1", "toolu_1", PermissionBehavior.DENY, Optional.of("user denied"), Optional.empty())
+        );
+
+        assertTrue(result.isError());
+        assertEquals(0, calls.get());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("user denied"));
+    }
+
+    @Test
+    void resumeAbortReturnsInterruptedToolErrorWithoutExecuting() {
+        AtomicInteger calls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.pending("turn-1"), security);
+        runtime.register(TestTools.countingTool("write", InterruptBehavior.CANCEL, calls));
+
+        ToolResult<?> result = runtime.resume(
+            new ToolUseRequest("toolu_1", "write", Map.of("text", "blocked"), "msg_1"),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new PermissionResponse("ses_1", "turn-1", "toolu_1", PermissionBehavior.ABORT, Optional.of("user aborted"), Optional.empty())
+        );
+
+        assertTrue(result.isError());
+        assertEquals(0, calls.get());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("user aborted"));
     }
 
     @Test

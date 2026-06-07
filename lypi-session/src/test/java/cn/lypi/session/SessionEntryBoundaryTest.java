@@ -30,7 +30,9 @@ class SessionEntryBoundaryTest {
             "custom",
             "custom_message",
             "label",
-            "session_info"
+            "session_info",
+            "permission_pending",
+            "permission_decision"
         );
     }
 

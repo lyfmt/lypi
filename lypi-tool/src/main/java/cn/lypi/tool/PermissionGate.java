@@ -32,4 +32,11 @@ public interface PermissionGate {
     static PermissionGate denying() {
         return (request, tool, context, decision) -> PermissionGateResult.deny(decision == null ? null : decision.message());
     }
+
+    /**
+     * 返回把 ASK 决策交由 agent-core 挂起的 gate。
+     */
+    static PermissionGate pending(String turnId) {
+        return (request, tool, context, decision) -> PermissionGateResult.pending(turnId);
+    }
 }

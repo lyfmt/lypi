@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
+import cn.lypi.contracts.agent.TurnState;
+import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
@@ -26,13 +28,22 @@ import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionResponse;
+import cn.lypi.contracts.security.PendingPermission;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
+import cn.lypi.contracts.session.PermissionDecisionEntry;
+import cn.lypi.contracts.session.PermissionPendingEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.tool.ToolUseRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -67,6 +78,8 @@ class ContractSerializationTest {
     @Test
     void sessionEntriesRoundTripOnlyForConversationPathFacts() throws Exception {
         Instant now = Instant.parse("2026-06-01T12:00:00Z");
+        PendingPermission pendingPermission = pendingPermission();
+        PermissionResponse permissionResponse = permissionResponse(PermissionBehavior.ALLOW);
         List<SessionEntry> entries = List.of(
             new CustomEntry("entry-custom", null, "demo.extension", Map.of("enabled", true), now),
             new BranchSummaryEntry("entry-branch", "entry-custom", "branch summary", now),
@@ -81,7 +94,9 @@ class ContractSerializationTest {
                 CompactionKind.SESSION,
                 now
             ),
-            new SessionInfoEntry("entry-info", "entry-compact", Map.of("name", "demo"), now)
+            new SessionInfoEntry("entry-info", "entry-compact", Map.of("name", "demo"), now),
+            new PermissionPendingEntry("entry-permission-pending", "entry-info", pendingPermission, now),
+            new PermissionDecisionEntry("entry-permission-decision", "entry-permission-pending", permissionResponse, now)
         );
 
         for (SessionEntry entry : entries) {
@@ -209,6 +224,42 @@ class ContractSerializationTest {
     }
 
     @Test
+    void permissionResumeContractsRoundTrip() throws Exception {
+        PendingPermission pendingPermission = pendingPermission();
+        PermissionResponse permissionResponse = permissionResponse(PermissionBehavior.DENY);
+
+        String pendingJson = mapper.writeValueAsString(pendingPermission);
+        PendingPermission restoredPending = mapper.readValue(pendingJson, PendingPermission.class);
+        String responseJson = mapper.writeValueAsString(permissionResponse);
+        PermissionResponse restoredResponse = mapper.readValue(responseJson, PermissionResponse.class);
+
+        assertEquals("turn-1", restoredPending.turnId());
+        assertEquals("toolu_01", restoredPending.request().toolUseId());
+        assertEquals(PermissionBehavior.ASK, restoredPending.decision().behavior());
+        assertEquals(PermissionBehavior.DENY, restoredResponse.behavior());
+        assertEquals("user declined", restoredResponse.feedback().orElseThrow());
+        assertTrue(restoredResponse.permissionUpdate().isPresent());
+    }
+
+    @Test
+    void turnStateKeepsPendingPermissionAndLegacyConstructor() {
+        PendingPermission pendingPermission = pendingPermission();
+        TurnState state = new TurnState(
+            "turn-1",
+            "ses_01",
+            null,
+            List.of(),
+            1,
+            TurnStatus.WAITING_PERMISSION,
+            Optional.of(pendingPermission)
+        );
+        TurnState legacyState = new TurnState("turn-2", "ses_01", null, List.of(), 0, TurnStatus.COMPLETED);
+
+        assertEquals("toolu_01", state.pendingPermission().orElseThrow().toolUseId());
+        assertTrue(legacyState.pendingPermission().isEmpty());
+    }
+
+    @Test
     void contentBlockRoundTripUsesSpecializedBlockTypes() throws Exception {
         ContentBlock block = new TextContentBlock("hello");
 
@@ -289,5 +340,43 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"type\":\"" + expectedTypeName + "\""));
         assertInstanceOf(expectedType, restored);
         assertEquals(block.kind(), restored.kind());
+    }
+
+    private PendingPermission pendingPermission() {
+        return new PendingPermission(
+            "turn-1",
+            "toolu_01",
+            "bash",
+            "bash {command=rm -rf target}",
+            "command needs approval",
+            new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.BASH_RISK,
+                "command needs approval",
+                Optional.empty(),
+                Map.of("risk", "medium")
+            ),
+            new ToolUseRequest("toolu_01", "bash", Map.of("command", "rm -rf target"), "msg_1")
+        );
+    }
+
+    private PermissionResponse permissionResponse(PermissionBehavior behavior) {
+        PermissionUpdate update = new PermissionUpdate(
+            PermissionRuleSource.SESSION,
+            new PermissionRule(
+                PermissionRuleSource.SESSION,
+                PermissionBehavior.ALLOW,
+                new PermissionRuleValue("bash", "rm -rf target"),
+                "user approved"
+            )
+        );
+        return new PermissionResponse(
+            "ses_01",
+            "turn-1",
+            "toolu_01",
+            behavior,
+            Optional.of("user declined"),
+            Optional.of(update)
+        );
     }
 }

@@ -9,6 +9,8 @@ import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.PermissionDecisionEntry;
+import cn.lypi.contracts.session.PermissionPendingEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
@@ -41,7 +43,9 @@ final class SessionJsonMapper {
         Map.entry("custom", CustomEntry.class),
         Map.entry("custom_message", CustomMessageEntry.class),
         Map.entry("label", LabelEntry.class),
-        Map.entry("session_info", SessionInfoEntry.class)
+        Map.entry("session_info", SessionInfoEntry.class),
+        Map.entry("permission_pending", PermissionPendingEntry.class),
+        Map.entry("permission_decision", PermissionDecisionEntry.class)
     );
     private final Map<Class<? extends SessionEntry>, String> typeNames = Map.ofEntries(
         Map.entry(MessageEntry.class, "message"),
@@ -54,7 +58,9 @@ final class SessionJsonMapper {
         Map.entry(CustomEntry.class, "custom"),
         Map.entry(CustomMessageEntry.class, "custom_message"),
         Map.entry(LabelEntry.class, "label"),
-        Map.entry(SessionInfoEntry.class, "session_info")
+        Map.entry(SessionInfoEntry.class, "session_info"),
+        Map.entry(PermissionPendingEntry.class, "permission_pending"),
+        Map.entry(PermissionDecisionEntry.class, "permission_decision")
     );
 
     SessionJsonMapper() {
