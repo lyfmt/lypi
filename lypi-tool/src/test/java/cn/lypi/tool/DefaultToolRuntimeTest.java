@@ -114,6 +114,45 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void permissionGateAllowContinuesAfterSecurityAskDecision() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            requestedDecision.set(decision);
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+        assertEquals("security ask", requestedDecision.get().message());
+        assertEquals("done", result.newMessages().getFirst().content().getFirst().text());
+    }
+
+    @Test
+    void permissionGateDenyPreventsToolExecutionForToolAskDecision() {
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.deny("user denied");
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.permissionCountingTool("write", PermissionBehavior.ASK, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertEquals(0, executeCalls.get());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("user denied"));
+    }
+
+    @Test
     void securityDenyShortCircuitsBeforeToolAskPermissionGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.DENY, "hard deny");
