@@ -925,6 +925,13 @@ class DefaultTurnExecutorTest {
         assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
         assertThat(messageStartKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
         assertThat(messageEndKind(eventBus, "msg-assistant")).isEqualTo(MessageKind.TEXT);
+        assertThat(messageDeltas(eventBus, "msg-assistant"))
+            .extracting(MessageDeltaEvent::blockKind)
+            .containsExactly(ContentBlockKind.THINKING, ContentBlockKind.TEXT);
+        MessageDeltaEvent thinkingDelta = messageDeltas(eventBus, "msg-assistant").getFirst();
+        assertThat(thinkingDelta.kind()).isEqualTo(MessageKind.THINKING);
+        assertThat(thinkingDelta.blockId()).isEqualTo("msg-assistant:thinking:0");
+        assertThat(thinkingDelta.delta()).isEqualTo("thinking");
     }
 
     @Test
@@ -968,6 +975,12 @@ class DefaultTurnExecutorTest {
         assertThat(session.messages().getLast().kind()).isEqualTo(cn.lypi.contracts.context.MessageKind.ERROR);
         assertThat(messageStartKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
         assertThat(messageEndKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
+        MessageDeltaEvent errorDelta = messageDeltas(eventBus, "msg-error").getFirst();
+        assertThat(errorDelta.kind()).isEqualTo(MessageKind.ERROR);
+        assertThat(errorDelta.blockKind()).isEqualTo(ContentBlockKind.ERROR);
+        assertThat(errorDelta.blockId()).isEqualTo("msg-error:error:0");
+        assertThat(errorDelta.delta()).isEqualTo("provider stream failed");
+        assertThat(errorDelta.metadata()).containsEntry("errorId", "provider-error");
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
         assertThat(memory.calls).isZero();
     }
@@ -1198,5 +1211,13 @@ class DefaultTurnExecutorTest {
             .map(MessageEndEvent::kind)
             .findFirst()
             .orElseThrow();
+    }
+
+    private List<MessageDeltaEvent> messageDeltas(AgentCoreTestFixtures.RecordingEventBus eventBus, String messageId) {
+        return eventBus.events.stream()
+            .filter(MessageDeltaEvent.class::isInstance)
+            .map(MessageDeltaEvent.class::cast)
+            .filter(event -> event.messageId().equals(messageId))
+            .toList();
     }
 }
