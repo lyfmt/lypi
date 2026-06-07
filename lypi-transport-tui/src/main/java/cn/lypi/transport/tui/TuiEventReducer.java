@@ -221,7 +221,9 @@ public final class TuiEventReducer {
         state.permissionPrompt(new PermissionPromptView(
             event.toolUseId(),
             event.message(),
-            event.defaultOptionId()
+            event.defaultOptionId(),
+            event.defaultOptionId(),
+            event.cancelOptionId()
         ));
     }
 
