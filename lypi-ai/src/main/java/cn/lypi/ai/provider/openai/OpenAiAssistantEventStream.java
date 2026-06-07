@@ -3,6 +3,8 @@ package cn.lypi.ai.provider.openai;
 import cn.lypi.ai.provider.ProviderEventStream;
 import cn.lypi.ai.provider.ProviderFallbackDecider;
 import cn.lypi.ai.provider.ProviderRawEvent;
+import cn.lypi.ai.provider.ProviderRetryCoordinator;
+import cn.lypi.ai.provider.ProviderRetryPolicy;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
@@ -10,7 +12,9 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.AssistantStreamResult;
+import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TokenUsage;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -24,7 +28,7 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
     private final List<OpenAiStreamAttempt> attempts;
     private final AbortSignal signal;
     private final ProviderFallbackDecider fallbackDecider;
-    private final int maxRetries;
+    private final ProviderRetryCoordinator retryCoordinator;
     private final Deque<AssistantStreamEvent> pendingEvents = new ArrayDeque<>();
     private final List<AssistantStreamEvent> emittedEvents = new ArrayList<>();
     private ProviderEventStream currentProviderStream;
@@ -36,8 +40,10 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
     private boolean completed;
     private boolean aborted;
     private boolean outputStarted;
+    private boolean retryNoticeAwaitingConsumption;
     private AssistantError error;
     private RuntimeException failure;
+    private Duration pendingRetryDelay = Duration.ZERO;
     private TokenUsage usage;
     private String stopReason;
     private String messageId = "";
@@ -51,7 +57,7 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
         this.attempts = List.copyOf(Objects.requireNonNull(attempts, "attempts"));
         this.signal = Objects.requireNonNull(signal, "signal");
         this.fallbackDecider = Objects.requireNonNull(fallbackDecider, "fallbackDecider");
-        this.maxRetries = Math.max(0, maxRetries);
+        this.retryCoordinator = ProviderRetryCoordinator.defaultSleep("openai", ProviderRetryPolicy.defaults(maxRetries));
     }
 
     @Override
@@ -107,6 +113,9 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
         if (!pendingEvents.isEmpty()) {
             return true;
         }
+        if (retryNoticeAwaitingConsumption) {
+            return false;
+        }
         if (failure != null) {
             throw failure;
         }
@@ -118,7 +127,11 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
             closeCurrentProviderStream();
             return false;
         }
+        sleepBeforeRetry();
         while (true) {
+            if (!pendingEvents.isEmpty()) {
+                return true;
+            }
             if (currentRawIterator == null && !openNextAttempt()) {
                 return false;
             }
@@ -158,7 +171,11 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
         }
         AssistantStreamEvent event = pendingEvents.removeFirst();
         emittedEvents.add(event);
-        outputStarted = true;
+        if (!(event instanceof ProviderRetryNotice)) {
+            outputStarted = true;
+        } else {
+            retryNoticeAwaitingConsumption = false;
+        }
         applyResult(event);
         return event;
     }
@@ -178,6 +195,9 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
                 handleAttemptFailure(exception);
                 if (failure != null) {
                     throw failure;
+                }
+                if (!pendingEvents.isEmpty()) {
+                    return true;
                 }
                 if (signal.aborted() || closed) {
                     return false;
@@ -201,8 +221,18 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
             aborted = true;
             return;
         }
-        if (retryIndex < maxRetries && fallbackDecider.shouldFallback(exception, outputStarted)) {
-            retryIndex++;
+        int nextRetryIndex = retryIndex + 1;
+        Optional<ProviderRetryNotice> retryNotice = retryCoordinator.planRetry(
+            exception,
+            signal,
+            outputStarted,
+            nextRetryIndex
+        );
+        if (retryNotice.isPresent()) {
+            retryIndex = nextRetryIndex;
+            pendingRetryDelay = retryNotice.get().delay();
+            pendingEvents.add(retryNotice.get());
+            retryNoticeAwaitingConsumption = true;
             return;
         }
         retryIndex = 0;
@@ -216,6 +246,14 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
             return;
         }
         pendingEvents.add(error);
+    }
+
+    private void sleepBeforeRetry() {
+        if (pendingRetryDelay.isZero() || pendingRetryDelay.isNegative()) {
+            return;
+        }
+        retryCoordinator.sleep(pendingRetryDelay, signal);
+        pendingRetryDelay = Duration.ZERO;
     }
 
     private void enqueue(AssistantStreamEvent event) {

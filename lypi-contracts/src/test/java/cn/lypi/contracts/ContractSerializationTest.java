@@ -23,6 +23,8 @@ import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
+import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -106,6 +108,29 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"type\":\"turn_start\""));
         assertInstanceOf(TurnStartEvent.class, restored.event());
         assertEquals(7, restored.sequence());
+    }
+
+    @Test
+    void providerRetryNoticeRoundTripUsesTypeDiscriminator() throws Exception {
+        AssistantStreamEvent event = new ProviderRetryNotice(
+            "openai",
+            2,
+            3,
+            java.time.Duration.ofMillis(1_000),
+            "rate_limit",
+            "provider.rate_limit",
+            "Provider rate limited the request."
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AssistantStreamEvent restored = mapper.readValue(json, AssistantStreamEvent.class);
+
+        assertTrue(json.contains("\"type\":\"provider_retry\""));
+        ProviderRetryNotice notice = assertInstanceOf(ProviderRetryNotice.class, restored);
+        assertEquals("openai", notice.provider());
+        assertEquals(2, notice.attempt());
+        assertEquals(java.time.Duration.ofMillis(1_000), notice.delay());
+        assertEquals("provider.rate_limit", notice.retryableErrorId());
     }
 
     @Test

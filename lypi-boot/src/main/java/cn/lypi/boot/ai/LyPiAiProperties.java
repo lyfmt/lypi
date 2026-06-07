@@ -86,7 +86,7 @@ public class LyPiAiProperties {
         private URI websocketUrl;
         private String apiKey;
         private Duration timeout = Duration.ofSeconds(30);
-        private int maxRetries;
+        private int maxRetries = 3;
         private Map<String, Object> compat = new LinkedHashMap<>();
         private List<ModelProperties> models = new ArrayList<>();
         private ModelDiscoveryProperties modelDiscovery = new ModelDiscoveryProperties();
