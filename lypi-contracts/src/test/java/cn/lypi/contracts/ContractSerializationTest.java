@@ -52,13 +52,25 @@ import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolResultSummary;
+import cn.lypi.contracts.tui.DiffView;
+import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.SessionFileView;
+import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.TuiErrorBlock;
+import cn.lypi.contracts.tui.TuiMessageBlock;
+import cn.lypi.contracts.tui.TuiThinkingBlock;
+import cn.lypi.contracts.tui.TuiToolBlock;
+import cn.lypi.contracts.tui.TuiToolState;
+import cn.lypi.contracts.tui.TuiViewModel;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ContractSerializationTest {
@@ -659,6 +671,53 @@ class ContractSerializationTest {
         assertInstanceOf(ToolValidationException.class, restored);
         assertEquals("bad tool input", restored.getMessage());
         assertEquals(ErrorSeverity.WARNING, restored.severity());
+    }
+
+    @Test
+    void tuiViewModelRoundTripKeepsLightweightBlockTypes() throws Exception {
+        TuiViewModel viewModel = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock(
+                    "block_msg",
+                    "msg_01",
+                    "assistant",
+                    "hello",
+                    false
+                ),
+                new TuiThinkingBlock("block_thinking", "msg_01", "considering", true, true),
+                new TuiToolBlock(
+                    "block_tool",
+                    "toolu_01",
+                    "bash",
+                    TuiToolState.RUNNING,
+                    "Bash",
+                    true
+                ),
+                new TuiErrorBlock("block_error", "boom")
+            ),
+            new StatusBarState("ses_01", "gpt-5.4", "running", "main"),
+            List.of(new SessionFileView(Path.of("src/App.java"), Set.of(), Instant.parse("2026-06-01T12:00:00Z"), Map.of())),
+            Optional.of(new PermissionPromptView("toolu_01", "Need approval", "allow_once", "allow_once", "cancel")),
+            Optional.of(new DiffView("src/App.java", "diff://ses_01/src/App.java"))
+        );
+
+        String json = mapper.writeValueAsString(viewModel);
+        TuiViewModel restored = mapper.readValue(json, TuiViewModel.class);
+
+        assertTrue(json.contains("\"type\":\"message\""));
+        assertTrue(json.contains("\"type\":\"thinking\""));
+        assertTrue(json.contains("\"type\":\"tool\""));
+        assertTrue(json.contains("\"type\":\"error\""));
+        assertInstanceOf(TuiMessageBlock.class, restored.blocks().get(0));
+        assertInstanceOf(TuiThinkingBlock.class, restored.blocks().get(1));
+        assertInstanceOf(TuiToolBlock.class, restored.blocks().get(2));
+        assertInstanceOf(TuiErrorBlock.class, restored.blocks().get(3));
+        TuiToolBlock tool = (TuiToolBlock) restored.blocks().get(2);
+        assertEquals(TuiToolState.RUNNING, tool.state());
+        assertTrue(tool.active());
+        assertTrue(restored.files().getFirst().path().endsWith(Path.of("src/App.java")));
+        assertEquals("cancel", restored.permissionPrompt().orElseThrow().cancelOptionId());
+        assertEquals("diff://ses_01/src/App.java", restored.diffView().orElseThrow().diffRef());
     }
 
     private <T extends ContentBlock> void assertContentBlockRoundTrip(
