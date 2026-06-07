@@ -66,43 +66,48 @@ public final class EventPublishingPermissionGate implements PermissionGate {
         );
         eventBus.publish(requestEvent);
 
-        PermissionResponse response = Optional.ofNullable(response(requestEvent, request, tool, context, decision))
-            .orElseGet(() -> fallbackDenyResponse(requestEvent));
-        boolean responseMatches = responseMatches(requestEvent, response);
-        if (!responseMatches) {
-            response = fallbackDenyResponse(requestEvent);
-        }
-        PermissionOption selectedOption = selectedOption(requestEvent, response);
-        PermissionGateResult result = resultFromOption(selectedOption, response, message);
+        PermissionSelection selection = selection(requestEvent, request, tool, context, decision, message);
         eventBus.publish(new PermissionDecisionEvent(
             context.sessionId(),
             requestEvent.requestId(),
             request.toolUseId(),
             tool.name(),
             renderedToolUse,
-            selectedOption.optionId(),
-            decisionFromResult(result, selectedOption, decision),
+            selection.selectedOption().optionId(),
+            decisionFromResult(selection.result(), selection.selectedOption(), decision),
             Optional.empty(),
-            decisionMetadata(selectedOption, responseMatches),
+            decisionMetadata(selection.selectedOption(), selection.responseMatches()),
             Instant.now()
         ));
-        return result;
+        return selection.result();
     }
 
-    private PermissionResponse response(
+    private PermissionSelection selection(
         PermissionRequestEvent requestEvent,
         ToolUseRequest request,
         Tool<?, ?> tool,
         ToolUseContext context,
-        PermissionDecision decision
+        PermissionDecision decision,
+        String message
     ) {
-        if (responseDelegate != null) {
-            return responseDelegate.request(requestEvent);
+        if (responseDelegate == null) {
+            return legacySelection(requestEvent, request, tool, context, decision);
         }
-        return responseFromLegacyGate(requestEvent, request, tool, context, decision);
+        PermissionResponse response = Optional.ofNullable(responseDelegate.request(requestEvent))
+            .orElseGet(() -> fallbackDenyResponse(requestEvent));
+        boolean responseMatches = responseMatches(requestEvent, response);
+        if (!responseMatches) {
+            response = fallbackDenyResponse(requestEvent);
+        }
+        PermissionOption selectedOption = selectedOption(requestEvent, response);
+        return new PermissionSelection(
+            selectedOption,
+            resultFromOption(selectedOption, response, message),
+            responseMatches
+        );
     }
 
-    private PermissionResponse responseFromLegacyGate(
+    private PermissionSelection legacySelection(
         PermissionRequestEvent requestEvent,
         ToolUseRequest request,
         Tool<?, ?> tool,
@@ -116,7 +121,14 @@ public final class EventPublishingPermissionGate implements PermissionGate {
             case DENY -> "deny";
             case ABORT -> requestEvent.cancelOptionId();
         };
-        return new PermissionResponse(requestEvent.sessionId(), requestEvent.requestId(), optionId, false, Instant.now());
+        PermissionOption selectedOption = requestEvent.options().stream()
+            .filter(option -> option.optionId().equals(optionId))
+            .findFirst()
+            .orElseGet(() -> requestEvent.options().stream()
+                .filter(option -> option.kind() == PermissionOptionKind.DENY)
+                .findFirst()
+                .orElse(requestEvent.options().getFirst()));
+        return new PermissionSelection(selectedOption, result, true);
     }
 
     private PermissionResponse fallbackDenyResponse(PermissionRequestEvent requestEvent) {
@@ -218,4 +230,10 @@ public final class EventPublishingPermissionGate implements PermissionGate {
         }
         return decision.message();
     }
+
+    private record PermissionSelection(
+        PermissionOption selectedOption,
+        PermissionGateResult result,
+        boolean responseMatches
+    ) {}
 }

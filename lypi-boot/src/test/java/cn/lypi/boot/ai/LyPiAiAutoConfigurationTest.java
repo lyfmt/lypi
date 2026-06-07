@@ -1,6 +1,7 @@
 package cn.lypi.boot.ai;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.ai.ApiProviderRegistry;
 import cn.lypi.ai.ModelPort;
@@ -8,9 +9,25 @@ import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
+import cn.lypi.agent.compact.AiCompactionSummarizer;
+import cn.lypi.agent.compact.CompactSummaryRequest;
+import cn.lypi.agent.compact.CompactionSummarizer;
+import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
+import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.context.ContextBudget;
+import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.prompt.SystemPrompt;
+import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.CompactionKind;
+import cn.lypi.contracts.session.CompactionPlan;
 import java.net.URI;
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -126,6 +143,50 @@ class LyPiAiAutoConfigurationTest {
 
                 assertThat(properties.getProviders().get("openai").getRequestStyle()).isEqualTo(RequestStyle.RESPONSES);
                 assertThat(properties.getProviders().get("openai").getFallbackRequestStyle()).isEqualTo(RequestStyle.RESPONSES);
+                assertThat(properties.getProviders().get("openai").getMaxRetries()).isEqualTo(3);
+            });
+    }
+
+    @Test
+    void bindsCompactionSummaryPropertiesWithoutSummaryModelOverride() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.ai.compaction-summary.enabled=true",
+                "lypi.ai.compaction-summary.fallback-policy=skip_compaction"
+            )
+            .run(context -> {
+                LyPiAiProperties properties = context.getBean(LyPiAiProperties.class);
+
+                assertThat(properties.getCompactionSummary().isEnabled()).isTrue();
+                assertThat(properties.getCompactionSummary().getFallbackPolicy())
+                    .isEqualTo(CompactionSummaryFallbackPolicy.SKIP_COMPACTION);
+            });
+    }
+
+    @Test
+    void createsUnavailableCompactionSummarizerWhenSummaryDisabled() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .run(context -> {
+                assertThat(context).hasSingleBean(CompactionSummarizer.class);
+                assertThat(context.getBean(CompactionSummarizer.class))
+                    .isNotInstanceOf(AiCompactionSummarizer.class);
+                assertThatThrownBy(() -> context.getBean(CompactionSummarizer.class).summarize(disabledSummaryRequest()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("disabled");
+            });
+    }
+
+    @Test
+    void createsAiCompactionSummarizerWhenSummaryEnabled() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues("lypi.ai.compaction-summary.enabled=true")
+            .run(context -> {
+                assertThat(context).hasSingleBean(CompactionSummarizer.class);
+                assertThat(context.getBean(CompactionSummarizer.class))
+                    .isInstanceOf(AiCompactionSummarizer.class);
             });
     }
 
@@ -178,5 +239,20 @@ class LyPiAiAutoConfigurationTest {
         public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
             throw new AssertionError("Remote discovery should not be called when disabled.");
         }
+    }
+
+    private static CompactSummaryRequest disabledSummaryRequest() {
+        ContextSnapshot context = new ContextSnapshot(
+            new SystemPrompt("system", List.of("test"), "hash"),
+            List.of(),
+            new ModelSelection("test", "gpt-test", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            new ContextBudget(0, 128000, 100000, 8192, 16384, 0, 0, BigDecimal.ZERO)
+        );
+        CompactionPlan plan = new CompactionPlan("first", "kept", List.of("first"), CompactionKind.SESSION);
+        AbortSignal abortSignal = () -> false;
+        return new CompactSummaryRequest(context, plan, List.of(), abortSignal);
     }
 }

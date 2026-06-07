@@ -28,6 +28,8 @@ import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.session.BranchSummaryEntry;
+import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.MessageEntry;
@@ -246,6 +248,10 @@ final class AgentCoreTestFixtures {
                 entryIds.add(entry.id());
                 if (entry instanceof MessageEntry messageEntry) {
                     messages.add(messageEntry.message());
+                } else if (entry instanceof BranchSummaryEntry branchSummary) {
+                    messages.add(branchSummaryMessage(branchSummary));
+                } else if (entry instanceof CustomMessageEntry customMessage) {
+                    messages.add(customMessage(customMessage));
                 } else if (entry instanceof CompactionEntry compactionEntry) {
                     latestCompaction = compactionEntry;
                 } else if (entry instanceof ModelChangeEntry modelChange) {
@@ -318,14 +324,45 @@ final class AgentCoreTestFixtures {
                 if (entry.id().equals(compaction.firstKeptEntryId())) {
                     keep = true;
                 }
-                if (keep && entry instanceof MessageEntry messageEntry) {
-                    kept.add(messageEntry.message());
+                if (keep) {
+                    project(entry).ifPresent(kept::add);
                 }
             }
             List<AgentMessage> replay = new ArrayList<>();
             replay.add(summaryMessage("summary-" + compaction.id(), compaction.summary()));
             replay.addAll(kept.isEmpty() ? originalMessages : kept);
             return replay;
+        }
+
+        private Optional<AgentMessage> project(SessionEntry entry) {
+            if (entry instanceof MessageEntry messageEntry) {
+                return Optional.of(messageEntry.message());
+            }
+            if (entry instanceof BranchSummaryEntry branchSummary) {
+                return Optional.of(branchSummaryMessage(branchSummary));
+            }
+            if (entry instanceof CustomMessageEntry customMessage) {
+                return Optional.of(customMessage(customMessage));
+            }
+            return Optional.empty();
+        }
+
+        private AgentMessage branchSummaryMessage(BranchSummaryEntry branchSummary) {
+            return textMessage(
+                "branch-summary-" + branchSummary.id(),
+                MessageRole.SYSTEM_LOCAL,
+                MessageKind.SUMMARY,
+                branchSummary.summary()
+            );
+        }
+
+        private AgentMessage customMessage(CustomMessageEntry customMessage) {
+            return textMessage(
+                "custom-message-" + customMessage.id(),
+                MessageRole.SYSTEM_LOCAL,
+                MessageKind.TEXT,
+                customMessage.content()
+            );
         }
     }
 
@@ -348,6 +385,7 @@ final class AgentCoreTestFixtures {
         private final List<AssistantEventStream> streams = new ArrayList<>();
         private final List<RuntimeException> failures = new ArrayList<>();
         final List<ContextSnapshot> contexts = new ArrayList<>();
+        final List<AbortSignal> abortSignals = new ArrayList<>();
 
         void enqueue(List<AssistantStreamEvent> events) {
             streams.add(new ListAssistantEventStream(events));
@@ -364,6 +402,7 @@ final class AgentCoreTestFixtures {
         @Override
         public AssistantEventStream stream(ContextSnapshot context, AbortSignal signal) {
             contexts.add(context);
+            abortSignals.add(signal);
             if (!failures.isEmpty()) {
                 throw failures.removeFirst();
             }

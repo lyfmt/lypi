@@ -1,22 +1,33 @@
 package cn.lypi.agent;
 
+import cn.lypi.agent.compact.CompactSummaryRequest;
+import cn.lypi.agent.compact.CompactSummaryResult;
 import cn.lypi.agent.compact.CompactionDecision;
 import cn.lypi.agent.compact.CompactionRequest;
 import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.DefaultCompactionCoordinator;
 import cn.lypi.agent.compact.DefaultCompactionPlanner;
+import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlock;
+import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
+import cn.lypi.contracts.model.TokenUsage;
+import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
+import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import static cn.lypi.agent.AgentCoreTestFixtures.NOW;
@@ -40,7 +51,7 @@ class DefaultCompactionCoordinatorTest {
             assembler,
             eventBus,
             new DefaultCompactionPlanner(4),
-            (branchEntries, plan, context) -> "summary text",
+            request -> summaryResult("summary text"),
             CLOCK
         );
 
@@ -57,6 +68,87 @@ class DefaultCompactionCoordinatorTest {
         assertThat(eventBus.events)
             .extracting(Object::getClass)
             .containsSubsequence(CompactStartEvent.class, CompactEndEvent.class);
+        assertThat(eventBus.events)
+            .filteredOn(CompactEndEvent.class::isInstance)
+            .singleElement()
+            .extracting(event -> ((CompactEndEvent) event).compactionEntryId())
+            .isEqualTo(session.leafId());
+    }
+
+    @Test
+    void passesCurrentContextPlanBranchAndAbortSignalToSummarizer() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = lowBudgetAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        AbortSignal abortSignal = () -> true;
+        AtomicReference<CompactSummaryRequest> capturedRequest = new AtomicReference<>();
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> {
+                capturedRequest.set(request);
+                return summaryResult("summary text");
+            },
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly, abortSignal));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(capturedRequest.get()).isNotNull();
+        assertThat(capturedRequest.get().context()).isSameAs(assembly.snapshot());
+        assertThat(capturedRequest.get().context().messages()).containsExactlyElementsOf(assembly.snapshot().messages());
+        assertThat(capturedRequest.get().plan()).isEqualTo(decision.plan().orElseThrow());
+        assertThat(capturedRequest.get().branchEntries())
+            .extracting(SessionEntry::id)
+            .containsExactly("entry-user-1", "entry-assistant-1", "entry-user-2");
+        assertThat(capturedRequest.get().abortSignal()).isSameAs(abortSignal);
+    }
+
+    @Test
+    void sendsProjectedCustomMessagesAndBranchSummariesToSummarizer() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.append(new MessageEntry("entry-old", "", userMessage("msg-old", "Need compact with local context"), NOW));
+        session.append(new CustomMessageEntry("entry-custom", "entry-old", "local instruction: preserve this", NOW));
+        session.append(new BranchSummaryEntry("entry-branch", "entry-custom", "branch summary: preserve this too", NOW));
+        session.append(new MessageEntry("entry-kept", "entry-branch", userMessage("msg-kept", "kept message long enough"), NOW));
+        DefaultContextAssembler assembler = lowBudgetAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        AtomicReference<CompactSummaryRequest> capturedRequest = new AtomicReference<>();
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> {
+                capturedRequest.set(request);
+                return summaryResult("summary text");
+            },
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(capturedRequest.get().context().messages())
+            .extracting(message -> message.content().getFirst().text())
+            .contains(
+                "local instruction: preserve this",
+                "branch summary: preserve this too"
+            );
+        assertThat(capturedRequest.get().context().messages())
+            .extracting(AgentMessage::kind)
+            .contains(MessageKind.TEXT, MessageKind.SUMMARY);
+        assertThat(capturedRequest.get().context().messages())
+            .extracting(AgentMessage::role)
+            .contains(MessageRole.SYSTEM_LOCAL);
+        assertThat(capturedRequest.get().plan().summarizedEntryIds())
+            .contains("entry-custom", "entry-branch");
     }
 
     @Test
@@ -65,13 +157,14 @@ class DefaultCompactionCoordinatorTest {
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
-        CompactionSummarizer failingSummarizer = (branchEntries, plan, context) -> {
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        CompactionSummarizer failingSummarizer = request -> {
             throw new IllegalStateException("summary unavailable");
         };
         DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
             session,
             assembler,
-            new AgentCoreTestFixtures.RecordingEventBus(),
+            eventBus,
             new DefaultCompactionPlanner(4),
             failingSummarizer,
             CLOCK
@@ -82,6 +175,43 @@ class DefaultCompactionCoordinatorTest {
         assertThat(decision.compacted()).isFalse();
         assertThat(decision.context()).isSameAs(assembly.snapshot());
         assertThat(decision.reason()).contains("summary unavailable");
+        assertThat(session.handle().byId().values())
+            .filteredOn(CompactionEntry.class::isInstance)
+            .isEmpty();
+        assertThat(eventBus.events)
+            .extracting(Object::getClass)
+            .containsSubsequence(CompactStartEvent.class, CompactEndEvent.class);
+        assertThat(eventBus.events)
+            .filteredOn(CompactEndEvent.class::isInstance)
+            .singleElement()
+            .extracting(event -> ((CompactEndEvent) event).compactionEntryId())
+            .isEqualTo("");
+    }
+
+    @Test
+    void fallsBackToOriginalContextWhenSummarizerReturnsBlankSummary() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            session,
+            fixedResourceRuntime("system prompt with many retained characters"),
+            new ContextBudgetEstimator(128, 1, 8, 4)
+        );
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> null,
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isFalse();
+        assertThat(decision.context()).isSameAs(assembly.snapshot());
+        assertThat(decision.reason()).contains("summary");
         assertThat(session.handle().byId().values())
             .filteredOn(CompactionEntry.class::isInstance)
             .isEmpty();
@@ -101,7 +231,7 @@ class DefaultCompactionCoordinatorTest {
             failingRebuildAssembler,
             new AgentCoreTestFixtures.RecordingEventBus(),
             new DefaultCompactionPlanner(4),
-            (branchEntries, plan, context) -> "summary text",
+            request -> summaryResult("summary text"),
             CLOCK
         );
 
@@ -114,6 +244,141 @@ class DefaultCompactionCoordinatorTest {
         assertThat(session.handle().byId().values())
             .filteredOn(CompactionEntry.class::isInstance)
             .hasSize(1);
+    }
+
+    @Test
+    void recordsTokensAfterFromCompactedContextInsteadOfSummaryUsage() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = lowBudgetAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> new CompactSummaryResult(
+                "short summary",
+                new TokenUsage(99_000, 1_000, 90_000, 0)
+            ),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        CompactionEntry entry = session.handle().byId().values().stream()
+            .filter(CompactionEntry.class::isInstance)
+            .map(CompactionEntry.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertThat(entry.tokensBefore()).isEqualTo(assembly.snapshot().budget().estimatedContextTokens());
+        assertThat(entry.tokensAfter()).isLessThan(99_000);
+        assertThat(entry.tokensAfter()).isEqualTo(decision.context().budget().estimatedContextTokens());
+        assertThat(decision.context().messages().getFirst().content().getFirst().text()).isEqualTo("short summary");
+    }
+
+    @Test
+    void returnsBudgetEstimatedFromSummaryAndKeptMessages() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.append(new MessageEntry("entry-old", "", userMessage("msg-old", "old message long enough to compact"), NOW));
+        session.append(new MessageEntry(
+            "entry-kept",
+            "entry-old",
+            userMessage("msg-kept", "kept message has many many retained characters"),
+            NOW
+        ));
+        DefaultContextAssembler assembler = lowBudgetAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        int summaryOnlyTokens = Math.max(1, "summary".length() / 4);
+        int expectedTokens = estimateTokens(decision.context());
+        assertThat(decision.compacted()).isTrue();
+        assertThat(decision.context().budget().estimatedContextTokens()).isEqualTo(expectedTokens);
+        assertThat(decision.context().budget().estimatedContextTokens()).isGreaterThan(summaryOnlyTokens);
+        assertThat(session.handle().byId().values())
+            .filteredOn(CompactionEntry.class::isInstance)
+            .singleElement()
+            .extracting(entry -> ((CompactionEntry) entry).tokensAfter())
+            .isEqualTo(expectedTokens);
+    }
+
+    @Test
+    void tokensAfterIncludesProjectedBranchSummaryAndCustomMessages() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.append(new MessageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long enough to count"), NOW));
+        session.append(new BranchSummaryEntry("entry-branch", "entry-user-1", "branch summary that must stay visible", NOW));
+        session.append(new CustomMessageEntry("entry-custom", "entry-branch", "custom message that must stay visible", NOW));
+        session.append(new MessageEntry("entry-user-2", "entry-custom", userMessage("msg-user-2", "kept user"), NOW));
+        DefaultContextAssembler assembler = lowBudgetAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("short summary"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(decision.context().messages())
+            .extracting(message -> message.content().getFirst().text())
+            .contains("short summary", "branch summary that must stay visible", "custom message that must stay visible");
+        assertThat(decision.context().budget().estimatedContextTokens()).isEqualTo(estimateTokens(decision.context()));
+    }
+
+    @Test
+    void tokensAfterFallsBackToOriginalMessagesWhenFirstKeptEntryHasNoProjectedMessages() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.append(new MessageEntry("entry-user-1", "", userMessage("msg-user-1", "original user text that remains in replay fallback"), NOW));
+        session.append(new ModelChangeEntry(
+            "entry-model",
+            "entry-user-1",
+            new cn.lypi.contracts.model.ModelSelection("test", "gpt-test-next", cn.lypi.contracts.model.ThinkingLevel.LOW),
+            "test",
+            NOW
+        ));
+        DefaultContextAssembler assembler = lowBudgetAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            (branchEntries, context) -> Optional.of(new cn.lypi.contracts.session.CompactionPlan(
+                "entry-user-1",
+                "entry-model",
+                List.of("entry-user-1"),
+                cn.lypi.contracts.session.CompactionKind.SESSION
+            )),
+            request -> summaryResult("short summary"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(decision.context().messages())
+            .extracting(message -> message.content().getFirst().text())
+            .contains("short summary", "original user text that remains in replay fallback");
+        assertThat(decision.context().budget().estimatedContextTokens()).isEqualTo(estimateTokens(decision.context()));
     }
 
     private static AgentCoreTestFixtures.InMemorySessionManager sessionWithLongBranch() {
@@ -142,12 +407,44 @@ class DefaultCompactionCoordinatorTest {
         ContextBuildRequest buildRequest,
         ContextAssembly assembly
     ) {
+        return request(session, buildRequest, assembly, () -> false);
+    }
+
+    private static CompactionRequest request(
+        AgentCoreTestFixtures.InMemorySessionManager session,
+        ContextBuildRequest buildRequest,
+        ContextAssembly assembly,
+        AbortSignal abortSignal
+    ) {
         return new CompactionRequest(
             "session-1",
             Optional.of(session.leafId()),
             Path.of("."),
             buildRequest,
-            assembly
+            assembly,
+            abortSignal
         );
+    }
+
+    private static CompactSummaryResult summaryResult(String summary) {
+        return new CompactSummaryResult(summary, new TokenUsage(10, 2, 8, 0));
+    }
+
+    private static int estimateTokens(ContextSnapshot snapshot) {
+        int systemTokens = snapshot.systemPrompt() == null ? 0 : estimateText(snapshot.systemPrompt().content());
+        int messageTokens = snapshot.messages().stream()
+            .flatMap(message -> message.content().stream())
+            .mapToInt(DefaultCompactionCoordinatorTest::estimateBlock)
+            .sum();
+        return systemTokens + messageTokens;
+    }
+
+    private static int estimateBlock(ContentBlock block) {
+        return estimateText(block.text());
+    }
+
+    private static int estimateText(String text) {
+        String safeText = text == null ? "" : text;
+        return Math.max(1, safeText.length() / 4);
     }
 }

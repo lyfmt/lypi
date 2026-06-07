@@ -15,12 +15,15 @@ import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
+import cn.lypi.contracts.event.RetryEndEvent;
+import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.tool.ToolResult;
@@ -186,7 +189,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             leafEntryId,
             ports.cwd(),
             contextBuildRequest,
-            assembly
+            assembly,
+            request.abortSignal()
         ));
         return compaction.context();
     }
@@ -196,8 +200,25 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         String sessionId = request.sessionId();
         List<MessageDeltaEvent> pendingDeltas = new ArrayList<>();
         Optional<String> startedAssistantMessageId = Optional.empty();
+        Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
         try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
+                if (event instanceof ProviderRetryNotice notice) {
+                    pendingRetry.ifPresent(previous -> publishRetryEnd(request.sessionId(), previous, false));
+                    ports.eventBus().publish(new RetryStartEvent(
+                        request.sessionId(),
+                        notice.attempt(),
+                        notice.retryableErrorId(),
+                        clock.instant()
+                    ));
+                    pendingRetry = Optional.of(notice);
+                    continue;
+                }
+                if (pendingRetry.isPresent()) {
+                    ProviderRetryNotice notice = pendingRetry.get();
+                    publishRetryEnd(request.sessionId(), notice, !(event instanceof cn.lypi.contracts.model.AssistantError));
+                    pendingRetry = Optional.empty();
+                }
                 accumulator.accept(event);
                 if (event instanceof AssistantStart start) {
                     startedAssistantMessageId = Optional.of(start.messageId());
@@ -242,10 +263,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     ));
                 }
                 if (request.abortSignal().aborted()) {
+                    pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
+                    pendingRetry = Optional.empty();
                     break;
                 }
             }
         } catch (RuntimeException failure) {
+            pendingRetry.ifPresent(notice -> publishRetryEnd(sessionId, notice, false));
             startedAssistantMessageId.ifPresent(messageId -> {
                 MessageKind kind = streamFailureKind(pendingDeltas);
                 publishAssistantMessageStart(sessionId, messageId, kind);
@@ -254,6 +278,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             });
             throw failure;
         }
+        pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
 
         AgentMessage message = accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
         publishAssistantMessageStart(sessionId, message.id(), message.kind());
@@ -261,15 +286,63 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return message;
     }
 
+    private void publishRetryEnd(String sessionId, ProviderRetryNotice notice, boolean success) {
+        ports.eventBus().publish(new RetryEndEvent(
+            sessionId,
+            notice.attempt(),
+            success,
+            clock.instant()
+        ));
+    }
+
     private List<ToolResult<?>> executeTools(String sessionId, List<ToolUseRequest> toolRequests, ContextSnapshot context) {
         ensureToolRuntimeCwdMatches();
-        List<ToolResult<?>> results = ports.toolRuntime().execute(toolRequests, context);
-        if (results.size() != toolRequests.size()) {
-            throw new IllegalStateException(
-                "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
-            );
+        for (ToolUseRequest toolRequest : toolRequests) {
+            ports.eventBus().publish(new cn.lypi.contracts.event.ToolStartEvent(
+                sessionId,
+                toolRequest.toolUseId(),
+                toolRequest.toolName(),
+                clock.instant()
+            ));
+        }
+        List<ToolResult<?>> results;
+        boolean toolEndErrorsPublished = false;
+        try {
+            results = ports.toolRuntime().execute(toolRequests, context);
+            if (results.size() != toolRequests.size()) {
+                publishToolEndErrors(sessionId, toolRequests);
+                toolEndErrorsPublished = true;
+                throw new IllegalStateException(
+                    "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
+                );
+            }
+        } catch (RuntimeException failure) {
+            if (!toolEndErrorsPublished) {
+                publishToolEndErrors(sessionId, toolRequests);
+            }
+            throw failure;
+        }
+        for (int index = 0; index < toolRequests.size(); index++) {
+            ToolUseRequest request = toolRequests.get(index);
+            ports.eventBus().publish(new cn.lypi.contracts.event.ToolEndEvent(
+                sessionId,
+                request.toolUseId(),
+                results.get(index).isError(),
+                clock.instant()
+            ));
         }
         return results;
+    }
+
+    private void publishToolEndErrors(String sessionId, List<ToolUseRequest> toolRequests) {
+        for (ToolUseRequest request : toolRequests) {
+            ports.eventBus().publish(new cn.lypi.contracts.event.ToolEndEvent(
+                sessionId,
+                request.toolUseId(),
+                true,
+                clock.instant()
+            ));
+        }
     }
 
     private void ensureToolRuntimeCwdMatches() {

@@ -23,6 +23,7 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
@@ -265,6 +266,7 @@ class OpenAiCompatibleProviderAdapterTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Provider stream failed after output");
             assertThat(stream.result().events()).containsExactly(new TextDelta("hello"));
+            assertThat(stream.result().events()).noneMatch(ProviderRetryNotice.class::isInstance);
             assertThat(stream.result().error()).isPresent();
             assertThat(stream.result().completed()).isFalse();
         }
@@ -327,6 +329,68 @@ class OpenAiCompatibleProviderAdapterTest {
         List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
 
         assertThat(websocket.requests).hasSize(3);
+        assertThat(events)
+            .filteredOn(ProviderRetryNotice.class::isInstance)
+            .containsExactly(
+                new ProviderRetryNotice(
+                    "openai",
+                    1,
+                    2,
+                    Duration.ofMillis(500),
+                    "fallback_candidate",
+                    "provider.fallback_candidate",
+                    "WebSocket handshake failed"
+                ),
+                new ProviderRetryNotice(
+                    "openai",
+                    2,
+                    2,
+                    Duration.ofMillis(1_000),
+                    "fallback_candidate",
+                    "provider.fallback_candidate",
+                    "WebSocket handshake failed"
+                )
+            );
+        assertThat(events)
+            .filteredOn(cn.lypi.contracts.model.AssistantError.class::isInstance)
+            .singleElement()
+            .isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
+    }
+
+    @Test
+    void emitsRetryNoticeBeforeOpeningNextProviderAttempt() {
+        RecordingTransport websocket = RecordingTransport.fail("Provider HTTP 429: rate limit");
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key", RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS, 1),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        try (AssistantEventStream stream = adapter.stream(context(), descriptor(), () -> false)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(websocket.requests).hasSize(1);
+            assertThat(iterator.next()).isInstanceOf(ProviderRetryNotice.class);
+            assertThat(websocket.requests).hasSize(1);
+        }
+    }
+
+    @Test
+    void doesNotRetryAuthenticationFailures() {
+        RecordingTransport websocket = RecordingTransport.fail("Provider HTTP 401: unauthorized");
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key", RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS, 2),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
+
+        assertThat(websocket.requests).hasSize(1);
+        assertThat(events).noneMatch(ProviderRetryNotice.class::isInstance);
         assertThat(events).singleElement().isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
     }
 

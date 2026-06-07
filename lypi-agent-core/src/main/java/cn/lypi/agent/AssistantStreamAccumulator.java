@@ -10,6 +10,7 @@ import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.TokenUsage;
@@ -53,6 +54,8 @@ public final class AssistantStreamAccumulator {
                 error = Optional.of(assistantError);
                 stopReason = Optional.of("error");
                 completed = true;
+            }
+            case ProviderRetryNotice ignored -> {
             }
         }
     }

@@ -55,7 +55,8 @@ class AgentCoreContractCompilationTest {
             Optional.empty(),
             Path.of("."),
             null,
-            new ContextAssembly(null, List.of(), List.of(), List.of(), false)
+            new ContextAssembly(null, List.of(), List.of(), List.of(), false),
+            () -> false
         )).compacted()).isFalse();
         assertThat(decision.reason()).isEqualTo("within budget");
     }

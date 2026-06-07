@@ -16,6 +16,8 @@ import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
+import cn.lypi.contracts.event.RetryEndEvent;
+import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
@@ -23,6 +25,7 @@ import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
+import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
@@ -113,6 +116,215 @@ class DefaultTurnExecutorTest {
         assertThat(assistantEnd.blocks().getFirst().text()).isEqualTo("hi");
         assertThat(assistantEnd.stopReason()).contains("end_turn");
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void mapsProviderRetryNoticeToRetryEventsWithoutAppendingTranscriptNoise() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new ProviderRetryNotice(
+                "openai",
+                1,
+                3,
+                java.time.Duration.ofMillis(500),
+                "rate_limit",
+                "provider.rate_limit",
+                "Provider HTTP 429: rate limit"
+            ),
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-assistant");
+        assertThat(eventBus.events).anySatisfy(event -> {
+            assertThat(event).isInstanceOf(RetryStartEvent.class);
+            RetryStartEvent retry = (RetryStartEvent) event;
+            assertThat(retry.attempt()).isEqualTo(1);
+            assertThat(retry.reason()).isEqualTo("provider.rate_limit");
+        });
+        assertThat(eventBus.events).anySatisfy(event -> {
+            assertThat(event).isInstanceOf(RetryEndEvent.class);
+            RetryEndEvent retry = (RetryEndEvent) event;
+            assertThat(retry.attempt()).isEqualTo(1);
+            assertThat(retry.success()).isTrue();
+        });
+        assertThat(state.newMessages()).hasSize(2);
+    }
+
+    @Test
+    void marksProviderRetryEndFailedWhenRetryProducesAssistantError() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new ProviderRetryNotice(
+                "openai",
+                1,
+                1,
+                java.time.Duration.ofMillis(500),
+                "rate_limit",
+                "provider.rate_limit",
+                "Provider HTTP 429: rate limit"
+            ),
+            new AssistantError("provider.request_failed", "Provider request failed.")
+        ));
+
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-error"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(eventBus.events).anySatisfy(event -> {
+            assertThat(event).isInstanceOf(RetryEndEvent.class);
+            RetryEndEvent retry = (RetryEndEvent) event;
+            assertThat(retry.attempt()).isEqualTo(1);
+            assertThat(retry.success()).isFalse();
+        });
+        assertThat(session.messages()).hasSize(2);
+    }
+
+    @Test
+    void closesPreviousRetryAttemptWhenProviderEmitsConsecutiveRetryNotices() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new ProviderRetryNotice("openai", 1, 2, java.time.Duration.ofMillis(500), "rate_limit", "provider.rate_limit", "first"),
+            new ProviderRetryNotice("openai", 2, 2, java.time.Duration.ofMillis(1_000), "rate_limit", "provider.rate_limit", "second"),
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(eventBus.events.stream()
+            .filter(RetryEndEvent.class::isInstance)
+            .map(RetryEndEvent.class::cast)
+            .map(RetryEndEvent::attempt))
+            .containsExactly(1, 2);
+        assertThat(eventBus.events.stream()
+            .filter(RetryEndEvent.class::isInstance)
+            .map(RetryEndEvent.class::cast)
+            .map(RetryEndEvent::success))
+            .containsExactly(false, true);
+    }
+
+    @Test
+    void closesPendingRetryWhenStreamEndsWithoutAnotherEvent() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new ProviderRetryNotice("openai", 1, 1, java.time.Duration.ofMillis(500), "rate_limit", "provider.rate_limit", "first")
+        ));
+
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(eventBus.events.stream()
+            .filter(RetryEndEvent.class::isInstance)
+            .map(RetryEndEvent.class::cast)
+            .map(RetryEndEvent::success))
+            .containsExactly(false);
     }
 
     @Test
@@ -375,8 +587,15 @@ class DefaultTurnExecutorTest {
         assertThat(session.messages()).extracting(AgentMessage::id)
             .containsExactly("msg-user", "msg-tool-call", "msg-tool-result-1", "msg-tool-result-2", "msg-final");
         assertThat(eventBus.events.stream()
-            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
-            .isEmpty();
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event))
+            .toList())
+            .containsExactly(
+                "ToolStartEvent:toolu-1",
+                "ToolStartEvent:toolu-2",
+                "ToolEndEvent:toolu-1",
+                "ToolEndEvent:toolu-2"
+            );
     }
 
     @Test
@@ -437,7 +656,7 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
-    void doesNotPublishToolLifecycleEventsWhenToolRuntimeThrows() {
+    void publishesToolEndErrorEventsWhenToolRuntimeThrows() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
@@ -477,12 +696,19 @@ class DefaultTurnExecutorTest {
         assertThat(tools.requests.getFirst()).extracting(request -> request.toolUseId())
             .containsExactly("toolu-1", "toolu-2");
         assertThat(eventBus.events.stream()
-            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
-            .isEmpty();
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event) + ":" + toolError(event))
+            .toList())
+            .containsExactly(
+                "ToolStartEvent:toolu-1:false",
+                "ToolStartEvent:toolu-2:false",
+                "ToolEndEvent:toolu-1:true",
+                "ToolEndEvent:toolu-2:true"
+            );
     }
 
     @Test
-    void failsTurnWithoutPublishingToolLifecycleEventsWhenToolRuntimeReturnsTooFewResults() {
+    void failsTurnAndClosesToolEventsWhenToolRuntimeReturnsTooFewResults() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
@@ -526,12 +752,19 @@ class DefaultTurnExecutorTest {
         assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
         assertThat(provider.contexts).hasSize(1);
         assertThat(eventBus.events.stream()
-            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
-            .isEmpty();
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event) + ":" + toolError(event))
+            .toList())
+            .containsExactly(
+                "ToolStartEvent:toolu-1:false",
+                "ToolStartEvent:toolu-2:false",
+                "ToolEndEvent:toolu-1:true",
+                "ToolEndEvent:toolu-2:true"
+            );
     }
 
     @Test
-    void failsTurnWithoutPublishingToolLifecycleEventsWhenToolRuntimeReturnsTooManyResults() {
+    void failsTurnAndClosesToolEventsWhenToolRuntimeReturnsTooManyResults() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
@@ -582,8 +815,13 @@ class DefaultTurnExecutorTest {
         assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
         assertThat(provider.contexts).hasSize(1);
         assertThat(eventBus.events.stream()
-            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
-            .isEmpty();
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .map(event -> event.getClass().getSimpleName() + ":" + toolUseId(event) + ":" + toolError(event))
+            .toList())
+            .containsExactly(
+                "ToolStartEvent:toolu-1:false",
+                "ToolEndEvent:toolu-1:true"
+            );
     }
 
     @Test
