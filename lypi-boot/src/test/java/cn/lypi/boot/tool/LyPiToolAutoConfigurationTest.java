@@ -22,7 +22,9 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.Executor;
+import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
@@ -34,6 +36,12 @@ import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
+import cn.lypi.contracts.subagent.MailboxCommandResult;
+import cn.lypi.contracts.subagent.MailboxMessage;
+import cn.lypi.contracts.subagent.MailboxStatus;
+import cn.lypi.contracts.subagent.SubagentSpawnRequest;
+import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
 import java.math.BigDecimal;
@@ -186,6 +194,22 @@ class LyPiToolAutoConfigurationTest {
             });
     }
 
+    @Test
+    void registersSubagentToolsWhenRuntimePortsAreAvailable() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(AgentCenterPort.class, LyPiToolAutoConfigurationTest::agentCenter)
+            .withBean(MailboxPort.class, LyPiToolAutoConfigurationTest::mailbox)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(runtime.resolve("spawn_agent")).isPresent();
+                assertThat(runtime.resolve("read_agent_result")).isPresent();
+                assertThat(runtime.resolve("read_mailbox")).isPresent();
+            });
+    }
+
     private static PermissionDecision allowAllSecurity(ToolUseRequest request, ToolUseContext context) {
         return new PermissionDecision(
             PermissionBehavior.ALLOW,
@@ -206,6 +230,49 @@ class LyPiToolAutoConfigurationTest {
             PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO)
         );
+    }
+
+    private static AgentCenterPort agentCenter() {
+        return new AgentCenterPort() {
+            @Override
+            public SubagentSpawnResult spawn(SubagentSpawnRequest request) {
+                throw new UnsupportedOperationException("not used");
+            }
+
+            @Override
+            public MailboxCommandResult interrupt(String agentId) {
+                throw new UnsupportedOperationException("not used");
+            }
+
+            @Override
+            public Optional<HeadlessSubagentOutput> readResult(String childSessionId) {
+                throw new UnsupportedOperationException("not used");
+            }
+        };
+    }
+
+    private static MailboxPort mailbox() {
+        return new MailboxPort() {
+            @Override
+            public List<MailboxMessage> read(String sessionId, java.util.Set<MailboxStatus> statuses) {
+                throw new UnsupportedOperationException("not used");
+            }
+
+            @Override
+            public MailboxCommandResult accept(String sessionId, String mailId) {
+                throw new UnsupportedOperationException("not used");
+            }
+
+            @Override
+            public MailboxCommandResult stash(String sessionId, String mailId) {
+                throw new UnsupportedOperationException("not used");
+            }
+
+            @Override
+            public MailboxCommandResult discard(String sessionId, String mailId) {
+                throw new UnsupportedOperationException("not used");
+            }
+        };
     }
 
     private static final class RecordingEventBus implements EventBus {

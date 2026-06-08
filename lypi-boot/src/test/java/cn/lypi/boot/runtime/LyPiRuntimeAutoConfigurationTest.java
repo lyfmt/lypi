@@ -16,6 +16,11 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
@@ -30,6 +35,9 @@ import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.runtime.event.InMemoryEventBus;
+import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
+import cn.lypi.runtime.subagent.SubagentProcessRunner;
+import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
 import java.math.BigDecimal;
@@ -40,11 +48,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class LyPiRuntimeAutoConfigurationTest {
+    @TempDir
+    Path tempDir;
+
     @Test
     void createsDefaultInMemoryEventBusWhenMissing() {
         new ApplicationContextRunner()
@@ -139,6 +151,46 @@ class LyPiRuntimeAutoConfigurationTest {
             });
     }
 
+    @Test
+    void createsDefaultSubagentRuntimeBeansWithConservativeDeliveryGuard() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .run(context -> {
+                assertThat(context).hasSingleBean(SessionManagerFactoryPort.class);
+                assertThat(context).hasSingleBean(ChildSessionPort.class);
+                assertThat(context).hasSingleBean(SessionManagerPort.class);
+                assertThat(context).hasSingleBean(MailboxPort.class);
+                assertThat(context).hasSingleBean(SubagentProcessRunner.class);
+                assertThat(context).hasSingleBean(AgentCenterPort.class);
+                assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(null)).isFalse();
+            });
+    }
+
+    @Test
+    void keepsUserProvidedSessionManagerForMailboxAndAgentCenter() {
+        SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        sessionManager.openOrCreate("ses_custom");
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(SessionManagerPort.class, () -> sessionManager)
+            .run(context -> assertThat(context.getBean(SessionManagerPort.class)).isSameAs(sessionManager));
+    }
+
+    @Test
+    void keepsUserProvidedMailboxPortWithoutRequiringDefaultAgentCenter() {
+        MailboxPort mailbox = new NoopMailbox();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(MailboxPort.class, () -> mailbox)
+            .run(context -> {
+                assertThat(context).hasSingleBean(MailboxPort.class);
+                assertThat(context.getBean(MailboxPort.class)).isSameAs(mailbox);
+                assertThat(context).doesNotHaveBean(AgentCenterPort.class);
+            });
+    }
+
     private static PermissionDecision allowAllSecurity(ToolUseRequest request, ToolUseContext context) {
         return new PermissionDecision(
             PermissionBehavior.ALLOW,
@@ -211,6 +263,31 @@ class LyPiRuntimeAutoConfigurationTest {
         ) {
             return () -> {
             };
+        }
+    }
+
+    private static final class NoopMailbox implements MailboxPort {
+        @Override
+        public List<cn.lypi.contracts.subagent.MailboxMessage> read(
+            String sessionId,
+            java.util.Set<cn.lypi.contracts.subagent.MailboxStatus> statuses
+        ) {
+            return List.of();
+        }
+
+        @Override
+        public cn.lypi.contracts.subagent.MailboxCommandResult accept(String sessionId, String mailId) {
+            return cn.lypi.contracts.subagent.MailboxCommandResult.failure("not used");
+        }
+
+        @Override
+        public cn.lypi.contracts.subagent.MailboxCommandResult stash(String sessionId, String mailId) {
+            return cn.lypi.contracts.subagent.MailboxCommandResult.failure("not used");
+        }
+
+        @Override
+        public cn.lypi.contracts.subagent.MailboxCommandResult discard(String sessionId, String mailId) {
+            return cn.lypi.contracts.subagent.MailboxCommandResult.failure("not used");
         }
     }
 

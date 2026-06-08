@@ -1,7 +1,9 @@
 package cn.lypi.boot.tool;
 
+import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.Executor;
+import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.tool.BlockingPermissionGate;
@@ -39,6 +41,8 @@ public class LyPiToolAutoConfiguration {
     public ToolRuntimePort toolRuntime(
         SecurityRuntimePort securityRuntime,
         Executor executor,
+        ObjectProvider<AgentCenterPort> agentCenter,
+        ObjectProvider<MailboxPort> mailbox,
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionPromptPort> promptPort
     ) {
@@ -55,6 +59,11 @@ public class LyPiToolAutoConfiguration {
             resolvedEventBus
         );
         BuiltInTools.registerDefaults(runtime, executor);
+        AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
+        MailboxPort resolvedMailbox = mailbox.getIfAvailable();
+        if (resolvedAgentCenter != null && resolvedMailbox != null) {
+            BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox);
+        }
         return runtime;
     }
 

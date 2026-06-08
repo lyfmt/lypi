@@ -45,6 +45,17 @@ public final class HeadlessSubagentJsonCodec {
     }
 
     /**
+     * 向 stdin 写入 headless subagent 输入。
+     */
+    public void writeInput(HeadlessSubagentInput input, OutputStream out) {
+        try {
+            objectMapper.writeValue(out, input);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to write headless subagent input JSON", e);
+        }
+    }
+
+    /**
      * 向 stdout 写入 headless subagent 输出。
      */
     public void writeOutput(HeadlessSubagentOutput output, OutputStream out) {
