@@ -40,9 +40,16 @@ public class HeadlessSubagentCommandAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnBean(HeadlessSubagentRunner.class)
-    public HeadlessSubagentCommand headlessSubagentCommand(HeadlessSubagentRunner runner) {
-        return new HeadlessSubagentCommand(runner);
+    public HeadlessSubagentCommand headlessSubagentCommand(
+        ObjectProvider<AgentCoreFactoryPort> agentCoreFactory,
+        ObjectProvider<SessionManagerFactoryPort> sessionManagerFactory,
+        HeadlessSubagentJsonCodec codec
+    ) {
+        return new HeadlessSubagentCommand(() -> new HeadlessSubagentRunner(
+            agentCoreFactory.getObject(),
+            sessionManagerFactory.getObject(),
+            codec
+        ));
     }
 
     /**

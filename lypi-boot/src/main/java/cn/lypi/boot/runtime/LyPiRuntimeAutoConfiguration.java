@@ -31,6 +31,8 @@ import cn.lypi.runtime.subagent.JsonlMailboxStore;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
+import cn.lypi.resource.DefaultResourceRuntime;
+import cn.lypi.security.DefaultPolicyEngine;
 import cn.lypi.session.ChildSessionService;
 import cn.lypi.session.DefaultSessionManagerFactory;
 import cn.lypi.session.SessionManagerImpl;
@@ -81,6 +83,24 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnMissingBean
     public Clock clock() {
         return Clock.systemUTC();
+    }
+
+    /**
+     * 创建默认安全策略运行时。
+     */
+    @Bean
+    @ConditionalOnMissingBean(SecurityRuntimePort.class)
+    public SecurityRuntimePort securityRuntime() {
+        return new DefaultPolicyEngine();
+    }
+
+    /**
+     * 创建默认资源运行时。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ResourceRuntimePort.class)
+    public ResourceRuntimePort resourceRuntime() {
+        return new DefaultResourceRuntime();
     }
 
     /**
@@ -201,32 +221,29 @@ public class LyPiRuntimeAutoConfiguration {
     /**
      * 创建默认 AgentCore factory。
      *
-     * NOTE: 该 factory 只在所有核心运行时端口已由上层装配提供时生效；
-     * 不在这里推断默认安全、资源或模型策略。
+     * NOTE: 核心端口在创建 child turn executor 时延迟解析，避免跨配置类
+     * bean 条件受装配顺序影响；缺失依赖会在使用时 fail-fast。
      */
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnBean({
-        AiProviderRuntimePort.class,
-        ToolRuntimePort.class,
-        SecurityRuntimePort.class,
-        ResourceRuntimePort.class,
-        EventBus.class,
-        CompactionSummarizer.class
-    })
     public AgentCoreFactoryPort agentCoreFactory(
-        AiProviderRuntimePort aiProvider,
-        ToolRuntimePort toolRuntime,
-        SecurityRuntimePort securityRuntime,
-        ResourceRuntimePort resourceRuntime,
+        ObjectProvider<AiProviderRuntimePort> aiProvider,
+        ObjectProvider<ToolRuntimePort> toolRuntime,
+        ObjectProvider<SecurityRuntimePort> securityRuntime,
+        ObjectProvider<ResourceRuntimePort> resourceRuntime,
         EventBus eventBus,
-        CompactionSummarizer compactionSummarizer,
+        ObjectProvider<CompactionSummarizer> compactionSummarizer,
         Clock clock
     ) {
         return (cwd, sessionManager) -> {
+            AiProviderRuntimePort resolvedAiProvider = aiProvider.getObject();
+            ToolRuntimePort resolvedToolRuntime = toolRuntime.getObject();
+            SecurityRuntimePort resolvedSecurityRuntime = securityRuntime.getObject();
+            ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getObject();
+            CompactionSummarizer resolvedCompactionSummarizer = compactionSummarizer.getObject();
             DefaultContextAssembler assembler = new DefaultContextAssembler(
                 sessionManager,
-                resourceRuntime,
+                resolvedResourceRuntime,
                 new ContextBudgetEstimator()
             );
             DefaultCompactionCoordinator compactionCoordinator = new DefaultCompactionCoordinator(
@@ -234,17 +251,17 @@ public class LyPiRuntimeAutoConfiguration {
                 assembler,
                 eventBus,
                 new DefaultCompactionPlanner(),
-                compactionSummarizer,
+                resolvedCompactionSummarizer,
                 clock
             );
             return new DefaultTurnExecutor(
                 new AgentCoreRuntimePorts(
                     cwd,
                     sessionManager,
-                    aiProvider,
-                    toolRuntime,
-                    securityRuntime,
-                    resourceRuntime,
+                    resolvedAiProvider,
+                    resolvedToolRuntime,
+                    resolvedSecurityRuntime,
+                    resolvedResourceRuntime,
                     eventBus,
                     assembler,
                     null,
