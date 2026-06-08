@@ -629,6 +629,75 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void toolLifecycleEventsUseCanonicalToolNameWhenModelRequestsAlias() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        tools.register(AgentCoreTestFixtures.tool("read", List.of("cat")));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "cat", Map.of("path", "pom.xml"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("done"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "content",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "content", false)),
+            Optional.empty()
+        )));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2"),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "run alias", Optional.empty(), () -> false));
+
+        ToolStartEvent start = eventBus.events.stream()
+            .filter(ToolStartEvent.class::isInstance)
+            .map(ToolStartEvent.class::cast)
+            .findFirst()
+            .orElseThrow();
+        ToolEndEvent end = eventBus.events.stream()
+            .filter(ToolEndEvent.class::isInstance)
+            .map(ToolEndEvent.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertThat(start.toolName()).isEqualTo("read");
+        assertThat(start.displayTitle()).isEqualTo("read");
+        assertThat(start.inputSummary()).isEqualTo("read {path=pom.xml}");
+        assertThat(start.inputMetadata()).containsEntry("path", "pom.xml");
+        assertThat(start.inputMetadata()).containsEntry("originalToolName", "cat");
+        assertThat(end.metadata()).containsEntry("toolName", "read");
+        assertThat(end.metadata()).containsEntry("originalToolName", "cat");
+        assertThat(end.resultSummary().title()).isEqualTo("read succeeded");
+        assertThat(end.resultSummary().metadata()).containsEntry("toolName", "read");
+        assertThat(end.resultSummary().metadata()).containsEntry("originalToolName", "cat");
+    }
+
+    @Test
     void publishesCancelledToolEndWhenToolRuntimeResultCarriesCancelledStatus() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();

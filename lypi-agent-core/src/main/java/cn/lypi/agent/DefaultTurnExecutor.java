@@ -36,13 +36,16 @@ import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import cn.lypi.contracts.tool.Tool;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 public final class DefaultTurnExecutor implements TurnExecutor {
@@ -360,7 +363,10 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     ) {
         ensureToolRuntimeCwdMatches();
         List<Instant> startedAt = new ArrayList<>(toolRequests.size());
+        List<ToolAuditName> auditNames = new ArrayList<>(toolRequests.size());
         for (ToolUseRequest toolRequest : toolRequests) {
+            ToolAuditName auditName = toolAuditName(toolRequest);
+            auditNames.add(auditName);
             Instant started = clock.instant();
             startedAt.add(started);
             ports.eventBus().publish(new ToolStartEvent(
@@ -368,10 +374,10 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 toolRequest.toolUseId(),
                 toolRequest.parentMessageId(),
                 turnId,
-                toolRequest.toolName(),
-                toolRequest.toolName(),
-                inputSummary(toolRequest),
-                inputMetadata(toolRequest),
+                auditName.toolName(),
+                auditName.toolName(),
+                inputSummary(toolRequest, auditName),
+                inputMetadata(toolRequest, auditName),
                 started,
                 started
             ));
@@ -381,7 +387,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         try {
             results = ports.toolRuntime().execute(toolRequests, context);
             if (results.size() != toolRequests.size()) {
-                publishToolEndErrors(sessionId, toolRequests, startedAt);
+                publishToolEndErrors(sessionId, toolRequests, startedAt, auditNames);
                 toolEndErrorsPublished = true;
                 throw new IllegalStateException(
                     "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
@@ -389,7 +395,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             }
         } catch (RuntimeException failure) {
             if (!toolEndErrorsPublished) {
-                publishToolEndErrors(sessionId, toolRequests, startedAt);
+                publishToolEndErrors(sessionId, toolRequests, startedAt, auditNames);
             }
             throw failure;
         }
@@ -401,21 +407,27 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 request.toolUseId(),
                 toolExecutionStatus(results.get(index)),
                 null,
-                resultSummary(request, results.get(index)),
+                resultSummary(request, results.get(index), auditNames.get(index)),
                 null,
                 startedAt.get(index),
                 endedAt,
                 durationMillis(startedAt.get(index), endedAt),
-                Map.of("toolName", request.toolName()),
+                auditNames.get(index).metadata(),
                 endedAt
             ));
         }
         return results;
     }
 
-    private void publishToolEndErrors(String sessionId, List<ToolUseRequest> toolRequests, List<Instant> startedAt) {
+    private void publishToolEndErrors(
+        String sessionId,
+        List<ToolUseRequest> toolRequests,
+        List<Instant> startedAt,
+        List<ToolAuditName> auditNames
+    ) {
         for (int index = 0; index < toolRequests.size(); index++) {
             ToolUseRequest request = toolRequests.get(index);
+            ToolAuditName auditName = index < auditNames.size() ? auditNames.get(index) : toolAuditName(request);
             Instant endedAt = clock.instant();
             Instant started = index < startedAt.size() ? startedAt.get(index) : endedAt;
             ports.eventBus().publish(new ToolEndEvent(
@@ -423,35 +435,45 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 request.toolUseId(),
                 ToolExecutionStatus.FAILED,
                 null,
-                resultSummary(request, null),
+                resultSummary(request, null, auditName),
                 null,
                 started,
                 endedAt,
                 durationMillis(started, endedAt),
-                Map.of("toolName", request.toolName()),
+                auditName.metadata(),
                 endedAt
             ));
         }
     }
 
-    private String inputSummary(ToolUseRequest request) {
-        if (request.input() == null || request.input().isEmpty()) {
-            return request.toolName();
-        }
-        return request.toolName() + " " + request.input();
+    private ToolAuditName toolAuditName(ToolUseRequest request) {
+        String originalToolName = request.toolName();
+        String toolName = ports.toolRuntime().resolve(originalToolName)
+            .map(Tool::name)
+            .orElse(originalToolName);
+        return new ToolAuditName(toolName, originalToolName);
     }
 
-    private Map<String, Object> inputMetadata(ToolUseRequest request) {
+    private String inputSummary(ToolUseRequest request, ToolAuditName auditName) {
         if (request.input() == null || request.input().isEmpty()) {
-            return Map.of();
+            return auditName.toolName();
         }
-        return request.input();
+        return auditName.toolName() + " " + request.input();
     }
 
-    private ToolResultSummary resultSummary(ToolUseRequest request, ToolResult<?> result) {
+    private Map<String, Object> inputMetadata(ToolUseRequest request, ToolAuditName auditName) {
+        if (request.input() == null || request.input().isEmpty()) {
+            return auditName.originalMetadata();
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>(request.input());
+        metadata.putAll(auditName.originalMetadata());
+        return Map.copyOf(metadata);
+    }
+
+    private ToolResultSummary resultSummary(ToolUseRequest request, ToolResult<?> result, ToolAuditName auditName) {
         ToolExecutionStatus status = toolExecutionStatus(result);
         boolean error = status != ToolExecutionStatus.SUCCEEDED;
-        String title = request.toolName() + " " + status.name().toLowerCase();
+        String title = auditName.toolName() + " " + status.name().toLowerCase();
         String outputText = outputText(result);
         String summary = previewSummary(outputText);
         return new ToolResultSummary(
@@ -461,7 +483,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             null,
             false,
             outputBytes(result),
-            Map.of("toolName", request.toolName())
+            auditName.metadata()
         );
     }
 
@@ -533,6 +555,22 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             return 0L;
         }
         return Math.max(0L, Duration.between(startedAt, endedAt).toMillis());
+    }
+
+    private record ToolAuditName(String toolName, String originalToolName) {
+        private Map<String, Object> metadata() {
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("toolName", toolName);
+            metadata.putAll(originalMetadata());
+            return Map.copyOf(metadata);
+        }
+
+        private Map<String, Object> originalMetadata() {
+            if (Objects.equals(toolName, originalToolName)) {
+                return Map.of();
+            }
+            return Map.of("originalToolName", originalToolName);
+        }
     }
 
     private void ensureToolRuntimeCwdMatches() {
