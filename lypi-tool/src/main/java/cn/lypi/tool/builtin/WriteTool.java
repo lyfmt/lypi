@@ -52,11 +52,25 @@ public final class WriteTool extends AbstractFileTool {
     public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
         try {
             Path path = resolvePath(input, context, "path");
+            Path parent = path.getParent();
+            if (parent != null) {
+                requirePathSegmentsInsideWorkspace(parent, context);
+            }
+            if (Files.exists(path) || Files.isSymbolicLink(path)) {
+                requireSymlinkTargetInsideWorkspace(path, context);
+                if (Files.exists(path)) {
+                    requireRealPathInsideWorkspace(path, context);
+                }
+            } else if (path.getParent() != null && Files.exists(path.getParent())) {
+                requireRealPathInsideWorkspace(path.getParent(), context);
+            }
             if (Files.exists(path)) {
                 return ask("覆盖已有文件需要确认。", input);
             }
         } catch (IllegalArgumentException exception) {
             return deny(exception.getMessage(), input);
+        } catch (IOException exception) {
+            return deny("路径安全检查失败: " + exception.getMessage(), input);
         }
         return super.checkPermissions(input, context);
     }
@@ -68,11 +82,25 @@ public final class WriteTool extends AbstractFileTool {
             Path path = resolvePath(input, context, "path");
             boolean createParents = Boolean.TRUE.equals(input.get("createParents"));
             Path parent = path.getParent();
+            if (parent != null) {
+                requirePathSegmentsInsideWorkspace(parent, context);
+            }
             if (parent != null && !Files.exists(parent)) {
                 if (!createParents) {
                     return error(toolUseId, "父目录不存在: " + relativePath(parent, context));
                 }
                 Files.createDirectories(parent);
+            }
+            if (Files.exists(path) || Files.isSymbolicLink(path)) {
+                requireSymlinkTargetInsideWorkspace(path, context);
+                if (Files.exists(path)) {
+                    requireRealPathInsideWorkspace(path, context);
+                }
+                if (Files.isDirectory(path)) {
+                    return error(toolUseId, "不能写入目录: " + relativePath(path, context));
+                }
+            } else if (parent != null) {
+                requireRealPathInsideWorkspace(parent, context);
             }
             boolean overwritten = Files.exists(path);
             String content = input.get("content").toString();

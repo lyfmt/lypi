@@ -18,7 +18,7 @@ final class FrontmatterParser {
         }
         int end = normalized.indexOf("\n---", 4);
         if (end < 0) {
-            return new FrontmatterDocument(Map.of(), normalized.strip());
+            throw new IOException("Unterminated frontmatter");
         }
         String metadataText = normalized.substring(4, end);
         int bodyStart = end + "\n---".length();

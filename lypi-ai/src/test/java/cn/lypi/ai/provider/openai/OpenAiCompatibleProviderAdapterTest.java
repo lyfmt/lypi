@@ -315,6 +315,30 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     @Test
+    void responsesSseRequestPreservesSelectedModelAndMediumThinking() throws Exception {
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.RESPONSES),
+            RecordingTransport.events(),
+            sse,
+            RecordingTransport.events()
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(ThinkingLevel.MEDIUM), descriptor(), () -> false));
+
+        assertThat(events).contains(new TextDelta("hello"));
+        assertThat(sse.requests).hasSize(1);
+        JsonNode body = OBJECT_MAPPER.readTree(sse.requests.getFirst().body());
+        assertThat(body.get("model").asText()).isEqualTo("gpt-5-mini");
+        assertThat(body.at("/reasoning/effort").asText()).isEqualTo("medium");
+        assertThat(body.get("api_key")).isNull();
+        assertThat(sse.requests.getFirst().headers()).containsEntry("Authorization", "Bearer test-key");
+    }
+
+    @Test
     void retriesAttemptAccordingToConfiguredMaxRetriesBeforeFallback() {
         RecordingTransport websocket = RecordingTransport.fail("WebSocket handshake failed");
         RecordingTransport sse = RecordingTransport.events();
@@ -451,6 +475,10 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     private static ContextSnapshot context() {
+        return context(ThinkingLevel.HIGH);
+    }
+
+    private static ContextSnapshot context(ThinkingLevel thinkingLevel) {
         return new ContextSnapshot(
             new SystemPrompt("system", List.of("test"), "hash"),
             List.of(new AgentMessage(
@@ -462,8 +490,8 @@ class OpenAiCompatibleProviderAdapterTest {
                 Optional.empty(),
                 Optional.empty()
             )),
-            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH),
-            ThinkingLevel.HIGH,
+            new ModelSelection("openai", "gpt-5-mini", thinkingLevel),
+            thinkingLevel,
             AgentMode.EXECUTE,
             PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)

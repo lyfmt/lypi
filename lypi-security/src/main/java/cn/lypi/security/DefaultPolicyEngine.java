@@ -7,6 +7,7 @@ import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -82,6 +83,16 @@ public final class DefaultPolicyEngine implements PolicyEngine {
                 "Plan Mode 禁止写入类工具调用: " + request.toolName(),
                 Map.of()
             );
+        }
+
+        Optional<PermissionDecision> sessionAllow = explicitDecision(
+            request,
+            sessionRules(effectiveRules),
+            PermissionBehavior.ALLOW,
+            bashRisk
+        );
+        if (sessionAllow.isPresent()) {
+            return sessionAllow.get();
         }
 
         Optional<PermissionDecision> explicitAsk = explicitDecision(request, effectiveRules, PermissionBehavior.ASK, bashRisk);
@@ -199,6 +210,12 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             }
         }
         return List.copyOf(effectiveRules);
+    }
+
+    private List<PermissionRule> sessionRules(List<PermissionRule> effectiveRules) {
+        return effectiveRules.stream()
+            .filter(rule -> rule.source() == PermissionRuleSource.SESSION)
+            .toList();
     }
 
     private boolean matches(PermissionRule rule, ToolUseRequest request, BashRiskAnalysis bashRisk) {

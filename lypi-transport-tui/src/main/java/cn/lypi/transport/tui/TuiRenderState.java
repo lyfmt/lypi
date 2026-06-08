@@ -19,6 +19,7 @@ final class TuiRenderState {
     private final Map<String, Integer> toolIndexes = new HashMap<>();
     private PermissionPromptView permissionPrompt;
     private DiffView diffView;
+    private String mode = "ready";
 
     List<TuiBlock> blocks() {
         return blocks;
@@ -54,10 +55,14 @@ final class TuiRenderState {
         this.permissionPrompt = null;
     }
 
+    void mode(String mode) {
+        this.mode = mode == null || mode.isBlank() ? "ready" : mode;
+    }
+
     TuiViewModel view() {
         return new TuiViewModel(
             blocks,
-            new StatusBarState("", "", "ready", ""),
+            new StatusBarState("", "", mode, ""),
             files,
             Optional.ofNullable(permissionPrompt),
             Optional.ofNullable(diffView)

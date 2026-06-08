@@ -49,6 +49,7 @@ public final class ReadTool extends AbstractFileTool {
             if (!Files.exists(path)) {
                 return error(toolUseId, "文件不存在: " + relativePath(path, context));
             }
+            requireRealPathInsideWorkspace(path, context);
             if (Files.isDirectory(path)) {
                 return error(toolUseId, "不能读取目录: " + relativePath(path, context));
             }

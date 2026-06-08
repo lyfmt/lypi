@@ -16,7 +16,8 @@ class ProjectRootResolverTest {
     void resolveUsesGitDirectoryInsteadOfMavenSubmoduleMarker() throws Exception {
         Path root = Files.createDirectories(tempDir.resolve("repo"));
         Path module = Files.createDirectories(root.resolve("module"));
-        Files.createDirectory(root.resolve(".git"));
+        Path gitDir = Files.createDirectory(root.resolve(".git"));
+        Files.writeString(gitDir.resolve("HEAD"), "ref: refs/heads/main");
         Files.writeString(module.resolve("pom.xml"), "<project/>");
 
         ResourceDiscoveryPlan plan = new ProjectRootResolver().resolve(module);
@@ -31,6 +32,19 @@ class ProjectRootResolverTest {
         assumeFalse(hasGitMarkerAncestor(tempDir.getParent()));
         Path cwd = Files.createDirectories(tempDir.resolve("not-git/module"));
         Files.writeString(tempDir.resolve("not-git/pom.xml"), "<project/>");
+
+        ResourceDiscoveryPlan plan = new ProjectRootResolver().resolve(cwd);
+
+        assertThat(plan.projectRoot()).isEqualTo(cwd);
+        assertThat(plan.cwd()).isEqualTo(cwd);
+        assertThat(plan.diagnostics()).isEmpty();
+    }
+
+    @Test
+    void resolveIgnoresInvalidGitDirectoryInAncestors() throws Exception {
+        Path fakeAncestor = Files.createDirectories(tempDir.resolve("fake-ancestor"));
+        Files.createDirectory(fakeAncestor.resolve(".git"));
+        Path cwd = Files.createDirectories(fakeAncestor.resolve("nested/module"));
 
         ResourceDiscoveryPlan plan = new ProjectRootResolver().resolve(cwd);
 

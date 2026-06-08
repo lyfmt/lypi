@@ -3,12 +3,16 @@ package cn.lypi.transport.tui;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.event.AgentEvent;
+import cn.lypi.contracts.event.CompactEndEvent;
+import cn.lypi.contracts.event.CompactStartEvent;
 import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.RetryEndEvent;
+import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
@@ -56,6 +60,10 @@ public final class TuiEventReducer {
             case ToolEndEvent end -> reduceToolEnd(end);
             case PermissionRequestEvent request -> reducePermissionRequest(request);
             case PermissionDecisionEvent decision -> reducePermissionDecision(decision);
+            case RetryStartEvent retry -> reduceRetryStart(retry);
+            case RetryEndEvent retry -> reduceRetryEnd(retry);
+            case CompactStartEvent compact -> reduceCompactStart(compact);
+            case CompactEndEvent compact -> reduceCompactEnd(compact);
             case ErrorEvent error -> reduceError(error);
             default -> {
                 return view();
@@ -229,6 +237,22 @@ public final class TuiEventReducer {
 
     private void reducePermissionDecision(PermissionDecisionEvent event) {
         state.clearPermissionPrompt();
+    }
+
+    private void reduceRetryStart(RetryStartEvent event) {
+        state.mode("retrying attempt " + event.attempt() + ": " + firstNonBlank(event.reason(), "unknown"));
+    }
+
+    private void reduceRetryEnd(RetryEndEvent event) {
+        state.mode("ready");
+    }
+
+    private void reduceCompactStart(CompactStartEvent event) {
+        state.mode("compacting " + firstNonBlank(event.kind(), "unknown"));
+    }
+
+    private void reduceCompactEnd(CompactEndEvent event) {
+        state.mode("ready");
     }
 
     private void reduceError(ErrorEvent event) {

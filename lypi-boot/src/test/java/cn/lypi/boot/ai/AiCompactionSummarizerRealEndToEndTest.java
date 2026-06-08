@@ -88,7 +88,10 @@ class AiCompactionSummarizerRealEndToEndTest {
     @Test
     @Timeout(180)
     void compactsRealSessionContextThroughConfiguredRealProvider() throws IOException {
-        assumeTrue(Boolean.getBoolean("lypi.summary.e2e"), "Enable with -Dlypi.summary.e2e=true");
+        assumeTrue(
+            Boolean.getBoolean("lypi.summary.e2e") || Boolean.getBoolean("lypi.provider.e2e"),
+            "Enable with -Dlypi.provider.e2e=true or -Dlypi.summary.e2e=true"
+        );
         RealSummarySettings settings = RealSummarySettings.fromSystemProperties();
         SessionManagerImpl session = new SessionManagerImpl(tempDir);
         String sessionId = "real-summary-e2e";
@@ -441,22 +444,36 @@ class AiCompactionSummarizerRealEndToEndTest {
     ) {
         private static RealSummarySettings fromSystemProperties() {
             return new RealSummarySettings(
-                requiredUri("lypi.summary.e2e.base-url"),
-                required("lypi.summary.e2e.api-key"),
-                System.getProperty("lypi.summary.e2e.provider", "real-summary"),
-                required("lypi.summary.e2e.model"),
-                ThinkingLevel.valueOf(System.getProperty("lypi.summary.e2e.thinking", "LOW").toUpperCase(java.util.Locale.ROOT))
+                requiredUri("lypi.summary.e2e.base-url", "lypi.provider.e2e.base-url"),
+                required("lypi.summary.e2e.api-key", "lypi.provider.e2e.api-key"),
+                first("lypi.summary.e2e.provider", "lypi.provider.e2e.provider").orElse("real-summary"),
+                required("lypi.summary.e2e.model", "lypi.provider.e2e.model"),
+                ThinkingLevel.valueOf(first("lypi.summary.e2e.thinking", "lypi.provider.e2e.thinking")
+                    .orElse("LOW")
+                    .toUpperCase(java.util.Locale.ROOT))
             );
         }
 
-        private static URI requiredUri(String key) {
-            return URI.create(required(key));
+        private static URI requiredUri(String primaryKey, String fallbackKey) {
+            return URI.create(required(primaryKey, fallbackKey));
         }
 
-        private static String required(String key) {
-            String value = System.getProperty(key);
-            assumeTrue(value != null && !value.isBlank(), "Missing required system property: " + key);
-            return value;
+        private static String required(String primaryKey, String fallbackKey) {
+            Optional<String> value = first(primaryKey, fallbackKey);
+            assumeTrue(value.isPresent(), "Missing required system property: " + primaryKey + " or " + fallbackKey);
+            return value.orElseThrow();
+        }
+
+        private static Optional<String> first(String primaryKey, String fallbackKey) {
+            String primary = System.getProperty(primaryKey);
+            if (primary != null && !primary.isBlank()) {
+                return Optional.of(primary);
+            }
+            String fallback = System.getProperty(fallbackKey);
+            if (fallback != null && !fallback.isBlank()) {
+                return Optional.of(fallback);
+            }
+            return Optional.empty();
         }
     }
 }

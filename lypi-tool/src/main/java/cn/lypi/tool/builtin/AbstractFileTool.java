@@ -110,6 +110,46 @@ abstract class AbstractFileTool implements Tool<Map<String, Object>, String> {
         }
     }
 
+    protected void requirePathSegmentsInsideWorkspace(Path path, ToolUseContext context) throws IOException {
+        Path cwd = context.cwd().toAbsolutePath().normalize();
+        Path normalized = path.toAbsolutePath().normalize();
+        if (!normalized.startsWith(cwd)) {
+            throw new IllegalArgumentException("路径越过当前工作目录: " + relativePath(path, context));
+        }
+        Path relative = cwd.relativize(normalized);
+        Path current = cwd;
+        for (Path segment : relative) {
+            current = current.resolve(segment).normalize();
+            if (Files.isSymbolicLink(current)) {
+                requireSymlinkTargetInsideWorkspace(current, context);
+            }
+            if (Files.exists(current)) {
+                requireRealPathInsideWorkspace(current, context);
+            } else {
+                Path parent = current.getParent();
+                if (parent != null && Files.exists(parent)) {
+                    requireRealPathInsideWorkspace(parent, context);
+                }
+                return;
+            }
+        }
+    }
+
+    protected void requireSymlinkTargetInsideWorkspace(Path path, ToolUseContext context) throws IOException {
+        if (!Files.isSymbolicLink(path)) {
+            return;
+        }
+        Path target = Files.readSymbolicLink(path);
+        Path parent = path.getParent() == null ? path : path.getParent();
+        Path resolved = target.isAbsolute() ? target.normalize() : parent.resolve(target).normalize();
+        Path realCwd = context.cwd().toRealPath();
+        Path realTargetParent = resolved.getParent() == null ? resolved : resolved.getParent().toRealPath();
+        Path realTarget = Files.exists(resolved) ? resolved.toRealPath() : realTargetParent.resolve(resolved.getFileName()).normalize();
+        if (!realTarget.startsWith(realCwd)) {
+            throw new IllegalArgumentException("路径经符号链接越过当前工作目录: " + relativePath(path, context));
+        }
+    }
+
     protected int intInput(Map<String, Object> input, String fieldName, int defaultValue, int min, int max) {
         Object value = input.get(fieldName);
         int parsed = switch (value) {

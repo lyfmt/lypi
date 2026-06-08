@@ -26,6 +26,9 @@ import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import java.math.BigDecimal;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -38,7 +41,7 @@ import org.junit.jupiter.api.Timeout;
 class OpenAiProviderRealEndToEndTest {
     @Test
     @Timeout(90)
-    void streamsFromConfiguredRealProvider() {
+    void streamsFromConfiguredRealProvider() throws java.io.IOException {
         assumeTrue(Boolean.getBoolean("lypi.provider.e2e"), "Enable with -Dlypi.provider.e2e=true");
         RealProviderSettings settings = RealProviderSettings.fromSystemProperties();
         HttpSseProviderTransport sseTransport = new HttpSseProviderTransport();
@@ -64,6 +67,15 @@ class OpenAiProviderRealEndToEndTest {
         );
 
         List<AssistantStreamEvent> events = collect(adapter.stream(context(settings), descriptor(settings), () -> false));
+        String assistantText = events.stream()
+            .filter(TextDelta.class::isInstance)
+            .map(TextDelta.class::cast)
+            .map(TextDelta::text)
+            .reduce("", String::concat)
+            .strip();
+        Path outputPath = Path.of("target", "real-provider-response.txt");
+        Files.createDirectories(outputPath.getParent());
+        Files.writeString(outputPath, assistantText + System.lineSeparator(), StandardCharsets.UTF_8);
 
         assertThat(events)
             .filteredOn(TextDelta.class::isInstance)
@@ -71,6 +83,8 @@ class OpenAiProviderRealEndToEndTest {
             .extracting(TextDelta::text)
             .anySatisfy(text -> assertThat(text).isNotBlank());
         assertThat(events).anySatisfy(event -> assertThat(event).isInstanceOf(AssistantDone.class));
+        assertThat(outputPath).exists();
+        assertThat(Files.readString(outputPath, StandardCharsets.UTF_8)).isNotBlank();
     }
 
     private static ModelDescriptor descriptor(RealProviderSettings settings) {

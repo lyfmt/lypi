@@ -18,6 +18,11 @@
 			<artifactId>lypi-contracts</artifactId>
 		</dependency>
 		<dependency>
+			<groupId>cn.lypi</groupId>
+			<artifactId>lypi-ai</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
