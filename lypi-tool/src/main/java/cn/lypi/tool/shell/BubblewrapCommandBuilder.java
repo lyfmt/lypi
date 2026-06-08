@@ -515,9 +515,12 @@ public final class BubblewrapCommandBuilder {
 
     private Path absoluteNormalized(Path path, String label) {
         Objects.requireNonNull(path, label + " path must not be null");
-        Path normalized = path.normalize();
-        if (!normalized.isAbsolute()) {
+        if (!path.isAbsolute()) {
             throw new IllegalArgumentException(label + " path must be absolute: " + path);
+        }
+        Path normalized = path.normalize();
+        if (!path.equals(normalized)) {
+            throw new IllegalArgumentException(label + " path must be normalized: " + path);
         }
         return normalized;
     }

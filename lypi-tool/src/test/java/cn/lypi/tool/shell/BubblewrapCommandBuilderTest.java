@@ -305,6 +305,30 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void rejectsNonNormalizedAllowWritePathFromCustomPolicy() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        Path nonNormalizedWorkspace = workspace.resolve("..").resolve(workspace.getFileName());
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(nonNormalizedWorkspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("allowWrite"));
+        assertTrue(exception.getMessage().contains("normalized"));
+    }
+
+    @Test
     void rejectsCwdInsideDenyReadDirectoryToAvoidSandboxStartupFallback() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path secret = Files.createDirectory(workspace.resolve("secret"));

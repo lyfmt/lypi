@@ -198,6 +198,17 @@ class HostExecutorTest {
     }
 
     @Test
+    void connectsChildStdinToDevNull() {
+        HostExecutor executor = new HostExecutor();
+
+        ExecutionResult result = executor.execute(request("readlink /proc/self/fd/0"), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("/dev/null", result.stdout().trim());
+    }
+
+    @Test
     void returnsAfterShellExitEvenWhenBackgroundProcessKeepsPipesOpen() {
         HostExecutor executor = new HostExecutor();
         Instant started = Instant.now();

@@ -10,6 +10,7 @@ import cn.lypi.contracts.runtime.Executor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.Map;
@@ -96,7 +97,6 @@ public final class HostExecutor implements Executor {
         } catch (IOException exception) {
             throw new IllegalStateException("无法启动命令: " + exception.getMessage(), exception);
         }
-        closeChildInput(process);
 
         OutputCollector stdout = new OutputCollector(process.getInputStream(), "stdout", safeProgress);
         OutputCollector stderr = new OutputCollector(process.getErrorStream(), "stderr", safeProgress);
@@ -131,6 +131,7 @@ public final class HostExecutor implements Executor {
 
     private Process startProcess(ExecutionRequest request) throws IOException {
         ProcessBuilder builder = new ProcessBuilder(request.command());
+        builder.redirectInput(ProcessBuilder.Redirect.from(Path.of("/dev/null").toFile()));
         if (request.cwd() != null) {
             builder.directory(request.cwd().toFile());
         }
@@ -144,14 +145,6 @@ public final class HostExecutor implements Executor {
         environment.putIfAbsent("GIT_EDITOR", "true");
         environment.putIfAbsent("LYPI", "1");
         return builder.start();
-    }
-
-    private void closeChildInput(Process process) {
-        try {
-            process.getOutputStream().close();
-        } catch (IOException ignored) {
-            // 子进程可能已经退出并关闭 stdin；执行结果以后续进程状态和输出采集为准。
-        }
     }
 
     private Map<String, String> scrubbedParentEnv() {
