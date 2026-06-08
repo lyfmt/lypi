@@ -3,6 +3,7 @@ package cn.lypi.tool.shell;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -40,10 +41,15 @@ public final class BubblewrapCommandBuilder {
     /**
      * Bubblewrap argv 和需要在执行后清理的合成挂载目标。
      */
-    public record BuildResult(List<String> argv, List<SyntheticMountTarget> syntheticMountTargets) {
+    public record BuildResult(
+        List<String> argv,
+        List<SyntheticMountTarget> syntheticMountTargets,
+        List<ProtectedCreateTarget> protectedCreateTargets
+    ) {
         public BuildResult {
             argv = List.copyOf(argv);
             syntheticMountTargets = List.copyOf(syntheticMountTargets);
+            protectedCreateTargets = List.copyOf(protectedCreateTargets);
         }
     }
 
@@ -76,6 +82,22 @@ public final class BubblewrapCommandBuilder {
         public enum Kind {
             EMPTY_FILE,
             EMPTY_DIRECTORY
+        }
+    }
+
+    /**
+     * 记录不应被沙盒创建的宿主路径。
+     */
+    public record ProtectedCreateTarget(Path path) {
+        public ProtectedCreateTarget {
+            Objects.requireNonNull(path, "path must not be null");
+        }
+
+        /**
+         * 返回缺失路径的受保护创建目标。
+         */
+        public static ProtectedCreateTarget missing(Path path) {
+            return new ProtectedCreateTarget(path);
         }
     }
 
@@ -113,6 +135,7 @@ public final class BubblewrapCommandBuilder {
         rejectUnsupportedDenyWrite(policy);
         List<String> argv = new ArrayList<>();
         List<SyntheticMountTarget> syntheticMountTargets = new ArrayList<>();
+        List<ProtectedCreateTarget> protectedCreateTargets = new ArrayList<>();
         argv.add("bwrap");
         argv.add("--new-session");
         argv.add("--die-with-parent");
@@ -142,8 +165,8 @@ public final class BubblewrapCommandBuilder {
             writableMountPaths.add(mountPath);
             appendWritableBind(argv, mountPath);
         }
-        appendProtectedMetadataMasks(argv, writableMountPaths, syntheticMountTargets);
-        appendDenyReadMasks(argv, policy.denyRead(), writableMountPaths, request.cwd(), syntheticMountTargets);
+        appendProtectedMetadataMasks(argv, writableMountPaths, syntheticMountTargets, protectedCreateTargets);
+        appendDenyReadMasks(argv, policy.denyRead(), writableMountPaths, request.cwd(), syntheticMountTargets, protectedCreateTargets);
         if (request.cwd() != null) {
             Path cwd = absoluteNormalized(request.cwd(), "cwd");
             argv.add("--chdir");
@@ -151,7 +174,7 @@ public final class BubblewrapCommandBuilder {
         }
         argv.add("--");
         argv.addAll(request.command());
-        return new BuildResult(argv, syntheticMountTargets);
+        return new BuildResult(argv, syntheticMountTargets, protectedCreateTargets);
     }
 
     private List<Path> readOnlyPaths(SandboxRuntimePolicy policy) {
@@ -176,7 +199,8 @@ public final class BubblewrapCommandBuilder {
         List<Path> denyReadPaths,
         List<Path> writableRoots,
         Path cwd,
-        List<SyntheticMountTarget> syntheticMountTargets
+        List<SyntheticMountTarget> syntheticMountTargets,
+        List<ProtectedCreateTarget> protectedCreateTargets
     ) {
         Path normalizedCwd = cwd == null ? null : absoluteNormalized(cwd, "cwd");
         LinkedHashSet<Path> masks = new LinkedHashSet<>();
@@ -188,7 +212,7 @@ public final class BubblewrapCommandBuilder {
         }
         rejectNestedDenyReadMasks(masks);
         for (Path denyReadPath : masks) {
-            appendDenyReadMask(argv, denyReadPath, writableRoots, syntheticMountTargets);
+            appendDenyReadMask(argv, denyReadPath, writableRoots, syntheticMountTargets, protectedCreateTargets);
         }
     }
 
@@ -243,7 +267,8 @@ public final class BubblewrapCommandBuilder {
         List<String> argv,
         Path denyReadPath,
         List<Path> writableRoots,
-        List<SyntheticMountTarget> syntheticMountTargets
+        List<SyntheticMountTarget> syntheticMountTargets,
+        List<ProtectedCreateTarget> protectedCreateTargets
     ) {
         List<Path> writableDescendants = writableDescendantsOf(denyReadPath, writableRoots);
         boolean missingPath = !Files.exists(denyReadPath, LinkOption.NOFOLLOW_LINKS);
@@ -261,7 +286,7 @@ public final class BubblewrapCommandBuilder {
             for (Path writableDescendant : writableDescendants) {
                 appendWritableBind(argv, writableDescendant);
             }
-            appendProtectedMetadataMasks(argv, writableDescendants, syntheticMountTargets);
+            appendProtectedMetadataMasks(argv, writableDescendants, syntheticMountTargets, protectedCreateTargets);
             return;
         }
         if (!writableDescendants.isEmpty()) {
@@ -397,26 +422,46 @@ public final class BubblewrapCommandBuilder {
         }
     }
 
-    private void appendProtectedMetadataMasks(List<String> argv, List<Path> writableRoots, List<SyntheticMountTarget> syntheticMountTargets) {
-        for (Path protectedMetadataPath : protectedMetadataPaths(writableRoots)) {
-            appendProtectedMetadataMask(argv, protectedMetadataPath, syntheticMountTargets);
-        }
-    }
-
-    private List<Path> protectedMetadataPaths(List<Path> writableRoots) {
-        LinkedHashSet<Path> paths = new LinkedHashSet<>();
+    private void appendProtectedMetadataMasks(
+        List<String> argv,
+        List<Path> writableRoots,
+        List<SyntheticMountTarget> syntheticMountTargets,
+        List<ProtectedCreateTarget> protectedCreateTargets
+    ) {
+        LinkedHashSet<Path> protectedMetadataPaths = new LinkedHashSet<>();
+        LinkedHashSet<Path> protectedCreatePaths = new LinkedHashSet<>();
         for (Path writableRoot : writableRoots) {
             if (isProtectedMetadataPath(writableRoot)) {
-                paths.add(writableRoot);
+                protectedMetadataPaths.add(writableRoot);
             }
             if (!Files.isDirectory(writableRoot, LinkOption.NOFOLLOW_LINKS)) {
                 continue;
             }
             for (String name : PROTECTED_METADATA_NAMES) {
-                paths.add(writableRoot.resolve(name).normalize());
+                Path protectedMetadataPath = writableRoot.resolve(name).normalize();
+                if (shouldLeaveMissingGitForParentRepoDiscovery(writableRoot, name)) {
+                    protectedCreatePaths.add(protectedMetadataPath);
+                } else {
+                    protectedMetadataPaths.add(protectedMetadataPath);
+                }
             }
         }
-        return List.copyOf(paths);
+        protectedCreatePaths.removeAll(protectedMetadataPaths);
+        for (Path protectedMetadataPath : protectedMetadataPaths) {
+            appendProtectedMetadataMask(argv, protectedMetadataPath, syntheticMountTargets);
+        }
+        for (Path protectedCreatePath : protectedCreatePaths) {
+            appendProtectedCreateTarget(protectedCreateTargets, protectedCreatePath);
+        }
+    }
+
+    private void appendProtectedCreateTarget(List<ProtectedCreateTarget> protectedCreateTargets, Path path) {
+        for (ProtectedCreateTarget target : protectedCreateTargets) {
+            if (target.path().equals(path)) {
+                return;
+            }
+        }
+        protectedCreateTargets.add(ProtectedCreateTarget.missing(path));
     }
 
     private void appendProtectedMetadataMask(List<String> argv, Path path, List<SyntheticMountTarget> syntheticMountTargets) {
@@ -429,6 +474,38 @@ public final class BubblewrapCommandBuilder {
         }
         appendReadonlyEmptyDirectoryMask(argv, path);
         syntheticMountTargets.add(SyntheticMountTarget.emptyDirectory(path));
+    }
+
+    private boolean shouldLeaveMissingGitForParentRepoDiscovery(Path writableRoot, String name) {
+        Path gitPath = writableRoot.resolve(name).normalize();
+        return ".git".equals(name)
+            && !Files.exists(gitPath, LinkOption.NOFOLLOW_LINKS)
+            && ancestorHasGitMetadata(writableRoot);
+    }
+
+    private boolean ancestorHasGitMetadata(Path path) {
+        Path ancestor = path.getParent();
+        while (ancestor != null) {
+            if (hasGitMetadata(ancestor.resolve(".git"))) {
+                return true;
+            }
+            ancestor = ancestor.getParent();
+        }
+        return false;
+    }
+
+    private boolean hasGitMetadata(Path gitPath) {
+        if (Files.isDirectory(gitPath, LinkOption.NOFOLLOW_LINKS)) {
+            return Files.exists(gitPath.resolve("HEAD"), LinkOption.NOFOLLOW_LINKS);
+        }
+        if (!Files.isRegularFile(gitPath, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        try {
+            return Files.readString(gitPath).trim().startsWith("gitdir:");
+        } catch (IOException exception) {
+            return false;
+        }
     }
 
     private boolean isProtectedMetadataPath(Path path) {

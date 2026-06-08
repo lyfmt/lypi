@@ -131,6 +131,78 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void leavesMissingChildGitUnderParentRepoForProtectedCreateCleanup() throws Exception {
+        Path repo = Files.createDirectory(tempDir.resolve("repo"));
+        Path parentGit = Files.createDirectory(repo.resolve(".git"));
+        Files.writeString(parentGit.resolve("HEAD"), "ref: refs/heads/main\n");
+        Path workspace = Files.createDirectory(repo.resolve("workspace"));
+        Path childGit = workspace.resolve(".git");
+        ExecutionRequest request = request(workspace, policy(workspace, NetworkMode.DISABLED));
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request, BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+
+        assertTrue(!containsSequence(
+            argv,
+            "--perms",
+            "555",
+            "--tmpfs",
+            childGit.toString(),
+            "--remount-ro",
+            childGit.toString()
+        ));
+        assertTrue(result.syntheticMountTargets().stream().noneMatch(target -> childGit.equals(target.path())));
+        assertTrue(result.protectedCreateTargets().stream().anyMatch(target -> childGit.equals(target.path())));
+        assertContainsSequence(
+            argv,
+            "--perms",
+            "555",
+            "--tmpfs",
+            workspace.resolve(".codex").toString(),
+            "--remount-ro",
+            workspace.resolve(".codex").toString()
+        );
+        assertContainsSequence(
+            argv,
+            "--perms",
+            "555",
+            "--tmpfs",
+            workspace.resolve(".agents").toString(),
+            "--remount-ro",
+            workspace.resolve(".agents").toString()
+        );
+    }
+
+    @Test
+    void deduplicatesProtectedCreateTargetsAfterReopeningWritableDescendant() throws Exception {
+        Path repo = Files.createDirectory(tempDir.resolve("repo"));
+        Path parentGit = Files.createDirectory(repo.resolve(".git"));
+        Files.writeString(parentGit.resolve("HEAD"), "ref: refs/heads/main\n");
+        Path workspace = Files.createDirectory(repo.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Path writableChild = Files.createDirectory(denied.resolve("child"));
+        Path childGit = writableChild.resolve(".git");
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(denied),
+            List.of(workspace, writableChild),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request(workspace, policy), BubblewrapCommandBuilder.Options.defaults());
+
+        long childGitTargets = result.protectedCreateTargets().stream()
+            .filter(target -> childGit.equals(target.path()))
+            .count();
+        assertEquals(1, childGitTargets);
+    }
+
+    @Test
     void rebindsExistingProtectedMetadataFileAsReadOnly() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path git = workspace.resolve(".git");

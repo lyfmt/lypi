@@ -4,19 +4,33 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
+import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
+import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import java.nio.file.Files;
+import java.nio.file.FileSystems;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -325,6 +339,132 @@ class BubblewrapExecutorTest {
         assertEquals("host-content", Files.readString(tempDir.resolve("missing-secret")));
     }
 
+    @Test
+    void cleansProtectedCreateTargetAndFailsSuccessfulCommand() throws Exception {
+        Path fakeBwrap = fakeBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(fakeBwrap)
+        );
+        Path repo = Files.createDirectory(tempDir.resolve("repo"));
+        Path parentGit = Files.createDirectory(repo.resolve(".git"));
+        Files.writeString(parentGit.resolve("HEAD"), "ref: refs/heads/main\n");
+        Path workspace = Files.createDirectory(repo.resolve("workspace"));
+        Path childGit = workspace.resolve(".git");
+
+        ExecutionResult result = executor.execute(requestInWorkspace(
+            "mkdir -p .git; printf created > .git/HEAD; printf user-success",
+            workspace
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(1, result.exitCode());
+        assertEquals("user-success", result.stdout());
+        assertTrue(result.stderr().contains("protected workspace metadata"));
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+        assertTrue(!Files.exists(childGit));
+    }
+
+    @Test
+    void flagsTransientProtectedCreateTargetEvenWhenCommandRemovesIt() throws Exception {
+        Path fakeBwrap = fakeBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(fakeBwrap)
+        );
+        Path repo = Files.createDirectory(tempDir.resolve("repo"));
+        Path parentGit = Files.createDirectory(repo.resolve(".git"));
+        Files.writeString(parentGit.resolve("HEAD"), "ref: refs/heads/main\n");
+        Path workspace = Files.createDirectory(repo.resolve("workspace"));
+        Path childGit = workspace.resolve(".git");
+
+        ExecutionResult result = executor.execute(requestInWorkspace(
+            "mkdir .git; rmdir .git; printf user-success",
+            workspace
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(1, result.exitCode());
+        assertEquals("user-success", result.stdout());
+        assertTrue(result.stderr().contains("protected workspace metadata"));
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+        assertTrue(!Files.exists(childGit));
+    }
+
+    @Test
+    void reportsProtectedCreateCleanupFailureWithoutThrowing() throws Exception {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
+        Path fakeBwrap = fakeBwrap();
+        Path repo = Files.createDirectory(tempDir.resolve("repo"));
+        Path parentGit = Files.createDirectory(repo.resolve(".git"));
+        Files.writeString(parentGit.resolve("HEAD"), "ref: refs/heads/main\n");
+        Path workspace = Files.createDirectory(repo.resolve("workspace"));
+        Path childGit = workspace.resolve(".git");
+        Path locked = childGit.resolve("locked");
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new LockedProtectedCreateExecutor(childGit),
+            () -> Optional.of(fakeBwrap)
+        );
+
+        try {
+            ExecutionResult result = executor.execute(requestInWorkspace(
+                "printf ignored",
+                workspace
+            ), progress -> {
+            }, () -> false);
+
+            assertEquals(1, result.exitCode());
+            assertEquals("user-success", result.stdout());
+            assertTrue(result.stderr().contains("protected workspace metadata"));
+            assertTrue(result.stderr().contains("failed to remove"));
+            assertTrue(result.metadata().sandboxed());
+            assertEquals("bubblewrap", result.metadata().executorName());
+        } finally {
+            restoreDirectoryPermissions(locked);
+            restoreDirectoryPermissions(childGit);
+        }
+    }
+
+    @Test
+    void serializesExecutionsForSameProtectedCreateTarget() throws Exception {
+        Path fakeBwrap = fakeBwrap();
+        Path repo = Files.createDirectory(tempDir.resolve("repo"));
+        Path parentGit = Files.createDirectory(repo.resolve(".git"));
+        Files.writeString(parentGit.resolve("HEAD"), "ref: refs/heads/main\n");
+        Path workspace = Files.createDirectory(repo.resolve("workspace"));
+        BlockingProtectedCreateExecutor host = new BlockingProtectedCreateExecutor();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            host,
+            () -> Optional.of(fakeBwrap)
+        );
+        AtomicReference<ExecutionResult> firstResult = new AtomicReference<>();
+        AtomicReference<ExecutionResult> secondResult = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        Thread first = Thread.ofVirtual().start(() -> runAndCapture(executor, workspace, firstResult, failure));
+        assertTrue(host.awaitFirstEntry(), "first execution must enter host executor");
+        Thread second = Thread.ofVirtual().start(() -> runAndCapture(executor, workspace, secondResult, failure));
+        Thread.sleep(50);
+
+        assertEquals(1, host.maxActive());
+        assertTrue(secondResult.get() == null, "second execution must wait for same protected path lease");
+
+        host.release();
+        first.join(Duration.ofSeconds(2));
+        second.join(Duration.ofSeconds(2));
+
+        assertTrue(failure.get() == null, () -> failure.get().getMessage());
+        assertEquals(0, firstResult.get().exitCode());
+        assertEquals(0, secondResult.get().exitCode());
+        assertEquals(1, host.maxActive());
+    }
+
     private ExecutionRequest request(String command, boolean failIfUnavailable) {
         return new ExecutionRequest(
             List.of("bash", "-lc", command),
@@ -338,6 +478,24 @@ class BubblewrapExecutorTest {
                 List.of(),
                 NetworkMode.DISABLED,
                 failIfUnavailable,
+                false
+            )
+        );
+    }
+
+    private ExecutionRequest requestInWorkspace(String command, Path workspace) {
+        return new ExecutionRequest(
+            List.of("bash", "-lc", command),
+            workspace,
+            Map.of(),
+            Duration.ofSeconds(5),
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(),
+                List.of(workspace),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
                 false
             )
         );
@@ -396,6 +554,123 @@ class BubblewrapExecutorTest {
                 false
             )
         );
+    }
+
+    private void restoreDirectoryPermissions(Path path) throws Exception {
+        if (!Files.exists(path)) {
+            return;
+        }
+        Set<PosixFilePermission> permissions = PosixFilePermissions.fromString("rwx------");
+        Files.setPosixFilePermissions(path, permissions);
+    }
+
+    private void runAndCapture(
+        BubblewrapExecutor executor,
+        Path workspace,
+        AtomicReference<ExecutionResult> result,
+        AtomicReference<Throwable> failure
+    ) {
+        try {
+            result.set(executor.execute(requestInWorkspace("printf ignored", workspace), progress -> {
+            }, () -> false));
+        } catch (Throwable throwable) {
+            failure.compareAndSet(null, throwable);
+        }
+    }
+
+    private static final class LockedProtectedCreateExecutor implements Executor {
+        private final Path target;
+
+        private LockedProtectedCreateExecutor(Path target) {
+            this.target = target;
+        }
+
+        @Override
+        public String name() {
+            return "host";
+        }
+
+        @Override
+        public ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal) {
+            String sentinel = request.command().stream()
+                .filter(argument -> argument.startsWith("__LYPI_BWRAP_STARTED__"))
+                .findFirst()
+                .orElseThrow();
+            createLockedTarget();
+            return new ExecutionResult(
+                0,
+                "user-success",
+                sentinel + "\n",
+                false,
+                Optional.empty(),
+                ExecutionMetadata.unsandboxed(name())
+            );
+        }
+
+        private void createLockedTarget() {
+            try {
+                Path staging = target.resolveSibling(".git-staging-" + java.util.UUID.randomUUID());
+                Path locked = staging.resolve("locked");
+                Files.createDirectory(staging);
+                Files.createDirectory(locked);
+                Files.writeString(locked.resolve("file"), "secret");
+                Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("---------"));
+                Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE);
+            } catch (Exception exception) {
+                throw new IllegalStateException(exception);
+            }
+        }
+    }
+
+    private static final class BlockingProtectedCreateExecutor implements Executor {
+        private final CountDownLatch firstEntry = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final AtomicInteger active = new AtomicInteger();
+        private final AtomicInteger maxActive = new AtomicInteger();
+
+        @Override
+        public String name() {
+            return "host";
+        }
+
+        @Override
+        public ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal) {
+            String sentinel = request.command().stream()
+                .filter(argument -> argument.startsWith("__LYPI_BWRAP_STARTED__"))
+                .findFirst()
+                .orElseThrow();
+            int running = active.incrementAndGet();
+            maxActive.accumulateAndGet(running, Math::max);
+            firstEntry.countDown();
+            try {
+                release.await(1, TimeUnit.SECONDS);
+                return new ExecutionResult(
+                    0,
+                    "user-success",
+                    sentinel + "\n",
+                    false,
+                    Optional.empty(),
+                    ExecutionMetadata.unsandboxed(name())
+                );
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(exception);
+            } finally {
+                active.decrementAndGet();
+            }
+        }
+
+        private boolean awaitFirstEntry() throws InterruptedException {
+            return firstEntry.await(1, TimeUnit.SECONDS);
+        }
+
+        private void release() {
+            release.countDown();
+        }
+
+        private int maxActive() {
+            return maxActive.get();
+        }
     }
 
     private Path fakeBwrap() throws Exception {
