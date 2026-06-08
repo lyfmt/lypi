@@ -119,9 +119,16 @@ class LyPiToolAutoConfigurationTest {
                     .contains("用户拒绝");
                 assertThat(promptHandle.get()).isNotNull();
                 assertThat(promptHandle.get().request().toolUseId()).isEqualTo("toolu_1");
-                assertThat(eventBus.events).hasSize(2);
-                assertThat(eventBus.events.get(0)).isInstanceOf(PermissionRequestEvent.class);
-                assertThat(eventBus.events.get(1)).isInstanceOf(PermissionDecisionEvent.class);
+                assertThat(eventBus.events).extracting(Object::getClass)
+                    .containsExactly(
+                        ToolStartEvent.class,
+                        PermissionRequestEvent.class,
+                        PermissionDecisionEvent.class,
+                        ToolEndEvent.class
+                    );
+                ToolEndEvent end = (ToolEndEvent) eventBus.events.get(3);
+                assertThat(end.error()).isTrue();
+                assertThat(end.resultSummary().summary()).contains("用户拒绝");
             });
     }
 
@@ -147,7 +154,7 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
-    void defaultRuntimePublishesToolProgressWhenEventBusIsAvailable() {
+    void defaultRuntimePublishesToolLifecycleAndProgressWhenEventBusIsAvailable() {
         RecordingEventBus eventBus = new RecordingEventBus();
 
         new ApplicationContextRunner()
@@ -164,14 +171,18 @@ class LyPiToolAutoConfigurationTest {
                 ).getFirst();
 
                 assertThat(result.isError()).isFalse();
-                assertThat(eventBus.events).anySatisfy(event -> {
-                    assertThat(event).isInstanceOf(ToolProgressEvent.class);
-                    ToolProgressEvent progress = (ToolProgressEvent) event;
-                    assertThat(progress.toolUseId()).isEqualTo("toolu_1");
-                    assertThat(progress.progress().title()).isEqualTo("working");
-                });
-                assertThat(eventBus.events).noneMatch(ToolStartEvent.class::isInstance);
-                assertThat(eventBus.events).noneMatch(ToolEndEvent.class::isInstance);
+                assertThat(eventBus.events).extracting(Object::getClass)
+                    .containsExactly(ToolStartEvent.class, ToolProgressEvent.class, ToolEndEvent.class);
+                ToolStartEvent start = (ToolStartEvent) eventBus.events.get(0);
+                assertThat(start.toolUseId()).isEqualTo("toolu_1");
+                assertThat(start.parentMessageId()).isEqualTo("msg_1");
+                ToolProgressEvent progress = (ToolProgressEvent) eventBus.events.get(1);
+                assertThat(progress.toolUseId()).isEqualTo("toolu_1");
+                assertThat(progress.progress().title()).isEqualTo("working");
+                ToolEndEvent end = (ToolEndEvent) eventBus.events.get(2);
+                assertThat(end.toolUseId()).isEqualTo("toolu_1");
+                assertThat(end.error()).isFalse();
+                assertThat(end.durationMillis()).isGreaterThanOrEqualTo(0L);
             });
     }
 

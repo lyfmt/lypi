@@ -42,7 +42,7 @@ public interface ToolRuntimePort {
      * 编排并执行模型发出的工具调用。
      *
      * NOTE: 必须完成解析、校验、权限、并发规划、执行和结果预算处理。
-     * NOTE: 工具调用生命周期由 agent-core 按模型 tool call 边界发布；工具运行时只发布权限等执行内部事件。
+     * NOTE: 工具调用生命周期由工具运行时按单个工具真实调度与完成边界发布。
      */
     List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context);
 }

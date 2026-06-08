@@ -94,7 +94,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             ToolExecutionInterceptors.noop(),
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionGate),
-            ToolExecutionEventPublisher.progressOnly(eventBus),
+            lifecyclePublisher(eventBus),
             normalizeOptions(options)
         );
     }
@@ -114,7 +114,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             ToolExecutionInterceptors.noop(),
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionResponseGate),
-            ToolExecutionEventPublisher.progressOnly(eventBus),
+            lifecyclePublisher(eventBus),
             normalizeOptions(options)
         );
     }
@@ -162,7 +162,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             interceptor,
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionResponseGate),
-            ToolExecutionEventPublisher.progressOnly(eventBus),
+            lifecyclePublisher(eventBus),
             ToolRuntimeOptions.defaults()
         );
     }
@@ -187,7 +187,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             interceptor,
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionGate),
-            ToolExecutionEventPublisher.progressOnly(eventBus),
+            lifecyclePublisher(eventBus),
             ToolRuntimeOptions.defaults()
         );
     }
@@ -301,18 +301,31 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             results.add(null);
         }
 
-        List<IndexedCall> resolvedCalls = new ArrayList<>();
+        List<IndexedCall> resolvedSegment = new ArrayList<>();
         for (int index = 0; index < requests.size(); index++) {
             ToolUseRequest request = requests.get(index);
             Optional<Tool<?, ?>> tool = registry.resolve(request.toolName());
             if (tool.isEmpty()) {
-                results.set(index, errorResult(request.toolUseId(), "未知工具: " + request.toolName()));
+                executeResolvedSegment(resolvedSegment, context, results);
+                resolvedSegment.clear();
+                results.set(index, executeUnknownCall(request, context));
                 continue;
             }
             Tool<Map<String, Object>, ?> resolvedTool = castTool(tool.get());
-            resolvedCalls.add(new IndexedCall(index, canonicalRequest(request, resolvedTool), request.toolName(), resolvedTool));
+            resolvedSegment.add(new IndexedCall(index, canonicalRequest(request, resolvedTool), request.toolName(), resolvedTool));
         }
+        executeResolvedSegment(resolvedSegment, context, results);
+        return List.copyOf(results);
+    }
 
+    private void executeResolvedSegment(
+        List<IndexedCall> resolvedCalls,
+        ContextSnapshot context,
+        List<ToolResult<?>> results
+    ) {
+        if (resolvedCalls.isEmpty()) {
+            return;
+        }
         List<ToolExecutionPlanner.ResolvedToolCall> calls = resolvedCalls.stream()
             .map(call -> new ToolExecutionPlanner.ResolvedToolCall(call.request(), call.tool()))
             .toList();
@@ -323,7 +336,6 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             executeBatch(batch, indexedBatch, context, results);
             cursor += batch.calls().size();
         }
-        return List.copyOf(results);
     }
 
     private void executeBatch(
@@ -365,60 +377,99 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             originalToolName,
             request.toolName()
         );
+        return executeStartedCall(request, originalToolName, tool.name(), tool, input, toolContext);
+    }
+
+    private ToolResult<?> executeUnknownCall(ToolUseRequest request, ContextSnapshot context) {
+        Map<String, Object> input = request.input() == null ? Map.of() : request.input();
+        String toolName = request.toolName();
+        ToolUseContext toolContext = contextWithCallMetadata(
+            contextFactory.create(request, context),
+            request.toolUseId(),
+            toolName,
+            toolName
+        );
+        ToolExecutionEventPublisher.StartedToolExecution started = eventPublisher.start(
+            toolContext.sessionId(),
+            request.toolUseId(),
+            request.parentMessageId(),
+            stringMetadata(toolContext, METADATA_TURN_ID),
+            toolName,
+            displayTitle(toolName),
+            inputSummary(toolName, input),
+            inputMetadata(input, toolName, toolName)
+        );
+        ToolResult<?> finalResult = null;
         try {
-            ValidationResult schemaResult = schemaValidator.validate(tool.inputSchema(), input);
-            if (!schemaResult.valid()) {
-                return errorResult(request.toolUseId(), "工具输入 schema 校验失败: " + joinMessages(schemaResult));
-            }
-
-            ValidationResult inputResult = tool.validateInput(input, toolContext);
-            if (inputResult != null && !inputResult.valid()) {
-                return errorResult(request.toolUseId(), "工具输入校验失败: " + joinMessages(inputResult));
-            }
-
-            PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
-            PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
-            PermissionDecision effectiveDecision = effectiveDecision(toolDecision, securityDecision);
-            if (isDeny(effectiveDecision)) {
-                return permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(effectiveDecision)));
-            }
-            PermissionGateResult permissionResult = resolvePermission(request, tool, toolContext, effectiveDecision);
-
-            ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
-            if (beforeResult != null && beforeResult.blocked()) {
-                return errorResult(request.toolUseId(), beforeResult.message());
-            }
-
-            return executeStartedCall(request, tool, input, toolContext, permissionResult);
+            finalResult = errorResult(request.toolUseId(), "未知工具: " + toolName);
+            return finalResult;
         } catch (RuntimeException exception) {
-            return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
+            finalResult = errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
+            return finalResult;
+        } finally {
+            publishToolEnd(
+                request,
+                toolContext,
+                toolName,
+                toolName,
+                finalResult,
+                finalResult,
+                ToolExecutionStatus.FAILED,
+                started.startedAt()
+            );
         }
     }
 
     private ToolResult<?> executeStartedCall(
         ToolUseRequest request,
+        String originalToolName,
+        String toolName,
         Tool<Map<String, Object>, ?> tool,
         Map<String, Object> input,
-        ToolUseContext toolContext,
-        PermissionGateResult permissionResult
+        ToolUseContext toolContext
     ) {
         ToolExecutionEventPublisher.StartedToolExecution started = eventPublisher.start(
             toolContext.sessionId(),
             request.toolUseId(),
             request.parentMessageId(),
             stringMetadata(toolContext, METADATA_TURN_ID),
-            tool.name(),
-            displayTitle(tool.name()),
-            inputSummary(tool.name(), input),
-            inputMetadata(input)
+            toolName,
+            displayTitle(toolName),
+            inputSummary(toolName, input),
+            inputMetadata(input, toolName, originalToolName)
         );
         ToolResult<?> rawResult = null;
         ToolResult<?> finalResult = null;
         ToolExecutionStatus status = ToolExecutionStatus.FAILED;
         try {
+            ValidationResult schemaResult = schemaValidator.validate(tool.inputSchema(), input);
+            if (!schemaResult.valid()) {
+                finalResult = errorResult(request.toolUseId(), "工具输入 schema 校验失败: " + joinMessages(schemaResult));
+                return finalResult;
+            }
+
+            ValidationResult inputResult = tool.validateInput(input, toolContext);
+            if (inputResult != null && !inputResult.valid()) {
+                finalResult = errorResult(request.toolUseId(), "工具输入校验失败: " + joinMessages(inputResult));
+                return finalResult;
+            }
+
+            PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
+            PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
+            PermissionDecision effectiveDecision = effectiveDecision(toolDecision, securityDecision);
+            if (isDeny(effectiveDecision)) {
+                finalResult = permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(effectiveDecision)));
+                return finalResult;
+            }
+            PermissionGateResult permissionResult = resolvePermission(request, tool, toolContext, effectiveDecision);
             if (permissionResult.status() != PermissionGateResult.Status.ALLOW) {
                 status = statusForGateResult(permissionResult);
                 finalResult = permissionGateError(request.toolUseId(), permissionResult);
+                return finalResult;
+            }
+            ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
+            if (beforeResult != null && beforeResult.blocked()) {
+                finalResult = errorResult(request.toolUseId(), beforeResult.message());
                 return finalResult;
             }
             if (shouldSkipForAbort(tool, toolContext)) {
@@ -437,27 +488,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             status = ToolExecutionStatus.FAILED;
             return finalResult;
         } finally {
-            Instant endedAt = Instant.now();
-            ToolResult<?> eventResult = rawResult == null ? finalResult : rawResult;
-            ToolResultSummary summary = resultSummary(tool.name(), eventResult, status);
-            ToolOutputRef resultRef = resultRef(
-                toolContext.sessionId(),
-                request.toolUseId(),
-                tool.name(),
-                eventResult,
-                finalResult != null && finalResult.replacement().isPresent()
-            );
-            eventPublisher.end(
-                toolContext.sessionId(),
-                request.toolUseId(),
-                status,
-                summary.exitCode(),
-                summary,
-                resultRef,
-                started.startedAt(),
-                endedAt,
-                Map.of("toolName", tool.name())
-            );
+            publishToolEnd(request, toolContext, toolName, originalToolName, rawResult, finalResult, status, started.startedAt());
         }
     }
 
@@ -491,7 +522,46 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return interceptedResult == null ? result : interceptedResult;
     }
 
-    private ToolResultSummary resultSummary(String toolName, ToolResult<?> result, ToolExecutionStatus status) {
+    private void publishToolEnd(
+        ToolUseRequest request,
+        ToolUseContext toolContext,
+        String toolName,
+        String originalToolName,
+        ToolResult<?> rawResult,
+        ToolResult<?> finalResult,
+        ToolExecutionStatus status,
+        Instant startedAt
+    ) {
+        Instant endedAt = Instant.now();
+        ToolResult<?> eventResult = rawResult == null ? finalResult : rawResult;
+        Map<String, Object> metadata = eventMetadata(toolName, originalToolName);
+        ToolResultSummary summary = resultSummary(toolName, eventResult, status, metadata);
+        ToolOutputRef resultRef = resultRef(
+            toolContext.sessionId(),
+            request.toolUseId(),
+            toolName,
+            eventResult,
+            finalResult != null && finalResult.replacement().isPresent()
+        );
+        eventPublisher.end(
+            toolContext.sessionId(),
+            request.toolUseId(),
+            status,
+            summary.exitCode(),
+            summary,
+            resultRef,
+            startedAt,
+            endedAt,
+            metadata
+        );
+    }
+
+    private ToolResultSummary resultSummary(
+        String toolName,
+        ToolResult<?> result,
+        ToolExecutionStatus status,
+        Map<String, Object> metadata
+    ) {
         String outputText = outputText(result);
         boolean error = result == null || result.isError();
         return new ToolResultSummary(
@@ -501,7 +571,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             exitCode(result),
             status == ToolExecutionStatus.TIMED_OUT,
             byteLength(outputText),
-            Map.of("toolName", toolName)
+            metadata
         );
     }
 
@@ -611,11 +681,13 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return toolName + " " + input;
     }
 
-    private Map<String, Object> inputMetadata(Map<String, Object> input) {
-        if (input == null || input.isEmpty()) {
-            return Map.of();
+    private Map<String, Object> inputMetadata(Map<String, Object> input, String toolName, String originalToolName) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (input != null) {
+            metadata.putAll(input);
         }
-        return Map.copyOf(input);
+        metadata.putAll(originalToolMetadata(toolName, originalToolName));
+        return Map.copyOf(metadata);
     }
 
     private String stringMetadata(ToolUseContext context, String key) {
@@ -669,6 +741,24 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return eventBus == null
             ? PermissionGate.denying()
             : new EventPublishingPermissionGate(eventBus, permissionResponseGate);
+    }
+
+    private static ToolExecutionEventPublisher lifecyclePublisher(EventBus eventBus) {
+        return eventBus == null ? ToolExecutionEventPublisher.noop() : ToolExecutionEventPublisher.eventBus(eventBus);
+    }
+
+    private Map<String, Object> eventMetadata(String toolName, String originalToolName) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("toolName", toolName);
+        metadata.putAll(originalToolMetadata(toolName, originalToolName));
+        return Map.copyOf(metadata);
+    }
+
+    private Map<String, Object> originalToolMetadata(String toolName, String originalToolName) {
+        if (Objects.equals(toolName, originalToolName)) {
+            return Map.of();
+        }
+        return Map.of(METADATA_ORIGINAL_TOOL_NAME, originalToolName);
     }
 
     private boolean shouldSkipForAbort(Tool<Map<String, Object>, ?> tool, ToolUseContext context) {

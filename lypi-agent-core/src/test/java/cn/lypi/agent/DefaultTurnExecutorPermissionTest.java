@@ -27,8 +27,10 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -126,14 +128,12 @@ class DefaultTurnExecutorPermissionTest {
                 TurnStartEvent.class,
                 MessageStartEvent.class,
                 MessageEndEvent.class,
-                ToolStartEvent.class,
-                ToolEndEvent.class,
                 TurnEndEvent.class
             );
         assertThat(eventBus.events.stream()
             .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
             .map(AgentEvent::getClass))
-            .containsExactly(ToolStartEvent.class, ToolEndEvent.class);
+            .isEmpty();
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
     }
 
@@ -252,6 +252,18 @@ class DefaultTurnExecutorPermissionTest {
                 Optional.empty(),
                 Map.of()
             );
+            eventBus.publish(new ToolStartEvent(
+                "session-1",
+                request.toolUseId(),
+                request.parentMessageId(),
+                "turn-1",
+                request.toolName(),
+                request.toolName(),
+                "write notes.txt",
+                request.input(),
+                Instant.EPOCH,
+                Instant.EPOCH
+            ));
             eventBus.publish(new PermissionRequestEvent(
                 "session-1",
                 request.toolUseId(),
@@ -273,6 +285,27 @@ class DefaultTurnExecutorPermissionTest {
                     Optional.empty(),
                     Map.of()
                 ),
+                Instant.EPOCH
+            ));
+            eventBus.publish(new ToolEndEvent(
+                "session-1",
+                request.toolUseId(),
+                ToolExecutionStatus.FAILED,
+                null,
+                new ToolResultSummary(
+                    request.toolName() + " failed",
+                    "权限请求未获允许: 用户拒绝。",
+                    true,
+                    null,
+                    false,
+                    0L,
+                    Map.of("toolName", request.toolName())
+                ),
+                null,
+                Instant.EPOCH,
+                Instant.EPOCH,
+                0L,
+                Map.of("toolName", request.toolName()),
                 Instant.EPOCH
             ));
             return List.of(new ToolResult<>(

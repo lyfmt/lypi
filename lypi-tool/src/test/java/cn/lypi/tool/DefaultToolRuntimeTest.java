@@ -67,6 +67,35 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void publishesLifecycleForUnknownTool() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "missing", Map.of("path", "none"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        List<AgentEvent> lifecycle = lifecycleEvents(events);
+        assertEquals(2, lifecycle.size());
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, lifecycle.get(0));
+        assertEquals("ses_1", start.sessionId());
+        assertEquals("toolu_1", start.toolUseId());
+        assertEquals("msg_1", start.parentMessageId());
+        assertEquals("turn_1", start.turnId());
+        assertEquals("missing", start.toolName());
+        assertEquals("missing {path=none}", start.inputSummary());
+        assertEquals("none", start.inputMetadata().get("path"));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, lifecycle.get(1));
+        assertEquals("toolu_1", end.toolUseId());
+        assertEquals(ToolExecutionStatus.FAILED, end.status());
+        assertTrue(end.resultSummary().error());
+        assertEquals("missing", end.metadata().get("toolName"));
+        assertTrue(end.durationMillis() >= 0);
+    }
+
+    @Test
     void passesCanonicalToolNameToSecurityRuntimeWhenCalledByAlias() {
         AtomicReference<String> securityToolName = new AtomicReference<>();
         SecurityRuntimePort security = (request, context) -> {
@@ -396,14 +425,22 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(1, events.events.size());
-        ToolProgressEvent progress = assertInstanceOf(ToolProgressEvent.class, events.events.getFirst());
+        assertEquals(3, events.events.size());
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        assertEquals("ses_public", start.sessionId());
+        assertEquals("toolu_public", start.toolUseId());
+        assertEquals("msg_parent", start.parentMessageId());
+        assertEquals("turn_public", start.turnId());
+        assertEquals("bash", start.toolName());
+        ToolProgressEvent progress = assertInstanceOf(ToolProgressEvent.class, events.events.get(1));
         assertEquals("ses_public", progress.sessionId());
         assertEquals("toolu_public", progress.toolUseId());
         assertEquals(ToolProgressKind.STATUS, progress.progress().kind());
         assertEquals("executor progress", progress.progress().title());
-        assertEquals(0, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
-        assertEquals(0, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(2));
+        assertEquals("ses_public", end.sessionId());
+        assertEquals("toolu_public", end.toolUseId());
+        assertEquals(ToolExecutionStatus.SUCCEEDED, end.status());
     }
 
     @Test
@@ -427,12 +464,15 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(2, events.events.size());
-        PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, events.events.get(0));
-        PermissionDecisionEvent decision = assertInstanceOf(PermissionDecisionEvent.class, events.events.get(1));
+        assertEquals(4, events.events.size());
+        assertEquals(1, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
+        assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, events.events.get(1));
+        PermissionDecisionEvent decision = assertInstanceOf(PermissionDecisionEvent.class, events.events.get(2));
         assertEquals("toolu_public", request.toolUseId());
         assertEquals("write", request.toolName());
         assertEquals("allow_once", decision.selectedOptionId());
+        assertInstanceOf(ToolEndEvent.class, events.events.get(3));
     }
 
     @Test
@@ -469,8 +509,8 @@ class DefaultToolRuntimeTest {
         assertEquals(1, responseRequests.get());
         assertEquals(1, events.events.stream().filter(PermissionRequestEvent.class::isInstance).count());
         assertEquals(1, events.events.stream().filter(PermissionDecisionEvent.class::isInstance).count());
-        assertEquals(0, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
-        assertEquals(0, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
+        assertEquals(1, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
+        assertEquals(1, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
     }
 
     @Test
@@ -596,7 +636,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void doesNotPublishToolExecutionEventsWhenPermissionDeniedBeforeExecution() {
+    void publishesFailedLifecycleWhenPermissionDeniedBeforeExecution() {
         RecordingEventBus events = new RecordingEventBus();
         SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.DENY, "hard deny");
         DefaultToolRuntime runtime = runtimeWithEvents(events, security);
@@ -608,15 +648,20 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
-        assertEquals(0, events.events.size());
+        List<AgentEvent> lifecycle = lifecycleEvents(events);
+        assertEquals(2, lifecycle.size());
+        assertInstanceOf(ToolStartEvent.class, lifecycle.get(0));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, lifecycle.get(1));
+        assertEquals(ToolExecutionStatus.FAILED, end.status());
+        assertTrue(end.resultSummary().summary().contains("hard deny"));
     }
 
     @Test
-    void publishesProgressForParallelToolsWithoutChangingResultOrder() {
+    void publishesSerialLifecycleOnlyWhenEachToolStarts() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
-        runtime.register(TestTools.progressEcho("first", "first progress"));
-        runtime.register(TestTools.progressEcho("second", "second progress"));
+        runtime.register(TestTools.echo("first", List.of(), false, false, true));
+        runtime.register(TestTools.echo("second", List.of(), false, false, true));
 
         List<ToolResult<?>> results = runtime.execute(List.of(
             new ToolUseRequest("toolu_1", "first", Map.of("text", "one"), "msg_1"),
@@ -625,10 +670,70 @@ class DefaultToolRuntimeTest {
 
         assertEquals("one", results.get(0).newMessages().getFirst().content().getFirst().text());
         assertEquals("two", results.get(1).newMessages().getFirst().content().getFirst().text());
-        assertEquals(6, events.events.size());
-        assertEquals(2, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
-        assertEquals(2, events.events.stream().filter(ToolProgressEvent.class::isInstance).count());
-        assertEquals(2, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
+        List<AgentEvent> lifecycle = lifecycleEvents(events);
+        assertEquals(4, lifecycle.size());
+        assertToolLifecycle(lifecycle.get(0), ToolStartEvent.class, "toolu_1");
+        assertToolLifecycle(lifecycle.get(1), ToolEndEvent.class, "toolu_1");
+        assertToolLifecycle(lifecycle.get(2), ToolStartEvent.class, "toolu_2");
+        assertToolLifecycle(lifecycle.get(3), ToolEndEvent.class, "toolu_2");
+        ToolEndEvent firstEnd = (ToolEndEvent) lifecycle.get(1);
+        ToolStartEvent secondStart = (ToolStartEvent) lifecycle.get(2);
+        assertFalse(secondStart.startedAt().isBefore(firstEnd.endedAt()));
+    }
+
+    @Test
+    void publishesParallelEndsInActualCompletionOrderWithoutChangingResultOrder() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(new TestTools.BlockingEchoTool("slow", Duration.ofMillis(120), true, true));
+        runtime.register(new TestTools.BlockingEchoTool("fast", Duration.ZERO, true, true));
+
+        List<ToolResult<?>> results = runtime.execute(List.of(
+            new ToolUseRequest("toolu_slow", "slow", Map.of("text", "one"), "msg_1"),
+            new ToolUseRequest("toolu_fast", "fast", Map.of("text", "two"), "msg_1")
+        ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
+
+        assertEquals("one", results.get(0).newMessages().getFirst().content().getFirst().text());
+        assertEquals("two", results.get(1).newMessages().getFirst().content().getFirst().text());
+        List<ToolStartEvent> starts = events.events.stream()
+            .filter(ToolStartEvent.class::isInstance)
+            .map(ToolStartEvent.class::cast)
+            .toList();
+        List<ToolEndEvent> ends = events.events.stream()
+            .filter(ToolEndEvent.class::isInstance)
+            .map(ToolEndEvent.class::cast)
+            .toList();
+        assertEquals(2, starts.size());
+        assertEquals(2, ends.size());
+        assertEquals("toolu_fast", ends.get(0).toolUseId());
+        assertEquals("toolu_slow", ends.get(1).toolUseId());
+        assertTrue(ends.get(1).durationMillis() >= ends.get(0).durationMillis());
+    }
+
+    @Test
+    void publishesLifecycleForSchemaAndInputValidationFailures() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(TestTools.requiredTextEcho("schema"));
+        runtime.register(TestTools.inputInvalidEcho("input"));
+
+        List<ToolResult<?>> results = runtime.execute(List.of(
+            new ToolUseRequest("toolu_schema", "schema", Map.of(), "msg_1"),
+            new ToolUseRequest("toolu_input", "input", Map.of("text", "bad"), "msg_1")
+        ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
+
+        assertTrue(results.get(0).isError());
+        assertTrue(results.get(1).isError());
+        List<AgentEvent> lifecycle = lifecycleEvents(events);
+        assertEquals(4, lifecycle.size());
+        assertToolLifecycle(lifecycle.get(0), ToolStartEvent.class, "toolu_schema");
+        ToolEndEvent schemaEnd = assertToolLifecycle(lifecycle.get(1), ToolEndEvent.class, "toolu_schema");
+        assertEquals(ToolExecutionStatus.FAILED, schemaEnd.status());
+        assertTrue(schemaEnd.resultSummary().summary().contains("schema"));
+        assertToolLifecycle(lifecycle.get(2), ToolStartEvent.class, "toolu_input");
+        ToolEndEvent inputEnd = assertToolLifecycle(lifecycle.get(3), ToolEndEvent.class, "toolu_input");
+        assertEquals(ToolExecutionStatus.FAILED, inputEnd.status());
+        assertTrue(inputEnd.resultSummary().summary().contains("bad input"));
     }
 
     @Test
@@ -746,6 +851,23 @@ class DefaultToolRuntimeTest {
 
     private SecurityRuntimePort allowAllSecurity() {
         return (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+    }
+
+    private List<AgentEvent> lifecycleEvents(RecordingEventBus events) {
+        return events.events.stream()
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .toList();
+    }
+
+    private <T extends AgentEvent> T assertToolLifecycle(AgentEvent event, Class<T> type, String toolUseId) {
+        T typed = assertInstanceOf(type, event);
+        if (typed instanceof ToolStartEvent start) {
+            assertEquals(toolUseId, start.toolUseId());
+        }
+        if (typed instanceof ToolEndEvent end) {
+            assertEquals(toolUseId, end.toolUseId());
+        }
+        return typed;
     }
 
     private DefaultToolRuntime runtimeWithGate(PermissionGate gate, SecurityRuntimePort security) {
