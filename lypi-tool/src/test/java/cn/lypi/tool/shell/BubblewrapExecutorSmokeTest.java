@@ -50,6 +50,35 @@ class BubblewrapExecutorSmokeTest {
         assertTrue(!Files.exists(workspace.resolve(".git/HEAD")));
     }
 
+    @Test
+    void masksDenyReadDirectoryWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path secret = Files.createDirectory(workspace.resolve("secret"));
+        Files.writeString(secret.resolve("token"), "hidden");
+
+        ExecutionResult result = executor.execute(request(
+            "cat secret/token",
+            workspace,
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(secret),
+                List.of(workspace),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        ), progress -> {
+        }, () -> false);
+
+        assertTrue(result.exitCode() != 0);
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("hidden", Files.readString(secret.resolve("token")));
+    }
+
     private boolean realBubblewrapWorks(BubblewrapExecutor executor) {
         return realBubblewrapWorks(executor, tempDir);
     }
@@ -65,11 +94,9 @@ class BubblewrapExecutorSmokeTest {
     }
 
     private ExecutionRequest request(String command, Path cwd) {
-        return new ExecutionRequest(
-            List.of("bash", "-lc", command),
+        return request(
+            command,
             cwd,
-            Map.of(),
-            Duration.ofSeconds(5),
             new SandboxRuntimePolicy(
                 List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
                 List.of(),
@@ -79,6 +106,16 @@ class BubblewrapExecutorSmokeTest {
                 false,
                 false
             )
+        );
+    }
+
+    private ExecutionRequest request(String command, Path cwd, SandboxRuntimePolicy policy) {
+        return new ExecutionRequest(
+            List.of("bash", "-lc", command),
+            cwd,
+            Map.of(),
+            Duration.ofSeconds(5),
+            policy
         );
     }
 }

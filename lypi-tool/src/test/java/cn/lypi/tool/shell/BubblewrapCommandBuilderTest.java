@@ -159,12 +159,60 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
-    void rejectsUnsupportedDenyPathsInsteadOfIgnoringThem() throws Exception {
+    void masksExistingDenyReadDirectoryAfterWritableWorkspaceBind() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path secret = Files.createDirectory(workspace.resolve("secret"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+            List.of(secret),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        int denyReadMask = indexOfSequence(argv, "--perms", "000", "--tmpfs", secret.toString(), "--remount-ro", secret.toString());
+        assertTrue(denyReadMask > workspaceBind);
+        assertTrue(denyReadMask < argv.lastIndexOf("--"));
+    }
+
+    @Test
+    void rejectsUnsupportedDenyWriteInsteadOfIgnoringIt() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path cwd = Files.createDirectory(workspace.resolve("src"));
         SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
             List.of(Path.of("/usr")),
+            List.of(),
+            List.of(workspace),
             List.of(workspace.resolve("secret")),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("denyWrite"));
+        assertTrue(exception.getMessage().contains("unsupported"));
+    }
+
+    @Test
+    void rejectsDenyReadFileUntilFileMaskingIsSupported() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path secretFile = Files.writeString(workspace.resolve("secret.txt"), "secret");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(secretFile),
             List.of(workspace),
             List.of(),
             NetworkMode.DISABLED,
@@ -177,7 +225,81 @@ class BubblewrapCommandBuilderTest {
             () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
         );
 
-        assertTrue(exception.getMessage().contains("denyRead"));
+        assertTrue(exception.getMessage().contains("denyRead file"));
+        assertTrue(exception.getMessage().contains("unsupported"));
+    }
+
+    @Test
+    void rejectsDenyReadSymlinkInsteadOfBuildingUnsafeMask() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Files.createDirectory(workspace.resolve("real-secret"));
+        Path secretLink = workspace.resolve("secret");
+        Files.createSymbolicLink(secretLink, Path.of("real-secret"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(secretLink),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("denyRead path must not cross a symbolic link"));
+    }
+
+    @Test
+    void rejectsMissingDenyReadPathUntilSyntheticMaskingIsSupported() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path missingSecret = workspace.resolve("missing-secret");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(missingSecret),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("missing denyRead path"));
+        assertTrue(exception.getMessage().contains("unsupported"));
+    }
+
+    @Test
+    void rejectsDenyReadAncestorOfWritableRootUntilReopenIsSupported() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Path writableChild = Files.createDirectory(denied.resolve("child"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(denied),
+            List.of(workspace, writableChild),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("denyRead ancestor of allowWrite"));
         assertTrue(exception.getMessage().contains("unsupported"));
     }
 
