@@ -25,6 +25,7 @@
 		<module>lypi-tool</module>
 		<module>lypi-security</module>
 		<module>lypi-resource</module>
+		<module>lypi-runtime</module>
 		<module>lypi-transport-headless</module>
 		<module>lypi-transport-tui</module>
 		<module>lypi-boot</module>
@@ -71,6 +72,11 @@
 			<dependency>
 				<groupId>cn.lypi</groupId>
 				<artifactId>lypi-resource</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>cn.lypi</groupId>
+				<artifactId>lypi-runtime</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
