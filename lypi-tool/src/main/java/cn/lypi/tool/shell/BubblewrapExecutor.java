@@ -16,8 +16,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -38,7 +39,7 @@ public final class BubblewrapExecutor implements Executor {
     private final BubblewrapCommandBuilder commandBuilder;
     private final Executor hostExecutor;
     private final Supplier<Optional<Path>> bwrapPathSupplier;
-    private final Map<NetworkMode, PreflightResult> preflightResults = new EnumMap<>(NetworkMode.class);
+    private final Map<PreflightKey, PreflightResult> preflightResults = new LinkedHashMap<>();
 
     public BubblewrapExecutor() {
         this(BubblewrapCommandBuilder.defaults(), new HostExecutor(), BubblewrapExecutor::findSystemBwrap);
@@ -70,13 +71,23 @@ public final class BubblewrapExecutor implements Executor {
         if (bwrapPath.isEmpty()) {
             return handleUnavailable(request, progress, signal, UNAVAILABLE_MESSAGE);
         }
-        PreflightResult preflight = preflight(bwrapPath.orElseThrow(), networkMode(request));
+        PreflightResult preflight = preflight(bwrapPath.orElseThrow(), networkMode(request), true);
+        boolean mountProc = true;
+        if (!preflight.available() && isProcMountFailure(preflight.diagnostic())) {
+            PreflightResult noProcPreflight = preflight(bwrapPath.orElseThrow(), networkMode(request), false);
+            if (noProcPreflight.available()) {
+                preflight = noProcPreflight;
+                mountProc = false;
+            } else {
+                preflight = noProcPreflight;
+            }
+        }
         if (!preflight.available()) {
             return handleUnavailable(request, progress, signal, preflight.diagnostic());
         }
         String sandboxStartedSentinel = sandboxStartedSentinel();
         ExecutionRequest wrappedRequest = requestWithSandboxStartedSentinel(request, sandboxStartedSentinel);
-        List<String> argv = commandBuilder.build(wrappedRequest);
+        List<String> argv = commandBuilder.build(wrappedRequest, new BubblewrapCommandBuilder.Options(mountProc));
         java.util.ArrayList<String> executableArgv = new java.util.ArrayList<>(argv);
         executableArgv.set(0, bwrapPath.orElseThrow().toString());
         ExecutionRequest bwrapRequest = new ExecutionRequest(
@@ -143,12 +154,15 @@ public final class BubblewrapExecutor implements Executor {
         return policy == null ? NetworkMode.DISABLED : policy.networkMode();
     }
 
-    private synchronized PreflightResult preflight(Path bwrapPath, NetworkMode networkMode) {
-        return preflightResults.computeIfAbsent(networkMode, mode -> runPreflight(bwrapPath, mode));
+    private synchronized PreflightResult preflight(Path bwrapPath, NetworkMode networkMode, boolean mountProc) {
+        return preflightResults.computeIfAbsent(
+            new PreflightKey(networkMode, mountProc),
+            key -> runPreflight(bwrapPath, key.networkMode(), key.mountProc())
+        );
     }
 
-    private PreflightResult runPreflight(Path bwrapPath, NetworkMode networkMode) {
-        List<String> command = preflightCommand(bwrapPath, networkMode);
+    private PreflightResult runPreflight(Path bwrapPath, NetworkMode networkMode, boolean mountProc) {
+        List<String> command = preflightCommand(bwrapPath, networkMode, mountProc);
         Process process;
         try {
             process = new ProcessBuilder(command).redirectErrorStream(true).start();
@@ -175,7 +189,7 @@ public final class BubblewrapExecutor implements Executor {
         }
     }
 
-    private List<String> preflightCommand(Path bwrapPath, NetworkMode networkMode) {
+    private List<String> preflightCommand(Path bwrapPath, NetworkMode networkMode, boolean mountProc) {
         List<String> command = new ArrayList<>();
         command.add(bwrapPath.toString());
         command.add("--new-session");
@@ -202,8 +216,10 @@ public final class BubblewrapExecutor implements Executor {
         command.add("/etc");
         command.add("--dev");
         command.add("/dev");
-        command.add("--proc");
-        command.add("/proc");
+        if (mountProc) {
+            command.add("--proc");
+            command.add("/proc");
+        }
         command.add("--tmpfs");
         command.add("/tmp");
         command.add("--");
@@ -219,6 +235,14 @@ public final class BubblewrapExecutor implements Executor {
             return "/bin/true";
         }
         return "true";
+    }
+
+    private boolean isProcMountFailure(String diagnostic) {
+        String normalized = diagnostic == null ? "" : diagnostic.toLowerCase(Locale.ROOT);
+        return normalized.contains("mount proc")
+            && (normalized.contains("operation not permitted")
+                || normalized.contains("permission denied")
+                || normalized.contains("invalid argument"));
     }
 
     private String sandboxStartedSentinel() {
@@ -309,6 +333,9 @@ public final class BubblewrapExecutor implements Executor {
             }
         }
         return Optional.empty();
+    }
+
+    private record PreflightKey(NetworkMode networkMode, boolean mountProc) {
     }
 
     private record PreflightResult(boolean available, String diagnostic) {

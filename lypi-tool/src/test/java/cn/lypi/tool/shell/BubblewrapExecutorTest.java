@@ -135,6 +135,24 @@ class BubblewrapExecutorTest {
     }
 
     @Test
+    void retriesWithoutProcMountWhenProcPreflightFails() throws Exception {
+        Path procFailingBwrap = procFailingBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(procFailingBwrap)
+        );
+
+        ExecutionResult result = executor.execute(request("printf sandbox-after-proc-fallback", false), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("sandbox-after-proc-fallback", result.stdout());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+    }
+
+    @Test
     void fallsBackToHostExecutorWhenBwrapSetupFailsAfterPreflightByDefault() throws Exception {
         Path setupFailingBwrap = setupFailingBwrap();
         BubblewrapExecutor executor = new BubblewrapExecutor(
@@ -212,6 +230,28 @@ class BubblewrapExecutorTest {
         Path script = tempDir.resolve("fake-bwrap.sh");
         Files.writeString(script, """
             #!/bin/sh
+            while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+              shift
+            done
+            if [ "$1" = "--" ]; then
+              shift
+            fi
+            exec "$@"
+            """);
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    private Path procFailingBwrap() throws Exception {
+        Path script = tempDir.resolve("proc-failing-bwrap.sh");
+        Files.writeString(script, """
+            #!/bin/sh
+            for arg in "$@"; do
+              if [ "$arg" = "--proc" ]; then
+                echo "bwrap: Can't mount proc on /proc: Operation not permitted" >&2
+                exit 1
+              fi
+            done
             while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
               shift
             done

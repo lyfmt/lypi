@@ -59,6 +59,21 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void canOmitProcMountWhenRequested() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        ExecutionRequest request = request(cwd, policy(workspace, NetworkMode.DISABLED));
+
+        List<String> argv = BubblewrapCommandBuilder.defaults()
+            .build(request, new BubblewrapCommandBuilder.Options(false));
+
+        assertTrue(!containsSequence(argv, "--proc", "/proc"));
+        assertContainsSequence(argv, "--dev", "/dev");
+        assertContainsSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertCommandSuffix(argv, List.of("bash", "-lc", "printf hello"));
+    }
+
+    @Test
     void rejectsUnsupportedDenyPathsInsteadOfIgnoringThem() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path cwd = Files.createDirectory(workspace.resolve("src"));
@@ -124,10 +139,14 @@ class BubblewrapCommandBuilderTest {
     }
 
     private void assertContainsSequence(List<String> argv, String... sequence) {
-        if (indexOfSequence(argv, sequence) >= 0) {
+        if (containsSequence(argv, sequence)) {
             return;
         }
         throw new AssertionError("missing sequence " + List.of(sequence) + " in " + argv);
+    }
+
+    private boolean containsSequence(List<String> argv, String... sequence) {
+        return indexOfSequence(argv, sequence) >= 0;
     }
 
     private int indexOfSequence(List<String> argv, String... sequence) {

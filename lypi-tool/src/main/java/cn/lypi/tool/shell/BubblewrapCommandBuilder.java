@@ -21,6 +21,18 @@ public final class BubblewrapCommandBuilder {
     );
 
     /**
+     * 控制 bwrap argv 中的可选运行时挂载。
+     */
+    public record Options(boolean mountProc) {
+        /**
+         * 返回默认 bwrap argv 选项。
+         */
+        public static Options defaults() {
+            return new Options(true);
+        }
+    }
+
+    /**
      * 返回默认 Bubblewrap argv 构建器。
      */
     public static BubblewrapCommandBuilder defaults() {
@@ -31,7 +43,15 @@ public final class BubblewrapCommandBuilder {
      * 构建 bwrap 命令行参数。
      */
     public List<String> build(ExecutionRequest request) {
+        return build(request, Options.defaults());
+    }
+
+    /**
+     * 构建 bwrap 命令行参数。
+     */
+    public List<String> build(ExecutionRequest request, Options options) {
         Objects.requireNonNull(request, "request must not be null");
+        Options safeOptions = options == null ? Options.defaults() : options;
         SandboxRuntimePolicy policy = Objects.requireNonNull(request.sandboxPolicy(), "sandboxPolicy must not be null");
         if (request.command() == null || request.command().isEmpty()) {
             throw new IllegalArgumentException("command must not be empty");
@@ -54,8 +74,10 @@ public final class BubblewrapCommandBuilder {
         }
         argv.add("--dev");
         argv.add("/dev");
-        argv.add("--proc");
-        argv.add("/proc");
+        if (safeOptions.mountProc()) {
+            argv.add("--proc");
+            argv.add("/proc");
+        }
         argv.add("--tmpfs");
         argv.add("/tmp");
         for (Path path : writablePaths(policy, request.cwd())) {
