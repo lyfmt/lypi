@@ -53,6 +53,12 @@ final class TuiInputLoop {
             case INSERT_NEWLINE -> editor.insertNewline();
             case DELETE_PREVIOUS_WORD -> editor.deletePreviousWord();
             case DELETE_NEXT_WORD -> editor.deleteNextWord();
+            case DELETE_LINE_BEFORE_CURSOR -> editor.deleteLineBeforeCursor();
+            case UNDO -> editor.undo();
+            case YANK -> editor.yank();
+            case YANK_POP -> editor.yankPop();
+            case MOVE_LEFT -> editor.moveLeft();
+            case MOVE_RIGHT -> editor.moveRight();
             case MOVE_WORD_LEFT -> editor.moveWordLeft();
             case MOVE_WORD_RIGHT -> editor.moveWordRight();
             case PREVIOUS_HISTORY -> editor.previousHistory();

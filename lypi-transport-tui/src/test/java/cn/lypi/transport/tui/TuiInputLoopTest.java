@@ -78,6 +78,43 @@ class TuiInputLoopTest {
         assertEquals("draft", loop.draft());
     }
 
+    @Test
+    void editingKeysMoveCursorDeleteLineUndoAndYank() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
+        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(30, 4));
+
+        loop.acceptText("alpha beta gamma");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptText("!");
+        assertEquals("alpha beta gam!ma", loop.draft());
+
+        loop.acceptKey(TerminalKey.CTRL_U);
+        assertEquals("ma", loop.draft());
+        loop.acceptKey(TerminalKey.CTRL_Y);
+        assertEquals("alpha beta gam!ma", loop.draft());
+        loop.acceptKey(TerminalKey.CTRL_Z);
+        assertEquals("ma", loop.draft());
+    }
+
+    @Test
+    void altYRotatesKillRingAfterYank() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
+        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(30, 4));
+
+        loop.acceptText("alpha beta gamma");
+        loop.acceptKey(TerminalKey.ALT_BACKSPACE);
+        loop.acceptKey(TerminalKey.ALT_BACKSPACE);
+        loop.acceptKey(TerminalKey.CTRL_Y);
+        assertEquals("alpha beta", loop.draft());
+
+        loop.acceptKey(TerminalKey.ALT_Y);
+
+        assertEquals("alpha gamma", loop.draft());
+    }
+
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
         private int interrupts;

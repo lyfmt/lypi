@@ -15,6 +15,12 @@ final class KeyBindingRegistry {
         bindings.put(TerminalKey.MODIFIED_ENTER, TerminalInputAction.INSERT_NEWLINE);
         bindings.put(TerminalKey.ALT_BACKSPACE, TerminalInputAction.DELETE_PREVIOUS_WORD);
         bindings.put(TerminalKey.ALT_DELETE, TerminalInputAction.DELETE_NEXT_WORD);
+        bindings.put(TerminalKey.CTRL_U, TerminalInputAction.DELETE_LINE_BEFORE_CURSOR);
+        bindings.put(TerminalKey.CTRL_Z, TerminalInputAction.UNDO);
+        bindings.put(TerminalKey.CTRL_Y, TerminalInputAction.YANK);
+        bindings.put(TerminalKey.ALT_Y, TerminalInputAction.YANK_POP);
+        bindings.put(TerminalKey.LEFT, TerminalInputAction.MOVE_LEFT);
+        bindings.put(TerminalKey.RIGHT, TerminalInputAction.MOVE_RIGHT);
         bindings.put(TerminalKey.WORD_LEFT, TerminalInputAction.MOVE_WORD_LEFT);
         bindings.put(TerminalKey.WORD_RIGHT, TerminalInputAction.MOVE_WORD_RIGHT);
         bindings.put(TerminalKey.UP, TerminalInputAction.PREVIOUS_HISTORY);
