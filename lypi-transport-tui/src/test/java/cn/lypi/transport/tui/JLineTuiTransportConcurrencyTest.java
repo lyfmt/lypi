@@ -17,4 +17,16 @@ class JLineTuiTransportConcurrencyTest {
         assertEquals("render;input;resize;", order.toString());
         assertEquals(3, transport.uiLockEntryCountForTest());
     }
+
+    @Test
+    void inputLoopCanRunThroughTransportUiMonitor() {
+        StringBuilder order = new StringBuilder();
+        JLineTuiTransport transport = new JLineTuiTransport(() -> {
+        });
+
+        transport.runInputMutationForTest(() -> order.append("key;"));
+
+        assertEquals("key;", order.toString());
+        assertEquals(1, transport.uiLockEntryCountForTest());
+    }
 }
