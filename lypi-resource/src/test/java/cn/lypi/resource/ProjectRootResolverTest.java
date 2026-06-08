@@ -1,6 +1,7 @@
 package cn.lypi.resource;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,6 +28,7 @@ class ProjectRootResolverTest {
 
     @Test
     void resolveUsesCwdWhenNoGitMarkerExists() throws Exception {
+        assumeFalse(hasGitMarkerAncestor(tempDir.getParent()));
         Path cwd = Files.createDirectories(tempDir.resolve("not-git/module"));
         Files.writeString(tempDir.resolve("not-git/pom.xml"), "<project/>");
 
@@ -47,5 +49,16 @@ class ProjectRootResolverTest {
 
         assertThat(plan.projectRoot()).isEqualTo(root);
         assertThat(plan.cwd()).isEqualTo(module);
+    }
+
+    private boolean hasGitMarkerAncestor(Path start) {
+        Path current = start;
+        while (current != null) {
+            if (Files.exists(current.resolve(".git"))) {
+                return true;
+            }
+            current = current.getParent();
+        }
+        return false;
     }
 }

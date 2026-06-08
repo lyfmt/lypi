@@ -1,12 +1,15 @@
 package cn.lypi.agent;
 
 import cn.lypi.agent.compact.CompactionCoordinator;
+import cn.lypi.agent.compact.NoopToolMicroCompactor;
+import cn.lypi.agent.compact.ToolMicroCompactor;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
@@ -69,8 +72,37 @@ final class AgentCoreTestFixtures {
         return textMessage(id, MessageRole.ASSISTANT, MessageKind.TEXT, text);
     }
 
+    static AgentMessage assistantToolCallMessage(String id, String toolUseId, String toolName, Map<String, Object> input) {
+        return new AgentMessage(
+            id,
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new ToolCallContentBlock(
+                toolUseId,
+                toolName,
+                "",
+                Map.of("input", Map.copyOf(input), "complete", true)
+            )),
+            NOW,
+            Optional.empty(),
+            Optional.of("tool_calls")
+        );
+    }
+
     static AgentMessage summaryMessage(String id, String text) {
-        return textMessage(id, MessageRole.SYSTEM_LOCAL, MessageKind.SUMMARY, text);
+        return textMessage(id, MessageRole.USER, MessageKind.SUMMARY, text);
+    }
+
+    static AgentMessage summaryMessage(String id, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.USER,
+            MessageKind.SUMMARY,
+            List.of(new TextContentBlock(text)),
+            timestamp,
+            Optional.empty(),
+            Optional.empty()
+        );
     }
 
     static AgentMessage toolResultMessage(String id, String toolUseId, String text, boolean error) {
@@ -150,6 +182,32 @@ final class AgentCoreTestFixtures {
             toolRuntime,
             eventBus,
             contextAssembler,
+            new NoopToolMicroCompactor(),
+            compactionCoordinator,
+            memoryExtractionWorker
+        );
+    }
+
+    static AgentCoreRuntimePorts ports(
+        InMemorySessionManager session,
+        StubAiProvider aiProvider,
+        StubToolRuntime toolRuntime,
+        RecordingEventBus eventBus,
+        ContextAssembler contextAssembler,
+        ToolMicroCompactor toolMicroCompactor,
+        CompactionCoordinator compactionCoordinator,
+        MemoryExtractionWorker memoryExtractionWorker
+    ) {
+        return new AgentCoreRuntimePorts(
+            Path.of("."),
+            session,
+            aiProvider,
+            toolRuntime,
+            allowAllSecurityRuntime(),
+            fixedResourceRuntime("system"),
+            eventBus,
+            contextAssembler,
+            toolMicroCompactor,
             compactionCoordinator,
             memoryExtractionWorker
         );
@@ -165,6 +223,30 @@ final class AgentCoreTestFixtures {
         CompactionCoordinator compactionCoordinator,
         MemoryExtractionWorker memoryExtractionWorker
     ) {
+        return ports(
+            cwd,
+            session,
+            aiProvider,
+            toolRuntime,
+            eventBus,
+            contextAssembler,
+            new NoopToolMicroCompactor(),
+            compactionCoordinator,
+            memoryExtractionWorker
+        );
+    }
+
+    static AgentCoreRuntimePorts ports(
+        Path cwd,
+        InMemorySessionManager session,
+        StubAiProvider aiProvider,
+        StubToolRuntime toolRuntime,
+        RecordingEventBus eventBus,
+        ContextAssembler contextAssembler,
+        ToolMicroCompactor toolMicroCompactor,
+        CompactionCoordinator compactionCoordinator,
+        MemoryExtractionWorker memoryExtractionWorker
+    ) {
         return new AgentCoreRuntimePorts(
             cwd,
             session,
@@ -174,6 +256,7 @@ final class AgentCoreTestFixtures {
             fixedResourceRuntime("system"),
             eventBus,
             contextAssembler,
+            toolMicroCompactor,
             compactionCoordinator,
             memoryExtractionWorker
         );
@@ -340,7 +423,7 @@ final class AgentCoreTestFixtures {
                 }
             }
             List<AgentMessage> replay = new ArrayList<>();
-            replay.add(summaryMessage("summary-" + compaction.id(), compaction.summary()));
+            replay.add(summaryMessage("summary-" + compaction.id(), compaction.summary(), compaction.timestamp()));
             replay.addAll(kept.isEmpty() ? originalMessages : kept);
             return replay;
         }

@@ -2,6 +2,7 @@ package cn.lypi.agent;
 
 import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.agent.compact.CompactionDecision;
+import cn.lypi.agent.compact.DefaultToolMicroCompactor;
 import cn.lypi.agent.compact.NoopCompactionCoordinator;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
@@ -11,6 +12,8 @@ import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.MessageDeltaEvent;
@@ -895,6 +898,246 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void sendsMicroCompactedContextWithoutChangingSessionTranscript() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        for (int index = 1; index <= 8; index++) {
+            session.appendMessage(toolCallMessage("msg-call-" + index, "read", "tool-" + index));
+            session.appendMessage(AgentCoreTestFixtures.toolResultMessage(
+                "msg-result-" + index,
+                "tool-" + index,
+                "result-" + index,
+                false
+            ));
+        }
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new DefaultToolMicroCompactor(clock),
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(toolResultText(provider.contexts.getFirst(), "tool-1"))
+            .isEqualTo(DefaultToolMicroCompactor.CLEARED_TOOL_RESULT_TEXT);
+        assertThat(toolResultText(provider.contexts.getFirst(), "tool-8"))
+            .isEqualTo("result-8");
+        assertThat(session.messages())
+            .filteredOn(message -> message.id().equals("msg-result-1"))
+            .singleElement()
+            .extracting(DefaultTurnExecutorTest::toolResultText)
+            .isEqualTo("result-1");
+    }
+
+    @Test
+    void hotMicroCompactRequestSendsOriginalContextWhenCacheEditIsUnavailable() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        for (int index = 1; index <= 8; index++) {
+            session.appendMessage(toolCallMessage("msg-call-" + index, "read", "tool-" + index));
+            session.appendMessage(AgentCoreTestFixtures.toolResultMessage(
+                "msg-result-" + index,
+                "tool-" + index,
+                "result-" + index,
+                false
+            ));
+        }
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        MutableTestClock clock = new MutableTestClock(NOW);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant-1"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant-2"),
+            new TextDelta("again"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            session,
+            AgentCoreTestFixtures.fixedResourceRuntime("system"),
+            new ContextBudgetEstimator()
+        );
+        DefaultToolMicroCompactor microCompactor = new DefaultToolMicroCompactor(clock);
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                microCompactor,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            countingIds(),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+        clock.advance(java.time.Duration.ofMinutes(1));
+        executor.execute(new TurnRequest("session-1", "again", Optional.empty(), () -> false));
+
+        assertThat(toolResultText(provider.contexts.getFirst(), "tool-1"))
+            .isEqualTo(DefaultToolMicroCompactor.CLEARED_TOOL_RESULT_TEXT);
+        assertThat(toolResultText(provider.contexts.get(1), "tool-1")).isEqualTo("result-1");
+    }
+
+    @Test
+    void successfulSessionCompactionResetsMicroCompactStateSoNextRequestIsCold() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        for (int index = 1; index <= 8; index++) {
+            session.appendMessage(toolCallMessage("msg-call-" + index, "read", "tool-" + index));
+            session.appendMessage(AgentCoreTestFixtures.toolResultMessage(
+                "msg-result-" + index,
+                "tool-" + index,
+                "result-" + index,
+                false
+            ));
+        }
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        MutableTestClock clock = new MutableTestClock(NOW);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant-1"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant-2"),
+            new TextDelta("again"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            session,
+            AgentCoreTestFixtures.fixedResourceRuntime("system"),
+            new ContextBudgetEstimator()
+        );
+        java.util.concurrent.atomic.AtomicInteger compactionCalls = new java.util.concurrent.atomic.AtomicInteger();
+        CompactionCoordinator compaction = request -> new CompactionDecision(
+            request.assembly().snapshot(),
+            Optional.empty(),
+            compactionCalls.incrementAndGet() == 1,
+            "test"
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new DefaultToolMicroCompactor(clock),
+                compaction,
+                new NoopMemoryExtractionWorker()
+            ),
+            countingIds(),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+        clock.advance(java.time.Duration.ofMinutes(1));
+        executor.execute(new TurnRequest("session-1", "again", Optional.empty(), () -> false));
+
+        assertThat(toolResultText(provider.contexts.get(1), "tool-1"))
+            .isEqualTo(DefaultToolMicroCompactor.CLEARED_TOOL_RESULT_TEXT);
+    }
+
+    @Test
+    void defaultMicroCompactorIsEnabledAndReestimatesBudgetBeforeCompactionPreflight() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        String largeResult = "x".repeat(4_000);
+        for (int index = 1; index <= 8; index++) {
+            session.appendMessage(toolCallMessage("msg-call-" + index, "read", "tool-" + index));
+            session.appendMessage(AgentCoreTestFixtures.toolResultMessage(
+                "msg-result-" + index,
+                "tool-" + index,
+                largeResult,
+                false
+            ));
+        }
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextSnapshot originalContext = AgentCoreTestFixtures.minimalContext(session.messages());
+        ContextAssembler assembler = request -> new ContextAssembly(
+            originalContext,
+            AgentCoreTestFixtures.emptyResources(),
+            session.branch(session.leafId()).stream().map(cn.lypi.contracts.session.SessionEntry::id).toList(),
+            List.of(),
+            List.of(),
+            true
+        );
+        AtomicReference<ContextSnapshot> preflightContext = new AtomicReference<>();
+        CompactionCoordinator compaction = request -> {
+            preflightContext.set(request.assembly().snapshot());
+            return new CompactionDecision(request.assembly().snapshot(), Optional.empty(), false, "within budget");
+        };
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            new AgentCoreRuntimePorts(
+                Path.of("."),
+                session,
+                provider,
+                tools,
+                AgentCoreTestFixtures.allowAllSecurityRuntime(),
+                AgentCoreTestFixtures.fixedResourceRuntime("system"),
+                eventBus,
+                assembler,
+                null,
+                compaction,
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(toolResultText(preflightContext.get(), "tool-1"))
+            .isEqualTo(DefaultToolMicroCompactor.CLEARED_TOOL_RESULT_TEXT);
+        assertThat(preflightContext.get().budget().estimatedContextTokens())
+            .isLessThan(new ContextBudgetEstimator().estimate(originalContext).estimatedContextTokens());
+    }
+
+    @Test
     void buildsContextWithRuntimeCwd() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
@@ -1445,6 +1688,32 @@ class DefaultTurnExecutorTest {
         return false;
     }
 
+    private static AgentMessage toolCallMessage(String id, String toolName, String toolUseId) {
+        return new AgentMessage(
+            id,
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new ToolCallContentBlock(toolUseId, toolName, toolName + " input")),
+            NOW,
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private static String toolResultText(ContextSnapshot context, String toolUseId) {
+        return context.messages().stream()
+            .filter(message -> message.kind() == MessageKind.TOOL_RESULT)
+            .map(message -> (ToolResultContentBlock) message.content().getFirst())
+            .filter(block -> block.toolUseId().equals(toolUseId))
+            .map(ToolResultContentBlock::text)
+            .findFirst()
+            .orElseThrow();
+    }
+
+    private static String toolResultText(AgentMessage message) {
+        return message.content().getFirst().text();
+    }
+
     private String messageId(AgentEvent event) {
         if (event instanceof MessageStartEvent messageStart) {
             return messageStart.messageId();
@@ -1481,5 +1750,58 @@ class DefaultTurnExecutorTest {
             .map(MessageDeltaEvent.class::cast)
             .filter(event -> event.messageId().equals(messageId))
             .toList();
+    }
+
+    private static TurnIds countingIds() {
+        return new TurnIds() {
+            private int index;
+
+            @Override
+            public String newTurnId() {
+                return next("turn");
+            }
+
+            @Override
+            public String newMessageId() {
+                return next("msg");
+            }
+
+            @Override
+            public String newEntryId() {
+                return next("entry");
+            }
+
+            private String next(String prefix) {
+                index++;
+                return prefix + "-" + index;
+            }
+        };
+    }
+
+    private static final class MutableTestClock extends Clock {
+        private java.time.Instant instant;
+
+        private MutableTestClock(java.time.Instant instant) {
+            this.instant = instant;
+        }
+
+        void advance(java.time.Duration duration) {
+            instant = instant.plus(duration);
+        }
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public java.time.Instant instant() {
+            return instant;
+        }
     }
 }

@@ -93,9 +93,8 @@ final class SessionReplayProjector {
         }
 
         List<AgentMessage> projected = new ArrayList<>();
-        projected.add(systemLocalMessage(
+        projected.add(userSummaryMessage(
             "summary-" + compaction.id(),
-            MessageKind.SUMMARY,
             compaction.summary(),
             compaction.timestamp()
         ));
@@ -139,6 +138,18 @@ final class SessionReplayProjector {
             id,
             MessageRole.SYSTEM_LOCAL,
             kind,
+            List.of(new TextContentBlock(text)),
+            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private AgentMessage userSummaryMessage(String id, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.USER,
+            MessageKind.SUMMARY,
             List.of(new TextContentBlock(text)),
             Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
             Optional.empty(),
