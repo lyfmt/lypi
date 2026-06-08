@@ -351,7 +351,7 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
-    void rejectsDenyReadAncestorOfWritableRootUntilReopenIsSupported() throws Exception {
+    void reopensWritableDirectoryUnderDenyReadAncestor() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path denied = Files.createDirectory(workspace.resolve("denied"));
         Path writableChild = Files.createDirectory(denied.resolve("child"));
@@ -366,13 +366,74 @@ class BubblewrapCommandBuilderTest {
             false
         );
 
-        IllegalArgumentException exception = assertThrows(
-            IllegalArgumentException.class,
-            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        int deniedMask = indexOfSequence(argv, "--perms", "111", "--tmpfs", denied.toString());
+        int childTarget = indexOfSequence(argv, "--dir", writableChild.toString());
+        int deniedReadonly = indexOfSequence(argv, "--remount-ro", denied.toString());
+        int childRebind = lastIndexOfSequence(argv, "--bind", writableChild.toString(), writableChild.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(workspaceBind < deniedMask);
+        assertTrue(deniedMask < childTarget);
+        assertTrue(childTarget < deniedReadonly);
+        assertTrue(deniedReadonly < childRebind);
+    }
+
+    @Test
+    void reopensWritableFileParentUnderDenyReadAncestor() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Path childDir = Files.createDirectory(denied.resolve("child"));
+        Path writableFile = Files.writeString(childDir.resolve("note.txt"), "ok");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(denied),
+            List.of(workspace, writableFile),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
         );
 
-        assertTrue(exception.getMessage().contains("denyRead ancestor of allowWrite"));
-        assertTrue(exception.getMessage().contains("unsupported"));
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int deniedMask = indexOfSequence(argv, "--perms", "111", "--tmpfs", denied.toString());
+        int childDirTarget = indexOfSequence(argv, "--dir", childDir.toString());
+        int fileTarget = indexOfSequence(argv, "--dir", writableFile.toString());
+        int deniedReadonly = indexOfSequence(argv, "--remount-ro", denied.toString());
+        int fileRebind = lastIndexOfSequence(argv, "--bind", writableFile.toString(), writableFile.toString());
+        assertTrue(deniedMask < childDirTarget);
+        assertTrue(fileTarget < 0, "writable file itself must not be recreated as a directory");
+        assertTrue(childDirTarget < deniedReadonly);
+        assertTrue(deniedReadonly < fileRebind);
+    }
+
+    @Test
+    void reappliesProtectedMetadataReadonlyAfterReopeningWritableDescendant() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Path writableChild = Files.createDirectory(denied.resolve("child"));
+        Path git = Files.createDirectory(writableChild.resolve(".git"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(denied),
+            List.of(workspace, writableChild),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int deniedReadonly = indexOfSequence(argv, "--remount-ro", denied.toString());
+        int childRebind = lastIndexOfSequence(argv, "--bind", writableChild.toString(), writableChild.toString());
+        int gitReadonly = lastIndexOfSequence(argv, "--ro-bind", git.toString(), git.toString());
+        assertTrue(deniedReadonly < childRebind);
+        assertTrue(childRebind < gitReadonly);
     }
 
     @Test
@@ -430,6 +491,19 @@ class BubblewrapCommandBuilderTest {
 
     private int indexOfSequence(List<String> argv, String... sequence) {
         for (int index = 0; index <= argv.size() - sequence.length; index++) {
+            boolean matches = true;
+            for (int offset = 0; offset < sequence.length; offset++) {
+                matches = matches && sequence[offset].equals(argv.get(index + offset));
+            }
+            if (matches) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private int lastIndexOfSequence(List<String> argv, String... sequence) {
+        for (int index = argv.size() - sequence.length; index >= 0; index--) {
             boolean matches = true;
             for (int offset = 0; offset < sequence.length; offset++) {
                 matches = matches && sequence[offset].equals(argv.get(index + offset));

@@ -15,6 +15,7 @@ import java.util.Objects;
  * 将执行请求和沙盒策略转换为 Bubblewrap argv。
  */
 public final class BubblewrapCommandBuilder {
+    private static final String EMPTY_FILE_FD = "0";
     private static final List<Path> DEFAULT_READ_ONLY_PATHS = List.of(
         Path.of("/usr"),
         Path.of("/bin"),
@@ -89,14 +90,10 @@ public final class BubblewrapCommandBuilder {
             Path mountPath = absoluteNormalized(path, "allowWrite");
             rejectSymlinkPath(mountPath, "allowWrite path must not cross a symbolic link");
             writableMountPaths.add(mountPath);
-            argv.add("--bind");
-            argv.add(mountPath.toString());
-            argv.add(mountPath.toString());
+            appendWritableBind(argv, mountPath);
         }
         for (Path protectedMetadataPath : existingProtectedMetadataPaths(writableMountPaths)) {
-            argv.add("--ro-bind");
-            argv.add(protectedMetadataPath.toString());
-            argv.add(protectedMetadataPath.toString());
+            appendReadonlyBind(argv, protectedMetadataPath);
         }
         appendDenyReadMasks(argv, policy.denyRead(), writableMountPaths, request.cwd());
         if (request.cwd() != null) {
@@ -136,7 +133,7 @@ public final class BubblewrapCommandBuilder {
         }
         rejectNestedDenyReadMasks(masks);
         for (Path denyReadPath : masks) {
-            appendDenyReadMask(argv, denyReadPath);
+            appendDenyReadMask(argv, denyReadPath, writableRoots);
         }
     }
 
@@ -149,31 +146,109 @@ public final class BubblewrapCommandBuilder {
             && !Files.isRegularFile(denyReadPath, LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("denyRead path type is unsupported by bubblewrap v1 policy builder: " + denyReadPath);
         }
-        for (Path writableRoot : writableRoots) {
-            if (writableRoot.startsWith(denyReadPath) && !writableRoot.equals(denyReadPath)) {
-                throw new IllegalArgumentException(
-                    "denyRead ancestor of allowWrite is unsupported by bubblewrap v1 policy builder: " + denyReadPath
-                );
+        if (Files.isRegularFile(denyReadPath, LinkOption.NOFOLLOW_LINKS)) {
+            for (Path writableRoot : writableRoots) {
+                if (writableRoot.startsWith(denyReadPath) && !writableRoot.equals(denyReadPath)) {
+                    throw new IllegalArgumentException(
+                        "denyRead file ancestor of allowWrite is unsupported by bubblewrap v1 policy builder: " + denyReadPath
+                    );
+                }
             }
         }
-        if (cwd != null && cwd.startsWith(denyReadPath)) {
+        if (cwd != null && cwd.startsWith(denyReadPath) && !cwdInsideWritableDescendant(cwd, denyReadPath, writableRoots)) {
             throw new IllegalArgumentException("cwd inside denyRead is unsupported by bubblewrap v1 policy builder: " + cwd);
         }
     }
 
-    private void appendDenyReadMask(List<String> argv, Path denyReadPath) {
+    private boolean cwdInsideWritableDescendant(Path cwd, Path denyReadPath, List<Path> writableRoots) {
+        for (Path writableRoot : writableRoots) {
+            if (writableRoot.startsWith(denyReadPath)
+                && !writableRoot.equals(denyReadPath)
+                && Files.isDirectory(writableRoot, LinkOption.NOFOLLOW_LINKS)
+                && cwd.startsWith(writableRoot)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void appendDenyReadMask(List<String> argv, Path denyReadPath, List<Path> writableRoots) {
+        List<Path> writableDescendants = writableDescendantsOf(denyReadPath, writableRoots);
         argv.add("--perms");
-        argv.add("000");
+        argv.add(writableDescendants.isEmpty() ? "000" : "111");
         if (Files.isDirectory(denyReadPath, LinkOption.NOFOLLOW_LINKS)) {
             argv.add("--tmpfs");
             argv.add(denyReadPath.toString());
+            for (Path writableDescendant : writableDescendants) {
+                appendMountTargetDirs(argv, writableDescendant, denyReadPath);
+            }
             argv.add("--remount-ro");
             argv.add(denyReadPath.toString());
+            for (Path writableDescendant : writableDescendants) {
+                appendWritableBind(argv, writableDescendant);
+            }
+            for (Path protectedMetadataPath : existingProtectedMetadataPaths(writableDescendants)) {
+                appendReadonlyBind(argv, protectedMetadataPath);
+            }
             return;
         }
+        if (!writableDescendants.isEmpty()) {
+            throw new IllegalArgumentException(
+                "denyRead file ancestor of allowWrite is unsupported by bubblewrap v1 policy builder: " + denyReadPath
+            );
+        }
         argv.add("--ro-bind-data");
-        argv.add("0");
+        // NOTE: BubblewrapExecutor 通过 HostExecutor 执行 bwrap；HostExecutor 会关闭子进程 stdin，
+        // 因此 bwrap 从 fd 0 读取 EOF，并把 denyRead 文件覆盖成空且不可读的文件。
+        argv.add(EMPTY_FILE_FD);
         argv.add(denyReadPath.toString());
+    }
+
+    private List<Path> writableDescendantsOf(Path denyReadPath, List<Path> writableRoots) {
+        List<Path> descendants = new ArrayList<>();
+        for (Path writableRoot : writableRoots) {
+            if (writableRoot.startsWith(denyReadPath) && !writableRoot.equals(denyReadPath)) {
+                descendants.add(writableRoot);
+            }
+        }
+        descendants.sort((left, right) -> Integer.compare(pathDepth(left), pathDepth(right)));
+        return List.copyOf(descendants);
+    }
+
+    private void appendMountTargetDirs(List<String> argv, Path mountTarget, Path anchor) {
+        Path lastDirectory = Files.isDirectory(mountTarget, LinkOption.NOFOLLOW_LINKS)
+            ? mountTarget
+            : mountTarget.getParent();
+        if (lastDirectory == null || !lastDirectory.startsWith(anchor) || lastDirectory.equals(anchor)) {
+            return;
+        }
+        List<Path> directories = new ArrayList<>();
+        Path current = lastDirectory;
+        while (current != null && !current.equals(anchor)) {
+            directories.add(current);
+            current = current.getParent();
+        }
+        java.util.Collections.reverse(directories);
+        for (Path directory : directories) {
+            argv.add("--dir");
+            argv.add(directory.toString());
+        }
+    }
+
+    private int pathDepth(Path path) {
+        return path.getNameCount();
+    }
+
+    private void appendWritableBind(List<String> argv, Path path) {
+        argv.add("--bind");
+        argv.add(path.toString());
+        argv.add(path.toString());
+    }
+
+    private void appendReadonlyBind(List<String> argv, Path path) {
+        argv.add("--ro-bind");
+        argv.add(path.toString());
+        argv.add(path.toString());
     }
 
     private void rejectNestedDenyReadMasks(LinkedHashSet<Path> denyReadMasks) {
@@ -199,7 +274,9 @@ public final class BubblewrapCommandBuilder {
         for (Path component : path) {
             current = current.resolve(component);
             if (Files.isSymbolicLink(current)) {
-                throw new IllegalArgumentException(message + ": " + current);
+                throw new IllegalArgumentException(
+                    message + ": " + current
+                );
             }
         }
     }

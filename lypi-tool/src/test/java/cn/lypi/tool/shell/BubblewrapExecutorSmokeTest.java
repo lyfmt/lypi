@@ -82,6 +82,38 @@ class BubblewrapExecutorSmokeTest {
     }
 
     @Test
+    void reopensWritableChildUnderDenyReadDirectoryWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Files.writeString(denied.resolve("secret"), "hidden");
+        Path allowed = Files.createDirectory(denied.resolve("allowed"));
+
+        ExecutionResult result = executor.execute(request(
+            "if cat denied/secret; then printf leaked; else printf blocked; fi; printf '\\n'; printf ok > denied/allowed/out; cat denied/allowed/out",
+            workspace,
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(denied),
+                List.of(workspace, allowed),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("blocked\nok", result.stdout());
+        assertTrue(!result.stdout().contains("hidden"));
+        assertEquals("ok", Files.readString(allowed.resolve("out")));
+    }
+
+    @Test
     void masksDenyReadFileWithRealBubblewrapWhenAvailable() throws Exception {
         BubblewrapExecutor executor = new BubblewrapExecutor();
         Path probe = Files.createDirectory(tempDir.resolve("probe"));
@@ -109,6 +141,39 @@ class BubblewrapExecutorSmokeTest {
         assertTrue(!result.stdout().contains("hidden"));
         assertTrue(result.stderr().contains("Permission denied") || result.stderr().contains("No such file or directory"));
         assertEquals("hidden", Files.readString(secret));
+    }
+
+    @Test
+    void masksMultipleDenyReadFilesWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path firstSecret = Files.writeString(workspace.resolve("first-secret.txt"), "hidden-one");
+        Path secondSecret = Files.writeString(workspace.resolve("second-secret.txt"), "hidden-two");
+
+        ExecutionResult result = executor.execute(request(
+            "cat first-secret.txt second-secret.txt",
+            workspace,
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(firstSecret, secondSecret),
+                List.of(workspace),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        ), progress -> {
+        }, () -> false);
+
+        assertTrue(result.exitCode() != 0);
+        assertTrue(result.metadata().sandboxed());
+        assertTrue(!result.stdout().contains("hidden-one"));
+        assertTrue(!result.stdout().contains("hidden-two"));
+        assertTrue(result.stderr().contains("Permission denied") || result.stderr().contains("No such file or directory"));
+        assertEquals("hidden-one", Files.readString(firstSecret));
+        assertEquals("hidden-two", Files.readString(secondSecret));
     }
 
     private boolean realBubblewrapWorks(BubblewrapExecutor executor) {
