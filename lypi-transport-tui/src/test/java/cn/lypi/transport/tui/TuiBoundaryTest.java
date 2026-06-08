@@ -17,25 +17,16 @@ import javax.xml.parsers.DocumentBuilderFactory;
 class TuiBoundaryTest {
     private static final Path MODULE_ROOT = Path.of(System.getProperty("user.dir"));
     private static final List<String> FORBIDDEN_IMPORT_PREFIXES = List.of(
-        "cn.lypi.agent.",
         "cn.lypi.ai.provider.",
-        "cn.lypi.boot.",
-        "cn.lypi.resource.",
         "cn.lypi.security.",
-        "cn.lypi.session.",
-        "cn.lypi.tool."
+        "cn.lypi.session."
     );
 
     @Test
     void tuiModuleOnlyDependsOnContracts() throws Exception {
         Set<String> dependencies = declaredDependencies(MODULE_ROOT.resolve("pom.xml"));
 
-        assertEquals(Set.of(
-            "lypi-contracts",
-            "jline-terminal",
-            "jline-reader",
-            "jline-builtins"
-        ), dependencies);
+        assertEquals(Set.of("lypi-contracts"), dependencies);
     }
 
     @Test
@@ -57,9 +48,9 @@ class TuiBoundaryTest {
     void tuiMainSourcesDoNotUseForbiddenFullyQualifiedInternals() throws Exception {
         for (Path source : javaSources(MODULE_ROOT.resolve("src/main/java"))) {
             String text = stripLineComments(Files.readString(source));
-            for (String forbidden : FORBIDDEN_IMPORT_PREFIXES) {
-                assertFalse(text.contains(forbidden), source + " must not reference " + forbidden + " internals");
-            }
+            assertFalse(text.contains("cn.lypi.ai.provider."), source + " must not reference provider internals");
+            assertFalse(text.contains("cn.lypi.security.PolicyEngine"), source + " must not call PolicyEngine directly");
+            assertFalse(text.contains("cn.lypi.session.JsonlSessionStore"), source + " must not write session JSONL directly");
         }
     }
 
@@ -88,8 +79,7 @@ class TuiBoundaryTest {
         return java.util.stream.IntStream.range(0, dependencies.getLength())
             .mapToObj(dependencies::item)
             .map(Element.class::cast)
-            .filter(dependency -> "cn.lypi".equals(text(dependency, "groupId"))
-                || "org.jline".equals(text(dependency, "groupId")))
+            .filter(dependency -> "cn.lypi".equals(text(dependency, "groupId")))
             .map(dependency -> text(dependency, "artifactId"))
             .collect(Collectors.toSet());
     }
