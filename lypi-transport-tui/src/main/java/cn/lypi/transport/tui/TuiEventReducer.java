@@ -218,14 +218,10 @@ public final class TuiEventReducer {
     }
 
     private void reducePermissionRequest(PermissionRequestEvent event) {
-        String rule = PermissionOverlay.formatRule(event.policyDecision());
-        if (rule.isBlank()) {
-            rule = event.defaultOptionId();
-        }
         state.permissionPrompt(new PermissionPromptView(
             event.toolUseId(),
             event.message(),
-            rule,
+            event.defaultOptionId(),
             event.defaultOptionId(),
             event.cancelOptionId()
         ));
