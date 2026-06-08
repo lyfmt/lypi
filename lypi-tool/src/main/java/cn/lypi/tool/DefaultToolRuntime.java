@@ -94,7 +94,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             ToolExecutionInterceptors.noop(),
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionGate),
-            ToolExecutionEventPublisher.noop(),
+            ToolExecutionEventPublisher.progressOnly(eventBus),
             normalizeOptions(options)
         );
     }
@@ -114,7 +114,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             ToolExecutionInterceptors.noop(),
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionResponseGate),
-            ToolExecutionEventPublisher.noop(),
+            ToolExecutionEventPublisher.progressOnly(eventBus),
             normalizeOptions(options)
         );
     }
@@ -162,7 +162,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             interceptor,
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionResponseGate),
-            ToolExecutionEventPublisher.noop(),
+            ToolExecutionEventPublisher.progressOnly(eventBus),
             ToolRuntimeOptions.defaults()
         );
     }
@@ -187,7 +187,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             interceptor,
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionGate),
-            ToolExecutionEventPublisher.noop(),
+            ToolExecutionEventPublisher.progressOnly(eventBus),
             ToolRuntimeOptions.defaults()
         );
     }

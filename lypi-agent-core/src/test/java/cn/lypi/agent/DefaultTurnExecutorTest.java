@@ -549,11 +549,12 @@ class DefaultTurnExecutorTest {
             new TextDelta("done"),
             new AssistantDone(Optional.empty(), Optional.of("end_turn"))
         ));
+        String longOutput = "x".repeat(260);
         tools.enqueue(List.of(
             new ToolResult<>(
-                "first",
+                longOutput,
                 false,
-                List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result-1", "toolu-1", "first", false)),
+                List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result-1", "toolu-1", longOutput, false)),
                 Optional.empty()
             ),
             new ToolResult<>(
@@ -615,7 +616,9 @@ class DefaultTurnExecutorTest {
         assertThat(ends).extracting(ToolEndEvent::status)
             .containsExactly(ToolExecutionStatus.SUCCEEDED, ToolExecutionStatus.SUCCEEDED);
         assertThat(ends.getFirst().resultSummary().title()).isEqualTo("read succeeded");
-        assertThat(ends.getFirst().resultSummary().summary()).isEqualTo("first");
+        assertThat(ends.getFirst().resultSummary().summary()).hasSizeLessThan(longOutput.length());
+        assertThat(ends.getFirst().resultSummary().summary()).startsWith("x".repeat(200));
+        assertThat(ends.getFirst().resultSummary().summary()).doesNotContain("x".repeat(260));
         assertThat(ends.getFirst().metadata()).containsEntry("toolName", "read");
         assertThat(ends.getFirst().startedAt()).isEqualTo(NOW);
         assertThat(ends.getFirst().endedAt()).isEqualTo(NOW);

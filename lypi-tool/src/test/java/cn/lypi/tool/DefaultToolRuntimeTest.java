@@ -377,7 +377,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void publicConstructorDoesNotPublishToolLifecycleEventsThroughEventBus() {
+    void publicConstructorPublishesProgressWithoutToolLifecycleEventsThroughEventBus() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = new DefaultToolRuntime(
             ToolRuntimeOptions.builder()
@@ -388,7 +388,7 @@ class DefaultToolRuntimeTest {
             PermissionGate.denying(),
             events
         );
-        runtime.register(TestTools.echo("bash", List.of(), true, true, false));
+        runtime.register(TestTools.progressEcho("bash", "executor progress"));
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_public", "bash", Map.of("text", "done"), "msg_parent")),
@@ -396,7 +396,14 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(0, events.events.size());
+        assertEquals(1, events.events.size());
+        ToolProgressEvent progress = assertInstanceOf(ToolProgressEvent.class, events.events.getFirst());
+        assertEquals("ses_public", progress.sessionId());
+        assertEquals("toolu_public", progress.toolUseId());
+        assertEquals(ToolProgressKind.STATUS, progress.progress().kind());
+        assertEquals("executor progress", progress.progress().title());
+        assertEquals(0, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
+        assertEquals(0, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
     }
 
     @Test

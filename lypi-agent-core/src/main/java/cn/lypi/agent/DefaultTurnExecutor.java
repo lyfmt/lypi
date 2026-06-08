@@ -45,6 +45,8 @@ import java.util.Map;
 import java.util.Optional;
 
 public final class DefaultTurnExecutor implements TurnExecutor {
+    private static final int TOOL_RESULT_SUMMARY_MAX_CHARS = 200;
+
     private final AgentCoreRuntimePorts ports;
     private final TurnIds ids;
     private final Clock clock;
@@ -448,7 +450,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private ToolResultSummary resultSummary(ToolUseRequest request, ToolResult<?> result) {
         boolean error = result == null || result.isError();
         String title = request.toolName() + (error ? " failed" : " succeeded");
-        String summary = result == null ? "" : String.valueOf(result.output());
+        String summary = result == null ? "" : previewSummary(String.valueOf(result.output()));
         return new ToolResultSummary(
             title,
             summary,
@@ -458,6 +460,14 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             outputBytes(result),
             Map.of("toolName", request.toolName())
         );
+    }
+
+    private String previewSummary(String output) {
+        if (output.length() <= TOOL_RESULT_SUMMARY_MAX_CHARS) {
+            return output;
+        }
+        return output.substring(0, TOOL_RESULT_SUMMARY_MAX_CHARS)
+            + "\n\n[工具结果摘要已截断。]";
     }
 
     private long outputBytes(ToolResult<?> result) {
