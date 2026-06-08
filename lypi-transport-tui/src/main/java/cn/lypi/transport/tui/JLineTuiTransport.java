@@ -9,12 +9,35 @@ import java.util.Optional;
 public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final Object uiMonitor = new Object();
     private final Runnable renderer;
+    private final TuiEventReducer reducer;
+    private final TuiRenderer tuiRenderer;
+    private final TuiScreen screen;
+    private final TuiLayout layout;
+    private final FrameSink frameSink;
     private EventSubscription subscription;
     private boolean lastRenderHeldUiLock;
     private int uiLockEntries;
 
     public JLineTuiTransport(Runnable renderer) {
         this.renderer = renderer;
+        this.reducer = null;
+        this.tuiRenderer = null;
+        this.screen = null;
+        this.layout = null;
+        this.frameSink = null;
+    }
+
+    private JLineTuiTransport(FrameSink frameSink, int width, int height) {
+        this.renderer = null;
+        this.reducer = new TuiEventReducer();
+        this.tuiRenderer = new TuiRenderer();
+        this.screen = new TuiScreen(Math.max(1, height - 2));
+        this.layout = new TuiLayout(width, height);
+        this.frameSink = frameSink;
+    }
+
+    static JLineTuiTransport withRenderer(FrameSink frameSink, int width, int height) {
+        return new JLineTuiTransport(frameSink, width, height);
     }
 
     @Override
@@ -28,8 +51,22 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             closeSubscription();
             subscription = events.subscribe(
                 new EventFilter(Optional.empty(), Optional.empty()),
-                envelope -> renderUnderUiLock()
+                envelope -> {
+                    if (reducer != null) {
+                        reduceAndRenderUnderUiLock(envelope.event());
+                    } else {
+                        renderUnderUiLock();
+                    }
+                }
             );
+        }
+    }
+
+    void reduceAndRenderUnderUiLock(cn.lypi.contracts.event.AgentEvent event) {
+        synchronized (uiMonitor) {
+            uiLockEntries++;
+            reducer.reduce(event);
+            frameSink.render(tuiRenderer.render(reducer.view(), screen, layout, ""));
         }
     }
 
@@ -37,7 +74,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             uiLockEntries++;
             lastRenderHeldUiLock = Thread.holdsLock(uiMonitor);
-            renderer.run();
+            if (renderer != null) {
+                renderer.run();
+            }
         }
     }
 
