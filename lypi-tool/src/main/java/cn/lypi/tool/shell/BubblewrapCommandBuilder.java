@@ -176,6 +176,8 @@ public final class BubblewrapCommandBuilder {
         if (policy.networkMode() == NetworkMode.DISABLED) {
             argv.add("--unshare-net");
         }
+        argv.add("--tmpfs");
+        argv.add("/");
         for (Path path : readOnlyPaths(policy)) {
             Path mountPath = absoluteNormalized(path, "allowRead");
             argv.add("--ro-bind-try");

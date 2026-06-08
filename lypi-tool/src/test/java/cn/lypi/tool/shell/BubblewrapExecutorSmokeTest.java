@@ -35,6 +35,26 @@ class BubblewrapExecutorSmokeTest {
     }
 
     @Test
+    void hidesHostPathsOutsideSandboxRootsWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path projectPom = Path.of("").toAbsolutePath().normalize().resolve("pom.xml");
+        assumeTrue(Files.exists(projectPom), "project pom must exist on host for visibility check");
+
+        ExecutionResult result = executor.execute(request(
+            "test ! -e " + shellQuote(projectPom.toString()) + " && printf hidden",
+            workspace
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("hidden", result.stdout());
+    }
+
+    @Test
     void keepsProtectedMetadataReadonlyWithRealBubblewrapWhenAvailable() throws Exception {
         BubblewrapExecutor executor = new BubblewrapExecutor();
         Path probe = Files.createDirectory(tempDir.resolve("probe"));
@@ -353,5 +373,9 @@ class BubblewrapExecutorSmokeTest {
             Duration.ofSeconds(5),
             policy
         );
+    }
+
+    private String shellQuote(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
     }
 }

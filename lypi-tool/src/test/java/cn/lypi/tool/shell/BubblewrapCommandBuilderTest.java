@@ -33,6 +33,9 @@ class BubblewrapCommandBuilderTest {
         assertTrue(argv.contains("--unshare-user"));
         assertTrue(argv.contains("--unshare-pid"));
         assertTrue(argv.contains("--unshare-net"));
+        int emptyRoot = indexOfSequence(argv, "--tmpfs", "/");
+        assertTrue(emptyRoot >= 0, "restricted sandbox must start from an empty root");
+        assertTrue(emptyRoot < indexOfSequence(argv, "--ro-bind-try", "/usr", "/usr"));
         assertContainsSequence(argv, "--ro-bind-try", "/usr", "/usr");
         assertContainsSequence(argv, "--ro-bind-try", "/bin", "/bin");
         assertContainsSequence(argv, "--ro-bind-try", "/lib", "/lib");
