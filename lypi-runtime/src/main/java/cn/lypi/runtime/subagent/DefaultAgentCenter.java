@@ -16,6 +16,7 @@ import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -28,6 +29,7 @@ public final class DefaultAgentCenter implements AgentCenterPort {
     private final List<String> command;
     private final ChildSessionPort childSessions;
     private final SessionManagerPort parentSession;
+    private final Path parentCwd;
     private final SessionManagerFactoryPort sessionManagerFactory;
     private final SubagentProcessRunner processRunner;
     private final DefaultMailboxService mailbox;
@@ -40,6 +42,7 @@ public final class DefaultAgentCenter implements AgentCenterPort {
         List<String> command,
         ChildSessionPort childSessions,
         SessionManagerPort parentSession,
+        Path parentCwd,
         SessionManagerFactoryPort sessionManagerFactory,
         SubagentProcessRunner processRunner,
         DefaultMailboxService mailbox,
@@ -49,6 +52,7 @@ public final class DefaultAgentCenter implements AgentCenterPort {
         this.command = command == null ? List.of() : List.copyOf(command);
         this.childSessions = childSessions;
         this.parentSession = parentSession;
+        this.parentCwd = parentCwd;
         this.sessionManagerFactory = sessionManagerFactory;
         this.processRunner = processRunner;
         this.mailbox = mailbox;
@@ -112,7 +116,7 @@ public final class DefaultAgentCenter implements AgentCenterPort {
                 Optional.ofNullable(exception.getMessage())
             );
             completeStartedAgent(
-                new RunningAgent(agentId, childSessionId, request.parentSessionId(), parentSpawnEntryId, request.cwd(), null),
+                new RunningAgent(agentId, childSessionId, request.parentSessionId(), parentSpawnEntryId, parentCwd, null),
                 output
             );
             return new SubagentSpawnResult(
@@ -126,7 +130,7 @@ public final class DefaultAgentCenter implements AgentCenterPort {
         }
         runningByAgentId.put(
             agentId,
-            new RunningAgent(agentId, childSessionId, request.parentSessionId(), parentSpawnEntryId, request.cwd(), handle)
+            new RunningAgent(agentId, childSessionId, request.parentSessionId(), parentSpawnEntryId, parentCwd, handle)
         );
         handle.completion().whenComplete((output, failure) -> complete(agentId, output, failure));
         return new SubagentSpawnResult(
@@ -171,7 +175,7 @@ public final class DefaultAgentCenter implements AgentCenterPort {
 
     private void completeStartedAgent(RunningAgent running, HeadlessSubagentOutput safeOutput) {
         resultsByChildSessionId.put(running.childSessionId(), safeOutput);
-        SessionManagerPort lifecycleSession = sessionManagerFactory.open(running.cwd(), running.parentSessionId());
+        SessionManagerPort lifecycleSession = sessionManagerFactory.open(running.parentCwd(), running.parentSessionId());
         lifecycleSession.append(new AgentLifecycleEntry(
             "entry_agent_" + randomId(),
             running.parentSpawnEntryId(),
@@ -254,7 +258,7 @@ public final class DefaultAgentCenter implements AgentCenterPort {
         String childSessionId,
         String parentSessionId,
         String parentSpawnEntryId,
-        java.nio.file.Path cwd,
+        Path parentCwd,
         SubagentProcessHandle handle
     ) {}
 }

@@ -54,6 +54,7 @@ class DefaultAgentCenterTest {
             List.of("lypi", "headless-subagent"),
             childSessions,
             parentSession,
+            tempDir,
             sessionFactory(parentSession),
             processRunner,
             mailbox,
@@ -126,6 +127,7 @@ class DefaultAgentCenterTest {
             List.of("lypi", "headless-subagent"),
             childSessions,
             parentSession,
+            tempDir,
             (cwd, sessionId) -> persistentParentSession,
             processRunner,
             mailbox,
@@ -165,6 +167,7 @@ class DefaultAgentCenterTest {
             List.of(),
             childSessions,
             parentSession,
+            tempDir,
             sessionFactory(parentSession),
             processRunner,
             mailbox,
@@ -206,6 +209,7 @@ class DefaultAgentCenterTest {
             List.of("lypi", "headless-subagent"),
             childSessions,
             parentSession,
+            tempDir,
             sessionFactory(parentSession),
             processRunner,
             mailbox,
@@ -255,6 +259,7 @@ class DefaultAgentCenterTest {
             List.of("lypi", "headless-subagent"),
             childSessions,
             parentSession,
+            tempDir,
             sessionFactory(parentSession),
             processRunner,
             mailbox,
@@ -313,6 +318,7 @@ class DefaultAgentCenterTest {
             List.of("lypi", "headless-subagent"),
             request -> null,
             parentSession,
+            tempDir,
             sessionFactory(parentSession),
             new CompletingProcessRunner(),
             mailbox,
@@ -327,6 +333,52 @@ class DefaultAgentCenterTest {
             assertThat(output.summary()).isEqualTo("持久化摘要");
             assertThat(output.finalEntryId()).hasValue("entry_final");
         });
+    }
+
+    @Test
+    void completionLifecycleUsesParentCwdWhenChildCwdIsOverridden() {
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        CapturingSessionFactory sessionFactory = new CapturingSessionFactory(parentSession);
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            request -> null,
+            parentSession,
+            tempDir,
+            sessionFactory,
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        Path childCwd = tempDir.resolve("child");
+        SubagentSpawnResult result = center.spawn(new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请审查代码",
+            childCwd,
+            List.of(),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            Optional.empty(),
+            Optional.empty()
+        ));
+
+        processRunner.complete(new HeadlessSubagentOutput(
+            result.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "完成摘要",
+            Optional.of("entry_final"),
+            Optional.empty()
+        ));
+
+        assertThat(processRunner.input.cwd()).isEqualTo(childCwd);
+        assertThat(sessionFactory.openedCwd).isEqualTo(tempDir);
     }
 
     private SubagentSpawnRequest request(String parentSessionId, String parentEntryId, String prompt) {
@@ -345,6 +397,21 @@ class DefaultAgentCenterTest {
 
     private SessionManagerFactoryPort sessionFactory(SessionManagerPort sessionManager) {
         return (cwd, sessionId) -> sessionManager;
+    }
+
+    private static final class CapturingSessionFactory implements SessionManagerFactoryPort {
+        private final SessionManagerPort sessionManager;
+        private Path openedCwd;
+
+        private CapturingSessionFactory(SessionManagerPort sessionManager) {
+            this.sessionManager = sessionManager;
+        }
+
+        @Override
+        public SessionManagerPort open(Path cwd, String sessionId) {
+            this.openedCwd = cwd;
+            return sessionManager;
+        }
     }
 
     private static final class CapturingChildSessions implements ChildSessionPort {

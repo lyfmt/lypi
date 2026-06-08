@@ -307,6 +307,7 @@ public class LyPiRuntimeAutoConfiguration {
             properties.getCommand(),
             childSessions,
             parentSession,
+            DEFAULT_CWD,
             sessionManagerFactory,
             processRunner,
             mailbox,
