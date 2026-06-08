@@ -18,6 +18,21 @@
 			<artifactId>lypi-contracts</artifactId>
 		</dependency>
 		<dependency>
+			<groupId>org.jline</groupId>
+			<artifactId>jline-terminal</artifactId>
+			<version>3.30.13</version>
+		</dependency>
+		<dependency>
+			<groupId>org.jline</groupId>
+			<artifactId>jline-reader</artifactId>
+			<version>3.30.13</version>
+		</dependency>
+		<dependency>
+			<groupId>org.jline</groupId>
+			<artifactId>jline-builtins</artifactId>
+			<version>3.30.13</version>
+		</dependency>
+		<dependency>
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter</artifactId>
 			<scope>test</scope>
