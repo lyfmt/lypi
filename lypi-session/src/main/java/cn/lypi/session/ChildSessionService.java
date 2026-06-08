@@ -35,6 +35,7 @@ public final class ChildSessionService implements ChildSessionPort {
         validate(request);
         JsonlSessionStore store = new JsonlSessionStore(request.cwd());
         Instant now = Instant.now(clock);
+        int depth = depth(request, store);
         SessionHeader header = new SessionHeader(
             "session",
             1,
@@ -42,7 +43,7 @@ public final class ChildSessionService implements ChildSessionPort {
             request.cwd(),
             java.util.Optional.of(request.parentSessionId()),
             java.util.Optional.of(request.parentSpawnEntryId()),
-            request.depth(),
+            depth,
             request.agentName(),
             request.agentRole(),
             now
@@ -53,7 +54,7 @@ public final class ChildSessionService implements ChildSessionPort {
         SessionInfoEntry info = new SessionInfoEntry(
             SessionEntryIds.newEntryId(),
             null,
-            metadata(request),
+            metadata(request, depth),
             now
         );
         index.add(info);
@@ -66,12 +67,19 @@ public final class ChildSessionService implements ChildSessionPort {
         );
     }
 
-    private Map<String, Object> metadata(ChildSessionRequest request) {
+    private int depth(ChildSessionRequest request, JsonlSessionStore store) {
+        if (!store.exists(request.parentSessionId())) {
+            return request.depth();
+        }
+        return store.read(request.parentSessionId()).header().depth() + 1;
+    }
+
+    private Map<String, Object> metadata(ChildSessionRequest request, int depth) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("kind", "subagent_child_session");
         metadata.put("parentSessionId", request.parentSessionId());
         metadata.put("parentSpawnEntryId", request.parentSpawnEntryId());
-        metadata.put("depth", request.depth());
+        metadata.put("depth", depth);
         request.agentName().ifPresent(value -> metadata.put("agentName", value));
         request.agentRole().ifPresent(value -> metadata.put("agentRole", value));
         return Map.copyOf(metadata);

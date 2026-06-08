@@ -33,7 +33,7 @@ public final class JsonlMailboxStore {
     /**
      * 追加 mailbox 消息状态行。
      */
-    public void append(MailboxMessage message) {
+    public synchronized void append(MailboxMessage message) {
         try {
             Files.createDirectories(mailboxDir);
             Files.writeString(
@@ -51,7 +51,7 @@ public final class JsonlMailboxStore {
     /**
      * 读取指定 session mailbox 的最新状态投影。
      */
-    public List<MailboxMessage> read(String parentSessionId, Set<MailboxStatus> statuses) {
+    public synchronized List<MailboxMessage> read(String parentSessionId, Set<MailboxStatus> statuses) {
         Path file = mailboxFile(parentSessionId);
         if (!Files.exists(file)) {
             return List.of();
@@ -73,6 +73,13 @@ public final class JsonlMailboxStore {
     }
 
     private Path mailboxFile(String parentSessionId) {
-        return mailboxDir.resolve(parentSessionId + ".jsonl").normalize();
+        if (parentSessionId == null || parentSessionId.isBlank() || !parentSessionId.matches("[A-Za-z0-9._-]+")) {
+            throw new IllegalArgumentException("Invalid mailbox session id: " + parentSessionId);
+        }
+        Path file = mailboxDir.resolve(parentSessionId + ".jsonl").normalize();
+        if (!file.startsWith(mailboxDir)) {
+            throw new IllegalArgumentException("Invalid mailbox session id: " + parentSessionId);
+        }
+        return file;
     }
 }

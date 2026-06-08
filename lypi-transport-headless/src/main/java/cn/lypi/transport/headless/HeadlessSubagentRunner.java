@@ -9,7 +9,7 @@ import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
-import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
@@ -55,7 +55,7 @@ public final class HeadlessSubagentRunner {
     public HeadlessSubagentOutput execute(HeadlessSubagentInput input) {
         validate(input);
         try {
-            SessionManagerPort childSession = sessionManagerFactory.open(input.cwd(), input.childSessionId());
+            sessionManagerFactory.open(input.cwd(), input.childSessionId());
             TurnState state = agentCore.execute(new TurnRequest(
                 input.childSessionId(),
                 input.prompt(),
@@ -67,7 +67,7 @@ public final class HeadlessSubagentRunner {
                 input.childSessionId(),
                 status,
                 summary(state),
-                Optional.ofNullable(childSession.currentView().leafId()),
+                finalEntryId(state),
                 status == SubagentRunStatus.SUCCEEDED ? Optional.empty() : Optional.of("Child turn ended with " + state.status())
             );
         } catch (RuntimeException e) {
@@ -93,6 +93,12 @@ public final class HeadlessSubagentRunner {
         }
         if (input.cwd() == null) {
             throw new IllegalArgumentException("cwd is required");
+        }
+        if (!input.allowedTools().isEmpty()) {
+            throw new IllegalArgumentException("allowedTools is not supported yet");
+        }
+        if (input.permissionMode() != PermissionMode.DEFAULT_EXECUTE) {
+            throw new IllegalArgumentException("permissionMode override is not supported yet");
         }
     }
 
@@ -138,6 +144,14 @@ public final class HeadlessSubagentRunner {
             .filter(text -> !text.isBlank())
             .findFirst()
             .orElse("");
+    }
+
+    private Optional<String> finalEntryId(TurnState state) {
+        List<AgentMessage> messages = state.newMessages();
+        if (messages == null || messages.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(messages.getLast().id());
     }
 
     private String text(ContentBlock block) {

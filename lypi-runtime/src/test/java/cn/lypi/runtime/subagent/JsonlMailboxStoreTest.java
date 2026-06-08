@@ -1,6 +1,7 @@
 package cn.lypi.runtime.subagent;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
@@ -44,6 +45,30 @@ class JsonlMailboxStoreTest {
         assertThat(store.read("ses_parent", Set.of(MailboxStatus.PENDING))).isEmpty();
         assertThat(Files.readAllLines(tempDir.resolve(".lypi").resolve("mailbox").resolve("ses_parent.jsonl")))
             .hasSize(2);
+    }
+
+    @Test
+    void rejectsMailboxSessionIdsThatEscapeMailboxDirectory() {
+        JsonlMailboxStore store = new JsonlMailboxStore(tempDir);
+        MailboxMessage traversal = new MailboxMessage(
+            "mail_01",
+            "agent_01",
+            "ses_child",
+            "../sessions/ses_parent",
+            "entry_spawn",
+            "完成摘要",
+            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
+            MailboxStatus.PENDING,
+            NOW,
+            NOW
+        );
+
+        assertThatThrownBy(() -> store.append(traversal))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid mailbox session id");
+        assertThatThrownBy(() -> store.read("../sessions/ses_parent", Set.of()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid mailbox session id");
     }
 
     private MailboxMessage message(MailboxStatus status, Instant now) {

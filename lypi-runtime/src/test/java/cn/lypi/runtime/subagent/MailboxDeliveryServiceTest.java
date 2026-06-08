@@ -81,6 +81,70 @@ class MailboxDeliveryServiceTest {
         assertThat(session.messages).hasSize(1);
     }
 
+    @Test
+    void deliveredOrDiscardedMessagesCannotBeAcceptedAgain() {
+        CapturingSessionManager session = new CapturingSessionManager("ses_parent", "entry_current");
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            session,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        mailbox.publish(message(MailboxStatus.PENDING, NOW));
+
+        assertThat(mailbox.accept("ses_parent", "mail_01").success()).isTrue();
+        assertThat(mailbox.accept("ses_parent", "mail_01").success()).isFalse();
+        assertThat(session.messages).hasSize(1);
+
+        MailboxMessage discarded = new MailboxMessage(
+            "mail_02",
+            "agent_01",
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "完成摘要",
+            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
+            MailboxStatus.DISCARDED,
+            NOW,
+            NOW
+        );
+        mailbox.publish(discarded);
+
+        assertThat(mailbox.accept("ses_parent", "mail_02").success()).isFalse();
+        assertThat(session.messages).hasSize(1);
+    }
+
+    @Test
+    void acceptRejectsWhenCurrentSessionDoesNotMatchMailboxSession() {
+        CapturingSessionManager session = new CapturingSessionManager("ses_other", "entry_current");
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            session,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        mailbox.publish(message(MailboxStatus.PENDING, NOW));
+
+        assertThat(mailbox.accept("ses_parent", "mail_01").success()).isFalse();
+
+        assertThat(session.messages).isEmpty();
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING))).hasSize(1);
+    }
+
+    @Test
+    void stashAndDiscardRejectWhenCurrentSessionDoesNotMatchMailboxSession() {
+        CapturingSessionManager session = new CapturingSessionManager("ses_other", "entry_current");
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            session,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        mailbox.publish(message(MailboxStatus.PENDING, NOW));
+
+        assertThat(mailbox.stash("ses_parent", "mail_01").success()).isFalse();
+        assertThat(mailbox.discard("ses_parent", "mail_01").success()).isFalse();
+
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING))).hasSize(1);
+    }
+
     private MailboxMessage message(MailboxStatus status, Instant now) {
         return new MailboxMessage(
             "mail_01",

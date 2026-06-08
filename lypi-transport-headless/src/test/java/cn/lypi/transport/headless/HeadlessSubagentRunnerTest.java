@@ -45,8 +45,8 @@ class HeadlessSubagentRunnerTest {
               "parentSpawnEntryId": "entry_spawn",
               "prompt": "请审查代码",
               "cwd": "/tmp/project",
-              "allowedTools": ["read"],
-              "permissionMode": "PLAN",
+              "allowedTools": [],
+              "permissionMode": "DEFAULT_EXECUTE",
               "timeoutSeconds": 30
             }
             """;
@@ -62,7 +62,7 @@ class HeadlessSubagentRunnerTest {
         assertThat(output.childSessionId()).isEqualTo("ses_child");
         assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
         assertThat(output.summary()).isEqualTo("child final answer");
-        assertThat(output.finalEntryId()).contains("entry_final");
+        assertThat(output.finalEntryId()).contains("msg_final");
     }
 
     @Test

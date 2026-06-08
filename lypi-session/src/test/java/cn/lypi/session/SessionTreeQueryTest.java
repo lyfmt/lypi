@@ -30,7 +30,7 @@ class SessionTreeQueryTest {
             "ses_parent",
             "entry_spawn",
             tempDir,
-            2,
+            99,
             Optional.of("reviewer"),
             Optional.of("code-review")
         ));
@@ -43,7 +43,7 @@ class SessionTreeQueryTest {
                 assertThat(child.sessionId()).isEqualTo("ses_child");
                 assertThat(child.parentSessionId()).contains("ses_parent");
                 assertThat(child.parentSpawnEntryId()).contains("entry_spawn");
-                assertThat(child.depth()).isEqualTo(2);
+                assertThat(child.depth()).isEqualTo(1);
                 assertThat(child.agentName()).contains("reviewer");
                 assertThat(child.agentRole()).contains("code-review");
             });

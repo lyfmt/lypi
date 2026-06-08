@@ -61,7 +61,7 @@ class HeadlessSubagentCommandTest {
             "entry_spawn",
             "执行检查",
             tempDir,
-            List.of("read"),
+            List.of(),
             PermissionMode.DEFAULT_EXECUTE,
             30
         ), input);

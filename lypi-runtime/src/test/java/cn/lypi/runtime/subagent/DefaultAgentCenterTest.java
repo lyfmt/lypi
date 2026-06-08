@@ -64,8 +64,8 @@ class DefaultAgentCenterTest {
             "entry_parent",
             "请审查代码",
             tempDir,
-            List.of("read"),
-            PermissionMode.PLAN,
+            List.of(),
+            PermissionMode.DEFAULT_EXECUTE,
             30,
             Optional.of("reviewer"),
             Optional.of("code-review")
@@ -101,6 +101,51 @@ class DefaultAgentCenterTest {
                 assertThat(message.parentSpawnEntryId()).isEqualTo(result.parentSpawnEntryId());
                 assertThat(message.summary()).isEqualTo("完成摘要");
             });
+        assertThat(parentSession.entries)
+            .filteredOn(AgentLifecycleEntry.class::isInstance)
+            .map(AgentLifecycleEntry.class::cast)
+            .extracting(AgentLifecycleEntry::lifecycle)
+            .containsExactly("spawned", "finished");
+    }
+
+    @Test
+    void missingSubagentCommandReturnsStructuredFailureWithoutCreatingPersistentState() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of(),
+            childSessions,
+            parentSession,
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        SubagentSpawnResult result = center.spawn(new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请审查代码",
+            tempDir,
+            List.of(),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            Optional.empty(),
+            Optional.empty()
+        ));
+
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.FAILED);
+        assertThat(result.message()).hasValueSatisfying(message -> assertThat(message).contains("Subagent command is not configured"));
+        assertThat(childSessions.request).isNull();
+        assertThat(parentSession.entries).isEmpty();
+        assertThat(processRunner.input).isNull();
+        assertThat(mailbox.read("ses_parent", Set.of())).isEmpty();
     }
 
     @Test
@@ -128,7 +173,7 @@ class DefaultAgentCenterTest {
             "请审查代码",
             tempDir,
             List.of(),
-            PermissionMode.PLAN,
+            PermissionMode.DEFAULT_EXECUTE,
             30,
             Optional.empty(),
             Optional.empty()

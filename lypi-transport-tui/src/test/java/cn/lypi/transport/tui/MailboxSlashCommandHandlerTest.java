@@ -80,6 +80,17 @@ class MailboxSlashCommandHandlerTest {
         assertTrue(handler.lastOutput().contains("mailId 不能为空"));
     }
 
+    @Test
+    void invalidStatusFilterReturnsUserFacingError() {
+        RecordingMailbox mailbox = new RecordingMailbox();
+        MailboxSlashCommandHandler handler = new MailboxSlashCommandHandler(mailbox, () -> "ses_parent");
+
+        handler.handle(Map.of("action", "list", "statuses", "missing"));
+
+        assertTrue(handler.lastOutput().contains("未知 mailbox status"));
+        assertEquals(null, mailbox.readSessionId);
+    }
+
     private static MailboxMessage message(MailboxStatus status) {
         return new MailboxMessage(
             "mail_1",

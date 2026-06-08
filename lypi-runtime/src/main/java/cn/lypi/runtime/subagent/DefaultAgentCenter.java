@@ -3,6 +3,7 @@ package cn.lypi.runtime.subagent;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
@@ -53,6 +54,12 @@ public final class DefaultAgentCenter implements AgentCenterPort {
 
     @Override
     public SubagentSpawnResult spawn(SubagentSpawnRequest request) {
+        if (command.isEmpty()) {
+            return failedSpawn(request, "Subagent command is not configured");
+        }
+        if (!request.allowedTools().isEmpty() || request.permissionMode() != PermissionMode.DEFAULT_EXECUTE) {
+            return failedSpawn(request, "Subagent tool and permission isolation is not implemented");
+        }
         String agentId = "agent_" + randomId();
         String childSessionId = "ses_child_" + randomId();
         String parentSpawnEntryId = "entry_spawn_" + randomId();
@@ -89,7 +96,27 @@ public final class DefaultAgentCenter implements AgentCenterPort {
             request.permissionMode(),
             request.timeoutSeconds()
         );
-        SubagentProcessHandle handle = processRunner.start(input);
+        SubagentProcessHandle handle;
+        try {
+            handle = processRunner.start(input);
+        } catch (RuntimeException exception) {
+            HeadlessSubagentOutput output = new HeadlessSubagentOutput(
+                childSessionId,
+                SubagentRunStatus.FAILED,
+                "",
+                Optional.empty(),
+                Optional.ofNullable(exception.getMessage())
+            );
+            completeStartedAgent(new RunningAgent(agentId, childSessionId, request.parentSessionId(), parentSpawnEntryId, null), output);
+            return new SubagentSpawnResult(
+                agentId,
+                childSessionId,
+                request.parentSessionId(),
+                parentSpawnEntryId,
+                SubagentRunStatus.FAILED,
+                Optional.ofNullable(exception.getMessage())
+            );
+        }
         runningByAgentId.put(agentId, new RunningAgent(agentId, childSessionId, request.parentSessionId(), parentSpawnEntryId, handle));
         handle.completion().whenComplete((output, failure) -> complete(agentId, output, failure));
         return new SubagentSpawnResult(
@@ -125,7 +152,24 @@ public final class DefaultAgentCenter implements AgentCenterPort {
         HeadlessSubagentOutput safeOutput = output == null
             ? failedOutput(running.childSessionId(), failure)
             : output;
+        completeStartedAgent(running, safeOutput);
+    }
+
+    private void completeStartedAgent(RunningAgent running, HeadlessSubagentOutput safeOutput) {
         resultsByChildSessionId.put(running.childSessionId(), safeOutput);
+        parentSession.append(new AgentLifecycleEntry(
+            "entry_agent_" + randomId(),
+            running.parentSpawnEntryId(),
+            running.agentId(),
+            running.childSessionId(),
+            running.parentSessionId(),
+            lifecycle(safeOutput.status()),
+            Map.of(
+                "status", safeOutput.status().name(),
+                "errorMessage", safeOutput.errorMessage().orElse("")
+            ),
+            Instant.now(clock)
+        ));
         MailboxMessage message = mailboxMessage(running, safeOutput);
         mailbox.publish(message);
         deliveryService.tryDeliver(message);
@@ -155,6 +199,26 @@ public final class DefaultAgentCenter implements AgentCenterPort {
             now,
             now
         );
+    }
+
+    private SubagentSpawnResult failedSpawn(SubagentSpawnRequest request, String message) {
+        return new SubagentSpawnResult(
+            "",
+            "",
+            request.parentSessionId(),
+            "",
+            SubagentRunStatus.FAILED,
+            Optional.of(message)
+        );
+    }
+
+    private String lifecycle(SubagentRunStatus status) {
+        return switch (status) {
+            case SUCCEEDED -> "finished";
+            case INTERRUPTED -> "interrupted";
+            case TIMED_OUT -> "timed_out";
+            case STARTED, RUNNING, FAILED -> "failed";
+        };
     }
 
     private String randomId() {

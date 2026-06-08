@@ -9,9 +9,13 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
     private final List<String> command;
@@ -35,29 +39,61 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
             Process process = new ProcessBuilder(command).start();
             objectMapper.writeValue(process.getOutputStream(), input);
             process.getOutputStream().close();
-            CompletableFuture<HeadlessSubagentOutput> completion = CompletableFuture.supplyAsync(() -> readOutput(process, input));
-            return new ProcessHandle(process, completion);
+            AtomicBoolean interrupted = new AtomicBoolean(false);
+            CompletableFuture<HeadlessSubagentOutput> completion = CompletableFuture.supplyAsync(() ->
+                readOutput(process, input, interrupted));
+            return new ProcessHandle(process, input.childSessionId(), completion, interrupted);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to start subagent process", e);
         }
     }
 
-    private HeadlessSubagentOutput readOutput(Process process, HeadlessSubagentInput input) {
+    private HeadlessSubagentOutput readOutput(Process process, HeadlessSubagentInput input, AtomicBoolean interrupted) {
+        CompletableFuture<byte[]> stdout = CompletableFuture.supplyAsync(() -> readAll(process.getInputStream()));
+        CompletableFuture<byte[]> stderr = CompletableFuture.supplyAsync(() -> readAll(process.getErrorStream()));
         try {
-            HeadlessSubagentOutput output = objectMapper.readValue(process.getInputStream(), HeadlessSubagentOutput.class);
-            process.waitFor();
-            return output;
+            boolean exited = process.waitFor(Math.max(1, input.timeoutSeconds()), TimeUnit.SECONDS);
+            if (!exited) {
+                process.destroyForcibly();
+                return new HeadlessSubagentOutput(
+                    input.childSessionId(),
+                    SubagentRunStatus.TIMED_OUT,
+                    "",
+                    Optional.empty(),
+                    Optional.of("Subagent process timed out after " + input.timeoutSeconds() + " seconds")
+                );
+            }
+            if (interrupted.get()) {
+                return interrupted(input.childSessionId());
+            }
+            byte[] output = stdout.get(1, TimeUnit.SECONDS);
+            String error = new String(stderr.get(1, TimeUnit.SECONDS), StandardCharsets.UTF_8).trim();
+            if (output.length == 0) {
+                return failure(input.childSessionId(), nonZeroMessage(process.exitValue(), error));
+            }
+            HeadlessSubagentOutput parsed = objectMapper.readValue(output, HeadlessSubagentOutput.class);
+            if (process.exitValue() != 0 && parsed.status() == SubagentRunStatus.SUCCEEDED) {
+                return failure(input.childSessionId(), nonZeroMessage(process.exitValue(), error));
+            }
+            return parsed;
         } catch (IOException e) {
+            if (interrupted.get()) {
+                return interrupted(input.childSessionId());
+            }
             return failure(input.childSessionId(), "Failed to read subagent output: " + e.getMessage());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return new HeadlessSubagentOutput(
-                input.childSessionId(),
-                SubagentRunStatus.INTERRUPTED,
-                "已中断",
-                Optional.empty(),
-                Optional.of("Interrupted while waiting for subagent process")
-            );
+            return interrupted(input.childSessionId());
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+            return failure(input.childSessionId(), "Failed to collect subagent process output: " + e.getMessage());
+        }
+    }
+
+    private byte[] readAll(InputStream in) {
+        try {
+            return in.readAllBytes();
+        } catch (IOException e) {
+            return new byte[0];
         }
     }
 
@@ -71,11 +107,49 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
         );
     }
 
-    private record ProcessHandle(Process process, CompletableFuture<HeadlessSubagentOutput> completion)
+    private HeadlessSubagentOutput interrupted(String childSessionId) {
+        return new HeadlessSubagentOutput(
+            childSessionId,
+            SubagentRunStatus.INTERRUPTED,
+            "已中断",
+            Optional.empty(),
+            Optional.of("Subagent process was interrupted")
+        );
+    }
+
+    private String nonZeroMessage(int exitCode, String stderr) {
+        if (stderr == null || stderr.isBlank()) {
+            return "Subagent process exited with code " + exitCode;
+        }
+        return "Subagent process exited with code " + exitCode + ": " + stderr;
+    }
+
+    private record ProcessHandle(
+        Process process,
+        String childSessionId,
+        CompletableFuture<HeadlessSubagentOutput> completion,
+        AtomicBoolean interrupted
+    )
         implements SubagentProcessHandle {
         @Override
         public void interrupt() {
+            interrupted.set(true);
             process.destroy();
+            try {
+                if (!process.waitFor(250, TimeUnit.MILLISECONDS)) {
+                    process.destroyForcibly();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                process.destroyForcibly();
+            }
+            completion.complete(new HeadlessSubagentOutput(
+                childSessionId,
+                SubagentRunStatus.INTERRUPTED,
+                "已中断",
+                Optional.empty(),
+                Optional.of("Subagent process was interrupted")
+            ));
         }
     }
 }

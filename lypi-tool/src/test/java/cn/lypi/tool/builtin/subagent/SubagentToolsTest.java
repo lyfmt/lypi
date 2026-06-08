@@ -34,8 +34,6 @@ class SubagentToolsTest {
 
         ToolResult<String> result = tool.execute(Map.of(
             "prompt", "检查测试失败原因",
-            "allowedTools", List.of("read", "grep"),
-            "permissionMode", "BYPASS",
             "timeoutSeconds", 90,
             "agentName", "reviewer",
             "agentRole", "code-review"
@@ -49,12 +47,49 @@ class SubagentToolsTest {
         assertEquals("ses_parent", agentCenter.spawnRequest.parentSessionId());
         assertEquals("msg_parent", agentCenter.spawnRequest.parentEntryId());
         assertEquals(Path.of("/workspace"), agentCenter.spawnRequest.cwd());
-        assertEquals(List.of("read", "grep"), agentCenter.spawnRequest.allowedTools());
-        assertEquals(PermissionMode.BYPASS, agentCenter.spawnRequest.permissionMode());
+        assertEquals(List.of(), agentCenter.spawnRequest.allowedTools());
+        assertEquals(PermissionMode.DEFAULT_EXECUTE, agentCenter.spawnRequest.permissionMode());
         assertEquals(90, agentCenter.spawnRequest.timeoutSeconds());
         assertEquals(Optional.of("reviewer"), agentCenter.spawnRequest.agentName());
         assertEquals(Optional.of("code-review"), agentCenter.spawnRequest.agentRole());
         assertFalse(tool.isReadOnly(Map.of()));
+    }
+
+    @Test
+    void spawnAgentRejectsUnimplementedToolAndPermissionIsolationInputs() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        SpawnAgentTool tool = new SpawnAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "prompt", "检查测试失败原因",
+            "allowedTools", List.of("read"),
+            "permissionMode", "BYPASS"
+        ), context(), ignored -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("暂不支持"));
+        assertEquals(null, agentCenter.spawnRequest);
+    }
+
+    @Test
+    void spawnAgentReturnsToolErrorWhenAgentCenterCannotStart() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        agentCenter.spawnResult = new SubagentSpawnResult(
+            "",
+            "",
+            "ses_parent",
+            "",
+            SubagentRunStatus.FAILED,
+            Optional.of("Subagent command is not configured")
+        );
+        SpawnAgentTool tool = new SpawnAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of("prompt", "检查测试失败原因"), context(), ignored -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("Subagent command is not configured"));
     }
 
     @Test
@@ -162,12 +197,16 @@ class SubagentToolsTest {
 
     private final class RecordingAgentCenter implements AgentCenterPort {
         private SubagentSpawnRequest spawnRequest;
+        private SubagentSpawnResult spawnResult;
         private String interruptedAgentId;
         private String readResultChildSessionId;
 
         @Override
         public SubagentSpawnResult spawn(SubagentSpawnRequest request) {
             this.spawnRequest = request;
+            if (spawnResult != null) {
+                return spawnResult;
+            }
             return new SubagentSpawnResult(
                 "agent_1",
                 "ses_child",

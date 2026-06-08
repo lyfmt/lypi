@@ -72,7 +72,14 @@ public final class MailboxSlashCommandHandler implements SlashCommandHandler {
     }
 
     private void list(Map<String, String> arguments) {
-        List<MailboxMessage> messages = mailbox.read(currentSessionId.get(), statuses(arguments));
+        Set<MailboxStatus> statuses;
+        try {
+            statuses = statuses(arguments);
+        } catch (IllegalArgumentException exception) {
+            lastOutput = exception.getMessage();
+            return;
+        }
+        List<MailboxMessage> messages = mailbox.read(currentSessionId.get(), statuses);
         if (messages.isEmpty()) {
             lastOutput = "Mailbox 当前没有匹配消息。";
             return;
@@ -122,7 +129,11 @@ public final class MailboxSlashCommandHandler implements SlashCommandHandler {
         for (String status : statuses.split(",")) {
             String normalized = status.trim();
             if (!normalized.isBlank()) {
-                parsed.add(MailboxStatus.valueOf(normalized.toUpperCase(Locale.ROOT)));
+                try {
+                    parsed.add(MailboxStatus.valueOf(normalized.toUpperCase(Locale.ROOT)));
+                } catch (IllegalArgumentException exception) {
+                    throw new IllegalArgumentException("未知 mailbox status: " + normalized, exception);
+                }
             }
         }
         return Set.copyOf(parsed);

@@ -32,7 +32,7 @@ public final class DefaultMailboxService implements MailboxPort {
     /**
      * 投递一条新的 mailbox 消息。
      */
-    public void publish(MailboxMessage message) {
+    public synchronized void publish(MailboxMessage message) {
         store.append(message);
     }
 
@@ -42,10 +42,17 @@ public final class DefaultMailboxService implements MailboxPort {
     }
 
     @Override
-    public MailboxCommandResult accept(String sessionId, String mailId) {
+    public synchronized MailboxCommandResult accept(String sessionId, String mailId) {
+        MailboxCommandResult sessionCheck = ensureCurrentSession(sessionId);
+        if (!sessionCheck.success()) {
+            return sessionCheck;
+        }
         Optional<MailboxMessage> message = latest(sessionId, mailId);
         if (message.isEmpty()) {
             return MailboxCommandResult.failure("Mailbox message not found: " + mailId);
+        }
+        if (message.get().status() != MailboxStatus.PENDING && message.get().status() != MailboxStatus.STASHED) {
+            return MailboxCommandResult.failure("Mailbox message cannot be accepted from status: " + message.get().status());
         }
         MailboxMessage delivered = withStatus(message.get(), MailboxStatus.DELIVERED);
         sessionManager.appendMessage(message(delivered));
@@ -54,23 +61,51 @@ public final class DefaultMailboxService implements MailboxPort {
     }
 
     @Override
-    public MailboxCommandResult stash(String sessionId, String mailId) {
+    public synchronized MailboxCommandResult stash(String sessionId, String mailId) {
         return updateStatus(sessionId, mailId, MailboxStatus.STASHED);
     }
 
     @Override
-    public MailboxCommandResult discard(String sessionId, String mailId) {
+    public synchronized MailboxCommandResult discard(String sessionId, String mailId) {
         return updateStatus(sessionId, mailId, MailboxStatus.DISCARDED);
     }
 
     private MailboxCommandResult updateStatus(String sessionId, String mailId, MailboxStatus status) {
+        MailboxCommandResult sessionCheck = ensureCurrentSession(sessionId);
+        if (!sessionCheck.success()) {
+            return sessionCheck;
+        }
         Optional<MailboxMessage> message = latest(sessionId, mailId);
         if (message.isEmpty()) {
             return MailboxCommandResult.failure("Mailbox message not found: " + mailId);
         }
+        MailboxStatus current = message.get().status();
+        if (!canTransition(current, status)) {
+            return MailboxCommandResult.failure("Mailbox message cannot transition from " + current + " to " + status);
+        }
         MailboxMessage updated = withStatus(message.get(), status);
         store.append(updated);
         return MailboxCommandResult.success(updated);
+    }
+
+    private MailboxCommandResult ensureCurrentSession(String sessionId) {
+        if (!sessionManager.currentView().sessionId().equals(sessionId)) {
+            return MailboxCommandResult.failure("Current session does not match mailbox session: " + sessionId);
+        }
+        return MailboxCommandResult.success(null);
+    }
+
+    private boolean canTransition(MailboxStatus current, MailboxStatus next) {
+        if (current == MailboxStatus.DELIVERED || current == MailboxStatus.DISCARDED) {
+            return false;
+        }
+        if (next == MailboxStatus.STASHED) {
+            return current == MailboxStatus.PENDING;
+        }
+        if (next == MailboxStatus.DISCARDED) {
+            return current == MailboxStatus.PENDING || current == MailboxStatus.STASHED;
+        }
+        return false;
     }
 
     private Optional<MailboxMessage> latest(String sessionId, String mailId) {

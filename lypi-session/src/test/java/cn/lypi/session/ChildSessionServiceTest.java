@@ -68,6 +68,34 @@ class ChildSessionServiceTest {
     }
 
     @Test
+    void createNestedChildSessionIncrementsParentHeaderDepth() throws Exception {
+        SessionManager parent = new SessionManagerImpl(tempDir);
+        parent.openOrCreate("ses_parent");
+
+        ChildSessionService service = new ChildSessionService(Clock.fixed(NOW, ZoneOffset.UTC));
+        service.create(new ChildSessionRequest(
+            "ses_child_1",
+            "ses_parent",
+            "entry_spawn_1",
+            tempDir,
+            1,
+            Optional.empty(),
+            Optional.empty()
+        ));
+        SessionHandle nested = service.create(new ChildSessionRequest(
+            "ses_child_2",
+            "ses_child_1",
+            "entry_spawn_2",
+            tempDir,
+            1,
+            Optional.empty(),
+            Optional.empty()
+        ));
+
+        assertThat(Files.readString(nested.sessionFile())).contains("\"depth\":2");
+    }
+
+    @Test
     void createChildSessionRejectsMissingRequiredFields() {
         ChildSessionService service = new ChildSessionService(Clock.fixed(NOW, ZoneOffset.UTC));
 
