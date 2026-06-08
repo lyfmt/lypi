@@ -11,6 +11,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final Runnable renderer;
     private EventSubscription subscription;
     private boolean lastRenderHeldUiLock;
+    private int uiLockEntries;
 
     public JLineTuiTransport(Runnable renderer) {
         this.renderer = renderer;
@@ -34,9 +35,22 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
 
     void renderUnderUiLock() {
         synchronized (uiMonitor) {
+            uiLockEntries++;
             lastRenderHeldUiLock = Thread.holdsLock(uiMonitor);
             renderer.run();
         }
+    }
+
+    void runInputMutationForTest(Runnable mutation) {
+        runUiMutation(mutation);
+    }
+
+    void runResizeMutationForTest(Runnable mutation) {
+        runUiMutation(mutation);
+    }
+
+    int uiLockEntryCountForTest() {
+        return uiLockEntries;
     }
 
     boolean isUiLockedForTest() {
@@ -60,6 +74,13 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             // NOTE: transport 关闭时订阅清理失败不应破坏终端恢复流程。
         } finally {
             subscription = null;
+        }
+    }
+
+    private void runUiMutation(Runnable mutation) {
+        synchronized (uiMonitor) {
+            uiLockEntries++;
+            mutation.run();
         }
     }
 }
