@@ -19,6 +19,7 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
@@ -45,6 +46,47 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LyPiToolAutoConfigurationTest {
     @Test
+    void createsHostExecutorAndRegistersDefaultTools() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                assertThat(context).hasSingleBean(Executor.class);
+                assertThat(context.getBean(Executor.class).name()).isEqualTo("host");
+
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                assertThat(runtime.resolve("bash")).isPresent();
+                assertThat(runtime.resolve("read")).isPresent();
+                assertThat(runtime.resolve("glob")).isPresent();
+            });
+    }
+
+    @Test
+    void keepsUserProvidedExecutor() {
+        Executor customExecutor = new Executor() {
+            @Override
+            public String name() {
+                return "custom";
+            }
+
+            @Override
+            public cn.lypi.contracts.runtime.ExecutionResult execute(
+                cn.lypi.contracts.runtime.ExecutionRequest request,
+                ProgressSink progress,
+                cn.lypi.contracts.common.AbortSignal signal
+            ) {
+                return new cn.lypi.contracts.runtime.ExecutionResult(0, "", "", false, Optional.empty());
+            }
+        };
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(Executor.class, () -> customExecutor)
+            .run(context -> assertThat(context.getBean(Executor.class)).isSameAs(customExecutor));
+    }
+
+    @Test
     void createsInteractiveRuntimeWhenPromptPortIsAvailable() {
         RecordingEventBus eventBus = new RecordingEventBus();
         AtomicReference<PermissionPromptPort.Handle> promptHandle = new AtomicReference<>();
@@ -64,7 +106,7 @@ class LyPiToolAutoConfigurationTest {
                 runtime.register(new AskTool());
 
                 ToolResult<?> result = runtime.execute(
-                    List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ignored"), "msg_1")),
+                    List.of(new ToolUseRequest("toolu_1", "ask-test", Map.of("text", "ignored"), "msg_1")),
                     context()
                 ).getFirst();
 
@@ -90,7 +132,7 @@ class LyPiToolAutoConfigurationTest {
                 runtime.register(new AskTool());
 
                 ToolResult<?> result = runtime.execute(
-                    List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ignored"), "msg_1")),
+                    List.of(new ToolUseRequest("toolu_1", "ask-test", Map.of("text", "ignored"), "msg_1")),
                     context()
                 ).getFirst();
 
@@ -140,7 +182,7 @@ class LyPiToolAutoConfigurationTest {
     private static final class AskTool implements Tool<Map<String, Object>, String> {
         @Override
         public String name() {
-            return "write";
+            return "ask-test";
         }
 
         @Override
