@@ -29,6 +29,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -718,7 +719,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             metadata.putAll(input);
         }
         metadata.putAll(originalToolMetadata(toolName, originalToolName));
-        return Map.copyOf(metadata);
+        return Collections.unmodifiableMap(metadata);
     }
 
     private String stringMetadata(ToolUseContext context, String key) {

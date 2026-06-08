@@ -3,6 +3,7 @@ package cn.lypi.tool;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.AbortSignal;
@@ -31,6 +32,7 @@ import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -154,6 +156,26 @@ class DefaultToolRuntimeTest {
         assertEquals("turn-dynamic", start.turnId());
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
         assertEquals("session-dynamic", end.sessionId());
+    }
+
+    @Test
+    void publishesLifecycleWhenInputContainsNullValue() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(TestTools.requiredTextEcho("schema"));
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("text", null);
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "schema", input, "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        assertNull(start.inputMetadata().get("text"));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals(ToolExecutionStatus.FAILED, end.status());
     }
 
     @Test
