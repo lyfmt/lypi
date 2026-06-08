@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class TuiRenderer {
+    private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
+
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input) {
         List<String> transcript = transcriptLines(view.blocks(), layout.width());
         screen.setTranscript(transcript);
@@ -29,14 +31,18 @@ final class TuiRenderer {
         List<String> lines = new ArrayList<>();
         for (TuiBlock block : blocks) {
             String text = switch (block) {
-                case TuiMessageBlock message -> message.role() + ": " + message.content();
+                case TuiMessageBlock message -> null;
                 case TuiThinkingBlock thinking -> thinking.collapsed()
                     ? "thinking: collapsed"
                     : "thinking: " + thinking.content();
                 case TuiToolBlock tool -> "tool " + tool.toolName() + ": " + tool.label();
                 case TuiErrorBlock error -> "error: " + error.message();
             };
-            lines.addAll(wrap(text, width));
+            if (block instanceof TuiMessageBlock message) {
+                lines.addAll(markdownRenderer.render(message.content(), width));
+            } else {
+                lines.addAll(wrap(text, width));
+            }
         }
         return lines;
     }
