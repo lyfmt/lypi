@@ -7,6 +7,7 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
@@ -69,8 +70,25 @@ final class AgentCoreTestFixtures {
         return textMessage(id, MessageRole.ASSISTANT, MessageKind.TEXT, text);
     }
 
+    static AgentMessage assistantToolCallMessage(String id, String toolUseId, String toolName, Map<String, Object> input) {
+        return new AgentMessage(
+            id,
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new ToolCallContentBlock(
+                toolUseId,
+                toolName,
+                "",
+                Map.of("input", Map.copyOf(input), "complete", true)
+            )),
+            NOW,
+            Optional.empty(),
+            Optional.of("tool_calls")
+        );
+    }
+
     static AgentMessage summaryMessage(String id, String text) {
-        return textMessage(id, MessageRole.SYSTEM_LOCAL, MessageKind.SUMMARY, text);
+        return textMessage(id, MessageRole.USER, MessageKind.SUMMARY, text);
     }
 
     static AgentMessage toolResultMessage(String id, String toolUseId, String text, boolean error) {

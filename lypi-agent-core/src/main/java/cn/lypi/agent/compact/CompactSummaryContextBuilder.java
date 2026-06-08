@@ -16,7 +16,12 @@ public final class CompactSummaryContextBuilder {
 
     public ContextSnapshot build(CompactSummaryRequest request) {
         ContextSnapshot current = request.context();
-        List<AgentMessage> messages = new ArrayList<>(current.messages());
+        return build(request, current.messages());
+    }
+
+    ContextSnapshot build(CompactSummaryRequest request, List<AgentMessage> messagePrefix) {
+        ContextSnapshot current = request.context();
+        List<AgentMessage> messages = new ArrayList<>(messagePrefix);
         messages.add(instructionFactory.instructionMessage());
         return new ContextSnapshot(
             current.systemPrompt(),

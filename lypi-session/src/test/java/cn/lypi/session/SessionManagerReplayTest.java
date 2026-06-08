@@ -135,6 +135,8 @@ class SessionManagerReplayTest {
         assertThat(context.messages())
             .extracting(AgentMessage::id)
             .containsExactly("summary-compact", "msg-kept", "msg-after");
+        assertThat(context.messages().getFirst().role()).isEqualTo(MessageRole.USER);
+        assertThat(context.messages().getFirst().kind()).isEqualTo(MessageKind.SUMMARY);
         assertThat(context.appliedCompactionEntryIds()).containsExactly("compact");
         assertThat(context.messages()).extracting(AgentMessage::id).doesNotContain("msg-old");
         assertThat(manager.transcript("after")).isEqualTo(context.messages());

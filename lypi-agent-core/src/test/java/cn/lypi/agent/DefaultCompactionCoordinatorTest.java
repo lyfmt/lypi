@@ -115,7 +115,8 @@ class DefaultCompactionCoordinatorTest {
         session.append(new MessageEntry("entry-old", "", userMessage("msg-old", "Need compact with local context"), NOW));
         session.append(new CustomMessageEntry("entry-custom", "entry-old", "local instruction: preserve this", NOW));
         session.append(new BranchSummaryEntry("entry-branch", "entry-custom", "branch summary: preserve this too", NOW));
-        session.append(new MessageEntry("entry-kept", "entry-branch", userMessage("msg-kept", "kept message long enough"), NOW));
+        session.append(new MessageEntry("entry-assistant-old", "entry-branch", assistantMessage("msg-assistant-old", "old assistant round"), NOW));
+        session.append(new MessageEntry("entry-kept", "entry-assistant-old", assistantMessage("msg-kept", "kept assistant round long enough"), NOW));
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
@@ -247,6 +248,36 @@ class DefaultCompactionCoordinatorTest {
     }
 
     @Test
+    void compactedDecisionDoesNotReplaySessionContextAfterAppendingCompactionEntry() {
+        ContextFailingAfterCompactionAppendSessionManager session = new ContextFailingAfterCompactionAppendSessionManager();
+        session.openOrCreate("session-1");
+        session.append(new MessageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long enough to count"), NOW));
+        session.append(new MessageEntry("entry-assistant-1", "entry-user-1", assistantMessage("msg-assistant-1", "assistant one long enough"), NOW));
+        session.append(new MessageEntry("entry-user-2", "entry-assistant-1", userMessage("msg-user-2", "user two long enough"), NOW));
+        DefaultContextAssembler assembler = lowBudgetAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary text"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(decision.context().messages())
+            .extracting(message -> message.content().getFirst().text())
+            .contains("summary text", "assistant one long enough", "user two long enough");
+        assertThat(session.handle().byId().values())
+            .filteredOn(CompactionEntry.class::isInstance)
+            .hasSize(1);
+    }
+
+    @Test
     void recordsTokensAfterFromCompactedContextInsteadOfSummaryUsage() {
         AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
@@ -282,10 +313,11 @@ class DefaultCompactionCoordinatorTest {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         session.openOrCreate("session-1");
         session.append(new MessageEntry("entry-old", "", userMessage("msg-old", "old message long enough to compact"), NOW));
+        session.append(new MessageEntry("entry-assistant-old", "entry-old", assistantMessage("msg-assistant-old", "old assistant round"), NOW));
         session.append(new MessageEntry(
             "entry-kept",
-            "entry-old",
-            userMessage("msg-kept", "kept message has many many retained characters"),
+            "entry-assistant-old",
+            assistantMessage("msg-kept", "kept message has many many retained characters"),
             NOW
         ));
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
@@ -319,9 +351,11 @@ class DefaultCompactionCoordinatorTest {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         session.openOrCreate("session-1");
         session.append(new MessageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long enough to count"), NOW));
-        session.append(new BranchSummaryEntry("entry-branch", "entry-user-1", "branch summary that must stay visible", NOW));
+        session.append(new MessageEntry("entry-assistant-1", "entry-user-1", assistantMessage("msg-assistant-1", "old assistant round"), NOW));
+        session.append(new BranchSummaryEntry("entry-branch", "entry-assistant-1", "branch summary that must stay visible", NOW));
         session.append(new CustomMessageEntry("entry-custom", "entry-branch", "custom message that must stay visible", NOW));
         session.append(new MessageEntry("entry-user-2", "entry-custom", userMessage("msg-user-2", "kept user"), NOW));
+        session.append(new MessageEntry("entry-assistant-2", "entry-user-2", assistantMessage("msg-assistant-2", "kept assistant"), NOW));
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
@@ -446,5 +480,27 @@ class DefaultCompactionCoordinatorTest {
     private static int estimateText(String text) {
         String safeText = text == null ? "" : text;
         return Math.max(1, safeText.length() / 4);
+    }
+
+    private static final class ContextFailingAfterCompactionAppendSessionManager
+        extends AgentCoreTestFixtures.InMemorySessionManager {
+        private boolean compactionAppended;
+
+        @Override
+        public cn.lypi.contracts.session.SessionHandle append(SessionEntry entry) {
+            cn.lypi.contracts.session.SessionHandle handle = super.append(entry);
+            if (entry instanceof CompactionEntry) {
+                compactionAppended = true;
+            }
+            return handle;
+        }
+
+        @Override
+        public cn.lypi.contracts.session.SessionContext context(String leafId) {
+            if (compactionAppended) {
+                throw new IllegalStateException("context replay should not run after compaction append");
+            }
+            return super.context(leafId);
+        }
     }
 }
