@@ -153,6 +153,44 @@ class BubblewrapExecutorTest {
     }
 
     @Test
+    void doesNotRetryWithoutProcMountForUnrelatedPreflightPermissionFailure() throws Exception {
+        Path unrelatedFailingBwrap = unrelatedPreflightFailingBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(unrelatedFailingBwrap)
+        );
+
+        ExecutionResult result = executor.execute(request("printf host-after-unrelated-failure", false), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("host-after-unrelated-failure", result.stdout());
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("host", result.metadata().executorName());
+        assertTrue(result.metadata().diagnostic().orElseThrow().contains("bubblewrap unavailable"));
+    }
+
+    @Test
+    void failsWhenProcFallbackPreflightFailsAndPolicyRequiresSandbox() throws Exception {
+        Path procAndNoProcFailingBwrap = procAndNoProcFailingBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(procAndNoProcFailingBwrap)
+        );
+
+        ExecutionResult result = executor.execute(request("printf ignored", true), progress -> {
+        }, () -> false);
+
+        assertNotEquals(0, result.exitCode());
+        assertTrue(result.stderr().contains("bubblewrap unavailable"));
+        assertTrue(result.stderr().contains("preflight failed exit"));
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+    }
+
+    @Test
     void fallsBackToHostExecutorWhenBwrapSetupFailsAfterPreflightByDefault() throws Exception {
         Path setupFailingBwrap = setupFailingBwrap();
         BubblewrapExecutor executor = new BubblewrapExecutor(
@@ -259,6 +297,34 @@ class BubblewrapExecutorTest {
               shift
             fi
             exec "$@"
+            """);
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    private Path unrelatedPreflightFailingBwrap() throws Exception {
+        Path script = tempDir.resolve("unrelated-preflight-failing-bwrap.sh");
+        Files.writeString(script, """
+            #!/bin/sh
+            echo "bwrap: Can't bind mount /dev/null: Operation not permitted" >&2
+            exit 1
+            """);
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    private Path procAndNoProcFailingBwrap() throws Exception {
+        Path script = tempDir.resolve("proc-and-no-proc-failing-bwrap.sh");
+        Files.writeString(script, """
+            #!/bin/sh
+            for arg in "$@"; do
+              if [ "$arg" = "--proc" ]; then
+                echo "bwrap: Can't mount proc on /proc: Operation not permitted" >&2
+                exit 1
+              fi
+            done
+            echo "bwrap: still unavailable without proc" >&2
+            exit 42
             """);
         script.toFile().setExecutable(true);
         return script;
