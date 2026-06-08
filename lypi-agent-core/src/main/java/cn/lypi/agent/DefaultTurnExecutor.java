@@ -213,6 +213,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             : reestimateBudget(microCompact.context(), assembly.snapshot().budget());
         ContextAssembly microCompactedAssembly = new ContextAssembly(
             microCompactedContext,
+            assembly.resources(),
             assembly.branchEntryIds(),
             assembly.appliedCompactionEntryIds(),
             assembly.replacements(),

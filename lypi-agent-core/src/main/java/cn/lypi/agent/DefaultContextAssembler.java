@@ -45,6 +45,7 @@ public final class DefaultContextAssembler implements ContextAssembler {
 
         return new ContextAssembly(
             snapshot,
+            resources,
             sessionContext.branchEntryIds(),
             sessionContext.appliedCompactionEntryIds(),
             List.of(),

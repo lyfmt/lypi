@@ -98,6 +98,18 @@ final class AgentCoreTestFixtures {
         return textMessage(id, MessageRole.USER, MessageKind.SUMMARY, text);
     }
 
+    static AgentMessage summaryMessage(String id, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.USER,
+            MessageKind.SUMMARY,
+            List.of(new TextContentBlock(text)),
+            timestamp,
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
     static AgentMessage toolResultMessage(String id, String toolUseId, String text, boolean error) {
         return toolResultMessage(id, toolUseId, text, error, Map.of());
     }
@@ -196,7 +208,7 @@ final class AgentCoreTestFixtures {
     }
 
     static ResourceRuntimePort fixedResourceRuntime(String systemPrompt) {
-        ResourceSnapshot snapshot = new ResourceSnapshot(List.of(), List.of(), null, List.of(), List.of(), List.of());
+        ResourceSnapshot snapshot = emptyResources();
         SystemPrompt prompt = new SystemPrompt(systemPrompt, List.of("test"), "hash");
         return new ResourceRuntimePort() {
             @Override
@@ -209,6 +221,17 @@ final class AgentCoreTestFixtures {
                 return prompt;
             }
         };
+    }
+
+    static ResourceSnapshot emptyResources() {
+        return new ResourceSnapshot(
+            List.of(),
+            List.of(),
+            new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()),
+            List.of(),
+            List.of(),
+            List.of()
+        );
     }
 
     static ContextSnapshot minimalContext(List<AgentMessage> messages) {
@@ -490,7 +513,7 @@ final class AgentCoreTestFixtures {
                 }
             }
             List<AgentMessage> replay = new ArrayList<>();
-            replay.add(summaryMessage("summary-" + compaction.id(), compaction.summary()));
+            replay.add(summaryMessage("summary-" + compaction.id(), compaction.summary(), compaction.timestamp()));
             replay.addAll(kept.isEmpty() ? originalMessages : kept);
             return replay;
         }
