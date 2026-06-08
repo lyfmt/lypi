@@ -51,15 +51,22 @@ public final class TerminalSession implements AutoCloseable {
     }
 
     static TerminalSession open(TerminalIo io, Runnable resizeCallback) throws IOException {
-        AutoCloseable rawMode = io.enterRawMode();
-        AutoCloseable resizeHandler = io.onResize(resizeCallback);
-        io.write(ENTER_ALTERNATE_SCREEN);
-        io.write(ENABLE_BRACKETED_PASTE);
-        io.write(HIDE_CURSOR);
-        io.write(ENABLE_KITTY_KEYBOARD);
-        io.write(ENABLE_MODIFY_OTHER_KEYS);
-        io.flush();
-        return new TerminalSession(io, rawMode, resizeHandler);
+        AutoCloseable rawMode = null;
+        AutoCloseable resizeHandler = null;
+        try {
+            rawMode = io.enterRawMode();
+            resizeHandler = io.onResize(resizeCallback);
+            io.write(ENTER_ALTERNATE_SCREEN);
+            io.write(ENABLE_BRACKETED_PASTE);
+            io.write(HIDE_CURSOR);
+            io.write(ENABLE_KITTY_KEYBOARD);
+            io.write(ENABLE_MODIFY_OTHER_KEYS);
+            io.flush();
+            return new TerminalSession(io, rawMode, resizeHandler);
+        } catch (IOException | RuntimeException exception) {
+            restoreAfterOpenFailure(resizeHandler, rawMode);
+            throw exception;
+        }
     }
 
     @Override
@@ -86,6 +93,22 @@ public final class TerminalSession implements AutoCloseable {
             closeable.close();
         } catch (Exception ignored) {
             // NOTE: 关闭终端时优先恢复 raw mode，resize handler 恢复失败不应阻断。
+        }
+    }
+
+    private static void restoreAfterOpenFailure(AutoCloseable resizeHandler, AutoCloseable rawMode) {
+        closeStaticQuietly(resizeHandler);
+        closeStaticQuietly(rawMode);
+    }
+
+    private static void closeStaticQuietly(AutoCloseable closeable) {
+        if (closeable == null) {
+            return;
+        }
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+            // NOTE: 打开失败回滚时尽量恢复已获取资源，失败不覆盖原始异常。
         }
     }
 }

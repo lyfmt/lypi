@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -40,6 +41,16 @@ class TerminalSessionTest {
         assertEquals(1, io.restoreCount);
     }
 
+    @Test
+    void openFailureRestoresRawModeAndResizeHandler() {
+        FailingTerminalIo io = new FailingTerminalIo();
+
+        assertThrows(IOException.class, () -> TerminalSession.open(io));
+
+        assertTrue(io.rawModeRestored);
+        assertTrue(io.resizeHandlerRestored);
+    }
+
     private static final class RecordingTerminalIo implements TerminalIo {
         private final StringBuilder output = new StringBuilder();
         private boolean rawModeEntered;
@@ -68,6 +79,30 @@ class TerminalSessionTest {
         public AutoCloseable onResize(Runnable callback) throws IOException {
             return () -> {
             };
+        }
+    }
+
+    private static final class FailingTerminalIo implements TerminalIo {
+        private boolean rawModeRestored;
+        private boolean resizeHandlerRestored;
+
+        @Override
+        public AutoCloseable enterRawMode() {
+            return () -> rawModeRestored = true;
+        }
+
+        @Override
+        public void write(String value) throws IOException {
+            throw new IOException("write failed");
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public AutoCloseable onResize(Runnable callback) {
+            return () -> resizeHandlerRestored = true;
         }
     }
 }

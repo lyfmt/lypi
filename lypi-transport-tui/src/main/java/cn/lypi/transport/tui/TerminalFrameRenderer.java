@@ -8,6 +8,7 @@ final class TerminalFrameRenderer {
     static final String CURSOR_MARKER = "|CURSOR|";
     private static final String SYNC_START = "\033[?2026h";
     private static final String SYNC_END = "\033[?2026l";
+    private static final String HOME_AND_CLEAR = "\033[H\033[J";
 
     private final TerminalIo io;
 
@@ -18,6 +19,7 @@ final class TerminalFrameRenderer {
     void render(List<String> lines) throws IOException {
         CursorFrame frame = stripCursor(lines);
         io.write(SYNC_START);
+        io.write(HOME_AND_CLEAR);
         io.write(String.join("\n", frame.lines()));
         if (frame.cursor().isPresent()) {
             CursorPosition cursor = frame.cursor().orElseThrow();

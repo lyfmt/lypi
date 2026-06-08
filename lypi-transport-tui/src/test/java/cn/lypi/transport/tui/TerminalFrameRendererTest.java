@@ -14,7 +14,7 @@ class TerminalFrameRendererTest {
 
         renderer.render(List.of("hello", "world|CURSOR|"));
 
-        assertEquals("\033[?2026hhello\nworld\033[2;6H\033[?2026l", io.output.toString());
+        assertEquals("\033[?2026h\033[H\033[Jhello\nworld\033[2;6H\033[?2026l", io.output.toString());
     }
 
     @Test
@@ -24,7 +24,7 @@ class TerminalFrameRendererTest {
 
         renderer.render(List.of("hello"));
 
-        assertEquals("\033[?2026hhello\033[?2026l", io.output.toString());
+        assertEquals("\033[?2026h\033[H\033[Jhello\033[?2026l", io.output.toString());
     }
 
     private static final class RecordingTerminalIo implements TerminalIo {

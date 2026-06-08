@@ -3,9 +3,12 @@ package cn.lypi.transport.tui;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Optional;
+import org.jline.terminal.Terminal;
 
 public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final Object uiMonitor = new Object();
@@ -17,6 +20,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final FrameSink frameSink;
     private final TerminalInputPump inputPump;
     private final TuiInputLoop inputLoop;
+    private final TerminalSession terminalSession;
     private EventSubscription subscription;
     private boolean lastRenderHeldUiLock;
     private int uiLockEntries;
@@ -30,9 +34,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.frameSink = null;
         this.inputPump = null;
         this.inputLoop = null;
+        this.terminalSession = null;
     }
 
     private JLineTuiTransport(FrameSink frameSink, int width, int height) {
+        this(frameSink, width, height, null);
+    }
+
+    private JLineTuiTransport(FrameSink frameSink, int width, int height, TerminalSession terminalSession) {
         this.renderer = null;
         this.reducer = new TuiEventReducer();
         this.tuiRenderer = new TuiRenderer();
@@ -41,9 +50,17 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.frameSink = frameSink;
         this.inputPump = null;
         this.inputLoop = null;
+        this.terminalSession = terminalSession;
     }
 
-    private JLineTuiTransport(FrameSink frameSink, int width, int height, TerminalInputSource inputSource, TuiSubmitHandler submitHandler) {
+    private JLineTuiTransport(
+        FrameSink frameSink,
+        int width,
+        int height,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        TerminalSession terminalSession
+    ) {
         this.renderer = null;
         this.reducer = new TuiEventReducer();
         this.tuiRenderer = new TuiRenderer();
@@ -52,6 +69,28 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.frameSink = frameSink;
         this.inputLoop = new TuiInputLoop(submitHandler, frameSink, tuiRenderer, screen, layout, reducer::view);
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
+        this.terminalSession = terminalSession;
+    }
+
+    /**
+     * 打开真实 JLine TUI transport 并挂载事件流。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal
+    ) throws IOException {
+        JLineTerminalIo io = new JLineTerminalIo(terminal);
+        return open(
+            state,
+            events,
+            io,
+            new JLineTerminalInputSource(terminal),
+            new RuntimeTuiSubmitHandler(state.sessionId(), core, events),
+            terminal.getWidth(),
+            terminal.getHeight()
+        );
     }
 
     static JLineTuiTransport withRenderer(FrameSink frameSink, int width, int height) {
@@ -65,7 +104,36 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler
     ) {
-        return new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler);
+        return new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, null);
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        int width,
+        int height
+    ) throws IOException {
+        JLineTuiTransport[] holder = new JLineTuiTransport[1];
+        TerminalSession session = TerminalSession.open(io, () -> {
+            if (holder[0] != null) {
+                holder[0].resize(width, height);
+            }
+        });
+        TerminalFrameRenderer frameRenderer = new TerminalFrameRenderer(io);
+        FrameSink frameSink = lines -> {
+            try {
+                frameRenderer.render(lines);
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+        };
+        JLineTuiTransport transport = new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, session);
+        holder[0] = transport;
+        transport.attach(events, state);
+        return transport;
     }
 
     @Override
@@ -78,7 +146,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             closeSubscription();
             subscription = events.subscribe(
-                new EventFilter(Optional.empty(), Optional.empty()),
+                new EventFilter(Optional.ofNullable(state).map(SessionRuntimeState::sessionId), Optional.empty()),
                 envelope -> {
                     if (reducer != null) {
                         reduceAndRenderUnderUiLock(envelope.event());
@@ -136,6 +204,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     public void close() throws Exception {
         synchronized (uiMonitor) {
             closeSubscription();
+            if (terminalSession != null) {
+                terminalSession.close();
+            }
         }
     }
 

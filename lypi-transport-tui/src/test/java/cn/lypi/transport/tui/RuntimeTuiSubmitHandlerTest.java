@@ -17,6 +17,8 @@ import cn.lypi.contracts.event.InterruptEvent;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class RuntimeTuiSubmitHandlerTest {
@@ -24,7 +26,7 @@ class RuntimeTuiSubmitHandlerTest {
     void submitCreatesIndependentAbortSignalPerTurn() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
-        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, Runnable::run);
 
         handler.submitUserInput("first");
         TurnRequest first = core.requests.getFirst();
@@ -43,7 +45,7 @@ class RuntimeTuiSubmitHandlerTest {
     void interruptOnlyAbortsCurrentActiveTurnAndPublishesEvent() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
-        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, Runnable::run);
 
         handler.submitUserInput("first");
         TurnRequest first = core.requests.getFirst();
@@ -59,12 +61,43 @@ class RuntimeTuiSubmitHandlerTest {
         assertEquals("ctrl-c", event.reason());
     }
 
+    @Test
+    void defaultSubmitDoesNotBlockOnCoreExecution() throws Exception {
+        BlockingCore core = new BlockingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+
+        handler.submitUserInput("hello");
+
+        assertTrue(core.started.await(2, TimeUnit.SECONDS));
+        assertEquals(1, core.requests.size());
+        core.release.countDown();
+    }
+
     private static final class RecordingCore implements AgentCorePort {
         private final List<TurnRequest> requests = new ArrayList<>();
 
         @Override
         public TurnState execute(TurnRequest request) {
             requests.add(request);
+            return null;
+        }
+    }
+
+    private static final class BlockingCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            started.countDown();
+            try {
+                release.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
             return null;
         }
     }

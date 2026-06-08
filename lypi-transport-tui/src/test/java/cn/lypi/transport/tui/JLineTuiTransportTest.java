@@ -16,14 +16,16 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportTest {
     @Test
-    void attachSubscribesToAllEventsAndRendersUnderUiLock() {
+    void attachSubscribesToSessionEventsAndRendersUnderUiLock() {
         RecordingScreen screen = new RecordingScreen();
         RecordingEventBus events = new RecordingEventBus();
         JLineTuiTransport transport = new JLineTuiTransport(screen::render);
@@ -34,6 +36,45 @@ class JLineTuiTransportTest {
         assertTrue(events.subscribed);
         assertEquals(1, screen.renderCount);
         assertTrue(transport.isUiLockedForTest());
+    }
+
+    @Test
+    void attachIgnoresEventsFromOtherSessions() {
+        RecordingScreen screen = new RecordingScreen();
+        RecordingEventBus events = new RecordingEventBus();
+        JLineTuiTransport transport = new JLineTuiTransport(screen::render);
+
+        transport.attach(events, runtimeState());
+        events.emit(new ErrorEvent("other_session", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
+
+        assertEquals(0, screen.renderCount);
+    }
+
+    @Test
+    void openAssemblesTerminalSessionRendererInputAndEventSubscription() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            40,
+            4
+        );
+
+        events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
+
+        assertTrue(io.rawModeEntered);
+        assertTrue(io.output.toString().contains(TerminalSession.ENTER_ALTERNATE_SCREEN));
+        assertTrue(io.output.toString().contains("\033[?2026h\033[H\033[Jerror: boom"));
+
+        transport.close();
+
+        assertTrue(io.rawModeRestored);
+        assertTrue(io.output.toString().contains(TerminalSession.EXIT_ALTERNATE_SCREEN));
     }
 
     private SessionRuntimeState runtimeState() {
@@ -74,16 +115,59 @@ class JLineTuiTransportTest {
 
         @Override
         public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
-            assertTrue(filter.sessionId().isEmpty());
+            assertEquals(Optional.of("ses_1"), filter.sessionId());
             assertTrue(filter.eventType().isEmpty());
             this.consumer = consumer;
+            this.filter = filter;
             subscribed = true;
             return () -> {
             };
         }
 
         void emit(AgentEvent event) {
+            if (filter.sessionId().isPresent() && !filter.sessionId().orElseThrow().equals(event.sessionId())) {
+                return;
+            }
             consumer.accept(new EventEnvelope("evt_1", "ses_1", 1, event));
+        }
+
+        private EventFilter filter;
+    }
+
+    private static final class RecordingSubmitHandler implements TuiSubmitHandler {
+        @Override
+        public void submitUserInput(String input) {
+        }
+
+        @Override
+        public void requestInterrupt(String reason) {
+        }
+    }
+
+    private static final class RecordingTerminalIo implements TerminalIo {
+        private final StringBuilder output = new StringBuilder();
+        private boolean rawModeEntered;
+        private boolean rawModeRestored;
+
+        @Override
+        public AutoCloseable enterRawMode() {
+            rawModeEntered = true;
+            return () -> rawModeRestored = true;
+        }
+
+        @Override
+        public void write(String value) {
+            output.append(value);
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public AutoCloseable onResize(Runnable callback) throws IOException {
+            return () -> {
+            };
         }
     }
 }
