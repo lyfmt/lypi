@@ -21,6 +21,7 @@ import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
@@ -160,6 +161,7 @@ class CommonContractTest {
             () -> assertMethod(AgentCenterPort.class, "spawn", 1),
             () -> assertMethod(AgentCenterPort.class, "interrupt", 1),
             () -> assertMethod(AgentCenterPort.class, "readResult", 1),
+            () -> assertMethod(ChildSessionPort.class, "create", 1),
             () -> assertMethod(MailboxPort.class, "read", 2),
             () -> assertMethod(MailboxPort.class, "accept", 2),
             () -> assertMethod(MailboxPort.class, "stash", 2),

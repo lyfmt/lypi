@@ -1,5 +1,6 @@
 package cn.lypi.session;
 
+import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
@@ -15,7 +16,7 @@ import java.util.Map;
  *
  * NOTE: child session 不复制父分支，只通过 header 和初始 session info 记录父子关系。
  */
-public final class ChildSessionService {
+public final class ChildSessionService implements ChildSessionPort {
     private final Clock clock;
 
     public ChildSessionService() {
@@ -29,6 +30,7 @@ public final class ChildSessionService {
     /**
      * 创建独立 child session。
      */
+    @Override
     public SessionHandle create(ChildSessionRequest request) {
         validate(request);
         JsonlSessionStore store = new JsonlSessionStore(request.cwd());

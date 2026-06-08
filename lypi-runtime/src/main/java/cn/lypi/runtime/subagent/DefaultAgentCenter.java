@@ -1,0 +1,171 @@
+package cn.lypi.runtime.subagent;
+
+import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.session.AgentLifecycleEntry;
+import cn.lypi.contracts.session.ChildSessionRequest;
+import cn.lypi.contracts.subagent.HeadlessSubagentInput;
+import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
+import cn.lypi.contracts.subagent.MailboxCommandResult;
+import cn.lypi.contracts.subagent.MailboxMessage;
+import cn.lypi.contracts.subagent.MailboxStatus;
+import cn.lypi.contracts.subagent.SubagentResultRef;
+import cn.lypi.contracts.subagent.SubagentRunStatus;
+import cn.lypi.contracts.subagent.SubagentSpawnRequest;
+import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+public final class DefaultAgentCenter implements AgentCenterPort {
+    private final List<String> command;
+    private final ChildSessionPort childSessions;
+    private final SessionManagerPort parentSession;
+    private final SubagentProcessRunner processRunner;
+    private final DefaultMailboxService mailbox;
+    private final MailboxDeliveryService deliveryService;
+    private final Clock clock;
+    private final Map<String, RunningAgent> runningByAgentId = new ConcurrentHashMap<>();
+    private final Map<String, HeadlessSubagentOutput> resultsByChildSessionId = new ConcurrentHashMap<>();
+
+    public DefaultAgentCenter(
+        List<String> command,
+        ChildSessionPort childSessions,
+        SessionManagerPort parentSession,
+        SubagentProcessRunner processRunner,
+        DefaultMailboxService mailbox,
+        MailboxDeliveryService deliveryService,
+        Clock clock
+    ) {
+        this.command = command == null ? List.of() : List.copyOf(command);
+        this.childSessions = childSessions;
+        this.parentSession = parentSession;
+        this.processRunner = processRunner;
+        this.mailbox = mailbox;
+        this.deliveryService = deliveryService;
+        this.clock = clock == null ? Clock.systemUTC() : clock;
+    }
+
+    @Override
+    public SubagentSpawnResult spawn(SubagentSpawnRequest request) {
+        String agentId = "agent_" + randomId();
+        String childSessionId = "ses_child_" + randomId();
+        String parentSpawnEntryId = "entry_spawn_" + randomId();
+        Instant now = Instant.now(clock);
+        childSessions.create(new ChildSessionRequest(
+            childSessionId,
+            request.parentSessionId(),
+            parentSpawnEntryId,
+            request.cwd(),
+            1,
+            request.agentName(),
+            request.agentRole()
+        ));
+        parentSession.append(new AgentLifecycleEntry(
+            parentSpawnEntryId,
+            request.parentEntryId(),
+            agentId,
+            childSessionId,
+            request.parentSessionId(),
+            "spawned",
+            Map.of(
+                "command", command,
+                "prompt", request.prompt()
+            ),
+            now
+        ));
+        HeadlessSubagentInput input = new HeadlessSubagentInput(
+            childSessionId,
+            request.parentSessionId(),
+            parentSpawnEntryId,
+            request.prompt(),
+            request.cwd(),
+            request.allowedTools(),
+            request.permissionMode(),
+            request.timeoutSeconds()
+        );
+        SubagentProcessHandle handle = processRunner.start(input);
+        runningByAgentId.put(agentId, new RunningAgent(agentId, childSessionId, request.parentSessionId(), parentSpawnEntryId, handle));
+        handle.completion().whenComplete((output, failure) -> complete(agentId, output, failure));
+        return new SubagentSpawnResult(
+            agentId,
+            childSessionId,
+            request.parentSessionId(),
+            parentSpawnEntryId,
+            SubagentRunStatus.STARTED,
+            Optional.of("subagent started")
+        );
+    }
+
+    @Override
+    public MailboxCommandResult interrupt(String agentId) {
+        RunningAgent running = runningByAgentId.get(agentId);
+        if (running == null) {
+            return MailboxCommandResult.failure("Agent is not running: " + agentId);
+        }
+        running.handle().interrupt();
+        return MailboxCommandResult.success(null);
+    }
+
+    @Override
+    public Optional<HeadlessSubagentOutput> readResult(String childSessionId) {
+        return Optional.ofNullable(resultsByChildSessionId.get(childSessionId));
+    }
+
+    private void complete(String agentId, HeadlessSubagentOutput output, Throwable failure) {
+        RunningAgent running = runningByAgentId.remove(agentId);
+        if (running == null) {
+            return;
+        }
+        HeadlessSubagentOutput safeOutput = output == null
+            ? failedOutput(running.childSessionId(), failure)
+            : output;
+        resultsByChildSessionId.put(running.childSessionId(), safeOutput);
+        MailboxMessage message = mailboxMessage(running, safeOutput);
+        mailbox.publish(message);
+        deliveryService.tryDeliver(message);
+    }
+
+    private HeadlessSubagentOutput failedOutput(String childSessionId, Throwable failure) {
+        return new HeadlessSubagentOutput(
+            childSessionId,
+            SubagentRunStatus.FAILED,
+            "",
+            Optional.empty(),
+            Optional.ofNullable(failure == null ? "Subagent failed" : failure.getMessage())
+        );
+    }
+
+    private MailboxMessage mailboxMessage(RunningAgent running, HeadlessSubagentOutput output) {
+        Instant now = Instant.now(clock);
+        return new MailboxMessage(
+            "mail_" + randomId(),
+            running.agentId(),
+            running.childSessionId(),
+            running.parentSessionId(),
+            running.parentSpawnEntryId(),
+            output.summary(),
+            new SubagentResultRef(running.childSessionId(), output.finalEntryId().orElse(""), Optional.empty()),
+            MailboxStatus.PENDING,
+            now,
+            now
+        );
+    }
+
+    private String randomId() {
+        return UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private record RunningAgent(
+        String agentId,
+        String childSessionId,
+        String parentSessionId,
+        String parentSpawnEntryId,
+        SubagentProcessHandle handle
+    ) {}
+}
