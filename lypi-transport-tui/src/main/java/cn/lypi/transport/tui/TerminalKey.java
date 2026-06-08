@@ -11,6 +11,8 @@ public enum TerminalKey {
     ALT_DELETE,
     WORD_LEFT,
     WORD_RIGHT,
+    UP,
+    DOWN,
     EXPAND_TOOLS,
     OTHER
 }

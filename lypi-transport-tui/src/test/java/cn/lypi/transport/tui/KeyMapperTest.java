@@ -22,6 +22,8 @@ class KeyMapperTest {
         assertEquals(TerminalKey.MODIFIED_ENTER, mapper.map("\033[13;5u").orElseThrow());
         assertEquals(TerminalKey.WORD_LEFT, mapper.map("\033[1;5D").orElseThrow());
         assertEquals(TerminalKey.WORD_RIGHT, mapper.map("\033OC").orElseThrow());
+        assertEquals(TerminalKey.UP, mapper.map("\033[A").orElseThrow());
+        assertEquals(TerminalKey.DOWN, mapper.map("\033OB").orElseThrow());
     }
 
     @Test

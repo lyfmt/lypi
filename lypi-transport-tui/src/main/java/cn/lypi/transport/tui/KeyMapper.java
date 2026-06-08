@@ -14,6 +14,8 @@ final class KeyMapper {
             case "\033[13;5u", "\033[13;3u" -> Optional.of(TerminalKey.MODIFIED_ENTER);
             case "\033[1;5D", "\033OD" -> Optional.of(TerminalKey.WORD_LEFT);
             case "\033[1;5C", "\033OC" -> Optional.of(TerminalKey.WORD_RIGHT);
+            case "\033[A", "\033OA" -> Optional.of(TerminalKey.UP);
+            case "\033[B", "\033OB" -> Optional.of(TerminalKey.DOWN);
             case "\033[?u", "\033[65;129u", "\033[27;7;65u" -> Optional.empty();
             default -> filterKittyReleaseOrRepeat(sequence);
         };

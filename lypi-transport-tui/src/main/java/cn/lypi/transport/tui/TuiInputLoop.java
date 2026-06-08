@@ -55,6 +55,8 @@ final class TuiInputLoop {
             case DELETE_NEXT_WORD -> editor.deleteNextWord();
             case MOVE_WORD_LEFT -> editor.moveWordLeft();
             case MOVE_WORD_RIGHT -> editor.moveWordRight();
+            case PREVIOUS_HISTORY -> editor.previousHistory();
+            case NEXT_HISTORY -> editor.nextHistory();
             default -> {
             }
         }
@@ -75,6 +77,7 @@ final class TuiInputLoop {
             render();
             return;
         }
+        editor.acceptHistoryEntry();
         submitHandler.submitUserInput(draft);
         editor.clear();
         render();

@@ -56,6 +56,28 @@ class TuiInputLoopTest {
         assertEquals(1, submit.interrupts);
     }
 
+    @Test
+    void upAndDownNavigateSubmittedHistory() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
+        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+
+        loop.acceptText("first");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("second");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("draft");
+
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("second", loop.draft());
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("first", loop.draft());
+        loop.acceptKey(TerminalKey.DOWN);
+        assertEquals("second", loop.draft());
+        loop.acceptKey(TerminalKey.DOWN);
+        assertEquals("draft", loop.draft());
+    }
+
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
         private int interrupts;

@@ -17,6 +17,8 @@ final class KeyBindingRegistry {
         bindings.put(TerminalKey.ALT_DELETE, TerminalInputAction.DELETE_NEXT_WORD);
         bindings.put(TerminalKey.WORD_LEFT, TerminalInputAction.MOVE_WORD_LEFT);
         bindings.put(TerminalKey.WORD_RIGHT, TerminalInputAction.MOVE_WORD_RIGHT);
+        bindings.put(TerminalKey.UP, TerminalInputAction.PREVIOUS_HISTORY);
+        bindings.put(TerminalKey.DOWN, TerminalInputAction.NEXT_HISTORY);
         bindings.put(TerminalKey.CTRL_O, TerminalInputAction.TOGGLE_THINKING);
         bindings.put(TerminalKey.EXPAND_TOOLS, TerminalInputAction.EXPAND_TOOLS);
         return new KeyBindingRegistry(bindings);
