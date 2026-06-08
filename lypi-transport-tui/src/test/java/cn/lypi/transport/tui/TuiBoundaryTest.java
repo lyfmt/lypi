@@ -26,7 +26,12 @@ class TuiBoundaryTest {
     void tuiModuleOnlyDependsOnContracts() throws Exception {
         Set<String> dependencies = declaredDependencies(MODULE_ROOT.resolve("pom.xml"));
 
-        assertEquals(Set.of("lypi-contracts"), dependencies);
+        assertEquals(Set.of(
+            "lypi-contracts",
+            "jline-terminal",
+            "jline-reader",
+            "jline-builtins"
+        ), dependencies);
     }
 
     @Test
@@ -79,7 +84,8 @@ class TuiBoundaryTest {
         return java.util.stream.IntStream.range(0, dependencies.getLength())
             .mapToObj(dependencies::item)
             .map(Element.class::cast)
-            .filter(dependency -> "cn.lypi".equals(text(dependency, "groupId")))
+            .filter(dependency -> "cn.lypi".equals(text(dependency, "groupId"))
+                || "org.jline".equals(text(dependency, "groupId")))
             .map(dependency -> text(dependency, "artifactId"))
             .collect(Collectors.toSet());
     }
