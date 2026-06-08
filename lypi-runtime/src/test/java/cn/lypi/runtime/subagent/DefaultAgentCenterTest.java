@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
@@ -53,6 +54,7 @@ class DefaultAgentCenterTest {
             List.of("lypi", "headless-subagent"),
             childSessions,
             parentSession,
+            sessionFactory(parentSession),
             processRunner,
             mailbox,
             new MailboxDeliveryService(mailbox, ignored -> false),
@@ -109,6 +111,47 @@ class DefaultAgentCenterTest {
     }
 
     @Test
+    void completionLifecycleDoesNotMoveParentSessionCurrentLeaf() {
+        ChildSessionPort childSessions = request -> null;
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CapturingParentSession persistentParentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        String originalLeaf = parentSession.currentView().leafId();
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            (cwd, sessionId) -> persistentParentSession,
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult result = center.spawn(request("ses_parent", originalLeaf, "请审查代码"));
+        parentSession.switchLeaf(originalLeaf);
+
+        processRunner.complete(new HeadlessSubagentOutput(
+            result.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "完成摘要",
+            Optional.of("entry_final"),
+            Optional.empty()
+        ));
+
+        assertThat(parentSession.currentView().leafId()).isEqualTo(originalLeaf);
+        assertThat(persistentParentSession.entries)
+            .filteredOn(AgentLifecycleEntry.class::isInstance)
+            .map(AgentLifecycleEntry.class::cast)
+            .extracting(AgentLifecycleEntry::lifecycle)
+            .containsExactly("finished");
+    }
+
+    @Test
     void missingSubagentCommandReturnsStructuredFailureWithoutCreatingPersistentState() {
         CapturingChildSessions childSessions = new CapturingChildSessions();
         CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
@@ -122,6 +165,7 @@ class DefaultAgentCenterTest {
             List.of(),
             childSessions,
             parentSession,
+            sessionFactory(parentSession),
             processRunner,
             mailbox,
             new MailboxDeliveryService(mailbox, ignored -> false),
@@ -162,6 +206,7 @@ class DefaultAgentCenterTest {
             List.of("lypi", "headless-subagent"),
             childSessions,
             parentSession,
+            sessionFactory(parentSession),
             processRunner,
             mailbox,
             new MailboxDeliveryService(mailbox, ignored -> false),
@@ -210,6 +255,7 @@ class DefaultAgentCenterTest {
             List.of("lypi", "headless-subagent"),
             childSessions,
             parentSession,
+            sessionFactory(parentSession),
             processRunner,
             mailbox,
             new MailboxDeliveryService(mailbox, ignored -> false),
@@ -243,6 +289,46 @@ class DefaultAgentCenterTest {
             .containsExactly("spawned", "failed", "spawned", "timed_out");
     }
 
+    @Test
+    void readResultFallsBackToPersistedMailboxContentRef() {
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        mailbox.publish(new MailboxMessage(
+            "mail_01",
+            "agent_01",
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "持久化摘要",
+            new cn.lypi.contracts.subagent.SubagentResultRef("ses_child", "entry_final", Optional.empty()),
+            MailboxStatus.PENDING,
+            NOW,
+            NOW
+        ));
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            request -> null,
+            parentSession,
+            sessionFactory(parentSession),
+            new CompletingProcessRunner(),
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        Optional<HeadlessSubagentOutput> result = center.readResult("ses_child");
+
+        assertThat(result).hasValueSatisfying(output -> {
+            assertThat(output.childSessionId()).isEqualTo("ses_child");
+            assertThat(output.summary()).isEqualTo("持久化摘要");
+            assertThat(output.finalEntryId()).hasValue("entry_final");
+        });
+    }
+
     private SubagentSpawnRequest request(String parentSessionId, String parentEntryId, String prompt) {
         return new SubagentSpawnRequest(
             parentSessionId,
@@ -255,6 +341,10 @@ class DefaultAgentCenterTest {
             Optional.empty(),
             Optional.empty()
         );
+    }
+
+    private SessionManagerFactoryPort sessionFactory(SessionManagerPort sessionManager) {
+        return (cwd, sessionId) -> sessionManager;
     }
 
     private static final class CapturingChildSessions implements ChildSessionPort {

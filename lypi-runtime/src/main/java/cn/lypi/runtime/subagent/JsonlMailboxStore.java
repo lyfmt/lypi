@@ -15,6 +15,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 public final class JsonlMailboxStore {
@@ -56,6 +57,28 @@ public final class JsonlMailboxStore {
         if (!Files.exists(file)) {
             return List.of();
         }
+        return readFile(file, statuses);
+    }
+
+    /**
+     * 按 child session id 查询已持久化 mailbox 最新状态。
+     */
+    public synchronized Optional<MailboxMessage> findByChildSessionId(String childSessionId) {
+        if (childSessionId == null || childSessionId.isBlank() || !Files.exists(mailboxDir)) {
+            return Optional.empty();
+        }
+        try (java.util.stream.Stream<Path> files = Files.list(mailboxDir)) {
+            return files
+                .filter(path -> path.getFileName().toString().endsWith(".jsonl"))
+                .flatMap(path -> readFile(path, Set.of()).stream())
+                .filter(message -> childSessionId.equals(message.childSessionId()))
+                .max(java.util.Comparator.comparing(MailboxMessage::updatedAt));
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to scan mailbox for child session: " + childSessionId, e);
+        }
+    }
+
+    private List<MailboxMessage> readFile(Path file, Set<MailboxStatus> statuses) {
         Map<String, MailboxMessage> latestById = new LinkedHashMap<>();
         try {
             for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
@@ -65,7 +88,7 @@ public final class JsonlMailboxStore {
                 }
             }
         } catch (IOException e) {
-            throw new IllegalStateException("Failed to read mailbox: " + parentSessionId, e);
+            throw new IllegalStateException("Failed to read mailbox file: " + file, e);
         }
         return latestById.values().stream()
             .filter(message -> statuses == null || statuses.isEmpty() || statuses.contains(message.status()))

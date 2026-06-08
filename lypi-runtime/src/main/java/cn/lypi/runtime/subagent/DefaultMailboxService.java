@@ -7,9 +7,11 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
+import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -39,6 +41,20 @@ public final class DefaultMailboxService implements MailboxPort {
     @Override
     public List<MailboxMessage> read(String sessionId, Set<MailboxStatus> statuses) {
         return store.read(sessionId, statuses);
+    }
+
+    /**
+     * 从持久化 mailbox content ref 恢复 subagent 输出摘要。
+     */
+    public Optional<HeadlessSubagentOutput> readResult(String childSessionId) {
+        return store.findByChildSessionId(childSessionId)
+            .map(message -> new HeadlessSubagentOutput(
+                message.childSessionId(),
+                recoveredStatus(message),
+                message.summary(),
+                blank(message.contentRef().finalEntryId()) ? Optional.empty() : Optional.of(message.contentRef().finalEntryId()),
+                Optional.empty()
+            ));
     }
 
     @Override
@@ -112,6 +128,14 @@ public final class DefaultMailboxService implements MailboxPort {
         return store.read(sessionId, Set.of()).stream()
             .filter(message -> message.mailId().equals(mailId))
             .findFirst();
+    }
+
+    private SubagentRunStatus recoveredStatus(MailboxMessage message) {
+        return blank(message.contentRef().finalEntryId()) ? SubagentRunStatus.FAILED : SubagentRunStatus.SUCCEEDED;
+    }
+
+    private boolean blank(String value) {
+        return value == null || value.isBlank();
     }
 
     private MailboxMessage withStatus(MailboxMessage message, MailboxStatus status) {

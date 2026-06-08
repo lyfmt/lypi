@@ -16,6 +16,8 @@ public record SessionRuntimeState(
     AgentMode agentMode,
     PermissionMode permissionMode,
     ContextBudget budget,
-    boolean hasInterruptibleTool
+    boolean hasInterruptibleTool,
+    boolean hasActiveTurn,
+    boolean hasPendingPermission,
+    boolean hasPendingInput
 ) {}
-

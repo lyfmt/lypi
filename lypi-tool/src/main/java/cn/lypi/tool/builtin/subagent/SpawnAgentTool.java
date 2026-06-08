@@ -42,7 +42,9 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
                 "cwd", Map.of("type", "string"),
                 "timeoutSeconds", Map.of("type", "integer", "minimum", 1),
                 "agentName", Map.of("type", "string"),
-                "agentRole", Map.of("type", "string")
+                "role", Map.of("type", "string"),
+                "agentRole", Map.of("type", "string"),
+                "allowedTools", Map.of("type", "array", "items", Map.of("type", "string"))
             )
         ));
     }
@@ -69,7 +71,7 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
                 PermissionMode.DEFAULT_EXECUTE,
                 intInput(input, 600, "timeoutSeconds", "timeout_seconds"),
                 optionalStringInput(input, "agentName", "agent_name"),
-                optionalStringInput(input, "agentRole", "agent_role")
+                optionalStringInput(input, "role", "agentRole", "agent_role")
             ));
             if (result.status() == SubagentRunStatus.FAILED) {
                 return error(context, result.message().orElse("subagent 启动失败。"));

@@ -163,7 +163,11 @@ public class LyPiRuntimeAutoConfiguration {
                 return false;
             }
             SessionRuntimeState runtimeState = state.getIfAvailable();
-            if (runtimeState == null || runtimeState.hasInterruptibleTool()) {
+            if (runtimeState == null
+                || runtimeState.hasInterruptibleTool()
+                || runtimeState.hasActiveTurn()
+                || runtimeState.hasPendingPermission()
+                || runtimeState.hasPendingInput()) {
                 return false;
             }
             return message.parentSessionId().equals(runtimeState.sessionId())
@@ -292,6 +296,7 @@ public class LyPiRuntimeAutoConfiguration {
     public AgentCenterPort agentCenter(
         ChildSessionPort childSessions,
         SessionManagerPort parentSession,
+        SessionManagerFactoryPort sessionManagerFactory,
         SubagentProcessRunner processRunner,
         DefaultMailboxService mailbox,
         MailboxDeliveryService deliveryService,
@@ -302,6 +307,7 @@ public class LyPiRuntimeAutoConfiguration {
             properties.getCommand(),
             childSessions,
             parentSession,
+            sessionManagerFactory,
             processRunner,
             mailbox,
             deliveryService,

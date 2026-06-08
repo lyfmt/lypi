@@ -56,6 +56,32 @@ class SubagentToolsTest {
     }
 
     @Test
+    void spawnAgentSchemaExposesPlannedRoleAndAllowedToolsInputs() {
+        SpawnAgentTool tool = new SpawnAgentTool(new RecordingAgentCenter());
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+
+        assertTrue(properties.containsKey("role"));
+        assertTrue(properties.containsKey("allowedTools"));
+    }
+
+    @Test
+    void spawnAgentAcceptsRoleAliasAsAgentRole() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        SpawnAgentTool tool = new SpawnAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "prompt", "检查测试失败原因",
+            "role", "code-review"
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals(Optional.of("code-review"), agentCenter.spawnRequest.agentRole());
+    }
+
+    @Test
     void spawnAgentRejectsUnimplementedToolAndPermissionIsolationInputs() {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
         SpawnAgentTool tool = new SpawnAgentTool(agentCenter);

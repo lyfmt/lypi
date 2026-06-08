@@ -238,6 +238,24 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void defaultDeliveryGuardKeepsMailboxPendingWhenRuntimeStateHasPendingInteraction() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false, true, false, false))
+            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false, false, true, false))
+            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false, false, false, true))
+            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
+    }
+
+    @Test
     void bindsSubagentCommandToRunnerAndAgentCenter() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
@@ -348,6 +366,16 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     private static SessionRuntimeState sessionState(String sessionId, boolean hasInterruptibleTool) {
+        return sessionState(sessionId, hasInterruptibleTool, false, false, false);
+    }
+
+    private static SessionRuntimeState sessionState(
+        String sessionId,
+        boolean hasInterruptibleTool,
+        boolean hasActiveTurn,
+        boolean hasPendingPermission,
+        boolean hasPendingInput
+    ) {
         return new SessionRuntimeState(
             sessionId,
             Path.of(".").toAbsolutePath().normalize(),
@@ -357,7 +385,10 @@ class LyPiRuntimeAutoConfigurationTest {
             AgentMode.EXECUTE,
             PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO),
-            hasInterruptibleTool
+            hasInterruptibleTool,
+            hasActiveTurn,
+            hasPendingPermission,
+            hasPendingInput
         );
     }
 
