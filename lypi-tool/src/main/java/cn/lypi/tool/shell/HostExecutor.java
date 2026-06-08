@@ -3,6 +3,7 @@ package cn.lypi.tool.shell;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
@@ -78,7 +79,14 @@ public final class HostExecutor implements Executor {
         } : progress;
         AbortSignal safeSignal = signal == null ? () -> false : signal;
         if (safeSignal.aborted()) {
-            return new ExecutionResult(ABORT_EXIT_CODE, "", "command aborted before start", false, Optional.empty());
+            return new ExecutionResult(
+                ABORT_EXIT_CODE,
+                "",
+                "command aborted before start",
+                false,
+                Optional.empty(),
+                ExecutionMetadata.unsandboxed(name())
+            );
         }
 
         Process process;
@@ -109,7 +117,14 @@ public final class HostExecutor implements Executor {
         } else if (waitResult.aborted()) {
             exitCode = exitCode == 0 ? ABORT_EXIT_CODE : exitCode;
         }
-        return new ExecutionResult(exitCode, stdout.output(), stderr.output(), waitResult.timedOut(), Optional.empty());
+        return new ExecutionResult(
+            exitCode,
+            stdout.output(),
+            stderr.output(),
+            waitResult.timedOut(),
+            Optional.empty(),
+            ExecutionMetadata.unsandboxed(name())
+        );
     }
 
     private Process startProcess(ExecutionRequest request) throws IOException {

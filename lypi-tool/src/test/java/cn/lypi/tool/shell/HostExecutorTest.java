@@ -10,6 +10,7 @@ import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
+import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,6 +41,8 @@ class HostExecutorTest {
         assertEquals("", result.stderr());
         assertFalse(result.timedOut());
         assertEquals(Optional.empty(), result.persistedOutput());
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("host", result.metadata().executorName());
     }
 
     @Test
@@ -188,7 +191,7 @@ class HostExecutorTest {
             cwd,
             env,
             timeout,
-            new SandboxRuntimePolicy(List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), true, true)
+            new SandboxRuntimePolicy(List.of(), List.of(), List.of(), List.of(), NetworkMode.DISABLED, false, false)
         );
     }
 }
