@@ -96,6 +96,7 @@ public final class HostExecutor implements Executor {
         } catch (IOException exception) {
             throw new IllegalStateException("无法启动命令: " + exception.getMessage(), exception);
         }
+        closeChildInput(process);
 
         OutputCollector stdout = new OutputCollector(process.getInputStream(), "stdout", safeProgress);
         OutputCollector stderr = new OutputCollector(process.getErrorStream(), "stderr", safeProgress);
@@ -143,6 +144,14 @@ public final class HostExecutor implements Executor {
         environment.putIfAbsent("GIT_EDITOR", "true");
         environment.putIfAbsent("LYPI", "1");
         return builder.start();
+    }
+
+    private void closeChildInput(Process process) {
+        try {
+            process.getOutputStream().close();
+        } catch (IOException ignored) {
+            // 子进程可能已经退出并关闭 stdin；执行结果以后续进程状态和输出采集为准。
+        }
     }
 
     private Map<String, String> scrubbedParentEnv() {

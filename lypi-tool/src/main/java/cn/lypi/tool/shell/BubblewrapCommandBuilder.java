@@ -131,27 +131,23 @@ public final class BubblewrapCommandBuilder {
         LinkedHashSet<Path> masks = new LinkedHashSet<>();
         for (Path path : denyReadPaths) {
             Path denyReadPath = absoluteNormalized(path, "denyRead");
-            validateDenyReadDirectory(denyReadPath, writableRoots, normalizedCwd);
+            validateDenyReadPath(denyReadPath, writableRoots, normalizedCwd);
             masks.add(denyReadPath);
         }
         rejectNestedDenyReadMasks(masks);
         for (Path denyReadPath : masks) {
-            argv.add("--perms");
-            argv.add("000");
-            argv.add("--tmpfs");
-            argv.add(denyReadPath.toString());
-            argv.add("--remount-ro");
-            argv.add(denyReadPath.toString());
+            appendDenyReadMask(argv, denyReadPath);
         }
     }
 
-    private void validateDenyReadDirectory(Path denyReadPath, List<Path> writableRoots, Path cwd) {
+    private void validateDenyReadPath(Path denyReadPath, List<Path> writableRoots, Path cwd) {
         rejectSymlinkPath(denyReadPath, "denyRead path must not cross a symbolic link");
         if (!Files.exists(denyReadPath, LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("missing denyRead path is unsupported by bubblewrap v1 policy builder: " + denyReadPath);
         }
-        if (!Files.isDirectory(denyReadPath, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IllegalArgumentException("denyRead file masking is unsupported by bubblewrap v1 policy builder: " + denyReadPath);
+        if (!Files.isDirectory(denyReadPath, LinkOption.NOFOLLOW_LINKS)
+            && !Files.isRegularFile(denyReadPath, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalArgumentException("denyRead path type is unsupported by bubblewrap v1 policy builder: " + denyReadPath);
         }
         for (Path writableRoot : writableRoots) {
             if (writableRoot.startsWith(denyReadPath) && !writableRoot.equals(denyReadPath)) {
@@ -163,6 +159,21 @@ public final class BubblewrapCommandBuilder {
         if (cwd != null && cwd.startsWith(denyReadPath)) {
             throw new IllegalArgumentException("cwd inside denyRead is unsupported by bubblewrap v1 policy builder: " + cwd);
         }
+    }
+
+    private void appendDenyReadMask(List<String> argv, Path denyReadPath) {
+        argv.add("--perms");
+        argv.add("000");
+        if (Files.isDirectory(denyReadPath, LinkOption.NOFOLLOW_LINKS)) {
+            argv.add("--tmpfs");
+            argv.add(denyReadPath.toString());
+            argv.add("--remount-ro");
+            argv.add(denyReadPath.toString());
+            return;
+        }
+        argv.add("--ro-bind-data");
+        argv.add("0");
+        argv.add(denyReadPath.toString());
     }
 
     private void rejectNestedDenyReadMasks(LinkedHashSet<Path> denyReadMasks) {

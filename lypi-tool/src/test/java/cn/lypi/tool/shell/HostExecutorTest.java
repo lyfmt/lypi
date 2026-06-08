@@ -16,7 +16,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -136,7 +135,7 @@ class HostExecutorTest {
     @Test
     void publishesStdoutAndStderrProgress() {
         HostExecutor executor = new HostExecutor();
-        List<ToolProgress> progresses = new ArrayList<>();
+        List<ToolProgress> progresses = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         ExecutionResult result = executor.execute(request("printf 'out\\n'; printf 'err\\n' >&2"), progresses::add, () -> false);
 
@@ -183,6 +182,19 @@ class HostExecutorTest {
 
         assertEquals(0, result.exitCode());
         assertEquals(20000, result.stdout().lines().count());
+    }
+
+    @Test
+    void providesEndOfFileOnStdinForNonInteractiveCommands() {
+        HostExecutor executor = new HostExecutor();
+
+        ExecutionResult result = executor.execute(rawRequest(List.of("cat"), tempDir, Map.of(), Duration.ofMillis(300)), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("", result.stdout());
+        assertEquals("", result.stderr());
+        assertFalse(result.timedOut());
     }
 
     @Test

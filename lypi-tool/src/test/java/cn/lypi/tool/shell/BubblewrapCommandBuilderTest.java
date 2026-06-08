@@ -278,7 +278,7 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
-    void rejectsDenyReadFileUntilFileMaskingIsSupported() throws Exception {
+    void masksExistingDenyReadFileAfterWritableWorkspaceBind() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path secretFile = Files.writeString(workspace.resolve("secret.txt"), "secret");
         Path cwd = Files.createDirectory(workspace.resolve("src"));
@@ -292,13 +292,13 @@ class BubblewrapCommandBuilderTest {
             false
         );
 
-        IllegalArgumentException exception = assertThrows(
-            IllegalArgumentException.class,
-            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
-        );
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
 
-        assertTrue(exception.getMessage().contains("denyRead file"));
-        assertTrue(exception.getMessage().contains("unsupported"));
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        int denyReadMask = indexOfSequence(argv, "--perms", "000", "--ro-bind-data", "0", secretFile.toString());
+        assertTrue(denyReadMask > workspaceBind);
+        assertTrue(denyReadMask < argv.lastIndexOf("--"));
     }
 
     @Test
