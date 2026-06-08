@@ -9,6 +9,7 @@ import cn.lypi.agent.compact.DefaultCompactionCoordinator;
 import cn.lypi.agent.compact.DefaultCompactionPlanner;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
@@ -16,12 +17,21 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
 import cn.lypi.contracts.model.TokenUsage;
+import cn.lypi.contracts.prompt.PromptParameter;
+import cn.lypi.contracts.prompt.PromptTemplate;
+import cn.lypi.contracts.prompt.PromptTemplateSource;
+import cn.lypi.contracts.prompt.SystemPrompt;
+import cn.lypi.contracts.resource.ContextFile;
+import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.skill.SkillDescriptor;
+import cn.lypi.contracts.skill.SkillIndex;
+import cn.lypi.contracts.skill.SkillSource;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.ZoneOffset;
@@ -72,7 +82,12 @@ class DefaultCompactionCoordinatorTest {
             .filteredOn(CompactEndEvent.class::isInstance)
             .singleElement()
             .extracting(event -> ((CompactEndEvent) event).compactionEntryId())
-            .isEqualTo(session.leafId());
+            .isEqualTo(session.handle().byId().values().stream()
+                .filter(CompactionEntry.class::isInstance)
+                .map(CompactionEntry.class::cast)
+                .findFirst()
+                .orElseThrow()
+                .id());
     }
 
     @Test
@@ -381,6 +396,156 @@ class DefaultCompactionCoordinatorTest {
         assertThat(decision.context().budget().estimatedContextTokens()).isEqualTo(estimateTokens(decision.context()));
     }
 
+    @Test
+    void appendsResourceBackfillMessageAfterCompaction() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = resourceAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary text"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(session.handle().byId().values())
+            .filteredOn(MessageEntry.class::isInstance)
+            .map(MessageEntry.class::cast)
+            .map(MessageEntry::message)
+            .anySatisfy(message -> {
+                assertThat(message.role()).isEqualTo(MessageRole.SYSTEM_LOCAL);
+                assertThat(message.kind()).isEqualTo(MessageKind.ATTACHMENT);
+                assertThat(message.content()).singleElement()
+                    .isInstanceOfSatisfying(AttachmentContentBlock.class, attachment -> {
+                        assertThat(attachment.attachmentId()).startsWith("compact-resource-");
+                        assertThat(attachment.text())
+                            .contains("AGENTS.md")
+                            .contains("context instructions that must be restored after compact")
+                            .contains("skill:compact-helper")
+                            .contains("Helps restore context after compact")
+                            .doesNotContain("full skill body should not be loaded");
+                    });
+            });
+        assertThat(decision.context().messages())
+            .anySatisfy(message -> assertThat(message.content())
+                .anySatisfy(block -> assertThat(block.text()).contains("context instructions that must be restored after compact")));
+        assertThat(session.handle().byId().values())
+            .filteredOn(CompactionEntry.class::isInstance)
+            .singleElement()
+            .extracting(entry -> ((CompactionEntry) entry).tokensAfter())
+            .isEqualTo(decision.context().budget().estimatedContextTokens());
+    }
+
+    @Test
+    void resourceBackfillAllowsMissingSkillIndex() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = resourceAssembler(session, null);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary after compact"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(session.handle().byId().values())
+            .filteredOn(MessageEntry.class::isInstance)
+            .map(entry -> ((MessageEntry) entry).message())
+            .filteredOn(message -> message.role() == MessageRole.SYSTEM_LOCAL)
+            .filteredOn(message -> message.kind() == MessageKind.ATTACHMENT)
+            .singleElement()
+            .satisfies(message -> assertThat(message.content())
+                .singleElement()
+                .satisfies(block -> assertThat(block.text())
+                    .contains("context instructions that must be restored after compact")));
+    }
+
+    @Test
+    void resourceBackfillIncludesPromptTemplateBody() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = resourceAssembler(
+            session,
+            List.of(new ContextFile(
+                Path.of("AGENTS.md"),
+                "context instructions that must be restored after compact",
+                "sha256:agents"
+            )),
+            new SkillIndex(List.of(), List.of()),
+            List.of(new PromptTemplate(
+                "review",
+                "Review current changes",
+                PromptTemplateSource.PROJECT,
+                List.of(new PromptParameter("scope", "review scope", true, Optional.empty())),
+                "Review {{scope}} with compact-restored prompt body.",
+                "sha256:prompt"
+            ))
+        );
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary after compact"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(resourceBackfillText(session))
+            .contains("prompt:review")
+            .contains("scope(required)")
+            .contains("Review {{scope}} with compact-restored prompt body.");
+    }
+
+    @Test
+    void resourceBackfillTruncationNoticeStaysWithinAttachmentLimit() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = resourceAssembler(
+            session,
+            List.of(
+                new ContextFile(Path.of("AGENTS-1.md"), "A".repeat(30_000), "sha256:agents-1"),
+                new ContextFile(Path.of("AGENTS-2.md"), "B".repeat(30_000), "sha256:agents-2"),
+                new ContextFile(Path.of("AGENTS-3.md"), "C".repeat(30_000), "sha256:agents-3"),
+                new ContextFile(Path.of("AGENTS-4.md"), "D".repeat(30_000), "sha256:agents-4"),
+                new ContextFile(Path.of("AGENTS-5.md"), "E".repeat(30_000), "sha256:agents-5")
+            ),
+            new SkillIndex(List.of(), List.of()),
+            List.of()
+        );
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary after compact"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        String text = resourceBackfillText(session);
+        assertThat(decision.compacted()).isTrue();
+        assertThat(text).contains("内容已截断");
+        assertThat(text).hasSizeLessThanOrEqualTo(20_000);
+    }
+
     private static AgentCoreTestFixtures.InMemorySessionManager sessionWithLongBranch() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         session.openOrCreate("session-1");
@@ -396,6 +561,87 @@ class DefaultCompactionCoordinatorTest {
             fixedResourceRuntime("system"),
             new ContextBudgetEstimator(64, 1, 8, 4)
         );
+    }
+
+    private static DefaultContextAssembler resourceAssembler(AgentCoreTestFixtures.InMemorySessionManager session) {
+        return resourceAssembler(
+            session,
+            List.of(new ContextFile(
+                Path.of("AGENTS.md"),
+                "context instructions that must be restored after compact",
+                "sha256:agents"
+            )),
+            new SkillIndex(List.of(new SkillDescriptor(
+                "compact-helper",
+                "Helps restore context after compact",
+                SkillSource.PROJECT,
+                Path.of(".ly-pi/skills/compact-helper/SKILL.md"),
+                List.of("**/*.java"),
+                List.of("read"),
+                "sha256:skill"
+            )), List.of()),
+            List.of()
+        );
+    }
+
+    private static DefaultContextAssembler resourceAssembler(
+        AgentCoreTestFixtures.InMemorySessionManager session,
+        SkillIndex skillIndex
+    ) {
+        return resourceAssembler(
+            session,
+            List.of(new ContextFile(
+                Path.of("AGENTS.md"),
+                "context instructions that must be restored after compact",
+                "sha256:agents"
+            )),
+            skillIndex,
+            List.of()
+        );
+    }
+
+    private static DefaultContextAssembler resourceAssembler(
+        AgentCoreTestFixtures.InMemorySessionManager session,
+        List<ContextFile> contextFiles,
+        SkillIndex skillIndex,
+        List<PromptTemplate> promptTemplates
+    ) {
+        ResourceSnapshot resources = new ResourceSnapshot(
+            contextFiles,
+            List.of(),
+            skillIndex,
+            promptTemplates,
+            List.of(),
+            List.of()
+        );
+        return new DefaultContextAssembler(
+            session,
+            new cn.lypi.contracts.runtime.ResourceRuntimePort() {
+                @Override
+                public ResourceSnapshot load(Path cwd) {
+                    return resources;
+                }
+
+                @Override
+                public SystemPrompt buildSystemPrompt(ResourceSnapshot ignored) {
+                    return new SystemPrompt("system", List.of("test"), "hash");
+                }
+            },
+            new ContextBudgetEstimator(512, 1, 8, 4)
+        );
+    }
+
+    private static String resourceBackfillText(AgentCoreTestFixtures.InMemorySessionManager session) {
+        return session.handle().byId().values().stream()
+            .filter(MessageEntry.class::isInstance)
+            .map(MessageEntry.class::cast)
+            .map(MessageEntry::message)
+            .filter(message -> message.role() == MessageRole.SYSTEM_LOCAL)
+            .filter(message -> message.kind() == MessageKind.ATTACHMENT)
+            .flatMap(message -> message.content().stream())
+            .findFirst()
+            .orElseThrow()
+            .text();
     }
 
     private static ContextBuildRequest buildRequest(AgentCoreTestFixtures.InMemorySessionManager session) {

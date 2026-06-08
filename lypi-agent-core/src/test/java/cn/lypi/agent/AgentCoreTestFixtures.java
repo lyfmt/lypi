@@ -86,7 +86,7 @@ final class AgentCoreTestFixtures {
     }
 
     static ResourceRuntimePort fixedResourceRuntime(String systemPrompt) {
-        ResourceSnapshot snapshot = new ResourceSnapshot(List.of(), List.of(), null, List.of(), List.of(), List.of());
+        ResourceSnapshot snapshot = emptyResources();
         SystemPrompt prompt = new SystemPrompt(systemPrompt, List.of("test"), "hash");
         return new ResourceRuntimePort() {
             @Override
@@ -99,6 +99,17 @@ final class AgentCoreTestFixtures {
                 return prompt;
             }
         };
+    }
+
+    static ResourceSnapshot emptyResources() {
+        return new ResourceSnapshot(
+            List.of(),
+            List.of(),
+            new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()),
+            List.of(),
+            List.of(),
+            List.of()
+        );
     }
 
     static ContextSnapshot minimalContext(List<AgentMessage> messages) {
