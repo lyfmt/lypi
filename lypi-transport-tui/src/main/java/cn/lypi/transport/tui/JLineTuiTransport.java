@@ -12,8 +12,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final Runnable renderer;
     private final TuiEventReducer reducer;
     private final TuiRenderer tuiRenderer;
-    private final TuiScreen screen;
-    private final TuiLayout layout;
+    private TuiScreen screen;
+    private TuiLayout layout;
     private final FrameSink frameSink;
     private final TerminalInputPump inputPump;
     private EventSubscription subscription;
@@ -113,6 +113,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         runUiMutation(mutation);
     }
 
+    void resizeForTest(int width, int height) {
+        resize(width, height);
+    }
+
     void drainInputForTest() throws IOException {
         drainInput();
     }
@@ -158,6 +162,18 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             if (inputPump != null) {
                 inputPump.drainAvailable();
             }
+        }
+    }
+
+    private void resize(int width, int height) {
+        synchronized (uiMonitor) {
+            uiLockEntries++;
+            if (reducer == null) {
+                return;
+            }
+            screen = new TuiScreen(Math.max(1, height - 2));
+            layout = new TuiLayout(width, height);
+            frameSink.render(tuiRenderer.render(reducer.view(), screen, layout, ""));
         }
     }
 }

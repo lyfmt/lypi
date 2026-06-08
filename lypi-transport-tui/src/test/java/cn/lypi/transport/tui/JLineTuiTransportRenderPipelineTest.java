@@ -44,6 +44,34 @@ class JLineTuiTransportRenderPipelineTest {
         assertEquals(1, transport.uiLockEntryCountForTest());
     }
 
+    @Test
+    void resizeRerendersCurrentViewWithUpdatedDimensionsUnderUiLock() {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 20, 5);
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "abcdefghijklmnopqrst",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+
+        transport.resizeForTest(8, 4);
+
+        assertEquals(2, frames.size());
+        assertEquals(4, frames.getLast().size());
+        frames.getLast().forEach(line -> assertEquals(line, AnsiWidth.truncate(line, 8)));
+        assertEquals(2, transport.uiLockEntryCountForTest());
+    }
+
     private static final class RecordingEventBus implements EventBus {
         private EventConsumer consumer;
 
