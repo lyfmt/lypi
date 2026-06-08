@@ -121,8 +121,17 @@ public class LyPiRuntimeAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public MailboxDeliveryGuard mailboxDeliveryGuard() {
-        return message -> false;
+    public MailboxDeliveryGuard mailboxDeliveryGuard(ObjectProvider<SessionRuntimeState> state) {
+        return message -> {
+            if (message == null) {
+                return false;
+            }
+            SessionRuntimeState runtimeState = state.getIfAvailable();
+            if (runtimeState == null || runtimeState.hasInterruptibleTool()) {
+                return false;
+            }
+            return message.parentSessionId().equals(runtimeState.sessionId());
+        };
     }
 
     /**

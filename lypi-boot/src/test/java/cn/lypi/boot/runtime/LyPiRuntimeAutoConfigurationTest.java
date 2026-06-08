@@ -29,6 +29,9 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.subagent.MailboxMessage;
+import cn.lypi.contracts.subagent.MailboxStatus;
+import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
@@ -171,6 +174,27 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void defaultDeliveryGuardAllowsSameIdleSessionWhenRuntimeStateExists() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
+            .run(context -> {
+                MailboxDeliveryGuard guard = context.getBean(MailboxDeliveryGuard.class);
+
+                assertThat(guard.canDeliver(mail("ses_parent"))).isTrue();
+                assertThat(guard.canDeliver(mail("ses_other"))).isFalse();
+            });
+    }
+
+    @Test
+    void defaultDeliveryGuardKeepsMailboxPendingWhenRuntimeStateHasRunningTool() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", true))
+            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
+    }
+
+    @Test
     void bindsSubagentCommandToRunnerAndAgentCenter() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
@@ -258,8 +282,12 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     private static SessionRuntimeState sessionState() {
+        return sessionState("session-1", false);
+    }
+
+    private static SessionRuntimeState sessionState(String sessionId, boolean hasInterruptibleTool) {
         return new SessionRuntimeState(
-            "session-1",
+            sessionId,
             Path.of(".").toAbsolutePath().normalize(),
             "leaf-1",
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
@@ -267,7 +295,22 @@ class LyPiRuntimeAutoConfigurationTest {
             AgentMode.EXECUTE,
             PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO),
-            false
+            hasInterruptibleTool
+        );
+    }
+
+    private static MailboxMessage mail(String parentSessionId) {
+        return new MailboxMessage(
+            "mail_1",
+            "agent_1",
+            "ses_child",
+            parentSessionId,
+            "entry_spawn",
+            "完成摘要",
+            new SubagentResultRef("ses_child", "entry_final", java.util.Optional.empty()),
+            MailboxStatus.PENDING,
+            Instant.EPOCH,
+            Instant.EPOCH
         );
     }
 

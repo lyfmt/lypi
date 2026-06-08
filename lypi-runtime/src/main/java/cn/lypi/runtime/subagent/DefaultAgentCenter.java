@@ -193,12 +193,21 @@ public final class DefaultAgentCenter implements AgentCenterPort {
             running.childSessionId(),
             running.parentSessionId(),
             running.parentSpawnEntryId(),
-            output.summary(),
+            mailboxSummary(output),
             new SubagentResultRef(running.childSessionId(), output.finalEntryId().orElse(""), Optional.empty()),
             MailboxStatus.PENDING,
             now,
             now
         );
+    }
+
+    private String mailboxSummary(HeadlessSubagentOutput output) {
+        if (output.summary() != null && !output.summary().isBlank()) {
+            return output.summary();
+        }
+        return output.errorMessage()
+            .filter(message -> !message.isBlank())
+            .orElse(output.status().name());
     }
 
     private SubagentSpawnResult failedSpawn(SubagentSpawnRequest request, String message) {

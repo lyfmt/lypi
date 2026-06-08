@@ -196,6 +196,67 @@ class DefaultAgentCenterTest {
             .isEqualTo("已中断");
     }
 
+    @Test
+    void failedAndTimedOutRunsPublishReadableMailboxAndLifecycleStatus() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        SubagentSpawnResult failed = center.spawn(request("ses_parent", "entry_parent", "检查失败"));
+        processRunner.complete(new HeadlessSubagentOutput(
+            failed.childSessionId(),
+            SubagentRunStatus.FAILED,
+            "",
+            Optional.empty(),
+            Optional.of("模型调用失败")
+        ));
+        SubagentSpawnResult timedOut = center.spawn(request("ses_parent", "entry_parent", "检查超时"));
+        processRunner.complete(new HeadlessSubagentOutput(
+            timedOut.childSessionId(),
+            SubagentRunStatus.TIMED_OUT,
+            "",
+            Optional.empty(),
+            Optional.of("Subagent process timed out after 1 seconds")
+        ));
+
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
+            .extracting(MailboxMessage::summary)
+            .containsExactly("模型调用失败", "Subagent process timed out after 1 seconds");
+        assertThat(parentSession.entries)
+            .filteredOn(AgentLifecycleEntry.class::isInstance)
+            .map(AgentLifecycleEntry.class::cast)
+            .extracting(AgentLifecycleEntry::lifecycle)
+            .containsExactly("spawned", "failed", "spawned", "timed_out");
+    }
+
+    private SubagentSpawnRequest request(String parentSessionId, String parentEntryId, String prompt) {
+        return new SubagentSpawnRequest(
+            parentSessionId,
+            parentEntryId,
+            prompt,
+            tempDir,
+            List.of(),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
     private static final class CapturingChildSessions implements ChildSessionPort {
         private ChildSessionRequest request;
 
