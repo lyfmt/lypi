@@ -631,6 +631,7 @@ class DefaultTurnExecutorTest {
         )));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
