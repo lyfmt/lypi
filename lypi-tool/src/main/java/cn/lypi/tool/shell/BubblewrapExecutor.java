@@ -87,8 +87,11 @@ public final class BubblewrapExecutor implements Executor {
         }
         String sandboxStartedSentinel = sandboxStartedSentinel();
         ExecutionRequest wrappedRequest = requestWithSandboxStartedSentinel(request, sandboxStartedSentinel);
-        List<String> argv = commandBuilder.build(wrappedRequest, new BubblewrapCommandBuilder.Options(mountProc));
-        java.util.ArrayList<String> executableArgv = new java.util.ArrayList<>(argv);
+        BubblewrapCommandBuilder.BuildResult buildResult = commandBuilder.buildDetailed(
+            wrappedRequest,
+            new BubblewrapCommandBuilder.Options(mountProc)
+        );
+        java.util.ArrayList<String> executableArgv = new java.util.ArrayList<>(buildResult.argv());
         executableArgv.set(0, bwrapPath.orElseThrow().toString());
         ExecutionRequest bwrapRequest = new ExecutionRequest(
             List.copyOf(executableArgv),
@@ -97,16 +100,35 @@ public final class BubblewrapExecutor implements Executor {
             timeout(request),
             request.sandboxPolicy()
         );
-        ExecutionResult result = hostExecutor.execute(
-            bwrapRequest,
-            progressWithoutSandboxStartedSentinel(progress, sandboxStartedSentinel),
-            signal
-        );
+        ExecutionResult result;
+        try {
+            result = hostExecutor.execute(
+                bwrapRequest,
+                progressWithoutSandboxStartedSentinel(progress, sandboxStartedSentinel),
+                signal
+            );
+        } finally {
+            cleanupSyntheticMountTargets(buildResult.syntheticMountTargets());
+        }
         if (!sandboxStarted(result, sandboxStartedSentinel)) {
             return handleExecutionFailure(request, progress, signal, result);
         }
         return withoutSandboxStartedSentinel(result, sandboxStartedSentinel)
             .withMetadata(ExecutionMetadata.sandboxed(name()));
+    }
+
+    private void cleanupSyntheticMountTargets(List<Path> syntheticMountTargets) {
+        syntheticMountTargets.stream()
+            .sorted((left, right) -> Integer.compare(right.getNameCount(), left.getNameCount()))
+            .forEach(this::deleteSyntheticMountTargetIfSafe);
+    }
+
+    private void deleteSyntheticMountTargetIfSafe(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+            // 只清理空目录或合成空文件；如果路径被填充，保守保留，避免误删用户数据。
+        }
     }
 
     private ExecutionResult handleUnavailable(ExecutionRequest request, ProgressSink progress, AbortSignal signal, String diagnostic) {

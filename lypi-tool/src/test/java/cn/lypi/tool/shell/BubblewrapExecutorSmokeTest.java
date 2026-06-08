@@ -51,6 +51,22 @@ class BubblewrapExecutorSmokeTest {
     }
 
     @Test
+    void masksMissingProtectedMetadataWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+
+        ExecutionResult result = executor.execute(request("printf bad > .git/HEAD || printf protected; test -d .git", workspace), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("protected", result.stdout());
+        assertTrue(!Files.exists(workspace.resolve(".git")));
+    }
+
+    @Test
     void masksDenyReadDirectoryWithRealBubblewrapWhenAvailable() throws Exception {
         BubblewrapExecutor executor = new BubblewrapExecutor();
         Path probe = Files.createDirectory(tempDir.resolve("probe"));
@@ -79,6 +95,35 @@ class BubblewrapExecutorSmokeTest {
         assertTrue(!result.stdout().contains("hidden"));
         assertTrue(result.stderr().contains("Permission denied") || result.stderr().contains("No such file or directory"));
         assertEquals("hidden", Files.readString(secret.resolve("token")));
+    }
+
+    @Test
+    void masksMissingDenyReadPathWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path missingSecret = workspace.resolve("missing-secret").resolve("token");
+
+        ExecutionResult result = executor.execute(request(
+            "mkdir -p missing-secret 2>/dev/null || true; printf hidden > missing-secret/token || printf protected",
+            workspace,
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(missingSecret),
+                List.of(workspace),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("protected", result.stdout());
+        assertTrue(!Files.exists(workspace.resolve("missing-secret")));
     }
 
     @Test

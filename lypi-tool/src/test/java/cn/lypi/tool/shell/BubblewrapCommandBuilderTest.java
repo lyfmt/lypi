@@ -92,16 +92,42 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
-    void skipsMissingProtectedMetadataPaths() throws Exception {
+    void masksMissingProtectedMetadataPathsAsReadonlyEmptyDirectories() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path cwd = Files.createDirectory(workspace.resolve("src"));
         ExecutionRequest request = request(cwd, policy(workspace, NetworkMode.DISABLED));
 
         List<String> argv = BubblewrapCommandBuilder.defaults().build(request);
 
-        assertTrue(!containsSequence(argv, "--ro-bind", workspace.resolve(".git").toString(), workspace.resolve(".git").toString()));
-        assertTrue(!containsSequence(argv, "--ro-bind", workspace.resolve(".codex").toString(), workspace.resolve(".codex").toString()));
-        assertTrue(!containsSequence(argv, "--ro-bind", workspace.resolve(".agents").toString(), workspace.resolve(".agents").toString()));
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(indexOfSequence(
+            argv,
+            "--perms",
+            "555",
+            "--tmpfs",
+            workspace.resolve(".git").toString(),
+            "--remount-ro",
+            workspace.resolve(".git").toString()
+        ) > workspaceBind);
+        assertTrue(indexOfSequence(
+            argv,
+            "--perms",
+            "555",
+            "--tmpfs",
+            workspace.resolve(".codex").toString(),
+            "--remount-ro",
+            workspace.resolve(".codex").toString()
+        ) > workspaceBind);
+        assertTrue(indexOfSequence(
+            argv,
+            "--perms",
+            "555",
+            "--tmpfs",
+            workspace.resolve(".agents").toString(),
+            "--remount-ro",
+            workspace.resolve(".agents").toString()
+        ) > workspaceBind);
     }
 
     @Test
@@ -327,9 +353,9 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
-    void rejectsMissingDenyReadPathUntilSyntheticMaskingIsSupported() throws Exception {
+    void masksFirstMissingDenyReadComponentInsideWritableRoot() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
-        Path missingSecret = workspace.resolve("missing-secret");
+        Path missingSecret = workspace.resolve("missing-secret").resolve("token");
         Path cwd = Files.createDirectory(workspace.resolve("src"));
         SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
             List.of(Path.of("/usr")),
@@ -341,13 +367,14 @@ class BubblewrapCommandBuilderTest {
             false
         );
 
-        IllegalArgumentException exception = assertThrows(
-            IllegalArgumentException.class,
-            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
-        );
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
 
-        assertTrue(exception.getMessage().contains("missing denyRead path"));
-        assertTrue(exception.getMessage().contains("unsupported"));
+        Path firstMissingComponent = workspace.resolve("missing-secret");
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        int missingMask = indexOfSequence(argv, "--perms", "000", "--ro-bind-data", "0", firstMissingComponent.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(workspaceBind < missingMask);
+        assertTrue(missingMask < argv.lastIndexOf("--"));
     }
 
     @Test
