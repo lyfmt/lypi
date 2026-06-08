@@ -51,6 +51,7 @@ import cn.lypi.runtime.event.InMemoryEventBus;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.session.SessionManagerImpl;
+import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
 import java.math.BigDecimal;
@@ -275,6 +276,25 @@ class LyPiRuntimeAutoConfigurationTest {
             });
     }
 
+    @Test
+    void registersMailboxSlashCommandHandlerWithRuntimeStateSession() {
+        NoopMailbox mailbox = new NoopMailbox();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(MailboxPort.class, () -> mailbox)
+            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
+            .run(context -> {
+                MailboxSlashCommandHandler handler = context.getBean(MailboxSlashCommandHandler.class);
+
+                handler.handle(Map.of("action", "list"));
+
+                assertThat(handler.command().name()).isEqualTo("mailbox");
+                assertThat(mailbox.readSessionId).isEqualTo("ses_parent");
+                assertThat(mailbox.readStatuses).containsExactly(MailboxStatus.PENDING);
+            });
+    }
+
     private static PermissionDecision allowAllSecurity(ToolUseRequest request, ToolUseContext context) {
         return new PermissionDecision(
             PermissionBehavior.ALLOW,
@@ -370,11 +390,16 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     private static final class NoopMailbox implements MailboxPort {
+        private String readSessionId;
+        private java.util.Set<MailboxStatus> readStatuses;
+
         @Override
         public List<cn.lypi.contracts.subagent.MailboxMessage> read(
             String sessionId,
             java.util.Set<cn.lypi.contracts.subagent.MailboxStatus> statuses
         ) {
+            readSessionId = sessionId;
+            readStatuses = statuses;
             return List.of();
         }
 

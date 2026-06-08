@@ -20,6 +20,7 @@ import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.session.ChildSessionService;
 import cn.lypi.session.DefaultSessionManagerFactory;
 import cn.lypi.session.SessionManagerImpl;
+import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
@@ -161,6 +162,26 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnBean(DefaultMailboxService.class)
     public MailboxDeliveryService mailboxDeliveryService(DefaultMailboxService mailbox, MailboxDeliveryGuard guard) {
         return new MailboxDeliveryService(mailbox, guard);
+    }
+
+    /**
+     * 创建 /mailbox slash command handler。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(MailboxPort.class)
+    public MailboxSlashCommandHandler mailboxSlashCommandHandler(
+        MailboxPort mailbox,
+        ObjectProvider<SessionRuntimeState> state,
+        SessionManagerPort sessionManager
+    ) {
+        return new MailboxSlashCommandHandler(mailbox, () -> {
+            SessionRuntimeState runtimeState = state.getIfAvailable();
+            if (runtimeState != null) {
+                return runtimeState.sessionId();
+            }
+            return sessionManager.currentView().sessionId();
+        });
     }
 
     /**

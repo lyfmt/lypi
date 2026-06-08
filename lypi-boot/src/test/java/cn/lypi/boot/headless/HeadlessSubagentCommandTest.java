@@ -1,7 +1,9 @@
 package cn.lypi.boot.headless;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import cn.lypi.boot.LyPiApplication;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -21,6 +23,7 @@ import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.transport.headless.HeadlessSubagentJsonCodec;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -28,11 +31,19 @@ import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 class HeadlessSubagentCommandTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void applicationDeclaresMainEntryPoint() throws Exception {
+        Method main = LyPiApplication.class.getDeclaredMethod("main", String[].class);
+
+        assertThat(main).isNotNull();
+    }
 
     @Test
     void autoConfigurationCreatesHeadlessSubagentCommandWhenDependenciesExist() {
@@ -41,6 +52,64 @@ class HeadlessSubagentCommandTest {
             .withBean(AgentCoreFactoryPort.class, () -> (cwd, sessionManager) -> request -> completedTurn(request, sessionManager))
             .withBean(SessionManagerFactoryPort.class, () -> this::sessionManager)
             .run(context -> assertThat(context).hasSingleBean(HeadlessSubagentCommand.class));
+    }
+
+    @Test
+    void autoConfigurationCreatesHeadlessApplicationRunner() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(HeadlessSubagentCommandAutoConfiguration.class)
+            .run(context -> assertThat(context).hasSingleBean(HeadlessSubagentApplicationRunner.class));
+    }
+
+    @Test
+    void applicationRunnerRunsHeadlessSubagentCommandWhenFlagIsPresent() {
+        HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
+        ByteArrayOutputStream input = new ByteArrayOutputStream();
+        codec.writeInput(new HeadlessSubagentInput(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "执行检查",
+            tempDir,
+            List.of(),
+            PermissionMode.DEFAULT_EXECUTE,
+            30
+        ), input);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        HeadlessSubagentCommand command = new HeadlessSubagentCommand(
+            (cwd, sessionManager) -> request -> completedTurn(request, sessionManager),
+            (cwd, sessionId) -> {
+                SessionManagerImpl manager = new SessionManagerImpl(cwd);
+                manager.openOrCreate(sessionId);
+                return manager;
+            },
+            codec
+        );
+        HeadlessSubagentApplicationRunner runner = new HeadlessSubagentApplicationRunner(
+            () -> command,
+            () -> new ByteArrayInputStream(input.toByteArray()),
+            () -> output
+        );
+
+        runner.run(new DefaultApplicationArguments("--lypi.headless.subagent"));
+
+        HeadlessSubagentOutput result = codec.readOutput(new ByteArrayInputStream(output.toByteArray()));
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+        assertThat(runner.getExitCode()).isZero();
+    }
+
+    @Test
+    void applicationRunnerFailsFastWhenHeadlessFlagHasNoCommand() {
+        HeadlessSubagentApplicationRunner runner = new HeadlessSubagentApplicationRunner(
+            () -> null,
+            ByteArrayInputStream::nullInputStream,
+            ByteArrayOutputStream::new
+        );
+
+        assertThatThrownBy(() -> runner.run(new DefaultApplicationArguments("headless-subagent")))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Headless subagent command is not available");
+        assertThat(runner.getExitCode()).isEqualTo(2);
     }
 
     @Test

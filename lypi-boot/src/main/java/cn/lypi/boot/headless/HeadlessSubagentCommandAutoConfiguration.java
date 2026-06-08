@@ -4,6 +4,7 @@ import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.transport.headless.HeadlessSubagentJsonCodec;
 import cn.lypi.transport.headless.HeadlessSubagentRunner;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -42,5 +43,16 @@ public class HeadlessSubagentCommandAutoConfiguration {
     @ConditionalOnBean(HeadlessSubagentRunner.class)
     public HeadlessSubagentCommand headlessSubagentCommand(HeadlessSubagentRunner runner) {
         return new HeadlessSubagentCommand(runner);
+    }
+
+    /**
+     * 创建 headless subagent CLI runner。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public HeadlessSubagentApplicationRunner headlessSubagentApplicationRunner(
+        ObjectProvider<HeadlessSubagentCommand> command
+    ) {
+        return new HeadlessSubagentApplicationRunner(command::getIfAvailable);
     }
 }
