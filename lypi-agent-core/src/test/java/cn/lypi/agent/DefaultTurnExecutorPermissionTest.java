@@ -23,6 +23,7 @@ import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -243,8 +244,19 @@ class DefaultTurnExecutorPermissionTest {
 
         @Override
         public List<ToolResult<?>> execute(List<ToolUseRequest> requests, cn.lypi.contracts.context.ContextSnapshot context) {
+            return execute(requests, context, new ToolRuntimeInvocation("session-1", "turn-1"));
+        }
+
+        @Override
+        public List<ToolResult<?>> execute(
+            List<ToolUseRequest> requests,
+            cn.lypi.contracts.context.ContextSnapshot context,
+            ToolRuntimeInvocation invocation
+        ) {
             this.requests.add(List.copyOf(requests));
             ToolUseRequest request = requests.getFirst();
+            String sessionId = invocation.sessionId();
+            String turnId = invocation.turnId();
             PermissionDecision ask = new PermissionDecision(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.TOOL_SPECIFIC,
@@ -253,10 +265,10 @@ class DefaultTurnExecutorPermissionTest {
                 Map.of()
             );
             eventBus.publish(new ToolStartEvent(
-                "session-1",
+                sessionId,
                 request.toolUseId(),
                 request.parentMessageId(),
-                "turn-1",
+                turnId,
                 request.toolName(),
                 request.toolName(),
                 "write notes.txt",
@@ -265,7 +277,7 @@ class DefaultTurnExecutorPermissionTest {
                 Instant.EPOCH
             ));
             eventBus.publish(new PermissionRequestEvent(
-                "session-1",
+                sessionId,
                 request.toolUseId(),
                 request.toolName(),
                 "write notes.txt",
@@ -274,7 +286,7 @@ class DefaultTurnExecutorPermissionTest {
                 Instant.EPOCH
             ));
             eventBus.publish(new PermissionDecisionEvent(
-                "session-1",
+                sessionId,
                 request.toolUseId(),
                 request.toolName(),
                 "write notes.txt",
@@ -288,7 +300,7 @@ class DefaultTurnExecutorPermissionTest {
                 Instant.EPOCH
             ));
             eventBus.publish(new ToolEndEvent(
-                "session-1",
+                sessionId,
                 request.toolUseId(),
                 ToolExecutionStatus.FAILED,
                 null,

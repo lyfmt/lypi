@@ -10,6 +10,7 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -293,6 +294,15 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
      */
     @Override
     public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
+        return execute(requests, context, null);
+    }
+
+    @Override
+    public List<ToolResult<?>> execute(
+        List<ToolUseRequest> requests,
+        ContextSnapshot context,
+        ToolRuntimeInvocation invocation
+    ) {
         if (requests == null || requests.isEmpty()) {
             return List.of();
         }
@@ -306,21 +316,22 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             ToolUseRequest request = requests.get(index);
             Optional<Tool<?, ?>> tool = registry.resolve(request.toolName());
             if (tool.isEmpty()) {
-                executeResolvedSegment(resolvedSegment, context, results);
+                executeResolvedSegment(resolvedSegment, context, invocation, results);
                 resolvedSegment.clear();
-                results.set(index, executeUnknownCall(request, context));
+                results.set(index, executeUnknownCall(request, context, invocation));
                 continue;
             }
             Tool<Map<String, Object>, ?> resolvedTool = castTool(tool.get());
             resolvedSegment.add(new IndexedCall(index, canonicalRequest(request, resolvedTool), request.toolName(), resolvedTool));
         }
-        executeResolvedSegment(resolvedSegment, context, results);
+        executeResolvedSegment(resolvedSegment, context, invocation, results);
         return List.copyOf(results);
     }
 
     private void executeResolvedSegment(
         List<IndexedCall> resolvedCalls,
         ContextSnapshot context,
+        ToolRuntimeInvocation invocation,
         List<ToolResult<?>> results
     ) {
         if (resolvedCalls.isEmpty()) {
@@ -333,7 +344,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         int cursor = 0;
         for (ToolExecutionPlanner.Batch batch : batches) {
             List<IndexedCall> indexedBatch = resolvedCalls.subList(cursor, cursor + batch.calls().size());
-            executeBatch(batch, indexedBatch, context, results);
+            executeBatch(batch, indexedBatch, context, invocation, results);
             cursor += batch.calls().size();
         }
     }
@@ -342,18 +353,31 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolExecutionPlanner.Batch batch,
         List<IndexedCall> indexedBatch,
         ContextSnapshot context,
+        ToolRuntimeInvocation invocation,
         List<ToolResult<?>> results
     ) {
         if (!batch.parallel()) {
             IndexedCall indexedCall = indexedBatch.getFirst();
-            results.set(indexedCall.index(), executeCall(indexedCall.request(), indexedCall.originalToolName(), indexedCall.tool(), context));
+            results.set(indexedCall.index(), executeCall(
+                indexedCall.request(),
+                indexedCall.originalToolName(),
+                indexedCall.tool(),
+                context,
+                invocation
+            ));
             return;
         }
 
         try (BoundedVirtualExecutor executor = new BoundedVirtualExecutor(maxConcurrency)) {
             List<CompletableFuture<IndexedResult>> futures = indexedBatch.stream()
                 .map(call -> CompletableFuture.supplyAsync(
-                    () -> new IndexedResult(call.index(), executeCall(call.request(), call.originalToolName(), call.tool(), context)),
+                    () -> new IndexedResult(call.index(), executeCall(
+                        call.request(),
+                        call.originalToolName(),
+                        call.tool(),
+                        context,
+                        invocation
+                    )),
                     executor
                 ))
                 .toList();
@@ -368,11 +392,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolUseRequest request,
         String originalToolName,
         Tool<Map<String, Object>, ?> tool,
-        ContextSnapshot context
+        ContextSnapshot context,
+        ToolRuntimeInvocation invocation
     ) {
         Map<String, Object> input = request.input() == null ? Map.of() : request.input();
         ToolUseContext toolContext = contextWithCallMetadata(
-            contextFactory.create(request, context),
+            contextFactory.create(request, context, invocation),
             request.toolUseId(),
             originalToolName,
             request.toolName()
@@ -380,11 +405,15 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return executeStartedCall(request, originalToolName, tool.name(), tool, input, toolContext);
     }
 
-    private ToolResult<?> executeUnknownCall(ToolUseRequest request, ContextSnapshot context) {
+    private ToolResult<?> executeUnknownCall(
+        ToolUseRequest request,
+        ContextSnapshot context,
+        ToolRuntimeInvocation invocation
+    ) {
         Map<String, Object> input = request.input() == null ? Map.of() : request.input();
         String toolName = request.toolName();
         ToolUseContext toolContext = contextWithCallMetadata(
-            contextFactory.create(request, context),
+            contextFactory.create(request, context, invocation),
             request.toolUseId(),
             toolName,
             toolName
@@ -477,10 +506,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 finalResult = errorResult(request.toolUseId(), "工具调用已中止。", status);
                 return finalResult;
             }
-            ToolResult<?> result = executeTool(request, tool, input, toolContext, started.progressSink());
-            rawResult = applyAfterInterceptor(request, tool, toolContext, result);
+            ExecutedToolResult execution = executeTool(request, tool, input, toolContext, started.progressSink());
+            rawResult = applyAfterInterceptor(request, tool, toolContext, execution.result());
             finalResult = resultBudgeter.apply(request.toolUseId(), tool.name(), rawResult, tool.maxResultSize());
-            status = finalResult.isError() ? ToolExecutionStatus.FAILED : ToolExecutionStatus.SUCCEEDED;
+            status = execution.threw() || finalResult.isError()
+                ? ToolExecutionStatus.FAILED
+                : ToolExecutionStatus.SUCCEEDED;
             return finalResult;
         } catch (RuntimeException exception) {
             finalResult = errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
@@ -498,7 +529,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             : ToolExecutionStatus.FAILED;
     }
 
-    private ToolResult<?> executeTool(
+    private ExecutedToolResult executeTool(
         ToolUseRequest request,
         Tool<Map<String, Object>, ?> tool,
         Map<String, Object> input,
@@ -506,9 +537,9 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ProgressSink progress
     ) {
         try {
-            return tool.execute(input, toolContext, progress);
+            return new ExecutedToolResult(tool.execute(input, toolContext, progress), false);
         } catch (RuntimeException exception) {
-            return errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
+            return new ExecutedToolResult(errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage()), true);
         }
     }
 
@@ -563,7 +594,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         Map<String, Object> metadata
     ) {
         String outputText = outputText(result);
-        boolean error = result == null || result.isError();
+        boolean error = status != ToolExecutionStatus.SUCCEEDED || result == null || result.isError();
         return new ToolResultSummary(
             toolName + " " + status.name().toLowerCase(),
             summarize(outputText),
@@ -857,6 +888,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         String originalToolName,
         Tool<Map<String, Object>, ?> tool
     ) {}
+
+    private record ExecutedToolResult(ToolResult<?> result, boolean threw) {}
 
     private record IndexedResult(
         int index,

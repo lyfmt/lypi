@@ -45,4 +45,17 @@ public interface ToolRuntimePort {
      * NOTE: 工具调用生命周期由工具运行时按单个工具真实调度与完成边界发布。
      */
     List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context);
+
+    /**
+     * 在指定上层归属下编排并执行模型发出的工具调用。
+     *
+     * NOTE: agent-core 必须通过该入口传入真实 sessionId 与 turnId，供工具生命周期事件归属使用。
+     */
+    default List<ToolResult<?>> execute(
+        List<ToolUseRequest> requests,
+        ContextSnapshot context,
+        ToolRuntimeInvocation invocation
+    ) {
+        return execute(requests, context);
+    }
 }

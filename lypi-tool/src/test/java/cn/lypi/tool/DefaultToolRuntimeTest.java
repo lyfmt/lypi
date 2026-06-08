@@ -19,6 +19,7 @@ import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionMode;
@@ -111,6 +112,48 @@ class DefaultToolRuntimeTest {
         );
 
         assertEquals("bash", securityToolName.get());
+    }
+
+    @Test
+    void publishesCanonicalLifecycleWithOriginalToolNameMetadataWhenCalledByAlias() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(TestTools.echo("bash", List.of("sh"), true, true, false));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "sh", Map.of("text", "hello"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        assertEquals("bash", start.toolName());
+        assertEquals("sh", start.inputMetadata().get("originalToolName"));
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals("bash", end.metadata().get("toolName"));
+        assertEquals("sh", end.metadata().get("originalToolName"));
+        assertEquals("bash", end.resultSummary().metadata().get("toolName"));
+        assertEquals("sh", end.resultSummary().metadata().get("originalToolName"));
+    }
+
+    @Test
+    void invocationOverridesStaticOptionsForLifecycleOwnership() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(TestTools.echo("bash", List.of(), true, true, false));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "hello"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("session-dynamic", "turn-dynamic")
+        ).getFirst();
+
+        assertFalse(result.isError());
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, events.events.get(0));
+        assertEquals("session-dynamic", start.sessionId());
+        assertEquals("turn-dynamic", start.turnId());
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals("session-dynamic", end.sessionId());
     }
 
     @Test
@@ -406,7 +449,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void publicConstructorPublishesProgressWithoutToolLifecycleEventsThroughEventBus() {
+    void publicConstructorPublishesToolLifecycleAndProgressThroughEventBus() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = new DefaultToolRuntime(
             ToolRuntimeOptions.builder()
@@ -592,6 +635,26 @@ class DefaultToolRuntimeTest {
         assertTrue(end.resultSummary().error());
         assertTrue(end.resultSummary().summary().contains("工具执行失败: after boom"));
         assertEquals(result.newMessages().getFirst().content().getFirst().text(), end.resultSummary().summary());
+    }
+
+    @Test
+    void keepsFailedLifecycleStatusWhenAfterInterceptorReplacesToolThrowWithSuccess() {
+        RecordingEventBus events = new RecordingEventBus();
+        ToolExecutionInterceptor interceptor = ToolExecutionInterceptor.after((request, tool, context, result) ->
+            TestTools.result(request.toolUseId(), "recovered", false)
+        );
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity(), interceptor);
+        runtime.register(TestTools.throwingExecute("throwing"));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "throwing", Map.of(), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals(ToolExecutionStatus.FAILED, end.status());
+        assertTrue(end.resultSummary().error());
     }
 
     @Test

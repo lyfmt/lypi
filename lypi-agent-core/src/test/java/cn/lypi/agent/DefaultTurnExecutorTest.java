@@ -32,6 +32,7 @@ import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
@@ -594,6 +595,58 @@ class DefaultTurnExecutorTest {
         assertThat(session.messages()).extracting(AgentMessage::id)
             .containsExactly("msg-user", "msg-tool-call", "msg-tool-result-1", "msg-tool-result-2", "msg-final");
         assertThat(eventBus.events).noneMatch(this::isToolLifecycleEvent);
+    }
+
+    @Test
+    void passesTurnOwnershipToToolRuntimeInvocation() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "bash", Map.of("command", "pwd"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("done"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "ok",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "ok", false)),
+            Optional.empty()
+        )));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2"),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "run tool", Optional.empty(), () -> false));
+
+        assertThat(tools.invocations).hasSize(1);
+        ToolRuntimeInvocation invocation = tools.invocations.getFirst();
+        assertThat(invocation.sessionId()).isEqualTo("session-1");
+        assertThat(invocation.turnId()).isEqualTo("turn-1");
     }
 
     @Test
