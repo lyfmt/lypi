@@ -11,6 +11,7 @@ import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.model.ToolCallDelta;
 import java.time.Clock;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -85,6 +86,23 @@ class AssistantStreamAccumulatorTest {
             .containsEntry("options", Map.of("encoding", "utf-8"))
             .containsEntry("ranges", List.of(1, 2, 3))
             .containsEntry("ratio", 1.5);
+    }
+
+    @Test
+    void preservesNullToolInputValues() {
+        AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("path", null);
+
+        accumulator.accept(new AssistantStart("msg-a"));
+        accumulator.accept(new ToolCallDelta("toolu-1", "read", input, true));
+        accumulator.accept(new AssistantDone(Optional.empty(), Optional.of("tool_calls")));
+
+        AgentMessage message = accumulator.toMessage("fallback", false);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> actualInput = (Map<String, Object>) message.content().getFirst().metadata().get("input");
+        assertThat(actualInput).containsEntry("path", null);
     }
 
     @Test

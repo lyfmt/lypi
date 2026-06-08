@@ -1,6 +1,7 @@
 package cn.lypi.tool;
 
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -31,16 +32,34 @@ public final class ToolRuntimeContextFactory {
      * 为单次工具调用创建工具上下文。
      */
     public ToolUseContext create(ToolUseRequest request, ContextSnapshot context) {
+        return create(request, context, null);
+    }
+
+    /**
+     * 为带上层归属的单次工具调用创建工具上下文。
+     */
+    public ToolUseContext create(ToolUseRequest request, ContextSnapshot context, ToolRuntimeInvocation invocation) {
         Objects.requireNonNull(request, "request must not be null");
         Map<String, Object> metadata = new LinkedHashMap<>();
         PermissionMode permissionMode = context == null ? PermissionMode.DEFAULT_EXECUTE : context.permissionMode();
         metadata.put(METADATA_PERMISSION_MODE, permissionMode);
         metadata.putAll(options.metadata());
+        String turnId = invocation == null ? null : invocation.turnId();
+        if (turnId != null && !turnId.isBlank()) {
+            metadata.put("turnId", turnId);
+        }
         return new ToolUseContext(
-            options.sessionId(),
+            sessionId(invocation),
             request.parentMessageId(),
             options.cwd(),
             Map.copyOf(metadata)
         );
+    }
+
+    private String sessionId(ToolRuntimeInvocation invocation) {
+        if (invocation == null || invocation.sessionId() == null || invocation.sessionId().isBlank()) {
+            return options.sessionId();
+        }
+        return invocation.sessionId();
     }
 }

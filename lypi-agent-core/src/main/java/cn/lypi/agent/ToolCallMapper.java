@@ -4,6 +4,7 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -33,7 +34,7 @@ public final class ToolCallMapper {
         if (input instanceof Map<?, ?> map) {
             java.util.LinkedHashMap<String, Object> values = new java.util.LinkedHashMap<>();
             map.forEach((key, value) -> values.put(String.valueOf(key), value));
-            return Map.copyOf(values);
+            return Collections.unmodifiableMap(values);
         }
         return Map.of();
     }
