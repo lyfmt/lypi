@@ -18,6 +18,7 @@ import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import java.nio.file.Files;
 import java.nio.file.FileSystems;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
@@ -337,6 +338,49 @@ class BubblewrapExecutorTest {
         assertTrue(result.metadata().sandboxed());
         assertEquals("sandbox", result.stdout());
         assertEquals("host-content", Files.readString(tempDir.resolve("missing-secret")));
+    }
+
+    @Test
+    void preservesExistingEmptyProtectedMetadataDirectoryAfterSyntheticMaskCleanup() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path codex = Files.createDirectory(workspace.resolve(".codex"));
+        Path checkingBwrap = requiringTmpfsTargetBwrap(codex);
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(checkingBwrap)
+        );
+
+        ExecutionResult result = executor.execute(requestInWorkspace("printf sandbox", workspace), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("sandbox", result.stdout());
+        assertTrue(Files.isDirectory(codex));
+        try (java.util.stream.Stream<Path> entries = Files.list(codex)) {
+            assertTrue(entries.findAny().isEmpty());
+        }
+    }
+
+    @Test
+    void removesReplacedExistingEmptyProtectedMetadataFileAfterSyntheticMaskCleanup() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path git = Files.writeString(workspace.resolve(".git"), "");
+        Path replacingBwrap = replacingRoBindDataTargetBwrap(git);
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(replacingBwrap)
+        );
+
+        ExecutionResult result = executor.execute(requestInWorkspace("printf sandbox", workspace), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("sandbox", result.stdout());
+        assertTrue(!Files.exists(git, LinkOption.NOFOLLOW_LINKS));
     }
 
     @Test
@@ -714,6 +758,66 @@ class BubblewrapExecutorTest {
             fi
             exec "$@"
             """.formatted(contentFile));
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    private Path replacingRoBindDataTargetBwrap(Path replacedTarget) throws Exception {
+        Path script = tempDir.resolve("replacing-ro-bind-data-target-bwrap.sh");
+        Files.writeString(script, """
+            #!/bin/sh
+            replaced_target="%s"
+            while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+              if [ "$1" = "--ro-bind-data" ]; then
+                shift
+                fd="${1:-}"
+                shift
+                target="${1:-}"
+                if [ "$fd" = "0" ] && [ "$target" = "$replaced_target" ]; then
+                  replacement="${target}.replacement.$$"
+                  : > "$replacement"
+                  mv -f "$replacement" "$target"
+                fi
+              fi
+              shift
+            done
+            if [ "$1" = "--" ]; then
+              shift
+            fi
+            exec "$@"
+            """.formatted(replacedTarget));
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    private Path requiringTmpfsTargetBwrap(Path requiredTarget) throws Exception {
+        Path script = tempDir.resolve("requiring-tmpfs-target-bwrap.sh");
+        Files.writeString(script, """
+            #!/bin/sh
+            required_target="%s"
+            saw_required_target=0
+            previous=""
+            for arg in "$@"; do
+              if [ "$previous" = "--tmpfs" ] && [ "$arg" = "$required_target" ]; then
+                saw_required_target=1
+              fi
+              previous="$arg"
+            done
+            while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+              shift
+            done
+            if [ "$1" = "--" ]; then
+              shift
+            fi
+            if [ "${1:-}" = "/usr/bin/true" ] || [ "${1:-}" = "/bin/true" ] || [ "${1:-}" = "true" ]; then
+              exec "$@"
+            fi
+            if [ "$saw_required_target" != "1" ]; then
+              echo "missing required tmpfs target: $required_target" >&2
+              exit 88
+            fi
+            exec "$@"
+            """.formatted(requiredTarget));
         script.toFile().setExecutable(true);
         return script;
     }

@@ -79,6 +79,9 @@ class BubblewrapCommandBuilderTest {
         Path git = Files.createDirectory(workspace.resolve(".git"));
         Path codex = Files.createDirectory(workspace.resolve(".codex"));
         Path agents = Files.createDirectory(workspace.resolve(".agents"));
+        Files.writeString(git.resolve("HEAD"), "ref: refs/heads/main\n");
+        Files.writeString(codex.resolve("config.json"), "{}");
+        Files.writeString(agents.resolve("config.json"), "{}");
         Path cwd = Files.createDirectory(workspace.resolve("src"));
         ExecutionRequest request = request(cwd, policy(workspace, NetworkMode.DISABLED));
 
@@ -89,6 +92,51 @@ class BubblewrapCommandBuilderTest {
         assertTrue(indexOfSequence(argv, "--ro-bind", git.toString(), git.toString()) > workspaceBind);
         assertTrue(indexOfSequence(argv, "--ro-bind", codex.toString(), codex.toString()) > workspaceBind);
         assertTrue(indexOfSequence(argv, "--ro-bind", agents.toString(), agents.toString()) > workspaceBind);
+    }
+
+    @Test
+    void masksExistingEmptyProtectedMetadataDirectoryInsteadOfBindingTransientHostPath() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path codex = Files.createDirectory(workspace.resolve(".codex"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        ExecutionRequest request = request(cwd, policy(workspace, NetworkMode.DISABLED));
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request, BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(indexOfSequence(argv, "--ro-bind", codex.toString(), codex.toString()) < 0);
+        assertTrue(indexOfSequence(
+            argv,
+            "--perms",
+            "555",
+            "--tmpfs",
+            codex.toString(),
+            "--remount-ro",
+            codex.toString()
+        ) > workspaceBind);
+        assertTrue(result.syntheticMountTargets().stream().anyMatch(target -> codex.equals(target.path())));
+    }
+
+    @Test
+    void masksExistingEmptyProtectedMetadataFileAsEmptyReadonlyFile() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path git = Files.writeString(workspace.resolve(".git"), "");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        ExecutionRequest request = request(cwd, policy(workspace, NetworkMode.DISABLED));
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request, BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(indexOfSequence(argv, "--ro-bind", git.toString(), git.toString()) < 0);
+        assertTrue(indexOfSequence(argv, "--ro-bind-data", "0", git.toString()) > workspaceBind);
+        assertTrue(indexOfSequence(argv, "--perms", "000", "--ro-bind-data", "0", git.toString()) < 0);
+        assertTrue(result.syntheticMountTargets().stream().anyMatch(target -> git.equals(target.path())));
     }
 
     @Test
@@ -238,6 +286,7 @@ class BubblewrapCommandBuilderTest {
     void protectedMetadataReadonlyBindWinsOverNestedWritableRoot() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path git = Files.createDirectory(workspace.resolve(".git"));
+        Files.writeString(git.resolve("HEAD"), "ref: refs/heads/main\n");
         Path cwd = Files.createDirectory(workspace.resolve("src"));
         SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
             List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
@@ -542,6 +591,7 @@ class BubblewrapCommandBuilderTest {
         Path denied = Files.createDirectory(workspace.resolve("denied"));
         Path writableChild = Files.createDirectory(denied.resolve("child"));
         Path git = Files.createDirectory(writableChild.resolve(".git"));
+        Files.writeString(git.resolve("HEAD"), "ref: refs/heads/main\n");
         Path cwd = Files.createDirectory(workspace.resolve("src"));
         SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
             List.of(Path.of("/usr")),

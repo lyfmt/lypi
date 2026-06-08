@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -56,10 +57,14 @@ public final class BubblewrapCommandBuilder {
     /**
      * 记录 bwrap 为缺失路径合成的宿主挂载目标。
      */
-    public record SyntheticMountTarget(Path path, Kind kind) {
+    public record SyntheticMountTarget(Path path, Kind kind, boolean preservesPreExistingPath, Object preExistingFileKey) {
         public SyntheticMountTarget {
             Objects.requireNonNull(path, "path must not be null");
             Objects.requireNonNull(kind, "kind must not be null");
+        }
+
+        public SyntheticMountTarget(Path path, Kind kind) {
+            this(path, kind, false, null);
         }
 
         /**
@@ -74,6 +79,33 @@ public final class BubblewrapCommandBuilder {
          */
         public static SyntheticMountTarget emptyDirectory(Path path) {
             return new SyntheticMountTarget(path, Kind.EMPTY_DIRECTORY);
+        }
+
+        /**
+         * 返回已存在空文件的合成遮蔽目标。
+         */
+        public static SyntheticMountTarget existingEmptyFile(Path path, BasicFileAttributes attributes) {
+            return new SyntheticMountTarget(path, Kind.EMPTY_FILE, true, attributes.fileKey());
+        }
+
+        /**
+         * 返回已存在空目录的合成遮蔽目标。
+         */
+        public static SyntheticMountTarget existingEmptyDirectory(Path path, BasicFileAttributes attributes) {
+            return new SyntheticMountTarget(path, Kind.EMPTY_DIRECTORY, true, attributes.fileKey());
+        }
+
+        boolean shouldRemoveAfter(BasicFileAttributes attributes) {
+            if (kind == Kind.EMPTY_FILE && (!attributes.isRegularFile() || attributes.size() != 0)) {
+                return false;
+            }
+            if (kind == Kind.EMPTY_DIRECTORY && !attributes.isDirectory()) {
+                return false;
+            }
+            if (!preservesPreExistingPath) {
+                return true;
+            }
+            return preExistingFileKey != null && !preExistingFileKey.equals(attributes.fileKey());
         }
 
         /**
@@ -295,8 +327,8 @@ public final class BubblewrapCommandBuilder {
             );
         }
         argv.add("--ro-bind-data");
-        // NOTE: BubblewrapExecutor 通过 HostExecutor 执行 bwrap；HostExecutor 会关闭子进程 stdin，
-        // 因此 bwrap 从 fd 0 读取 EOF，并把 denyRead 文件覆盖成空且不可读的文件。
+        // NOTE: BubblewrapExecutor 通过 HostExecutor 执行 bwrap；HostExecutor 将子进程
+        // stdin 重定向到 /dev/null，因此 bwrap 从 fd 0 读取 EOF 并生成空只读文件。
         argv.add(EMPTY_FILE_FD);
         argv.add(denyReadPath.toString());
         if (missingPath) {
@@ -469,11 +501,44 @@ public final class BubblewrapCommandBuilder {
             throw new IllegalArgumentException("protected metadata path must not be a symbolic link: " + path);
         }
         if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+            BasicFileAttributes attributes = readAttributes(path);
+            if (attributes.isRegularFile() && attributes.size() == 0) {
+                appendReadonlyEmptyFileMask(argv, path);
+                syntheticMountTargets.add(SyntheticMountTarget.existingEmptyFile(path, attributes));
+                return;
+            }
+            if (attributes.isDirectory() && directoryIsEmpty(path)) {
+                appendReadonlyEmptyDirectoryMask(argv, path);
+                syntheticMountTargets.add(SyntheticMountTarget.existingEmptyDirectory(path, attributes));
+                return;
+            }
             appendReadonlyBind(argv, path);
             return;
         }
         appendReadonlyEmptyDirectoryMask(argv, path);
         syntheticMountTargets.add(SyntheticMountTarget.emptyDirectory(path));
+    }
+
+    private void appendReadonlyEmptyFileMask(List<String> argv, Path path) {
+        argv.add("--ro-bind-data");
+        argv.add(EMPTY_FILE_FD);
+        argv.add(path.toString());
+    }
+
+    private BasicFileAttributes readAttributes(Path path) {
+        try {
+            return Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("protected metadata path cannot be inspected: " + path, exception);
+        }
+    }
+
+    private boolean directoryIsEmpty(Path path) {
+        try (java.util.stream.Stream<Path> entries = Files.list(path)) {
+            return entries.findAny().isEmpty();
+        } catch (IOException exception) {
+            return false;
+        }
     }
 
     private boolean shouldLeaveMissingGitForParentRepoDiscovery(Path writableRoot, String name) {

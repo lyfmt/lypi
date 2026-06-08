@@ -168,6 +168,16 @@ public final class BubblewrapExecutor implements Executor {
     }
 
     private void deleteSyntheticMountTargetIfSafe(BubblewrapCommandBuilder.SyntheticMountTarget target) {
+        BasicFileAttributes attributes;
+        try {
+            attributes = Files.readAttributes(target.path(), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException ignored) {
+            // NOTE: 路径已消失、被替换或无法安全确认时，保守保留。
+            return;
+        }
+        if (!target.shouldRemoveAfter(attributes)) {
+            return;
+        }
         switch (target.kind()) {
             case EMPTY_FILE -> deleteEmptyFileIfSafe(target.path());
             case EMPTY_DIRECTORY -> deleteEmptyDirectoryIfSafe(target.path());
