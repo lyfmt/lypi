@@ -67,6 +67,7 @@ class DefaultTurnExecutorTest {
 
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -148,6 +149,7 @@ class DefaultTurnExecutorTest {
 
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -209,6 +211,7 @@ class DefaultTurnExecutorTest {
 
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -257,6 +260,7 @@ class DefaultTurnExecutorTest {
 
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -304,6 +308,7 @@ class DefaultTurnExecutorTest {
 
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -359,6 +364,7 @@ class DefaultTurnExecutorTest {
 
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -433,6 +439,7 @@ class DefaultTurnExecutorTest {
         )));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -486,6 +493,7 @@ class DefaultTurnExecutorTest {
         )));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -569,6 +577,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -675,6 +684,7 @@ class DefaultTurnExecutorTest {
         )));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -734,6 +744,7 @@ class DefaultTurnExecutorTest {
         )));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -786,6 +797,7 @@ class DefaultTurnExecutorTest {
         )));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -828,6 +840,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -886,6 +899,7 @@ class DefaultTurnExecutorTest {
         tools.failWith(new RuntimeException("tool runtime down"));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -934,6 +948,7 @@ class DefaultTurnExecutorTest {
         )));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -988,6 +1003,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1032,6 +1048,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             originalContext,
+            AgentCoreTestFixtures.emptyResources(),
             List.of("entry-msg-user"),
             List.of(),
             List.of(),
@@ -1094,6 +1111,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1272,6 +1290,7 @@ class DefaultTurnExecutorTest {
         ContextSnapshot originalContext = AgentCoreTestFixtures.minimalContext(session.messages());
         ContextAssembler assembler = request -> new ContextAssembly(
             originalContext,
+            AgentCoreTestFixtures.emptyResources(),
             session.branch(session.leafId()).stream().map(cn.lypi.contracts.session.SessionEntry::id).toList(),
             List.of(),
             List.of(),
@@ -1326,6 +1345,7 @@ class DefaultTurnExecutorTest {
             requestedCwds.add(request.cwd());
             return new ContextAssembly(
                 AgentCoreTestFixtures.minimalContext(session.messages()),
+                AgentCoreTestFixtures.emptyResources(),
                 List.of(),
                 List.of(),
                 List.of(),
@@ -1369,6 +1389,7 @@ class DefaultTurnExecutorTest {
 
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1418,6 +1439,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1454,6 +1476,7 @@ class DefaultTurnExecutorTest {
         provider.failWith(new RuntimeException("provider down"));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1511,6 +1534,7 @@ class DefaultTurnExecutorTest {
         );
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1567,6 +1591,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1614,6 +1639,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1666,6 +1692,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1721,6 +1748,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
@@ -1806,6 +1834,7 @@ class DefaultTurnExecutorTest {
         ));
         ContextAssembler assembler = request -> new ContextAssembly(
             AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
             List.of(),
             List.of(),
             List.of(),
