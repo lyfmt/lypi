@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -298,11 +299,78 @@ class EventPublishingPermissionGateTest {
         assertEquals(update, decisionEvent.decision().suggestedUpdate().orElseThrow());
     }
 
+    @Test
+    void requestEventPublishFailureDoesNotBlockPermissionDecision() {
+        ThrowingEventBus events = new ThrowingEventBus(1);
+        AtomicReference<PermissionRequestEvent> requestedEvent = new AtomicReference<>();
+        PermissionResponseGate delegate = requestEvent -> {
+            requestedEvent.set(requestEvent);
+            return new PermissionResponse(requestEvent.sessionId(), requestEvent.requestId(), "allow_once", false, Instant.now());
+        };
+        EventPublishingPermissionGate gate = new EventPublishingPermissionGate(events, delegate);
+
+        PermissionGateResult result = gate.request(
+            new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
+            TestTools.echo("write", List.of(), false, false, true),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.decision(PermissionBehavior.ASK, "write requires approval")
+        );
+
+        assertEquals(PermissionGateResult.Status.ALLOW, result.status());
+        assertInstanceOf(PermissionRequestEvent.class, requestedEvent.get());
+        assertEquals(1, events.events.size());
+        assertInstanceOf(PermissionDecisionEvent.class, events.events.getFirst());
+    }
+
+    @Test
+    void decisionEventPublishFailureDoesNotOverridePermissionDecision() {
+        ThrowingEventBus events = new ThrowingEventBus(2);
+        EventPublishingPermissionGate gate = new EventPublishingPermissionGate(
+            events,
+            requestEvent -> new PermissionResponse(requestEvent.sessionId(), requestEvent.requestId(), "allow_once", false, Instant.now())
+        );
+
+        PermissionGateResult result = gate.request(
+            new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
+            TestTools.echo("write", List.of(), false, false, true),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.decision(PermissionBehavior.ASK, "write requires approval")
+        );
+
+        assertEquals(PermissionGateResult.Status.ALLOW, result.status());
+        assertEquals(1, events.events.size());
+        assertInstanceOf(PermissionRequestEvent.class, events.events.getFirst());
+    }
+
     private static final class RecordingEventBus implements EventBus {
         private final List<AgentEvent> events = new ArrayList<>();
 
         @Override
         public void publish(AgentEvent event) {
+            events.add(event);
+        }
+
+        @Override
+        public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
+            return () -> {
+            };
+        }
+    }
+
+    private static final class ThrowingEventBus implements EventBus {
+        private final List<AgentEvent> events = new ArrayList<>();
+        private final AtomicInteger publishCount = new AtomicInteger();
+        private final int throwingPublishNumber;
+
+        private ThrowingEventBus(int throwingPublishNumber) {
+            this.throwingPublishNumber = throwingPublishNumber;
+        }
+
+        @Override
+        public void publish(AgentEvent event) {
+            if (publishCount.incrementAndGet() == throwingPublishNumber) {
+                throw new IllegalStateException("event bus unavailable");
+            }
             events.add(event);
         }
 

@@ -50,6 +50,7 @@ public interface ToolRuntimePort {
      * 在指定上层归属下编排并执行模型发出的工具调用。
      *
      * NOTE: agent-core 必须通过该入口传入真实 sessionId 与 turnId，供工具生命周期事件归属使用。
+     * NOTE: 自定义 runtime 若需要发布工具生命周期事件，应重写该入口并使用 invocation 归属信息。
      */
     default List<ToolResult<?>> execute(
         List<ToolUseRequest> requests,
