@@ -73,9 +73,11 @@ class LyPiToolAutoConfigurationTest {
                     .contains("用户拒绝");
                 assertThat(promptHandle.get()).isNotNull();
                 assertThat(promptHandle.get().request().toolUseId()).isEqualTo("toolu_1");
-                assertThat(eventBus.events).hasSize(2);
+                assertThat(eventBus.events).hasSize(4);
                 assertThat(eventBus.events.get(0)).isInstanceOf(PermissionRequestEvent.class);
                 assertThat(eventBus.events.get(1)).isInstanceOf(PermissionDecisionEvent.class);
+                assertThat(eventBus.events.get(2)).isInstanceOf(cn.lypi.contracts.event.ToolStartEvent.class);
+                assertThat(eventBus.events.get(3)).isInstanceOf(cn.lypi.contracts.event.ToolEndEvent.class);
             });
     }
 

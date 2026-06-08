@@ -5,7 +5,6 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.tool.BlockingPermissionGate;
 import cn.lypi.tool.DefaultToolRuntime;
-import cn.lypi.tool.EventPublishingPermissionGate;
 import cn.lypi.tool.PermissionGate;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.ToolRuntimeOptions;
@@ -29,6 +28,7 @@ public class LyPiToolAutoConfiguration {
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionPromptPort> promptPort
     ) {
+        EventBus resolvedEventBus = eventBus.getIfAvailable();
         return new DefaultToolRuntime(
             new cn.lypi.tool.DefaultToolRegistry(),
             new cn.lypi.tool.ToolSchemaValidator(),
@@ -37,18 +37,15 @@ public class LyPiToolAutoConfiguration {
             new cn.lypi.tool.ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()),
             cn.lypi.tool.ToolExecutionInterceptors.noop(),
             securityRuntime,
-            permissionGate(eventBus.getIfAvailable(), promptPort.getIfAvailable())
+            permissionGate(promptPort.getIfAvailable()),
+            resolvedEventBus
         );
     }
 
-    private PermissionGate permissionGate(EventBus eventBus, PermissionPromptPort promptPort) {
+    private PermissionGate permissionGate(PermissionPromptPort promptPort) {
         if (promptPort == null) {
             return PermissionGate.denying();
         }
-        PermissionGate blockingGate = new BlockingPermissionGate(promptPort);
-        if (eventBus == null) {
-            return blockingGate;
-        }
-        return new EventPublishingPermissionGate(eventBus, blockingGate);
+        return new BlockingPermissionGate(promptPort);
     }
 }

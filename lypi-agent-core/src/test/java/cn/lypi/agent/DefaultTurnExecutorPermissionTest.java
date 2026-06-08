@@ -26,7 +26,9 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
+import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
@@ -124,16 +126,11 @@ class DefaultTurnExecutorPermissionTest {
                 TurnStartEvent.class,
                 MessageStartEvent.class,
                 MessageEndEvent.class,
-                ToolStartEvent.class,
-                ToolEndEvent.class,
                 TurnEndEvent.class
             );
-        ToolEndEvent toolEnd = eventBus.events.stream()
-            .filter(ToolEndEvent.class::isInstance)
-            .map(ToolEndEvent.class::cast)
-            .findFirst()
-            .orElseThrow();
-        assertThat(toolEnd.error()).isTrue();
+        assertThat(eventBus.events.stream()
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
+            .isEmpty();
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
     }
 
@@ -244,6 +241,18 @@ class DefaultTurnExecutorPermissionTest {
         public List<ToolResult<?>> execute(List<ToolUseRequest> requests, cn.lypi.contracts.context.ContextSnapshot context) {
             this.requests.add(List.copyOf(requests));
             ToolUseRequest request = requests.getFirst();
+            eventBus.publish(new ToolStartEvent(
+                "session-1",
+                request.toolUseId(),
+                "msg-tool-call",
+                "turn-1",
+                request.toolName(),
+                request.toolName(),
+                "write notes.txt",
+                Map.of(),
+                Instant.EPOCH,
+                Instant.EPOCH
+            ));
             PermissionDecision ask = new PermissionDecision(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.TOOL_SPECIFIC,
@@ -272,6 +281,27 @@ class DefaultTurnExecutorPermissionTest {
                     Optional.empty(),
                     Map.of()
                 ),
+                Instant.EPOCH
+            ));
+            eventBus.publish(new ToolEndEvent(
+                "session-1",
+                request.toolUseId(),
+                ToolExecutionStatus.FAILED,
+                null,
+                new ToolResultSummary(
+                    "permission denied",
+                    "用户拒绝",
+                    true,
+                    null,
+                    false,
+                    0L,
+                    Map.of()
+                ),
+                null,
+                Instant.EPOCH,
+                Instant.EPOCH,
+                0L,
+                Map.of(),
                 Instant.EPOCH
             ));
             return List.of(new ToolResult<>(
