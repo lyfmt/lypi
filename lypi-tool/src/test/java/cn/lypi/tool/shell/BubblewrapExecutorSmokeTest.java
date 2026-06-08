@@ -114,6 +114,100 @@ class BubblewrapExecutorSmokeTest {
     }
 
     @Test
+    void reopensWritableFileUnderDenyReadDirectoryWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Files.writeString(denied.resolve("secret"), "hidden");
+        Path allowed = Files.createDirectory(denied.resolve("allowed"));
+        Path note = Files.writeString(allowed.resolve("note.txt"), "original");
+
+        ExecutionResult result = executor.execute(request(
+            "if cat denied/secret; then printf leaked; else printf blocked; fi; printf '\\n'; printf updated > denied/allowed/note.txt; test ! -d denied/allowed/note.txt; cat denied/allowed/note.txt",
+            workspace,
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(denied),
+                List.of(workspace, note),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("blocked\nupdated", result.stdout());
+        assertTrue(!result.stdout().contains("hidden"));
+        assertEquals("updated", Files.readString(note));
+    }
+
+    @Test
+    void chdirsIntoReopenedWritableChildWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Path allowed = Files.createDirectory(denied.resolve("allowed"));
+
+        ExecutionResult result = executor.execute(request(
+            "pwd; printf ok > out",
+            allowed,
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(denied),
+                List.of(workspace, allowed),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals(allowed.toString(), result.stdout().trim());
+        assertEquals("ok", Files.readString(allowed.resolve("out")));
+    }
+
+    @Test
+    void keepsProtectedMetadataReadonlyAfterReopeningWritableChildWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Path allowed = Files.createDirectory(denied.resolve("allowed"));
+        Path git = Files.createDirectory(allowed.resolve(".git"));
+
+        ExecutionResult result = executor.execute(request(
+            "printf bad > denied/allowed/.git/HEAD || printf protected; test ! -e denied/allowed/.git/HEAD",
+            workspace,
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(denied),
+                List.of(workspace, allowed),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("protected", result.stdout());
+        assertTrue(!Files.exists(git.resolve("HEAD")));
+    }
+
+    @Test
     void masksDenyReadFileWithRealBubblewrapWhenAvailable() throws Exception {
         BubblewrapExecutor executor = new BubblewrapExecutor();
         Path probe = Files.createDirectory(tempDir.resolve("probe"));

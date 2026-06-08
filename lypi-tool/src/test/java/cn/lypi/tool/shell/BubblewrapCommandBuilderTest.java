@@ -402,11 +402,14 @@ class BubblewrapCommandBuilderTest {
         int deniedMask = indexOfSequence(argv, "--perms", "111", "--tmpfs", denied.toString());
         int childDirTarget = indexOfSequence(argv, "--dir", childDir.toString());
         int fileTarget = indexOfSequence(argv, "--dir", writableFile.toString());
+        int fileMountTarget = indexOfSequence(argv, "--file", "0", writableFile.toString());
         int deniedReadonly = indexOfSequence(argv, "--remount-ro", denied.toString());
         int fileRebind = lastIndexOfSequence(argv, "--bind", writableFile.toString(), writableFile.toString());
         assertTrue(deniedMask < childDirTarget);
         assertTrue(fileTarget < 0, "writable file itself must not be recreated as a directory");
         assertTrue(childDirTarget < deniedReadonly);
+        assertTrue(childDirTarget < fileMountTarget);
+        assertTrue(fileMountTarget < deniedReadonly);
         assertTrue(deniedReadonly < fileRebind);
     }
 

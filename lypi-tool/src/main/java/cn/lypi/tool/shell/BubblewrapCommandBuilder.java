@@ -181,6 +181,7 @@ public final class BubblewrapCommandBuilder {
             argv.add(denyReadPath.toString());
             for (Path writableDescendant : writableDescendants) {
                 appendMountTargetDirs(argv, writableDescendant, denyReadPath);
+                appendMountTargetFile(argv, writableDescendant);
             }
             argv.add("--remount-ro");
             argv.add(denyReadPath.toString());
@@ -233,6 +234,15 @@ public final class BubblewrapCommandBuilder {
             argv.add("--dir");
             argv.add(directory.toString());
         }
+    }
+
+    private void appendMountTargetFile(List<String> argv, Path mountTarget) {
+        if (!Files.isRegularFile(mountTarget, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        argv.add("--file");
+        argv.add(EMPTY_FILE_FD);
+        argv.add(mountTarget.toString());
     }
 
     private int pathDepth(Path path) {
