@@ -8,8 +8,8 @@ import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventBus;
-import cn.lypi.contracts.event.ToolEndEvent;
-import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.event.PermissionDecisionEvent;
+import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.model.ModelSelection;
@@ -30,6 +30,8 @@ import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.runtime.event.InMemoryEventBus;
+import cn.lypi.tool.PermissionGateResult;
+import cn.lypi.tool.PermissionPromptPort;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -114,6 +116,7 @@ class LyPiRuntimeAutoConfigurationTest {
             .withBean(TransportAdapter.class, () -> transport)
             .withBean(SessionRuntimeState.class, LyPiRuntimeAutoConfigurationTest::sessionState)
             .withBean(SecurityRuntimePort.class, () -> LyPiRuntimeAutoConfigurationTest::allowAllSecurity)
+            .withBean(PermissionPromptPort.class, () -> handle -> PermissionGateResult.allow())
             .run(context -> {
                 EventBus eventBus = context.getBean(EventBus.class);
                 assertThat(eventBus).isInstanceOf(InMemoryEventBus.class);
@@ -123,16 +126,16 @@ class LyPiRuntimeAutoConfigurationTest {
                 ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
                 runtime.register(new SuccessTool());
                 ToolResult<?> result = runtime.execute(
-                    List.of(new ToolUseRequest("toolu_1", "read", Map.of("path", "pom.xml"), "msg_1")),
+                    List.of(new ToolUseRequest("toolu_1", "ask-probe", Map.of("path", "pom.xml"), "msg_1")),
                     contextSnapshot()
                 ).getFirst();
 
                 assertThat(result.isError()).isFalse();
                 assertThat(receivedEvents.stream()
                     .map(EventEnvelope::event)
-                    .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+                    .filter(event -> event instanceof PermissionRequestEvent || event instanceof PermissionDecisionEvent)
                     .map(cn.lypi.contracts.event.AgentEvent::getClass))
-                    .containsExactly(ToolStartEvent.class, ToolEndEvent.class);
+                    .containsExactly(PermissionRequestEvent.class, PermissionDecisionEvent.class);
             });
     }
 
@@ -214,7 +217,7 @@ class LyPiRuntimeAutoConfigurationTest {
     private static final class SuccessTool implements Tool<Map<String, Object>, String> {
         @Override
         public String name() {
-            return "read";
+            return "ask-probe";
         }
 
         @Override
@@ -234,7 +237,13 @@ class LyPiRuntimeAutoConfigurationTest {
 
         @Override
         public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
-            return allowAllSecurity(new ToolUseRequest("toolu_1", name(), input, context.messageId()), context);
+            return new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.TOOL_SPECIFIC,
+                "需要确认",
+                java.util.Optional.empty(),
+                Map.of()
+            );
         }
 
         @Override
@@ -269,7 +278,7 @@ class LyPiRuntimeAutoConfigurationTest {
 
         @Override
         public String renderForUser(Map<String, Object> input) {
-            return "read " + input;
+            return "ask-probe " + input;
         }
 
         @Override

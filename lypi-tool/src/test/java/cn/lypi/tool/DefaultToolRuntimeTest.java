@@ -377,7 +377,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void publicConstructorPublishesToolLifecycleEventsThroughEventBus() {
+    void publicConstructorDoesNotPublishToolLifecycleEventsThroughEventBus() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = new DefaultToolRuntime(
             ToolRuntimeOptions.builder()
@@ -396,14 +396,7 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(2, events.events.size());
-        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, events.events.get(0));
-        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
-        assertEquals("msg_parent", start.parentMessageId());
-        assertEquals("turn_public", start.turnId());
-        assertEquals("bash {text=done}", start.inputSummary());
-        assertEquals(ToolExecutionStatus.SUCCEEDED, end.status());
-        assertEquals("bash succeeded", end.resultSummary().title());
+        assertEquals(0, events.events.size());
     }
 
     @Test
@@ -427,11 +420,9 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(4, events.events.size());
+        assertEquals(2, events.events.size());
         PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, events.events.get(0));
         PermissionDecisionEvent decision = assertInstanceOf(PermissionDecisionEvent.class, events.events.get(1));
-        assertInstanceOf(ToolStartEvent.class, events.events.get(2));
-        assertInstanceOf(ToolEndEvent.class, events.events.get(3));
         assertEquals("toolu_public", request.toolUseId());
         assertEquals("write", request.toolName());
         assertEquals("allow_once", decision.selectedOptionId());
@@ -471,8 +462,8 @@ class DefaultToolRuntimeTest {
         assertEquals(1, responseRequests.get());
         assertEquals(1, events.events.stream().filter(PermissionRequestEvent.class::isInstance).count());
         assertEquals(1, events.events.stream().filter(PermissionDecisionEvent.class::isInstance).count());
-        assertEquals(1, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
-        assertEquals(1, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
+        assertEquals(0, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
+        assertEquals(0, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
     }
 
     @Test

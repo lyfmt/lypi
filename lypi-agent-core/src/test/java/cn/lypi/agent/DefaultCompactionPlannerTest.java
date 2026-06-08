@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import static cn.lypi.agent.AgentCoreTestFixtures.NOW;
 import static cn.lypi.agent.AgentCoreTestFixtures.assistantMessage;
+import static cn.lypi.agent.AgentCoreTestFixtures.assistantToolCallMessage;
 import static cn.lypi.agent.AgentCoreTestFixtures.toolResultMessage;
 import static cn.lypi.agent.AgentCoreTestFixtures.userMessage;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,7 +38,7 @@ class DefaultCompactionPlannerTest {
         Optional<CompactionPlan> plan = planner.plan(branchEntries, overBudgetContext());
 
         assertThat(plan).isPresent();
-        assertThat(plan.orElseThrow().firstKeptEntryId()).isEqualTo("entry-user-3");
+        assertThat(plan.orElseThrow().firstKeptEntryId()).isEqualTo("entry-assistant-2");
         assertThat(plan.orElseThrow().summarizedEntryIds()).contains("entry-user-1", "entry-assistant-1");
         assertThat(plan.orElseThrow().kind()).isEqualTo(CompactionKind.SESSION);
     }
@@ -57,6 +58,98 @@ class DefaultCompactionPlannerTest {
         assertThat(plan).isPresent();
         assertThat(plan.orElseThrow().firstKeptEntryId()).isNotEqualTo("entry-tool-result-1");
         assertThat(entryKind(branchEntries, plan.orElseThrow().firstKeptEntryId())).isNotEqualTo(MessageKind.TOOL_RESULT);
+    }
+
+    @Test
+    void keepsWholeApiRoundForParallelToolCalls() {
+        DefaultCompactionPlanner planner = new DefaultCompactionPlanner(8);
+        List<SessionEntry> branchEntries = List.of(
+            messageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long")),
+            messageEntry(
+                "entry-assistant-tools",
+                "entry-user-1",
+                assistantToolCallMessage("msg-assistant-tools", "tool-call-1", "read", java.util.Map.of("path", "a.txt"))
+            ),
+            messageEntry("entry-tool-result-1", "entry-assistant-tools", toolResultMessage("msg-tool-result-1", "tool-call-1", "result one long", false)),
+            messageEntry("entry-tool-result-2", "entry-tool-result-1", toolResultMessage("msg-tool-result-2", "tool-call-2", "result two long", false)),
+            messageEntry("entry-assistant-2", "entry-tool-result-2", assistantMessage("msg-assistant-2", "next assistant long")),
+            messageEntry("entry-user-2", "entry-assistant-2", userMessage("msg-user-2", "recent user long"))
+        );
+
+        Optional<CompactionPlan> plan = planner.plan(branchEntries, overBudgetContext());
+
+        assertThat(plan).isPresent();
+        assertThat(plan.orElseThrow().firstKeptEntryId()).isEqualTo("entry-assistant-2");
+        assertThat(plan.orElseThrow().summarizedEntryIds())
+            .containsExactly("entry-user-1", "entry-assistant-tools", "entry-tool-result-1", "entry-tool-result-2");
+    }
+
+    @Test
+    void canCompactInsideSingleUserTurnAtNewAssistantApiRound() {
+        DefaultCompactionPlanner planner = new DefaultCompactionPlanner(4);
+        List<SessionEntry> branchEntries = List.of(
+            messageEntry("entry-user-1", "", userMessage("msg-user-1", "single prompt long")),
+            messageEntry(
+                "entry-assistant-tool-1",
+                "entry-user-1",
+                assistantToolCallMessage("msg-assistant-tool-1", "tool-call-1", "read", java.util.Map.of("path", "a.txt"))
+            ),
+            messageEntry("entry-tool-result-1", "entry-assistant-tool-1", toolResultMessage("msg-tool-result-1", "tool-call-1", "tool result long", false)),
+            messageEntry("entry-assistant-2", "entry-tool-result-1", assistantMessage("msg-assistant-2", "follow up assistant long")),
+            messageEntry("entry-assistant-3", "entry-assistant-2", assistantMessage("msg-assistant-3", "final assistant long"))
+        );
+
+        Optional<CompactionPlan> plan = planner.plan(branchEntries, overBudgetContext());
+
+        assertThat(plan).isPresent();
+        assertThat(plan.orElseThrow().firstKeptEntryId()).isEqualTo("entry-assistant-3");
+        assertThat(plan.orElseThrow().summarizedEntryIds())
+            .containsExactly("entry-user-1", "entry-assistant-tool-1", "entry-tool-result-1", "entry-assistant-2");
+    }
+
+    @Test
+    void danglingToolCallDoesNotPinApiRoundBoundaryClosedForever() {
+        DefaultCompactionPlanner planner = new DefaultCompactionPlanner(4);
+        List<SessionEntry> branchEntries = List.of(
+            messageEntry("entry-user-1", "", userMessage("msg-user-1", "single prompt long")),
+            messageEntry(
+                "entry-assistant-dangling",
+                "entry-user-1",
+                assistantToolCallMessage("msg-assistant-dangling", "tool-call-1", "read", java.util.Map.of("path", "a.txt"))
+            ),
+            messageEntry("entry-assistant-2", "entry-assistant-dangling", assistantMessage("msg-assistant-2", "new api round long")),
+            messageEntry("entry-assistant-3", "entry-assistant-2", assistantMessage("msg-assistant-3", "recent api round long"))
+        );
+
+        Optional<CompactionPlan> plan = planner.plan(branchEntries, overBudgetContext());
+
+        assertThat(plan).isPresent();
+        assertThat(plan.orElseThrow().firstKeptEntryId()).isEqualTo("entry-assistant-3");
+        assertThat(plan.orElseThrow().summarizedEntryIds())
+            .containsExactly("entry-user-1", "entry-assistant-dangling", "entry-assistant-2");
+    }
+
+    @Test
+    void sameAssistantIdEntriesStayInOneApiRound() {
+        DefaultCompactionPlanner planner = new DefaultCompactionPlanner(4);
+        List<SessionEntry> branchEntries = List.of(
+            messageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long")),
+            messageEntry("entry-assistant-text", "entry-user-1", assistantMessage("msg-assistant-same", "assistant text long")),
+            messageEntry(
+                "entry-assistant-tool",
+                "entry-assistant-text",
+                assistantToolCallMessage("msg-assistant-same", "tool-call-1", "read", java.util.Map.of("path", "a.txt"))
+            ),
+            messageEntry("entry-tool-result", "entry-assistant-tool", toolResultMessage("msg-tool-result", "tool-call-1", "result long", false)),
+            messageEntry("entry-assistant-2", "entry-tool-result", assistantMessage("msg-assistant-2", "new round long"))
+        );
+
+        Optional<CompactionPlan> plan = planner.plan(branchEntries, overBudgetContext());
+
+        assertThat(plan).isPresent();
+        assertThat(plan.orElseThrow().firstKeptEntryId()).isEqualTo("entry-assistant-text");
+        assertThat(plan.orElseThrow().summarizedEntryIds())
+            .containsExactly("entry-user-1");
     }
 
     @Test

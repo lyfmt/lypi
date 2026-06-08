@@ -7,6 +7,10 @@ import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContextSnapshot;
+import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 public final class AiCompactionSummarizer implements CompactionSummarizer {
@@ -32,7 +36,7 @@ public final class AiCompactionSummarizer implements CompactionSummarizer {
     @Override
     public CompactSummaryResult summarize(CompactSummaryRequest request) {
         try {
-            return summarizeWithAi(request);
+            return summarizeWithRetry(request);
         } catch (RuntimeException exception) {
             if (exception instanceof SummaryAbortedException) {
                 throw exception;
@@ -41,28 +45,66 @@ public final class AiCompactionSummarizer implements CompactionSummarizer {
         }
     }
 
-    private CompactSummaryResult summarizeWithAi(CompactSummaryRequest request) {
+    private CompactSummaryResult summarizeWithRetry(CompactSummaryRequest request) {
+        List<AgentMessage> messagesToSummarize = request.context().messages();
+        int promptTooLongAttempts = 0;
+
+        while (true) {
+            try {
+                return summarizeWithAi(request, messagesToSummarize);
+            } catch (PromptTooLongException exception) {
+                promptTooLongAttempts++;
+                Optional<List<AgentMessage>> truncated = promptTooLongAttempts <= CompactionPromptTooLongRetry.MAX_PTL_RETRIES
+                    ? exception.truncate(messagesToSummarize)
+                    : Optional.empty();
+                if (truncated.isEmpty()) {
+                    throw new IllegalStateException(
+                        "compact summary prompt too long after " + promptTooLongAttempts + " attempt(s)",
+                        exception
+                    );
+                }
+                messagesToSummarize = truncated.orElseThrow();
+            }
+        }
+    }
+
+    private CompactSummaryResult summarizeWithAi(CompactSummaryRequest request, List<AgentMessage> messagesToSummarize) {
         StringBuilder text = new StringBuilder();
         TokenUsage usage = ZERO_USAGE;
-        try (AssistantEventStream stream = provider.stream(contextBuilder.build(request), request.abortSignal())) {
+        ContextSnapshot summaryContext = contextBuilder.build(request, messagesToSummarize);
+        try (AssistantEventStream stream = provider.stream(summaryContext, request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
                 if (event instanceof TextDelta delta) {
                     text.append(delta.text());
                 } else if (event instanceof AssistantDone done) {
                     usage = done.usage().orElse(ZERO_USAGE);
                 } else if (event instanceof AssistantError error) {
+                    if (CompactionPromptTooLongDetector.isPromptTooLong(error)) {
+                        throw new PromptTooLongException(error);
+                    }
                     throw new IllegalStateException("summary provider error: " + error.message());
                 }
                 if (request.abortSignal().aborted()) {
                     throw new SummaryAbortedException();
                 }
             }
+        } catch (RuntimeException exception) {
+            if (exception instanceof PromptTooLongException || exception instanceof SummaryAbortedException) {
+                throw exception;
+            }
+            if (CompactionPromptTooLongDetector.isPromptTooLong(exception)) {
+                throw new PromptTooLongException(exception);
+            }
+            throw exception;
         }
         if (request.abortSignal().aborted()) {
             throw new SummaryAbortedException();
         }
 
         String summary = cleanSummary(text.toString());
+        if (CompactionPromptTooLongDetector.isPromptTooLong(summary)) {
+            throw new PromptTooLongException(summary);
+        }
         if (summary.isBlank()) {
             throw new IllegalStateException("summary provider returned empty output");
         }
@@ -94,6 +136,43 @@ public final class AiCompactionSummarizer implements CompactionSummarizer {
     private static final class SummaryAbortedException extends IllegalStateException {
         private SummaryAbortedException() {
             super("summary aborted");
+        }
+    }
+
+    private static final class PromptTooLongException extends IllegalStateException {
+        private final RuntimeException causeException;
+        private final AssistantError assistantError;
+        private final String promptTooLongText;
+
+        private PromptTooLongException(RuntimeException cause) {
+            super(cause.getMessage(), cause);
+            this.causeException = cause;
+            this.assistantError = null;
+            this.promptTooLongText = cause.getMessage();
+        }
+
+        private PromptTooLongException(AssistantError assistantError) {
+            super(assistantError.message());
+            this.causeException = null;
+            this.assistantError = assistantError;
+            this.promptTooLongText = assistantError.errorId() + " " + assistantError.message();
+        }
+
+        private PromptTooLongException(String promptTooLongText) {
+            super(promptTooLongText);
+            this.causeException = null;
+            this.assistantError = null;
+            this.promptTooLongText = promptTooLongText;
+        }
+
+        private Optional<List<AgentMessage>> truncate(List<AgentMessage> messages) {
+            if (causeException != null) {
+                return CompactionPromptTooLongRetry.truncateHeadForRetry(messages, causeException);
+            }
+            if (assistantError != null) {
+                return CompactionPromptTooLongRetry.truncateHeadForRetry(messages, assistantError);
+            }
+            return CompactionPromptTooLongRetry.truncateHeadForRetry(messages, promptTooLongText);
         }
     }
 }

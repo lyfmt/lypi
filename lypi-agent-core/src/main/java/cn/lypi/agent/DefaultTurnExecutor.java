@@ -2,12 +2,15 @@ package cn.lypi.agent;
 
 import cn.lypi.agent.compact.CompactionDecision;
 import cn.lypi.agent.compact.CompactionRequest;
+import cn.lypi.agent.compact.ToolMicroCompactRequest;
+import cn.lypi.agent.compact.ToolMicroCompactResult;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
+import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.ToolCallContentBlock;
@@ -17,6 +20,8 @@ import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.RetryEndEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
+import cn.lypi.contracts.event.ToolEndEvent;
+import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
@@ -26,10 +31,14 @@ import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +51,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private final AgentMessageFactory messageFactory;
     private final ToolCallMapper toolCallMapper;
     private final AgentCoreExceptionHandler exceptionHandler;
+    private final ContextBudgetEstimator budgetEstimator;
 
     public DefaultTurnExecutor(AgentCoreRuntimePorts ports, TurnIds ids, Clock clock) {
         this.ports = ports;
@@ -50,6 +60,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         this.messageFactory = new AgentMessageFactory(clock);
         this.toolCallMapper = new ToolCallMapper();
         this.exceptionHandler = new AgentCoreExceptionHandler(ports.eventBus(), messageFactory, clock);
+        this.budgetEstimator = new ContextBudgetEstimator();
     }
 
     @Override
@@ -101,7 +112,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
                 }
                 toolRound++;
-                List<ToolResult<?>> toolResults = executeTools(request.sessionId(), toolRequests, context);
+                List<ToolResult<?>> toolResults = executeTools(turnId, request.sessionId(), toolRequests, context);
                 for (ToolResult<?> toolResult : toolResults) {
                     for (AgentMessage toolMessage : toolResult.newMessages()) {
                         contextLeafId = appendNewMessage(request.sessionId(), toolMessage);
@@ -184,15 +195,58 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             true
         );
         ContextAssembly assembly = ports.contextAssembler().build(contextBuildRequest);
+        ToolMicroCompactResult microCompact = ports.toolMicroCompactor().compact(new ToolMicroCompactRequest(
+            request.sessionId(),
+            leafEntryId,
+            assembly.branchEntryIds(),
+            assembly.snapshot(),
+            ports.toolRuntime().snapshot()
+        ));
+        ContextSnapshot microCompactedContext = microCompact.projectedToolUseIds().isEmpty()
+            ? microCompact.context()
+            : reestimateBudget(microCompact.context(), assembly.snapshot().budget());
+        ContextAssembly microCompactedAssembly = new ContextAssembly(
+            microCompactedContext,
+            assembly.branchEntryIds(),
+            assembly.appliedCompactionEntryIds(),
+            assembly.replacements(),
+            microCompactedContext.budget().estimatedContextTokens() > microCompactedContext.budget().autoCompactThreshold()
+        );
         CompactionDecision compaction = ports.compactionCoordinator().preflight(new CompactionRequest(
             request.sessionId(),
             leafEntryId,
             ports.cwd(),
             contextBuildRequest,
-            assembly,
+            microCompactedAssembly,
             request.abortSignal()
         ));
+        if (compaction.compacted()) {
+            ports.toolMicroCompactor().reset();
+        }
         return compaction.context();
+    }
+
+    private ContextSnapshot reestimateBudget(ContextSnapshot context, ContextBudget previousBudget) {
+        ContextBudget estimated = budgetEstimator.estimate(context);
+        ContextBudget budget = new ContextBudget(
+            estimated.estimatedContextTokens(),
+            previousBudget.effectiveContextWindow(),
+            previousBudget.autoCompactThreshold(),
+            previousBudget.turnOutputBudget(),
+            previousBudget.toolResultBudget(),
+            previousBudget.totalInputTokens(),
+            previousBudget.totalOutputTokens(),
+            previousBudget.estimatedCost()
+        );
+        return new ContextSnapshot(
+            context.systemPrompt(),
+            context.messages(),
+            context.model(),
+            context.thinkingLevel(),
+            context.mode(),
+            context.permissionMode(),
+            budget
+        );
     }
 
     private AgentMessage runModel(TurnRequest request, ContextSnapshot context) {
@@ -295,20 +349,129 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ));
     }
 
-    private List<ToolResult<?>> executeTools(String sessionId, List<ToolUseRequest> toolRequests, ContextSnapshot context) {
+    private List<ToolResult<?>> executeTools(
+        String turnId,
+        String sessionId,
+        List<ToolUseRequest> toolRequests,
+        ContextSnapshot context
+    ) {
         ensureToolRuntimeCwdMatches();
+        List<Instant> startedAt = new ArrayList<>(toolRequests.size());
+        for (ToolUseRequest toolRequest : toolRequests) {
+            Instant started = clock.instant();
+            startedAt.add(started);
+            ports.eventBus().publish(new ToolStartEvent(
+                sessionId,
+                toolRequest.toolUseId(),
+                toolRequest.parentMessageId(),
+                turnId,
+                toolRequest.toolName(),
+                toolRequest.toolName(),
+                inputSummary(toolRequest),
+                inputMetadata(toolRequest),
+                started,
+                started
+            ));
+        }
         List<ToolResult<?>> results;
+        boolean toolEndErrorsPublished = false;
         try {
             results = ports.toolRuntime().execute(toolRequests, context);
             if (results.size() != toolRequests.size()) {
+                publishToolEndErrors(sessionId, toolRequests, startedAt);
+                toolEndErrorsPublished = true;
                 throw new IllegalStateException(
                     "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
                 );
             }
         } catch (RuntimeException failure) {
+            if (!toolEndErrorsPublished) {
+                publishToolEndErrors(sessionId, toolRequests, startedAt);
+            }
             throw failure;
         }
+        for (int index = 0; index < toolRequests.size(); index++) {
+            ToolUseRequest request = toolRequests.get(index);
+            Instant endedAt = clock.instant();
+            ports.eventBus().publish(new ToolEndEvent(
+                sessionId,
+                request.toolUseId(),
+                results.get(index).isError() ? ToolExecutionStatus.FAILED : ToolExecutionStatus.SUCCEEDED,
+                null,
+                resultSummary(request, results.get(index)),
+                null,
+                startedAt.get(index),
+                endedAt,
+                durationMillis(startedAt.get(index), endedAt),
+                Map.of("toolName", request.toolName()),
+                endedAt
+            ));
+        }
         return results;
+    }
+
+    private void publishToolEndErrors(String sessionId, List<ToolUseRequest> toolRequests, List<Instant> startedAt) {
+        for (int index = 0; index < toolRequests.size(); index++) {
+            ToolUseRequest request = toolRequests.get(index);
+            Instant endedAt = clock.instant();
+            Instant started = index < startedAt.size() ? startedAt.get(index) : endedAt;
+            ports.eventBus().publish(new ToolEndEvent(
+                sessionId,
+                request.toolUseId(),
+                ToolExecutionStatus.FAILED,
+                null,
+                resultSummary(request, null),
+                null,
+                started,
+                endedAt,
+                durationMillis(started, endedAt),
+                Map.of("toolName", request.toolName()),
+                endedAt
+            ));
+        }
+    }
+
+    private String inputSummary(ToolUseRequest request) {
+        if (request.input() == null || request.input().isEmpty()) {
+            return request.toolName();
+        }
+        return request.toolName() + " " + request.input();
+    }
+
+    private Map<String, Object> inputMetadata(ToolUseRequest request) {
+        if (request.input() == null || request.input().isEmpty()) {
+            return Map.of();
+        }
+        return request.input();
+    }
+
+    private ToolResultSummary resultSummary(ToolUseRequest request, ToolResult<?> result) {
+        boolean error = result == null || result.isError();
+        String title = request.toolName() + (error ? " failed" : " succeeded");
+        String summary = result == null ? "" : String.valueOf(result.output());
+        return new ToolResultSummary(
+            title,
+            summary,
+            error,
+            null,
+            false,
+            outputBytes(result),
+            Map.of("toolName", request.toolName())
+        );
+    }
+
+    private long outputBytes(ToolResult<?> result) {
+        if (result == null || result.output() == null) {
+            return 0L;
+        }
+        return String.valueOf(result.output()).getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+    }
+
+    private long durationMillis(Instant startedAt, Instant endedAt) {
+        if (startedAt == null || endedAt == null) {
+            return 0L;
+        }
+        return Math.max(0L, Duration.between(startedAt, endedAt).toMillis());
     }
 
     private void ensureToolRuntimeCwdMatches() {

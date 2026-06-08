@@ -94,7 +94,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             ToolExecutionInterceptors.noop(),
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionGate),
-            eventPublisher(eventBus),
+            ToolExecutionEventPublisher.noop(),
             normalizeOptions(options)
         );
     }
@@ -114,7 +114,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             ToolExecutionInterceptors.noop(),
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionResponseGate),
-            eventPublisher(eventBus),
+            ToolExecutionEventPublisher.noop(),
             normalizeOptions(options)
         );
     }
@@ -162,7 +162,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             interceptor,
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionResponseGate),
-            eventPublisher(eventBus),
+            ToolExecutionEventPublisher.noop(),
             ToolRuntimeOptions.defaults()
         );
     }
@@ -187,7 +187,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             interceptor,
             securityRuntime,
             eventPublishingPermissionGate(eventBus, permissionGate),
-            eventPublisher(eventBus),
+            ToolExecutionEventPublisher.noop(),
             ToolRuntimeOptions.defaults()
         );
     }
@@ -669,10 +669,6 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return eventBus == null
             ? PermissionGate.denying()
             : new EventPublishingPermissionGate(eventBus, permissionResponseGate);
-    }
-
-    private static ToolExecutionEventPublisher eventPublisher(EventBus eventBus) {
-        return eventBus == null ? ToolExecutionEventPublisher.noop() : ToolExecutionEventPublisher.eventBus(eventBus);
     }
 
     private boolean shouldSkipForAbort(Tool<Map<String, Object>, ?> tool, ToolUseContext context) {

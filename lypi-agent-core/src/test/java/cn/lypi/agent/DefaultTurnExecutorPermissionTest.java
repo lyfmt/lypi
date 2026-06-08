@@ -1,6 +1,7 @@
 package cn.lypi.agent;
 
 import cn.lypi.agent.compact.NoopCompactionCoordinator;
+import cn.lypi.agent.compact.NoopToolMicroCompactor;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -26,9 +27,7 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.tool.Tool;
-import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
-import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
@@ -91,6 +90,7 @@ class DefaultTurnExecutorPermissionTest {
                 AgentCoreTestFixtures.fixedResourceRuntime("system"),
                 eventBus,
                 assembler,
+                new NoopToolMicroCompactor(),
                 new NoopCompactionCoordinator(),
                 new NoopMemoryExtractionWorker()
             ),
@@ -126,11 +126,14 @@ class DefaultTurnExecutorPermissionTest {
                 TurnStartEvent.class,
                 MessageStartEvent.class,
                 MessageEndEvent.class,
+                ToolStartEvent.class,
+                ToolEndEvent.class,
                 TurnEndEvent.class
             );
         assertThat(eventBus.events.stream()
-            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent))
-            .isEmpty();
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .map(AgentEvent::getClass))
+            .containsExactly(ToolStartEvent.class, ToolEndEvent.class);
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
     }
 
@@ -169,6 +172,7 @@ class DefaultTurnExecutorPermissionTest {
                 AgentCoreTestFixtures.fixedResourceRuntime("system"),
                 eventBus,
                 assembler,
+                new NoopToolMicroCompactor(),
                 new NoopCompactionCoordinator(),
                 new NoopMemoryExtractionWorker()
             ),
@@ -241,18 +245,6 @@ class DefaultTurnExecutorPermissionTest {
         public List<ToolResult<?>> execute(List<ToolUseRequest> requests, cn.lypi.contracts.context.ContextSnapshot context) {
             this.requests.add(List.copyOf(requests));
             ToolUseRequest request = requests.getFirst();
-            eventBus.publish(new ToolStartEvent(
-                "session-1",
-                request.toolUseId(),
-                "msg-tool-call",
-                "turn-1",
-                request.toolName(),
-                request.toolName(),
-                "write notes.txt",
-                Map.of(),
-                Instant.EPOCH,
-                Instant.EPOCH
-            ));
             PermissionDecision ask = new PermissionDecision(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.TOOL_SPECIFIC,
@@ -281,27 +273,6 @@ class DefaultTurnExecutorPermissionTest {
                     Optional.empty(),
                     Map.of()
                 ),
-                Instant.EPOCH
-            ));
-            eventBus.publish(new ToolEndEvent(
-                "session-1",
-                request.toolUseId(),
-                ToolExecutionStatus.FAILED,
-                null,
-                new ToolResultSummary(
-                    "permission denied",
-                    "用户拒绝",
-                    true,
-                    null,
-                    false,
-                    0L,
-                    Map.of()
-                ),
-                null,
-                Instant.EPOCH,
-                Instant.EPOCH,
-                0L,
-                Map.of(),
                 Instant.EPOCH
             ));
             return List.of(new ToolResult<>(
