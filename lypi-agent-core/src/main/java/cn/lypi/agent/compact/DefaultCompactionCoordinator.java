@@ -79,7 +79,8 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
             String compactionId = "entry-compact-" + UUID.randomUUID();
             Instant compactionTimestamp = clock.instant();
             Optional<MessageEntry> backfillEntry = resourceBackfillPlanner.plan(
-                assembly.resources(),
+                branchEntries,
+                compactionPlan,
                 compactionId,
                 compactionTimestamp
             );
@@ -92,7 +93,7 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
                 compactionTimestamp,
                 List.of()
             );
-            int tokensAfter = estimateCompactedTokens(assembly.snapshot(), baseCompactedMessages);
+            int baseTokensAfter = estimateCompactedTokens(assembly.snapshot(), baseCompactedMessages);
             List<AgentMessage> compactedMessages = compactedMessages(
                 assembly.snapshot(),
                 branchEntries,
@@ -102,10 +103,11 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
                 compactionTimestamp,
                 backfillEntry.map(MessageEntry::message).stream().toList()
             );
+            int tokensAfter = estimateCompactedTokens(assembly.snapshot(), compactedMessages);
             ContextSnapshot compactedContext = compactedContext(
                 assembly.snapshot(),
                 compactedMessages,
-                estimateCompactedTokens(assembly.snapshot(), compactedMessages)
+                tokensAfter
             );
             CompactionEntry compactionEntry = new CompactionEntry(
                 compactionId,
@@ -121,7 +123,7 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
             compactionEntryId = compactionEntry.id();
             Optional<String> backfillFailure = appendResourceBackfill(backfillEntry);
             if (backfillFailure.isPresent()) {
-                ContextSnapshot fallbackContext = compactedContext(assembly.snapshot(), baseCompactedMessages, tokensAfter);
+                ContextSnapshot fallbackContext = compactedContext(assembly.snapshot(), baseCompactedMessages, baseTokensAfter);
                 return new CompactionDecision(
                     fallbackContext,
                     plan,

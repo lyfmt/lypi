@@ -17,9 +17,6 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
 import cn.lypi.contracts.model.TokenUsage;
-import cn.lypi.contracts.prompt.PromptParameter;
-import cn.lypi.contracts.prompt.PromptTemplate;
-import cn.lypi.contracts.prompt.PromptTemplateSource;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ContextFile;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -42,7 +39,9 @@ import org.junit.jupiter.api.Test;
 
 import static cn.lypi.agent.AgentCoreTestFixtures.NOW;
 import static cn.lypi.agent.AgentCoreTestFixtures.assistantMessage;
+import static cn.lypi.agent.AgentCoreTestFixtures.assistantToolCallMessage;
 import static cn.lypi.agent.AgentCoreTestFixtures.fixedResourceRuntime;
+import static cn.lypi.agent.AgentCoreTestFixtures.toolResultMessage;
 import static cn.lypi.agent.AgentCoreTestFixtures.userMessage;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -431,8 +430,8 @@ class DefaultCompactionCoordinatorTest {
     }
 
     @Test
-    void appendsResourceBackfillMessageAfterCompaction() {
-        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+    void appendsReadStateBackfillFromDroppedSuccessfulReadResults() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithReadStateBranch();
         DefaultContextAssembler assembler = resourceAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
@@ -440,7 +439,7 @@ class DefaultCompactionCoordinatorTest {
             session,
             assembler,
             new AgentCoreTestFixtures.RecordingEventBus(),
-            new DefaultCompactionPlanner(4),
+            readStatePlan(),
             request -> summaryResult("summary text"),
             CLOCK
         );
@@ -459,16 +458,17 @@ class DefaultCompactionCoordinatorTest {
                     .isInstanceOfSatisfying(AttachmentContentBlock.class, attachment -> {
                         assertThat(attachment.attachmentId()).startsWith("compact-resource-");
                         assertThat(attachment.text())
-                            .contains("AGENTS.md")
-                            .contains("context instructions that must be restored after compact")
-                            .contains("skill:compact-helper")
-                            .contains("Helps restore context after compact")
-                            .doesNotContain("full skill body should not be loaded");
+                            .contains("src/Dropped.java")
+                            .contains("dropped read content")
+                            .doesNotContain("context instructions that must not be restored from ResourceSnapshot")
+                            .doesNotContain("skill:compact-helper")
+                            .doesNotContain("AGENTS.md")
+                            .doesNotContain("kept read content");
                     });
             });
         assertThat(decision.context().messages())
             .anySatisfy(message -> assertThat(message.content())
-                .anySatisfy(block -> assertThat(block.text()).contains("context instructions that must be restored after compact")));
+                .anySatisfy(block -> assertThat(block.text()).contains("dropped read content")));
         CompactionEntry compactionEntry = session.handle().byId().values().stream()
             .filter(CompactionEntry.class::isInstance)
             .map(CompactionEntry.class::cast)
@@ -478,16 +478,15 @@ class DefaultCompactionCoordinatorTest {
             .filteredOn(CompactionEntry.class::isInstance)
             .hasSize(1);
         assertThat(compactionEntry.tokensAfter())
-            .isEqualTo(estimateTokens(assembly.snapshot(), session.context(compactionEntry.id()).messages()));
+            .isEqualTo(decision.context().budget().estimatedContextTokens())
+            .isEqualTo(estimateTokens(assembly.snapshot(), session.context(session.leafId()).messages()));
         assertThat(decision.context().budget().estimatedContextTokens())
             .isEqualTo(estimateTokens(decision.context()));
-        assertThat(decision.context().budget().estimatedContextTokens())
-            .isGreaterThan(compactionEntry.tokensAfter());
     }
 
     @Test
     void resourceBackfillDecisionContextMatchesReplayWithLiveClock() {
-        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithReadStateBranch();
         DefaultContextAssembler assembler = resourceAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
@@ -495,7 +494,7 @@ class DefaultCompactionCoordinatorTest {
             session,
             assembler,
             new AgentCoreTestFixtures.RecordingEventBus(),
-            new DefaultCompactionPlanner(4),
+            readStatePlan(),
             request -> summaryResult("summary text"),
             Clock.systemUTC()
         );
@@ -507,9 +506,99 @@ class DefaultCompactionCoordinatorTest {
     }
 
     @Test
-    void resourceBackfillAllowsMissingSkillIndex() {
+    void readStateBackfillExcludesDroppedReadsAlreadyPresentInKeptTail() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithReadStateBranchReadingSamePathInTail();
+        DefaultContextAssembler assembler = resourceAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            readStatePlan(),
+            request -> summaryResult("summary after compact"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(session.handle().byId().values())
+            .filteredOn(MessageEntry.class::isInstance)
+            .map(MessageEntry.class::cast)
+            .map(MessageEntry::message)
+            .filteredOn(message -> message.role() == MessageRole.SYSTEM_LOCAL)
+            .filteredOn(message -> message.kind() == MessageKind.ATTACHMENT)
+            .isEmpty();
+        assertThat(decision.context().messages())
+            .flatExtracting(AgentMessage::content)
+            .extracting(ContentBlock::text)
+            .doesNotContain("File: src/Dropped.java\n1 | dropped read content");
+    }
+
+    @Test
+    void readStateBackfillKeepsDroppedReadWhenKeptTailReadOfSamePathFailed() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithReadStateBranchReadingSamePathInTailWithError();
+        DefaultContextAssembler assembler = resourceAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            readStatePlan(),
+            request -> summaryResult("summary after compact"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(resourceBackfillText(session))
+            .contains("src/Dropped.java")
+            .contains("dropped read content")
+            .doesNotContain("kept failed read");
+    }
+
+    @Test
+    void readStateBackfillExcludesRelativeNestedAndWindowsSystemResourcePaths() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithSystemResourceReadOnlyBranch();
+        DefaultContextAssembler assembler = resourceAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            readStatePlan(),
+            request -> summaryResult("summary after compact"),
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(session.handle().byId().values())
+            .filteredOn(MessageEntry.class::isInstance)
+            .map(MessageEntry.class::cast)
+            .map(MessageEntry::message)
+            .filteredOn(message -> message.role() == MessageRole.SYSTEM_LOCAL)
+            .filteredOn(message -> message.kind() == MessageKind.ATTACHMENT)
+            .isEmpty();
+        assertThat(decision.context().messages())
+            .flatExtracting(AgentMessage::content)
+            .extracting(ContentBlock::text)
+            .doesNotContain("skill instructions")
+            .doesNotContain("codex instructions")
+            .doesNotContain("claude instructions")
+            .doesNotContain("nested codex instructions")
+            .doesNotContain("windows claude instructions");
+    }
+
+    @Test
+    void readStateBackfillDoesNotRestoreSystemResourceSnapshotWhenNoReadStateWasDropped() {
         AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
-        DefaultContextAssembler assembler = resourceAssembler(session, null);
+        DefaultContextAssembler assembler = resourceAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
         DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
@@ -526,78 +615,30 @@ class DefaultCompactionCoordinatorTest {
         assertThat(decision.compacted()).isTrue();
         assertThat(session.handle().byId().values())
             .filteredOn(MessageEntry.class::isInstance)
-            .map(entry -> ((MessageEntry) entry).message())
+            .map(MessageEntry.class::cast)
+            .map(MessageEntry::message)
             .filteredOn(message -> message.role() == MessageRole.SYSTEM_LOCAL)
             .filteredOn(message -> message.kind() == MessageKind.ATTACHMENT)
-            .singleElement()
-            .satisfies(message -> assertThat(message.content())
-                .singleElement()
-                .satisfies(block -> assertThat(block.text())
-                    .contains("context instructions that must be restored after compact")));
+            .isEmpty();
+        assertThat(decision.context().messages())
+            .flatExtracting(AgentMessage::content)
+            .extracting(ContentBlock::text)
+            .doesNotContain("context instructions that must not be restored from ResourceSnapshot")
+            .doesNotContain("compact-restored prompt body")
+            .doesNotContain("skill:compact-helper");
     }
 
     @Test
-    void resourceBackfillIncludesPromptTemplateBody() {
-        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
-        DefaultContextAssembler assembler = resourceAssembler(
-            session,
-            List.of(new ContextFile(
-                Path.of("AGENTS.md"),
-                "context instructions that must be restored after compact",
-                "sha256:agents"
-            )),
-            new SkillIndex(List.of(), List.of()),
-            List.of(new PromptTemplate(
-                "review",
-                "Review current changes",
-                PromptTemplateSource.PROJECT,
-                List.of(new PromptParameter("scope", "review scope", true, Optional.empty())),
-                "Review {{scope}} with compact-restored prompt body.",
-                "sha256:prompt"
-            ))
-        );
+    void readStateBackfillTruncationNoticeStaysWithinAttachmentLimit() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLargeReadStateBranch();
+        DefaultContextAssembler assembler = resourceAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
         DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
             session,
             assembler,
             new AgentCoreTestFixtures.RecordingEventBus(),
-            new DefaultCompactionPlanner(4),
-            request -> summaryResult("summary after compact"),
-            CLOCK
-        );
-
-        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
-
-        assertThat(decision.compacted()).isTrue();
-        assertThat(resourceBackfillText(session))
-            .contains("prompt:review")
-            .contains("scope(required)")
-            .contains("Review {{scope}} with compact-restored prompt body.");
-    }
-
-    @Test
-    void resourceBackfillTruncationNoticeStaysWithinAttachmentLimit() {
-        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
-        DefaultContextAssembler assembler = resourceAssembler(
-            session,
-            List.of(
-                new ContextFile(Path.of("AGENTS-1.md"), "A".repeat(30_000), "sha256:agents-1"),
-                new ContextFile(Path.of("AGENTS-2.md"), "B".repeat(30_000), "sha256:agents-2"),
-                new ContextFile(Path.of("AGENTS-3.md"), "C".repeat(30_000), "sha256:agents-3"),
-                new ContextFile(Path.of("AGENTS-4.md"), "D".repeat(30_000), "sha256:agents-4"),
-                new ContextFile(Path.of("AGENTS-5.md"), "E".repeat(30_000), "sha256:agents-5")
-            ),
-            new SkillIndex(List.of(), List.of()),
-            List.of()
-        );
-        ContextBuildRequest buildRequest = buildRequest(session);
-        ContextAssembly assembly = assembler.build(buildRequest);
-        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
-            session,
-            assembler,
-            new AgentCoreTestFixtures.RecordingEventBus(),
-            new DefaultCompactionPlanner(4),
+            readStatePlan(),
             request -> summaryResult("summary after compact"),
             CLOCK
         );
@@ -613,10 +654,7 @@ class DefaultCompactionCoordinatorTest {
     @Test
     void resourceBackfillAppendFailureDoesNotReturnOriginalContextAfterCompactionAppend() {
         BackfillFailingAfterCompactionAppendSessionManager session = new BackfillFailingAfterCompactionAppendSessionManager();
-        session.openOrCreate("session-1");
-        session.append(new MessageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long enough to count"), NOW));
-        session.append(new MessageEntry("entry-assistant-1", "entry-user-1", assistantMessage("msg-assistant-1", "assistant one long enough"), NOW));
-        session.append(new MessageEntry("entry-user-2", "entry-assistant-1", userMessage("msg-user-2", "user two long enough"), NOW));
+        populateReadStateBranch(session, false, false);
         DefaultContextAssembler assembler = resourceAssembler(session);
         ContextBuildRequest buildRequest = buildRequest(session);
         ContextAssembly assembly = assembler.build(buildRequest);
@@ -624,7 +662,7 @@ class DefaultCompactionCoordinatorTest {
             session,
             assembler,
             new AgentCoreTestFixtures.RecordingEventBus(),
-            new DefaultCompactionPlanner(4),
+            readStatePlan(),
             request -> summaryResult("summary text"),
             CLOCK
         );
@@ -636,19 +674,221 @@ class DefaultCompactionCoordinatorTest {
         assertThat(decision.context()).isNotSameAs(assembly.snapshot());
         assertThat(decision.context().messages())
             .extracting(message -> message.content().getFirst().text())
-            .contains("summary text", "assistant one long enough", "user two long enough")
-            .doesNotContain("context instructions that must be restored after compact");
+            .contains("summary text", "File: src/Kept.java\n1 | kept read content", "current user request")
+            .doesNotContain("File: src/Dropped.java\n1 | dropped read content")
+            .doesNotContain("context instructions that must not be restored from ResourceSnapshot");
         assertThat(session.context(session.leafId()).messages()).containsExactlyElementsOf(decision.context().messages());
         assertThat(session.handle().byId().values())
             .filteredOn(CompactionEntry.class::isInstance)
             .hasSize(1);
         assertThat(session.entry(session.leafId()))
             .isInstanceOfSatisfying(CompactionEntry.class, entry ->
-                assertThat(entry.tokensAfter()).isEqualTo(decision.context().budget().estimatedContextTokens())
+                assertThat(entry.tokensAfter()).isGreaterThan(decision.context().budget().estimatedContextTokens())
             );
         assertThat(session.handle().byId().values())
             .filteredOn(MessageEntry.class::isInstance)
-            .hasSize(3);
+            .map(MessageEntry.class::cast)
+            .map(MessageEntry::message)
+            .filteredOn(message -> message.role() == MessageRole.SYSTEM_LOCAL)
+            .filteredOn(message -> message.kind() == MessageKind.ATTACHMENT)
+            .isEmpty();
+    }
+
+    private static cn.lypi.agent.compact.CompactionPlanner readStatePlan() {
+        return (branchEntries, context) -> Optional.of(new cn.lypi.contracts.session.CompactionPlan(
+            "entry-tool-agents",
+            "entry-assistant-kept",
+            List.of(
+                "entry-user-1",
+                "entry-assistant-dropped",
+                "entry-tool-dropped",
+                "entry-assistant-codex",
+                "entry-tool-codex",
+                "entry-assistant-claude",
+                "entry-tool-claude",
+                "entry-assistant-nested-codex",
+                "entry-tool-nested-codex",
+                "entry-assistant-windows-claude",
+                "entry-tool-windows-claude",
+                "entry-assistant-agents",
+                "entry-tool-agents"
+            ),
+            cn.lypi.contracts.session.CompactionKind.SESSION
+        ));
+    }
+
+    private static AgentCoreTestFixtures.InMemorySessionManager sessionWithReadStateBranch() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        populateReadStateBranch(session, false, false);
+        return session;
+    }
+
+    private static AgentCoreTestFixtures.InMemorySessionManager sessionWithReadStateBranchReadingSamePathInTail() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        populateReadStateBranch(session, true, false);
+        return session;
+    }
+
+    private static AgentCoreTestFixtures.InMemorySessionManager sessionWithReadStateBranchReadingSamePathInTailWithError() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        populateReadStateBranch(session, true, false, true, false);
+        return session;
+    }
+
+    private static AgentCoreTestFixtures.InMemorySessionManager sessionWithLargeReadStateBranch() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        populateReadStateBranch(session, false, true);
+        return session;
+    }
+
+    private static AgentCoreTestFixtures.InMemorySessionManager sessionWithSystemResourceReadOnlyBranch() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        populateReadStateBranch(session, false, false, false, true);
+        return session;
+    }
+
+    private static void populateReadStateBranch(
+        AgentCoreTestFixtures.InMemorySessionManager session,
+        boolean keptTailReadsDroppedPath,
+        boolean largeDroppedRead
+    ) {
+        populateReadStateBranch(session, keptTailReadsDroppedPath, largeDroppedRead, false, false);
+    }
+
+    private static void populateReadStateBranch(
+        AgentCoreTestFixtures.InMemorySessionManager session,
+        boolean keptTailReadsDroppedPath,
+        boolean largeDroppedRead,
+        boolean keptTailReadError,
+        boolean systemResourceOnly
+    ) {
+        session.openOrCreate("session-1");
+        session.append(new MessageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long enough to count"), NOW));
+        String droppedPath = systemResourceOnly ? ".ly-pi/skills/helper/SKILL.md" : "src/Dropped.java";
+        session.append(new MessageEntry(
+            "entry-assistant-dropped",
+            "entry-user-1",
+            assistantToolCallMessage("msg-assistant-dropped", "tool-dropped", "read", java.util.Map.of("path", droppedPath)),
+            NOW
+        ));
+        String droppedReadText;
+        if (systemResourceOnly) {
+            droppedReadText = "File: .ly-pi/skills/helper/SKILL.md\n1 | skill instructions";
+        } else if (largeDroppedRead) {
+            droppedReadText = "File: src/Dropped.java\n" + "1 | " + "A".repeat(30_000);
+        } else {
+            droppedReadText = "File: src/Dropped.java\n1 | dropped read content";
+        }
+        session.append(new MessageEntry(
+            "entry-tool-dropped",
+            "entry-assistant-dropped",
+            toolResultMessage("msg-tool-dropped", "tool-dropped", droppedReadText, false),
+            NOW
+        ));
+        if (systemResourceOnly) {
+            session.append(new MessageEntry(
+                "entry-assistant-codex",
+                "entry-tool-dropped",
+                assistantToolCallMessage("msg-assistant-codex", "tool-codex", "read", java.util.Map.of("path", ".codex/rules.md")),
+                NOW
+            ));
+            session.append(new MessageEntry(
+                "entry-tool-codex",
+                "entry-assistant-codex",
+                toolResultMessage("msg-tool-codex", "tool-codex", "File: .codex/rules.md\n1 | codex instructions", false),
+                NOW
+            ));
+            session.append(new MessageEntry(
+                "entry-assistant-claude",
+                "entry-tool-codex",
+                assistantToolCallMessage("msg-assistant-claude", "tool-claude", "read", java.util.Map.of("path", ".claude/settings.md")),
+                NOW
+            ));
+            session.append(new MessageEntry(
+                "entry-tool-claude",
+                "entry-assistant-claude",
+                toolResultMessage("msg-tool-claude", "tool-claude", "File: .claude/settings.md\n1 | claude instructions", false),
+                NOW
+            ));
+            session.append(new MessageEntry(
+                "entry-assistant-nested-codex",
+                "entry-tool-claude",
+                assistantToolCallMessage(
+                    "msg-assistant-nested-codex",
+                    "tool-nested-codex",
+                    "read",
+                    java.util.Map.of("path", "src/module/.codex/config.md")
+                ),
+                NOW
+            ));
+            session.append(new MessageEntry(
+                "entry-tool-nested-codex",
+                "entry-assistant-nested-codex",
+                toolResultMessage(
+                    "msg-tool-nested-codex",
+                    "tool-nested-codex",
+                    "File: src/module/.codex/config.md\n1 | nested codex instructions",
+                    false
+                ),
+                NOW
+            ));
+            session.append(new MessageEntry(
+                "entry-assistant-windows-claude",
+                "entry-tool-nested-codex",
+                assistantToolCallMessage(
+                    "msg-assistant-windows-claude",
+                    "tool-windows-claude",
+                    "read",
+                    java.util.Map.of("path", "C:\\repo\\.claude\\settings.md")
+                ),
+                NOW
+            ));
+            session.append(new MessageEntry(
+                "entry-tool-windows-claude",
+                "entry-assistant-windows-claude",
+                toolResultMessage(
+                    "msg-tool-windows-claude",
+                    "tool-windows-claude",
+                    "File: C:\\repo\\.claude\\settings.md\n1 | windows claude instructions",
+                    false
+                ),
+                NOW
+            ));
+        }
+        session.append(new MessageEntry(
+            "entry-assistant-agents",
+            systemResourceOnly ? "entry-tool-windows-claude" : "entry-tool-dropped",
+            assistantToolCallMessage("msg-assistant-agents", "tool-agents", "read", java.util.Map.of("path", "AGENTS.md")),
+            NOW
+        ));
+        session.append(new MessageEntry(
+            "entry-tool-agents",
+            "entry-assistant-agents",
+            toolResultMessage("msg-tool-agents", "tool-agents", "File: AGENTS.md\n1 | system instructions", false),
+            NOW
+        ));
+        String keptPath = keptTailReadsDroppedPath ? "src/Dropped.java" : "src/Kept.java";
+        String keptText = keptTailReadsDroppedPath
+            ? "File: src/Dropped.java\n1 | kept replacement read content"
+            : "File: src/Kept.java\n1 | kept read content";
+        session.append(new MessageEntry(
+            "entry-assistant-kept",
+            "entry-tool-agents",
+            assistantToolCallMessage("msg-assistant-kept", "tool-kept", "read", java.util.Map.of("path", keptPath)),
+            NOW
+        ));
+        session.append(new MessageEntry(
+            "entry-tool-kept",
+            "entry-assistant-kept",
+            toolResultMessage("msg-tool-kept", "tool-kept", keptTailReadError ? "kept failed read" : keptText, keptTailReadError),
+            NOW
+        ));
+        session.append(new MessageEntry(
+            "entry-user-2",
+            "entry-tool-kept",
+            userMessage("msg-user-2", "current user request"),
+            NOW
+        ));
     }
 
     private static AgentCoreTestFixtures.InMemorySessionManager sessionWithLongBranch() {
@@ -673,7 +913,7 @@ class DefaultCompactionCoordinatorTest {
             session,
             List.of(new ContextFile(
                 Path.of("AGENTS.md"),
-                "context instructions that must be restored after compact",
+                "context instructions that must not be restored from ResourceSnapshot",
                 "sha256:agents"
             )),
             new SkillIndex(List.of(new SkillDescriptor(
@@ -684,38 +924,20 @@ class DefaultCompactionCoordinatorTest {
                 List.of("**/*.java"),
                 List.of("read"),
                 "sha256:skill"
-            )), List.of()),
-            List.of()
-        );
-    }
-
-    private static DefaultContextAssembler resourceAssembler(
-        AgentCoreTestFixtures.InMemorySessionManager session,
-        SkillIndex skillIndex
-    ) {
-        return resourceAssembler(
-            session,
-            List.of(new ContextFile(
-                Path.of("AGENTS.md"),
-                "context instructions that must be restored after compact",
-                "sha256:agents"
-            )),
-            skillIndex,
-            List.of()
+            )), List.of())
         );
     }
 
     private static DefaultContextAssembler resourceAssembler(
         AgentCoreTestFixtures.InMemorySessionManager session,
         List<ContextFile> contextFiles,
-        SkillIndex skillIndex,
-        List<PromptTemplate> promptTemplates
+        SkillIndex skillIndex
     ) {
         ResourceSnapshot resources = new ResourceSnapshot(
             contextFiles,
             List.of(),
             skillIndex,
-            promptTemplates,
+            List.of(),
             List.of(),
             List.of()
         );

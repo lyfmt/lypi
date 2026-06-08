@@ -2,36 +2,37 @@ package cn.lypi.agent.compact;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.AttachmentContentBlock;
+import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
-import cn.lypi.contracts.mcp.McpServerConfig;
-import cn.lypi.contracts.prompt.PromptParameter;
-import cn.lypi.contracts.prompt.PromptTemplate;
-import cn.lypi.contracts.resource.ContextFile;
-import cn.lypi.contracts.resource.MemorySource;
-import cn.lypi.contracts.resource.ResourceDiagnostic;
-import cn.lypi.contracts.resource.ResourceSnapshot;
-import cn.lypi.contracts.session.CompactionEntry;
+import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
+import cn.lypi.contracts.session.CompactionPlan;
 import cn.lypi.contracts.session.MessageEntry;
-import cn.lypi.contracts.skill.SkillDescriptor;
+import cn.lypi.contracts.session.SessionEntry;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
- * 规划 compact 后需要重新注入的资源上下文消息。
+ * 规划 compact 后需要重新注入的 read tool 状态。
  *
- * NOTE: 仅回注 ResourceSnapshot 已经披露的内容；Skill 正文必须等激活记录进入
- * session 后再按已调用 Skill 回注，不能在 compact 时一次性加载全部正文。
+ * NOTE: 只恢复 compact 丢失段中已经由 read 工具披露过的内容；系统资源、
+ * 规则文件和保留尾部已经存在的 read 结果不得重复回注。
  */
 final class CompactResourceBackfillPlanner {
     private static final int MAX_ATTACHMENT_CHARS = 20_000;
-    private static final int MAX_CONTEXT_FILE_CHARS = 5_000;
-    private static final String TRUNCATION_NOTICE = "\n\n[内容已截断；如需完整内容，请重新读取对应资源。]";
+    private static final int MAX_READ_STATES = 8;
+    private static final String TRUNCATION_NOTICE = "\n\n[内容已截断；如需完整内容，请重新读取对应文件。]";
 
     private final Clock clock;
 
@@ -39,12 +40,18 @@ final class CompactResourceBackfillPlanner {
         this.clock = clock;
     }
 
-    Optional<MessageEntry> plan(ResourceSnapshot resources, String compactionEntryId, Instant timestamp) {
-        if (resources == null || isEmpty(resources)) {
+    Optional<MessageEntry> plan(
+        List<SessionEntry> branchEntries,
+        CompactionPlan plan,
+        String compactionEntryId,
+        Instant timestamp
+    ) {
+        List<ReadState> readStates = readStatesToBackfill(branchEntries, plan);
+        if (readStates.isEmpty()) {
             return Optional.empty();
         }
 
-        String text = truncate(render(resources), MAX_ATTACHMENT_CHARS);
+        String text = truncate(render(readStates), MAX_ATTACHMENT_CHARS);
         if (text.isBlank()) {
             return Optional.empty();
         }
@@ -59,7 +66,7 @@ final class CompactResourceBackfillPlanner {
                 attachmentId,
                 text,
                 "text/markdown",
-                metadata(resources)
+                metadata(readStates)
             )),
             safeTimestamp,
             Optional.empty(),
@@ -73,114 +80,152 @@ final class CompactResourceBackfillPlanner {
         ));
     }
 
-    private boolean isEmpty(ResourceSnapshot resources) {
-        return agentFiles(resources).isEmpty()
-            && memorySources(resources).isEmpty()
-            && skills(resources).isEmpty()
-            && promptTemplates(resources).isEmpty()
-            && mcpServers(resources).isEmpty();
+    private List<ReadState> readStatesToBackfill(List<SessionEntry> branchEntries, CompactionPlan plan) {
+        if (branchEntries == null || branchEntries.isEmpty() || plan == null) {
+            return List.of();
+        }
+        List<SessionEntry> droppedEntries = droppedEntries(branchEntries, plan);
+        if (droppedEntries.isEmpty()) {
+            return List.of();
+        }
+        Set<String> keptReadPaths = readPaths(keptEntries(branchEntries, plan.firstKeptEntryId()));
+        Map<String, String> readPathsByToolUseId = new HashMap<>();
+        LinkedHashMap<String, ReadState> statesByPath = new LinkedHashMap<>();
+
+        for (SessionEntry entry : droppedEntries) {
+            if (!(entry instanceof MessageEntry messageEntry)) {
+                continue;
+            }
+            AgentMessage message = messageEntry.message();
+            for (ContentBlock block : safeContent(message)) {
+                if (block instanceof ToolCallContentBlock toolCall) {
+                    readPath(toolCall).ifPresent(path ->
+                        readPathsByToolUseId.put(toolCall.toolUseId(), path)
+                    );
+                } else if (block instanceof ToolResultContentBlock toolResult && !toolResult.error()) {
+                    String path = readPathsByToolUseId.get(toolResult.toolUseId());
+                    if (path == null || keptReadPaths.contains(path) || isSystemResource(path)) {
+                        continue;
+                    }
+                    statesByPath.remove(path);
+                    statesByPath.put(path, new ReadState(path, safeText(toolResult.text())));
+                }
+            }
+        }
+
+        List<ReadState> states = new ArrayList<>(statesByPath.values());
+        int fromIndex = Math.max(0, states.size() - MAX_READ_STATES);
+        return List.copyOf(states.subList(fromIndex, states.size()));
     }
 
-    private String render(ResourceSnapshot resources) {
+    private List<SessionEntry> droppedEntries(List<SessionEntry> branchEntries, CompactionPlan plan) {
+        Set<String> summarizedIds = new HashSet<>(safeList(plan.summarizedEntryIds()));
+        if (summarizedIds.isEmpty()) {
+            return List.of();
+        }
+        return branchEntries.stream()
+            .filter(entry -> summarizedIds.contains(entry.id()))
+            .toList();
+    }
+
+    private List<SessionEntry> keptEntries(List<SessionEntry> branchEntries, String firstKeptEntryId) {
+        if (firstKeptEntryId == null || firstKeptEntryId.isBlank()) {
+            return List.of();
+        }
+        List<SessionEntry> kept = new ArrayList<>();
+        boolean keep = false;
+        for (SessionEntry entry : branchEntries) {
+            if (entry.id().equals(firstKeptEntryId)) {
+                keep = true;
+            }
+            if (keep) {
+                kept.add(entry);
+            }
+        }
+        return List.copyOf(kept);
+    }
+
+    private Set<String> readPaths(List<SessionEntry> entries) {
+        Set<String> paths = new HashSet<>();
+        Map<String, String> readPathsByToolUseId = new HashMap<>();
+        for (SessionEntry entry : entries) {
+            if (!(entry instanceof MessageEntry messageEntry)) {
+                continue;
+            }
+            for (ContentBlock block : safeContent(messageEntry.message())) {
+                if (block instanceof ToolCallContentBlock toolCall) {
+                    readPath(toolCall).ifPresent(path ->
+                        readPathsByToolUseId.put(toolCall.toolUseId(), path)
+                    );
+                } else if (block instanceof ToolResultContentBlock toolResult && !toolResult.error()) {
+                    Optional.ofNullable(readPathsByToolUseId.get(toolResult.toolUseId())).ifPresent(paths::add);
+                }
+            }
+        }
+        return Set.copyOf(paths);
+    }
+
+    private Optional<String> readPath(ToolCallContentBlock toolCall) {
+        if (toolCall == null || !"read".equals(normalizeToolName(toolCall.toolName()))) {
+            return Optional.empty();
+        }
+        Object input = safeMap(toolCall.metadata()).get("input");
+        if (!(input instanceof Map<?, ?> inputMap)) {
+            return Optional.empty();
+        }
+        Object path = inputMap.get("path");
+        if (path == null || path.toString().isBlank()) {
+            return Optional.empty();
+        }
+        String normalizedPath = normalizePath(path.toString());
+        if (normalizedPath.isBlank() || isSystemResource(normalizedPath)) {
+            return Optional.empty();
+        }
+        return Optional.of(normalizedPath);
+    }
+
+    private String render(List<ReadState> states) {
         StringBuilder text = new StringBuilder();
-        text.append("Post-compact resource context has been restored.\n");
-        appendContextFiles(text, agentFiles(resources));
-        appendMemorySources(text, memorySources(resources));
-        appendSkills(text, skills(resources));
-        appendPromptTemplates(text, promptTemplates(resources));
-        appendMcpServers(text, mcpServers(resources));
+        text.append("Post-compact read state has been restored.");
+        text.append("\n\n## Restored Read Files\n");
+        for (ReadState state : states) {
+            text.append("\n### ").append(state.path()).append('\n');
+            text.append(safeText(state.text()).strip()).append('\n');
+        }
         return text.toString().strip();
     }
 
-    private void appendContextFiles(StringBuilder text, List<ContextFile> files) {
-        if (files.isEmpty()) {
-            return;
-        }
-        text.append("\n\n## Restored Context Files\n");
-        for (ContextFile file : files) {
-            text.append("\n### ").append(file.path()).append('\n');
-            text.append(truncate(safeText(file.content()).strip(), MAX_CONTEXT_FILE_CHARS)).append('\n');
-        }
-    }
-
-    private void appendMemorySources(StringBuilder text, List<MemorySource> memorySources) {
-        if (memorySources.isEmpty()) {
-            return;
-        }
-        text.append("\n\n## Memory Sources\n");
-        for (MemorySource memorySource : memorySources) {
-            text.append("- ")
-                .append(memorySource.path())
-                .append(" (")
-                .append(memorySource.contentHash())
-                .append(")\n");
-        }
-    }
-
-    private void appendSkills(StringBuilder text, List<SkillDescriptor> skills) {
-        if (skills.isEmpty()) {
-            return;
-        }
-        text.append("\n\n## Available Skills\n");
-        for (SkillDescriptor skill : skills) {
-            text.append("- skill:")
-                .append(skill.name())
-                .append(" source=")
-                .append(skill.source())
-                .append(" hash=")
-                .append(skill.contentHash())
-                .append('\n')
-                .append("  description: ")
-                .append(skill.description())
-                .append('\n');
-            if (!safeList(skill.pathGlobs()).isEmpty()) {
-                text.append("  paths: ").append(skill.pathGlobs()).append('\n');
-            }
-            if (!safeList(skill.allowedTools()).isEmpty()) {
-                text.append("  allowedTools: ").append(skill.allowedTools()).append('\n');
-            }
-        }
-    }
-
-    private void appendPromptTemplates(StringBuilder text, List<PromptTemplate> promptTemplates) {
-        if (promptTemplates.isEmpty()) {
-            return;
-        }
-        text.append("\n\n## Prompt Templates\n");
-        for (PromptTemplate template : promptTemplates) {
-            text.append("- prompt:")
-                .append(template.name())
-                .append(" source=")
-                .append(template.source())
-                .append(" hash=")
-                .append(template.contentHash())
-                .append('\n')
-                .append("  description: ")
-                .append(template.description())
-                .append('\n');
-            if (!safeList(template.parameters()).isEmpty()) {
-                text.append("  parameters: ").append(parameterSummary(template.parameters())).append('\n');
-            }
-            if (template.templateBody() != null && !template.templateBody().isBlank()) {
-                text.append("  body:\n")
-                    .append(truncate(template.templateBody().strip(), MAX_CONTEXT_FILE_CHARS))
-                    .append('\n');
-            }
-        }
-    }
-
-    private void appendMcpServers(StringBuilder text, List<McpServerConfig> mcpServers) {
-        if (mcpServers.isEmpty()) {
-            return;
-        }
-        text.append("\n\n## MCP Servers\n");
-        mcpServers.forEach(server ->
-            text.append("- mcp:")
-                .append(server.name())
-                .append(" transport=")
-                .append(server.transport())
-                .append('\n')
+    private Map<String, Object> metadata(List<ReadState> states) {
+        return Map.of(
+            "readStateCount",
+            states.size(),
+            "paths",
+            states.stream().map(ReadState::path).toList()
         );
+    }
+
+    private boolean isSystemResource(String path) {
+        String normalized = normalizePath(path).toLowerCase(Locale.ROOT);
+        String fileName = normalized.substring(normalized.lastIndexOf('/') + 1);
+        return fileName.equals("agents.md")
+            || fileName.equals("claude.md")
+            || fileName.equals("claude.local.md")
+            || fileName.endsWith(".rules")
+            || fileName.endsWith(".rules.md")
+            || normalized.startsWith(".codex/")
+            || normalized.contains("/.codex/")
+            || normalized.startsWith(".ly-pi/skills/")
+            || normalized.contains("/.ly-pi/skills/")
+            || normalized.startsWith(".claude/")
+            || normalized.contains("/.claude/");
+    }
+
+    private String normalizePath(String path) {
+        String normalized = safeText(path).replace('\\', '/').strip();
+        while (normalized.startsWith("./")) {
+            normalized = normalized.substring(2);
+        }
+        return normalized;
     }
 
     private String truncate(String text, int maxChars) {
@@ -192,56 +237,25 @@ final class CompactResourceBackfillPlanner {
         return safeText.substring(0, prefixChars) + TRUNCATION_NOTICE;
     }
 
-    private String parameterSummary(List<PromptParameter> parameters) {
-        return safeList(parameters).stream()
-            .map(parameter -> parameter.name() + (parameter.required() ? "(required)" : "(optional)"))
-            .reduce((left, right) -> left + ", " + right)
-            .orElse("");
-    }
-
-    private Map<String, Object> metadata(ResourceSnapshot resources) {
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("agentFileCount", agentFiles(resources).size());
-        metadata.put("memorySourceCount", memorySources(resources).size());
-        metadata.put("skillCount", skills(resources).size());
-        metadata.put("promptTemplateCount", promptTemplates(resources).size());
-        metadata.put("mcpServerCount", mcpServers(resources).size());
-        metadata.put("diagnosticCount", diagnostics(resources).size());
-        return Map.copyOf(metadata);
-    }
-
-    private List<ContextFile> agentFiles(ResourceSnapshot resources) {
-        return safeList(resources.agentFiles());
-    }
-
-    private List<MemorySource> memorySources(ResourceSnapshot resources) {
-        return safeList(resources.memorySources());
-    }
-
-    private List<SkillDescriptor> skills(ResourceSnapshot resources) {
-        if (resources.skillIndex() == null) {
-            return List.of();
-        }
-        return safeList(resources.skillIndex().skills());
-    }
-
-    private List<PromptTemplate> promptTemplates(ResourceSnapshot resources) {
-        return safeList(resources.promptTemplates());
-    }
-
-    private List<McpServerConfig> mcpServers(ResourceSnapshot resources) {
-        return safeList(resources.mcpServers());
-    }
-
-    private List<ResourceDiagnostic> diagnostics(ResourceSnapshot resources) {
-        return safeList(resources.diagnostics());
+    private List<ContentBlock> safeContent(AgentMessage message) {
+        return message == null || message.content() == null ? List.of() : message.content();
     }
 
     private <T> List<T> safeList(List<T> values) {
         return values == null ? List.of() : values;
     }
 
+    private Map<String, Object> safeMap(Map<String, Object> values) {
+        return values == null ? Map.of() : values;
+    }
+
     private String safeText(String text) {
         return text == null ? "" : text;
     }
+
+    private String normalizeToolName(String toolName) {
+        return toolName == null ? "" : toolName.toLowerCase(Locale.ROOT);
+    }
+
+    private record ReadState(String path, String text) {}
 }
