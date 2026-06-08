@@ -15,6 +15,7 @@ import java.time.Instant;
     @JsonSubTypes.Type(value = BranchSummaryEntry.class, name = "branch_summary"),
     @JsonSubTypes.Type(value = CustomEntry.class, name = "custom"),
     @JsonSubTypes.Type(value = CustomMessageEntry.class, name = "custom_message"),
+    @JsonSubTypes.Type(value = AgentLifecycleEntry.class, name = "agent_lifecycle"),
     @JsonSubTypes.Type(value = LabelEntry.class, name = "label"),
     @JsonSubTypes.Type(value = SessionInfoEntry.class, name = "session_info")
 })

@@ -43,13 +43,18 @@ import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.subagent.MailboxMessage;
+import cn.lypi.contracts.subagent.MailboxStatus;
+import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
@@ -122,6 +127,92 @@ class ContractSerializationTest {
             SessionEntry restored = mapper.readValue(json, SessionEntry.class);
             assertEquals(entry, restored);
         }
+    }
+
+    @Test
+    void sessionHeaderRoundTripKeepsSubagentRelationshipFields() throws Exception {
+        SessionHeader header = new SessionHeader(
+            "session",
+            1,
+            "ses_child",
+            Path.of("/tmp/project"),
+            Optional.of("ses_parent"),
+            Optional.of("entry_spawn"),
+            2,
+            Optional.of("reviewer"),
+            Optional.of("code-review"),
+            Instant.parse("2026-06-09T00:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(header);
+        SessionHeader restored = mapper.readValue(json, SessionHeader.class);
+
+        assertEquals(header, restored);
+        assertTrue(json.contains("\"parentSessionId\":\"ses_parent\""));
+        assertTrue(json.contains("\"parentSpawnEntryId\":\"entry_spawn\""));
+        assertTrue(json.contains("\"depth\":2"));
+    }
+
+    @Test
+    void legacySessionHeaderDefaultsSubagentRelationshipFields() throws Exception {
+        String json = """
+            {
+              "type": "session",
+              "version": 1,
+              "id": "ses_main",
+              "cwd": "/tmp/project",
+              "parentSessionId": null,
+              "timestamp": "2026-06-09T00:00:00Z"
+            }
+            """;
+
+        SessionHeader restored = mapper.readValue(json, SessionHeader.class);
+
+        assertEquals(Optional.empty(), restored.parentSpawnEntryId());
+        assertEquals(0, restored.depth());
+        assertEquals(Optional.empty(), restored.agentName());
+        assertEquals(Optional.empty(), restored.agentRole());
+    }
+
+    @Test
+    void subagentContractsRoundTripKeepSessionRelationsAndMailboxStatus() throws Exception {
+        Instant now = Instant.parse("2026-06-09T00:00:00Z");
+        SessionEntry entry = new AgentLifecycleEntry(
+            "entry_spawn",
+            "entry_parent",
+            "agent_01",
+            "ses_child",
+            "ses_parent",
+            "spawned",
+            Map.of("agentName", "reviewer"),
+            now
+        );
+
+        String entryJson = mapper.writeValueAsString(entry);
+        SessionEntry restoredEntry = mapper.readValue(entryJson, SessionEntry.class);
+
+        assertTrue(entryJson.contains("\"type\":\"agent_lifecycle\""));
+        assertInstanceOf(AgentLifecycleEntry.class, restoredEntry);
+        assertEquals(entry, restoredEntry);
+
+        MailboxMessage message = new MailboxMessage(
+            "mail_01",
+            "agent_01",
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "完成摘要",
+            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
+            MailboxStatus.PENDING,
+            now,
+            now
+        );
+
+        String messageJson = mapper.writeValueAsString(message);
+        MailboxMessage restoredMessage = mapper.readValue(messageJson, MailboxMessage.class);
+
+        assertEquals(message, restoredMessage);
+        assertTrue(messageJson.contains("\"status\":\"PENDING\""));
     }
 
     @Test
