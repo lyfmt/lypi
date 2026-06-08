@@ -22,10 +22,22 @@ final class TerminalInputPump {
      * 排空当前可读终端输入，并分发到 TUI 输入循环。
      */
     void drainAvailable() throws IOException {
-        Optional<String> chunk = inputSource.read();
-        while (chunk.isPresent()) {
+        drainAvailable(Integer.MAX_VALUE);
+    }
+
+    /**
+     * 读取有限数量的终端输入片段，避免调用方长期持有 UI 锁。
+     */
+    void drainAvailable(int maxChunks) throws IOException {
+        if (maxChunks <= 0) {
+            return;
+        }
+        for (int drained = 0; drained < maxChunks; drained++) {
+            Optional<String> chunk = inputSource.read();
+            if (chunk.isEmpty()) {
+                return;
+            }
             dispatch(chunk.orElseThrow());
-            chunk = inputSource.read();
         }
     }
 

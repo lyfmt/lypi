@@ -12,6 +12,8 @@ import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.ToolEndEvent;
+import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -184,7 +186,10 @@ class JLineTuiTransportRenderPipelineTest {
         transport.drainInputForTest();
 
         assertEquals(4, frames.getLast().size());
-        frames.getLast().forEach(line -> assertEquals(line, AnsiWidth.truncate(line, 8)));
+        frames.getLast().forEach(line -> assertEquals(
+            line.replace(TerminalFrameRenderer.CURSOR_MARKER, ""),
+            AnsiWidth.truncate(line.replace(TerminalFrameRenderer.CURSOR_MARKER, ""), 8)
+        ));
     }
 
     @Test
@@ -200,6 +205,69 @@ class JLineTuiTransportRenderPipelineTest {
 
         transport.runUntilExit();
 
+        assertEquals(true, transport.exitRequestedForTest());
+    }
+
+    @Test
+    void transportDrainProcessesBoundedInputBatch() throws Exception {
+        List<String> chunks = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            chunks.add("a");
+        }
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            ignored -> {
+            },
+            80,
+            5,
+            new QueueInputSource(chunks.toArray(String[]::new)),
+            new RecordingSubmitHandler()
+        );
+
+        transport.drainInputForTest();
+
+        assertEquals(32, transport.currentDraftLengthForTest());
+    }
+
+    @Test
+    void ctrlCInterruptsRunningToolAfterToolStartEvent() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            ignored -> {
+            },
+            40,
+            5,
+            new QueueInputSource("\u0003"),
+            submit
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new ToolStartEvent("ses_1", "tool_1", "bash", Instant.parse("2026-06-09T00:00:00Z")));
+        transport.drainInputForTest();
+
+        assertEquals(1, submit.interrupts);
+        assertEquals(false, transport.exitRequestedForTest());
+    }
+
+    @Test
+    void ctrlCRequestsExitAfterToolEndEvent() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            ignored -> {
+            },
+            40,
+            5,
+            new QueueInputSource("\u0003"),
+            submit
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new ToolStartEvent("ses_1", "tool_1", "bash", Instant.parse("2026-06-09T00:00:00Z")));
+        events.emit(new ToolEndEvent("ses_1", "tool_1", false, Instant.parse("2026-06-09T00:00:01Z")));
+        transport.drainInputForTest();
+
+        assertEquals(0, submit.interrupts);
         assertEquals(true, transport.exitRequestedForTest());
     }
 
@@ -236,12 +304,15 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
+        private int interrupts;
+
         @Override
         public void submitUserInput(String input) {
         }
 
         @Override
         public void requestInterrupt(String reason) {
+            interrupts++;
         }
     }
 }

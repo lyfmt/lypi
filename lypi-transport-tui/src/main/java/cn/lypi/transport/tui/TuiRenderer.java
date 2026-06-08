@@ -91,12 +91,67 @@ final class TuiRenderer {
         if (cursor < 0) {
             return AnsiWidth.truncate("> " + value, width);
         }
+        if (width <= 0) {
+            return TerminalFrameRenderer.CURSOR_MARKER;
+        }
         int boundedCursor = Math.max(0, Math.min(cursor, value.length()));
-        String marked = "> "
-            + value.substring(0, boundedCursor)
-            + TerminalFrameRenderer.CURSOR_MARKER
-            + value.substring(boundedCursor);
-        return AnsiWidth.truncate(marked, width);
+        String prefix = width >= 2 ? "> " : "";
+        int beforeBudget = Math.max(0, width - AnsiWidth.displayWidth(prefix) - 1);
+        String before = value.substring(0, boundedCursor);
+        String visibleBefore = before;
+        if (AnsiWidth.displayWidth(visibleBefore) > beforeBudget) {
+            visibleBefore = beforeBudget <= 1
+                ? ""
+                : "…" + displaySuffix(before, beforeBudget - 1);
+        }
+        int remaining = Math.max(0, width - AnsiWidth.displayWidth(prefix) - AnsiWidth.displayWidth(visibleBefore));
+        String visibleAfter = displayPrefix(value.substring(boundedCursor), remaining);
+        return prefix + visibleBefore + TerminalFrameRenderer.CURSOR_MARKER + visibleAfter;
+    }
+
+    private String displayPrefix(String value, int maxWidth) {
+        if (maxWidth <= 0 || value.isEmpty()) {
+            return "";
+        }
+        if (AnsiWidth.displayWidth(value) <= maxWidth) {
+            return value;
+        }
+        int contentLimit = Math.max(0, maxWidth - 1);
+        StringBuilder result = new StringBuilder();
+        int width = 0;
+        for (int index = 0; index < value.length();) {
+            int codePoint = value.codePointAt(index);
+            int codePointWidth = AnsiWidth.displayWidth(new String(Character.toChars(codePoint)));
+            if (width + codePointWidth > contentLimit) {
+                break;
+            }
+            result.appendCodePoint(codePoint);
+            width += codePointWidth;
+            index += Character.charCount(codePoint);
+        }
+        return result.append("…").toString();
+    }
+
+    private String displaySuffix(String value, int maxWidth) {
+        if (maxWidth <= 0 || value.isEmpty()) {
+            return "";
+        }
+        if (AnsiWidth.displayWidth(value) <= maxWidth) {
+            return value;
+        }
+        StringBuilder reversed = new StringBuilder();
+        int width = 0;
+        for (int index = value.length(); index > 0;) {
+            int codePoint = value.codePointBefore(index);
+            int codePointWidth = AnsiWidth.displayWidth(new String(Character.toChars(codePoint)));
+            if (width + codePointWidth > maxWidth) {
+                break;
+            }
+            reversed.appendCodePoint(codePoint);
+            width += codePointWidth;
+            index -= Character.charCount(codePoint);
+        }
+        return reversed.reverse().toString();
     }
 
     private String nullToEmpty(String value) {

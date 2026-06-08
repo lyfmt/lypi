@@ -5,12 +5,16 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.TuiToolBlock;
+import cn.lypi.contracts.tui.TuiViewModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Optional;
 import org.jline.terminal.Terminal;
 
 public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
+    private static final int MAX_INPUT_CHUNKS_PER_DRAIN = 32;
+
     private final Object uiMonitor = new Object();
     private final Runnable renderer;
     private final TuiEventReducer reducer;
@@ -174,7 +178,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             uiLockEntries++;
             reducer.reduce(event);
-            frameSink.render(tuiRenderer.render(reducer.view(), screen, layout, currentDraft(), currentCursor()));
+            TuiViewModel view = reducer.view();
+            syncInputLoopToolState(view);
+            frameSink.render(tuiRenderer.render(view, screen, layout, currentDraft(), currentCursor()));
         }
     }
 
@@ -216,6 +222,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         return exitRequested();
     }
 
+    int currentDraftLengthForTest() {
+        return currentDraft().length();
+    }
+
     @Override
     public void close() throws Exception {
         synchronized (uiMonitor) {
@@ -250,7 +260,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             uiLockEntries++;
             if (inputPump != null) {
-                inputPump.drainAvailable();
+                inputPump.drainAvailable(MAX_INPUT_CHUNKS_PER_DRAIN);
             }
         }
     }
@@ -276,6 +286,16 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
 
     private int currentCursor() {
         return inputLoop == null ? -1 : inputLoop.cursor();
+    }
+
+    private void syncInputLoopToolState(TuiViewModel view) {
+        if (inputLoop == null) {
+            return;
+        }
+        boolean toolRunning = view.blocks()
+            .stream()
+            .anyMatch(block -> block instanceof TuiToolBlock tool && tool.active());
+        inputLoop.setToolRunning(toolRunning);
     }
 
     private boolean exitRequested() {

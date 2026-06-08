@@ -83,4 +83,21 @@ class TuiRendererTest {
 
         assertEquals("> alpha |CURSOR|beta", lines.get(2));
     }
+
+    @Test
+    void inputLineKeepsCursorMarkerAfterNarrowTruncation() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(8, 3), "abcdefgh", 8);
+
+        assertEquals("> …efgh|CURSOR|", lines.get(2));
+    }
 }
