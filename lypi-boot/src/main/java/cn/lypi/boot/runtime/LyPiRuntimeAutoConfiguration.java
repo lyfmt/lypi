@@ -1,10 +1,24 @@
 package cn.lypi.boot.runtime;
 
+import cn.lypi.agent.AgentCoreRuntimePorts;
+import cn.lypi.agent.ContextBudgetEstimator;
+import cn.lypi.agent.DefaultContextAssembler;
+import cn.lypi.agent.DefaultTurnExecutor;
+import cn.lypi.agent.NoopMemoryExtractionWorker;
+import cn.lypi.agent.TurnIds;
+import cn.lypi.agent.compact.CompactionSummarizer;
+import cn.lypi.agent.compact.DefaultCompactionCoordinator;
+import cn.lypi.agent.compact.DefaultCompactionPlanner;
+import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.transport.TransportAdapter;
@@ -182,6 +196,65 @@ public class LyPiRuntimeAutoConfiguration {
             }
             return sessionManager.currentView().sessionId();
         });
+    }
+
+    /**
+     * 创建默认 AgentCore factory。
+     *
+     * NOTE: 该 factory 只在所有核心运行时端口已由上层装配提供时生效；
+     * 不在这里推断默认安全、资源或模型策略。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean({
+        AiProviderRuntimePort.class,
+        ToolRuntimePort.class,
+        SecurityRuntimePort.class,
+        ResourceRuntimePort.class,
+        EventBus.class,
+        CompactionSummarizer.class
+    })
+    public AgentCoreFactoryPort agentCoreFactory(
+        AiProviderRuntimePort aiProvider,
+        ToolRuntimePort toolRuntime,
+        SecurityRuntimePort securityRuntime,
+        ResourceRuntimePort resourceRuntime,
+        EventBus eventBus,
+        CompactionSummarizer compactionSummarizer,
+        Clock clock
+    ) {
+        return (cwd, sessionManager) -> {
+            DefaultContextAssembler assembler = new DefaultContextAssembler(
+                sessionManager,
+                resourceRuntime,
+                new ContextBudgetEstimator()
+            );
+            DefaultCompactionCoordinator compactionCoordinator = new DefaultCompactionCoordinator(
+                sessionManager,
+                assembler,
+                eventBus,
+                new DefaultCompactionPlanner(),
+                compactionSummarizer,
+                clock
+            );
+            return new DefaultTurnExecutor(
+                new AgentCoreRuntimePorts(
+                    cwd,
+                    sessionManager,
+                    aiProvider,
+                    toolRuntime,
+                    securityRuntime,
+                    resourceRuntime,
+                    eventBus,
+                    assembler,
+                    null,
+                    compactionCoordinator,
+                    new NoopMemoryExtractionWorker()
+                ),
+                TurnIds.random(),
+                clock
+            );
+        };
     }
 
     /**

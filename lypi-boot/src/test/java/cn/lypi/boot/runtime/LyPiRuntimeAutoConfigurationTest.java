@@ -1,6 +1,8 @@
 package cn.lypi.boot.runtime;
 
 import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
+import cn.lypi.agent.compact.CompactSummaryResult;
+import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
@@ -14,12 +16,17 @@ import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
+import cn.lypi.contracts.resource.ResourceSnapshot;
+import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -41,12 +48,14 @@ import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.runtime.event.InMemoryEventBus;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
@@ -178,6 +187,23 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(context).hasSingleBean(AgentCenterPort.class);
                 assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(null)).isFalse();
             });
+    }
+
+    @Test
+    void createsAgentCoreFactoryWhenRequiredRuntimePortsExist() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(AiProviderRuntimePort.class, () -> (snapshot, signal) -> {
+                throw new UnsupportedOperationException("not used");
+            })
+            .withBean(ToolRuntimePort.class, NoopToolRuntime::new)
+            .withBean(SecurityRuntimePort.class, () -> LyPiRuntimeAutoConfigurationTest::allowAllSecurity)
+            .withBean(ResourceRuntimePort.class, NoopResourceRuntime::new)
+            .withBean(CompactionSummarizer.class, () -> request -> new CompactSummaryResult(
+                "summary",
+                new TokenUsage(0, 0, 0, 0)
+            ))
+            .run(context -> assertThat(context).hasSingleBean(AgentCoreFactoryPort.class));
     }
 
     @Test
@@ -416,6 +442,44 @@ class LyPiRuntimeAutoConfigurationTest {
         @Override
         public cn.lypi.contracts.subagent.MailboxCommandResult discard(String sessionId, String mailId) {
             return cn.lypi.contracts.subagent.MailboxCommandResult.failure("not used");
+        }
+    }
+
+    private static final class NoopResourceRuntime implements ResourceRuntimePort {
+        @Override
+        public ResourceSnapshot load(Path cwd) {
+            return new ResourceSnapshot(List.of(), List.of(), new SkillIndex(List.of(), List.of()), List.of(), List.of(), List.of());
+        }
+
+        @Override
+        public SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
+            return new SystemPrompt("system", List.of(), "hash");
+        }
+    }
+
+    private static final class NoopToolRuntime implements ToolRuntimePort {
+        @Override
+        public void register(Tool<?, ?> tool) {
+        }
+
+        @Override
+        public java.util.Optional<Tool<?, ?>> resolve(String nameOrAlias) {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public ToolRegistrySnapshot snapshot() {
+            return new ToolRegistrySnapshot(List.of());
+        }
+
+        @Override
+        public Path cwd() {
+            return Path.of(".").toAbsolutePath().normalize();
+        }
+
+        @Override
+        public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
+            return List.of();
         }
     }
 
