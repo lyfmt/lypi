@@ -94,11 +94,21 @@ final class AgentCoreTestFixtures {
     }
 
     static AgentMessage toolResultMessage(String id, String toolUseId, String text, boolean error) {
+        return toolResultMessage(id, toolUseId, text, error, Map.of());
+    }
+
+    static AgentMessage toolResultMessage(
+        String id,
+        String toolUseId,
+        String text,
+        boolean error,
+        Map<String, Object> metadata
+    ) {
         return new AgentMessage(
             id,
             MessageRole.TOOL_RESULT,
             MessageKind.TOOL_RESULT,
-            List.of(new ToolResultContentBlock(toolUseId, text, error)),
+            List.of(new ToolResultContentBlock(toolUseId, text, error, metadata)),
             NOW,
             Optional.empty(),
             Optional.empty()

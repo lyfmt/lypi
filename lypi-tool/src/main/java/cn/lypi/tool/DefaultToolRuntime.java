@@ -423,7 +423,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             }
             if (shouldSkipForAbort(tool, toolContext)) {
                 status = ToolExecutionStatus.CANCELLED;
-                finalResult = errorResult(request.toolUseId(), "工具调用已中止。");
+                finalResult = errorResult(request.toolUseId(), "工具调用已中止。", status);
                 return finalResult;
             }
             ToolResult<?> result = executeTool(request, tool, input, toolContext, started.progressSink());
@@ -718,7 +718,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private ToolResult<?> permissionGateError(String toolUseId, PermissionGateResult result) {
         String message = result.message().orElse("权限请求未获允许。");
         if (result.status() == PermissionGateResult.Status.ABORT) {
-            return errorResult(toolUseId, "工具权限请求已中断: " + message);
+            return errorResult(toolUseId, "工具权限请求已中断: " + message, ToolExecutionStatus.CANCELLED);
         }
         return errorResult(toolUseId, "权限请求未获允许: " + message);
     }
@@ -738,12 +738,17 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     }
 
     private ToolResult<String> errorResult(String toolUseId, String message) {
+        return errorResult(toolUseId, message, null);
+    }
+
+    private ToolResult<String> errorResult(String toolUseId, String message, ToolExecutionStatus status) {
         String safeMessage = message == null || message.isBlank() ? "工具调用失败。" : message;
+        Map<String, Object> metadata = status == null ? Map.of() : Map.of("status", status.name());
         AgentMessage agentMessage = new AgentMessage(
             "msg_" + toolUseId,
             MessageRole.TOOL_RESULT,
             MessageKind.TOOL_RESULT,
-            List.of(new ToolResultContentBlock(toolUseId, safeMessage, true)),
+            List.of(new ToolResultContentBlock(toolUseId, safeMessage, true, metadata)),
             Instant.now(),
             Optional.empty(),
             Optional.empty()

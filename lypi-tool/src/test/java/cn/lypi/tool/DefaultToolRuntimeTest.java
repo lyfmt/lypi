@@ -647,6 +647,8 @@ class DefaultToolRuntimeTest {
 
         assertTrue(result.isError());
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("工具调用已中止"));
+        ToolResultContentBlock block = (ToolResultContentBlock) result.newMessages().getFirst().content().getFirst();
+        assertEquals(ToolExecutionStatus.CANCELLED.name(), block.metadata().get("status"));
     }
 
     @Test
@@ -675,6 +677,8 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
+        ToolResultContentBlock block = (ToolResultContentBlock) result.newMessages().getFirst().content().getFirst();
+        assertEquals(ToolExecutionStatus.CANCELLED.name(), block.metadata().get("status"));
         assertEquals(2, events.events.size());
         assertInstanceOf(ToolStartEvent.class, events.events.get(0));
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
@@ -708,6 +712,8 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
+        ToolResultContentBlock block = (ToolResultContentBlock) result.newMessages().getFirst().content().getFirst();
+        assertEquals(ToolExecutionStatus.CANCELLED.name(), block.metadata().get("status"));
         assertEquals(2, events.events.size());
         assertInstanceOf(ToolStartEvent.class, events.events.get(0));
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));

@@ -14,6 +14,7 @@ import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
@@ -398,7 +399,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             ports.eventBus().publish(new ToolEndEvent(
                 sessionId,
                 request.toolUseId(),
-                results.get(index).isError() ? ToolExecutionStatus.FAILED : ToolExecutionStatus.SUCCEEDED,
+                toolExecutionStatus(results.get(index)),
                 null,
                 resultSummary(request, results.get(index)),
                 null,
@@ -448,9 +449,11 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private ToolResultSummary resultSummary(ToolUseRequest request, ToolResult<?> result) {
-        boolean error = result == null || result.isError();
-        String title = request.toolName() + (error ? " failed" : " succeeded");
-        String summary = result == null ? "" : previewSummary(String.valueOf(result.output()));
+        ToolExecutionStatus status = toolExecutionStatus(result);
+        boolean error = status != ToolExecutionStatus.SUCCEEDED;
+        String title = request.toolName() + " " + status.name().toLowerCase();
+        String outputText = outputText(result);
+        String summary = previewSummary(outputText);
         return new ToolResultSummary(
             title,
             summary,
@@ -471,10 +474,58 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private long outputBytes(ToolResult<?> result) {
-        if (result == null || result.output() == null) {
-            return 0L;
+        return outputText(result).getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+    }
+
+    private ToolExecutionStatus toolExecutionStatus(ToolResult<?> result) {
+        if (result == null) {
+            return ToolExecutionStatus.FAILED;
         }
-        return String.valueOf(result.output()).getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        if (result.newMessages() == null || result.newMessages().isEmpty()) {
+            return result.isError() ? ToolExecutionStatus.FAILED : ToolExecutionStatus.SUCCEEDED;
+        }
+        return result.newMessages().stream()
+            .flatMap(message -> message.content().stream())
+            .filter(ToolResultContentBlock.class::isInstance)
+            .map(ToolResultContentBlock.class::cast)
+            .map(ToolResultContentBlock::metadata)
+            .map(metadata -> metadata.get("status"))
+            .map(this::toolExecutionStatus)
+            .flatMap(Optional::stream)
+            .findFirst()
+            .orElseGet(() -> result.isError() ? ToolExecutionStatus.FAILED : ToolExecutionStatus.SUCCEEDED);
+    }
+
+    private Optional<ToolExecutionStatus> toolExecutionStatus(Object value) {
+        if (value instanceof ToolExecutionStatus status) {
+            return Optional.of(status);
+        }
+        if (!(value instanceof String text) || text.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(ToolExecutionStatus.valueOf(text));
+        } catch (IllegalArgumentException ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private String outputText(ToolResult<?> result) {
+        if (result == null || result.newMessages() == null || result.newMessages().isEmpty()) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        for (AgentMessage message : result.newMessages()) {
+            if (message.content() == null) {
+                continue;
+            }
+            for (ContentBlock block : message.content()) {
+                if (block instanceof ToolResultContentBlock toolResultBlock) {
+                    parts.add(toolResultBlock.text());
+                }
+            }
+        }
+        return String.join("\n", parts);
     }
 
     private long durationMillis(Instant startedAt, Instant endedAt) {

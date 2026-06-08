@@ -51,7 +51,8 @@ public class LyPiToolAutoConfiguration {
             new cn.lypi.tool.ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()),
             cn.lypi.tool.ToolExecutionInterceptors.noop(),
             securityRuntime,
-            permissionGate(resolvedEventBus, promptPort.getIfAvailable())
+            permissionGate(resolvedEventBus, promptPort.getIfAvailable()),
+            resolvedEventBus
         );
         BuiltInTools.registerDefaults(runtime, executor);
         return runtime;

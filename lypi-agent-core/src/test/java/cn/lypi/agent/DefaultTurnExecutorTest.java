@@ -35,6 +35,7 @@ import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.ZoneOffset;
@@ -549,12 +550,13 @@ class DefaultTurnExecutorTest {
             new TextDelta("done"),
             new AssistantDone(Optional.empty(), Optional.of("end_turn"))
         ));
-        String longOutput = "x".repeat(260);
+        String rawOutput = "x".repeat(260);
+        String budgetedOutput = "[工具结果已超过预算，仅保留预览]";
         tools.enqueue(List.of(
             new ToolResult<>(
-                longOutput,
+                rawOutput,
                 false,
-                List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result-1", "toolu-1", longOutput, false)),
+                List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result-1", "toolu-1", budgetedOutput, false)),
                 Optional.empty()
             ),
             new ToolResult<>(
@@ -616,13 +618,132 @@ class DefaultTurnExecutorTest {
         assertThat(ends).extracting(ToolEndEvent::status)
             .containsExactly(ToolExecutionStatus.SUCCEEDED, ToolExecutionStatus.SUCCEEDED);
         assertThat(ends.getFirst().resultSummary().title()).isEqualTo("read succeeded");
-        assertThat(ends.getFirst().resultSummary().summary()).hasSizeLessThan(longOutput.length());
-        assertThat(ends.getFirst().resultSummary().summary()).startsWith("x".repeat(200));
-        assertThat(ends.getFirst().resultSummary().summary()).doesNotContain("x".repeat(260));
+        assertThat(ends.getFirst().resultSummary().summary()).isEqualTo(budgetedOutput);
+        assertThat(ends.getFirst().resultSummary().summary()).doesNotContain("x");
+        assertThat(ends.getFirst().resultSummary().outputBytes())
+            .isEqualTo(budgetedOutput.getBytes(StandardCharsets.UTF_8).length);
         assertThat(ends.getFirst().metadata()).containsEntry("toolName", "read");
         assertThat(ends.getFirst().startedAt()).isEqualTo(NOW);
         assertThat(ends.getFirst().endedAt()).isEqualTo(NOW);
         assertThat(ends.getFirst().durationMillis()).isZero();
+    }
+
+    @Test
+    void publishesCancelledToolEndWhenToolRuntimeResultCarriesCancelledStatus() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "bash", Map.of("command", "sleep 10"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("cancelled"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "工具调用已中止。",
+            true,
+            List.of(AgentCoreTestFixtures.toolResultMessage(
+                "msg-tool-result",
+                "toolu-1",
+                "工具调用已中止。",
+                true,
+                Map.of("status", ToolExecutionStatus.CANCELLED.name())
+            )),
+            Optional.empty()
+        )));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2"),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "run tool", Optional.empty(), () -> false));
+
+        ToolEndEvent end = eventBus.events.stream()
+            .filter(ToolEndEvent.class::isInstance)
+            .map(ToolEndEvent.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertThat(end.status()).isEqualTo(ToolExecutionStatus.CANCELLED);
+        assertThat(end.resultSummary().title()).isEqualTo("bash cancelled");
+        assertThat(end.resultSummary().error()).isTrue();
+    }
+
+    @Test
+    void fallsBackToErrorFlagWhenToolRuntimeResultDoesNotCarryStatusMetadata() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "bash", Map.of("command", "exit 1"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("failed"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "failed",
+            true,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "failed", true)),
+            Optional.empty()
+        )));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2"),
+            clock
+        );
+
+        executor.execute(new TurnRequest("session-1", "run tool", Optional.empty(), () -> false));
+
+        ToolEndEvent end = eventBus.events.stream()
+            .filter(ToolEndEvent.class::isInstance)
+            .map(ToolEndEvent.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertThat(end.status()).isEqualTo(ToolExecutionStatus.FAILED);
+        assertThat(end.resultSummary().title()).isEqualTo("bash failed");
+        assertThat(end.resultSummary().error()).isTrue();
     }
 
     @Test
