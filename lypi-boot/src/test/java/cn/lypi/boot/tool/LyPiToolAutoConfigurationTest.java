@@ -15,6 +15,9 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.ToolEndEvent;
+import cn.lypi.contracts.event.ToolProgressEvent;
+import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
@@ -26,6 +29,7 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -142,6 +146,35 @@ class LyPiToolAutoConfigurationTest {
             });
     }
 
+    @Test
+    void defaultRuntimePublishesToolProgressWhenEventBusIsAvailable() {
+        RecordingEventBus eventBus = new RecordingEventBus();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(EventBus.class, () -> eventBus)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                runtime.register(new ProgressTool());
+
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "progress-test", Map.of("text", "done"), "msg_1")),
+                    context()
+                ).getFirst();
+
+                assertThat(result.isError()).isFalse();
+                assertThat(eventBus.events).anySatisfy(event -> {
+                    assertThat(event).isInstanceOf(ToolProgressEvent.class);
+                    ToolProgressEvent progress = (ToolProgressEvent) event;
+                    assertThat(progress.toolUseId()).isEqualTo("toolu_1");
+                    assertThat(progress.progress().title()).isEqualTo("working");
+                });
+                assertThat(eventBus.events).noneMatch(ToolStartEvent.class::isInstance);
+                assertThat(eventBus.events).noneMatch(ToolEndEvent.class::isInstance);
+            });
+    }
+
     private static PermissionDecision allowAllSecurity(ToolUseRequest request, ToolUseContext context) {
         return new PermissionDecision(
             PermissionBehavior.ALLOW,
@@ -244,6 +277,89 @@ class LyPiToolAutoConfigurationTest {
         @Override
         public String renderForUser(Map<String, Object> input) {
             return "write " + input;
+        }
+
+        @Override
+        public AgentMessage serializeForContext(String output) {
+            return new AgentMessage(
+                "msg_tool_result",
+                MessageRole.TOOL_RESULT,
+                MessageKind.TOOL_RESULT,
+                List.of(new ToolResultContentBlock("toolu_1", output, false)),
+                Instant.EPOCH,
+                Optional.empty(),
+                Optional.empty()
+            );
+        }
+    }
+
+    private static final class ProgressTool implements Tool<Map<String, Object>, String> {
+        @Override
+        public String name() {
+            return "progress-test";
+        }
+
+        @Override
+        public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
+            return new PermissionDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.TOOL_SPECIFIC,
+                "允许",
+                Optional.empty(),
+                Map.of()
+            );
+        }
+
+        @Override
+        public ValidationResult validateInput(Map<String, Object> input, ToolUseContext context) {
+            return new ValidationResult(true, List.of());
+        }
+
+        @Override
+        public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+            progress.progress(ToolProgress.status("working", "running"));
+            String output = String.valueOf(input.get("text"));
+            return new ToolResult<>(output, false, List.of(serializeForContext(output)), Optional.empty());
+        }
+
+        @Override
+        public List<String> aliases() {
+            return List.of();
+        }
+
+        @Override
+        public cn.lypi.contracts.common.JsonSchema inputSchema() {
+            return new cn.lypi.contracts.common.JsonSchema(Map.of());
+        }
+
+        @Override
+        public cn.lypi.contracts.tool.InterruptBehavior interruptBehavior() {
+            return cn.lypi.contracts.tool.InterruptBehavior.CANCEL;
+        }
+
+        @Override
+        public boolean isReadOnly(Map<String, Object> input) {
+            return true;
+        }
+
+        @Override
+        public boolean isConcurrencySafe(Map<String, Object> input) {
+            return true;
+        }
+
+        @Override
+        public boolean isDestructive(Map<String, Object> input) {
+            return false;
+        }
+
+        @Override
+        public int maxResultSize() {
+            return 4096;
+        }
+
+        @Override
+        public String renderForUser(Map<String, Object> input) {
+            return "progress " + input;
         }
 
         @Override

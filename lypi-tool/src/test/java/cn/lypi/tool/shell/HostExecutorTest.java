@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -133,16 +134,20 @@ class HostExecutorTest {
     @Test
     void publishesStdoutAndStderrProgress() {
         HostExecutor executor = new HostExecutor();
-        List<ToolProgress> progresses = new ArrayList<>();
+        List<ToolProgress> progresses = Collections.synchronizedList(new ArrayList<>());
 
         ExecutionResult result = executor.execute(request("printf 'out\\n'; printf 'err\\n' >&2"), progresses::add, () -> false);
 
         assertEquals(0, result.exitCode());
-        assertTrue(progresses.stream().anyMatch(progress ->
+        List<ToolProgress> snapshot;
+        synchronized (progresses) {
+            snapshot = List.copyOf(progresses);
+        }
+        assertTrue(snapshot.stream().anyMatch(progress ->
             progress.kind() == ToolProgressKind.OUTPUT
                 && "stdout".equals(progress.stream())
                 && progress.delta().contains("out")));
-        assertTrue(progresses.stream().anyMatch(progress ->
+        assertTrue(snapshot.stream().anyMatch(progress ->
             progress.kind() == ToolProgressKind.OUTPUT
                 && "stderr".equals(progress.stream())
                 && progress.delta().contains("err")));

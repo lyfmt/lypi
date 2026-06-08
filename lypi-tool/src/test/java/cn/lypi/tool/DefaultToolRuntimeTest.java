@@ -377,7 +377,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void publicConstructorPublishesToolLifecycleEventsThroughEventBus() {
+    void publicConstructorPublishesProgressWithoutToolLifecycleEventsThroughEventBus() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = new DefaultToolRuntime(
             ToolRuntimeOptions.builder()
@@ -388,7 +388,7 @@ class DefaultToolRuntimeTest {
             PermissionGate.denying(),
             events
         );
-        runtime.register(TestTools.echo("bash", List.of(), true, true, false));
+        runtime.register(TestTools.progressEcho("bash", "executor progress"));
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_public", "bash", Map.of("text", "done"), "msg_parent")),
@@ -396,14 +396,14 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(2, events.events.size());
-        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, events.events.get(0));
-        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
-        assertEquals("msg_parent", start.parentMessageId());
-        assertEquals("turn_public", start.turnId());
-        assertEquals("bash {text=done}", start.inputSummary());
-        assertEquals(ToolExecutionStatus.SUCCEEDED, end.status());
-        assertEquals("bash succeeded", end.resultSummary().title());
+        assertEquals(1, events.events.size());
+        ToolProgressEvent progress = assertInstanceOf(ToolProgressEvent.class, events.events.getFirst());
+        assertEquals("ses_public", progress.sessionId());
+        assertEquals("toolu_public", progress.toolUseId());
+        assertEquals(ToolProgressKind.STATUS, progress.progress().kind());
+        assertEquals("executor progress", progress.progress().title());
+        assertEquals(0, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
+        assertEquals(0, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
     }
 
     @Test
@@ -427,11 +427,9 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(4, events.events.size());
+        assertEquals(2, events.events.size());
         PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, events.events.get(0));
         PermissionDecisionEvent decision = assertInstanceOf(PermissionDecisionEvent.class, events.events.get(1));
-        assertInstanceOf(ToolStartEvent.class, events.events.get(2));
-        assertInstanceOf(ToolEndEvent.class, events.events.get(3));
         assertEquals("toolu_public", request.toolUseId());
         assertEquals("write", request.toolName());
         assertEquals("allow_once", decision.selectedOptionId());
@@ -471,8 +469,8 @@ class DefaultToolRuntimeTest {
         assertEquals(1, responseRequests.get());
         assertEquals(1, events.events.stream().filter(PermissionRequestEvent.class::isInstance).count());
         assertEquals(1, events.events.stream().filter(PermissionDecisionEvent.class::isInstance).count());
-        assertEquals(1, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
-        assertEquals(1, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
+        assertEquals(0, events.events.stream().filter(ToolStartEvent.class::isInstance).count());
+        assertEquals(0, events.events.stream().filter(ToolEndEvent.class::isInstance).count());
     }
 
     @Test
@@ -649,6 +647,8 @@ class DefaultToolRuntimeTest {
 
         assertTrue(result.isError());
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("工具调用已中止"));
+        ToolResultContentBlock block = (ToolResultContentBlock) result.newMessages().getFirst().content().getFirst();
+        assertEquals(ToolExecutionStatus.CANCELLED.name(), block.metadata().get("status"));
     }
 
     @Test
@@ -677,6 +677,8 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
+        ToolResultContentBlock block = (ToolResultContentBlock) result.newMessages().getFirst().content().getFirst();
+        assertEquals(ToolExecutionStatus.CANCELLED.name(), block.metadata().get("status"));
         assertEquals(2, events.events.size());
         assertInstanceOf(ToolStartEvent.class, events.events.get(0));
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
@@ -710,6 +712,8 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
+        ToolResultContentBlock block = (ToolResultContentBlock) result.newMessages().getFirst().content().getFirst();
+        assertEquals(ToolExecutionStatus.CANCELLED.name(), block.metadata().get("status"));
         assertEquals(2, events.events.size());
         assertInstanceOf(ToolStartEvent.class, events.events.get(0));
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
