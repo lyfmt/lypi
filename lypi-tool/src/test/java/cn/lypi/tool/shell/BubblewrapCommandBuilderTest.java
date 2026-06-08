@@ -183,6 +183,78 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void rejectsAllowWriteSymlinkInsteadOfLeavingAliasBypass() throws Exception {
+        Path realWorkspace = Files.createDirectory(tempDir.resolve("real-workspace"));
+        Path workspaceLink = tempDir.resolve("workspace-link");
+        Files.createSymbolicLink(workspaceLink, realWorkspace);
+        Path cwd = Files.createDirectory(realWorkspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(workspaceLink),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("allowWrite path must not cross a symbolic link"));
+    }
+
+    @Test
+    void rejectsCwdInsideDenyReadDirectoryToAvoidSandboxStartupFallback() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path secret = Files.createDirectory(workspace.resolve("secret"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(secret),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(secret, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("cwd inside denyRead"));
+        assertTrue(exception.getMessage().contains("unsupported"));
+    }
+
+    @Test
+    void rejectsNestedDenyReadDirectoriesUntilOrderingIsSupported() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path secret = Files.createDirectory(workspace.resolve("secret"));
+        Path nested = Files.createDirectory(secret.resolve("nested"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(secret, nested),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("nested denyRead"));
+        assertTrue(exception.getMessage().contains("unsupported"));
+    }
+
+    @Test
     void rejectsUnsupportedDenyWriteInsteadOfIgnoringIt() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path cwd = Files.createDirectory(workspace.resolve("src"));

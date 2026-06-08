@@ -111,7 +111,7 @@ public final class BubblewrapExecutor implements Executor {
 
     private ExecutionResult handleUnavailable(ExecutionRequest request, ProgressSink progress, AbortSignal signal, String diagnostic) {
         SandboxRuntimePolicy policy = request.sandboxPolicy();
-        if (policy != null && policy.failIfUnavailable()) {
+        if (requiresSandbox(policy)) {
             return new ExecutionResult(
                 UNAVAILABLE_EXIT_CODE,
                 "",
@@ -138,11 +138,16 @@ public final class BubblewrapExecutor implements Executor {
             return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution timed out"));
         }
         SandboxRuntimePolicy policy = request.sandboxPolicy();
-        if (policy != null && policy.failIfUnavailable()) {
+        if (requiresSandbox(policy)) {
             return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution failed"));
         }
         return hostExecutor.execute(request, progress, signal)
             .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), "bubblewrap execution failed; fell back to host"));
+    }
+
+    private boolean requiresSandbox(SandboxRuntimePolicy policy) {
+        return policy != null
+            && (policy.failIfUnavailable() || !policy.denyRead().isEmpty() || !policy.denyWrite().isEmpty());
     }
 
     private Duration timeout(ExecutionRequest request) {

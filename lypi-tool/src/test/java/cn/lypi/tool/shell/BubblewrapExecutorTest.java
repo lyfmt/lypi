@@ -99,6 +99,24 @@ class BubblewrapExecutorTest {
     }
 
     @Test
+    void doesNotFallBackToHostWhenBwrapUnavailableAndPolicyContainsDenyRead() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            Optional::empty
+        );
+
+        ExecutionResult result = executor.execute(requestWithDenyRead("printf should-not-run"), progress -> {
+        }, () -> false);
+
+        assertNotEquals(0, result.exitCode());
+        assertEquals("", result.stdout());
+        assertTrue(result.stderr().contains("bubblewrap unavailable"));
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+    }
+
+    @Test
     void failsWhenBwrapUnavailableAndPolicyRequiresSandbox() {
         BubblewrapExecutor executor = new BubblewrapExecutor(
             BubblewrapCommandBuilder.defaults(),
@@ -210,6 +228,26 @@ class BubblewrapExecutorTest {
     }
 
     @Test
+    void doesNotFallBackToHostWhenBwrapSetupFailsAndPolicyContainsDenyRead() throws Exception {
+        Path setupFailingBwrap = setupFailingBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(setupFailingBwrap)
+        );
+
+        ExecutionResult result = executor.execute(requestWithDenyRead("printf should-not-run"), progress -> {
+        }, () -> false);
+
+        assertNotEquals(0, result.exitCode());
+        assertTrue(!result.stdout().contains("should-not-run"));
+        assertTrue(result.stderr().contains("bwrap: setup failed"));
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+        assertTrue(result.metadata().diagnostic().orElseThrow().contains("bubblewrap execution failed"));
+    }
+
+    @Test
     void failsWhenBwrapSetupFailsAfterPreflightAndPolicyRequiresSandbox() throws Exception {
         Path setupFailingBwrap = setupFailingBwrap();
         BubblewrapExecutor executor = new BubblewrapExecutor(
@@ -259,6 +297,25 @@ class BubblewrapExecutorTest {
                 List.of(),
                 NetworkMode.DISABLED,
                 failIfUnavailable,
+                false
+            )
+        );
+    }
+
+    private ExecutionRequest requestWithDenyRead(String command) throws Exception {
+        Path secret = Files.createDirectories(tempDir.resolve("secret"));
+        return new ExecutionRequest(
+            List.of("bash", "-lc", command),
+            tempDir,
+            Map.of(),
+            Duration.ofSeconds(5),
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(secret),
+                List.of(tempDir),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
                 false
             )
         );

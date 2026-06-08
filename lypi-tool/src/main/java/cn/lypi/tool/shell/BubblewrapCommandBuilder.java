@@ -87,6 +87,7 @@ public final class BubblewrapCommandBuilder {
         List<Path> writableMountPaths = new ArrayList<>();
         for (Path path : writablePaths(policy, request.cwd())) {
             Path mountPath = absoluteNormalized(path, "allowWrite");
+            rejectSymlinkPath(mountPath, "allowWrite path must not cross a symbolic link");
             writableMountPaths.add(mountPath);
             argv.add("--bind");
             argv.add(mountPath.toString());
@@ -97,7 +98,7 @@ public final class BubblewrapCommandBuilder {
             argv.add(protectedMetadataPath.toString());
             argv.add(protectedMetadataPath.toString());
         }
-        appendDenyReadMasks(argv, policy.denyRead(), writableMountPaths);
+        appendDenyReadMasks(argv, policy.denyRead(), writableMountPaths, request.cwd());
         if (request.cwd() != null) {
             Path cwd = absoluteNormalized(request.cwd(), "cwd");
             argv.add("--chdir");
@@ -125,10 +126,16 @@ public final class BubblewrapCommandBuilder {
         }
     }
 
-    private void appendDenyReadMasks(List<String> argv, List<Path> denyReadPaths, List<Path> writableRoots) {
+    private void appendDenyReadMasks(List<String> argv, List<Path> denyReadPaths, List<Path> writableRoots, Path cwd) {
+        Path normalizedCwd = cwd == null ? null : absoluteNormalized(cwd, "cwd");
+        LinkedHashSet<Path> masks = new LinkedHashSet<>();
         for (Path path : denyReadPaths) {
             Path denyReadPath = absoluteNormalized(path, "denyRead");
-            validateDenyReadDirectory(denyReadPath, writableRoots);
+            validateDenyReadDirectory(denyReadPath, writableRoots, normalizedCwd);
+            masks.add(denyReadPath);
+        }
+        rejectNestedDenyReadMasks(masks);
+        for (Path denyReadPath : masks) {
             argv.add("--perms");
             argv.add("000");
             argv.add("--tmpfs");
@@ -138,7 +145,7 @@ public final class BubblewrapCommandBuilder {
         }
     }
 
-    private void validateDenyReadDirectory(Path denyReadPath, List<Path> writableRoots) {
+    private void validateDenyReadDirectory(Path denyReadPath, List<Path> writableRoots, Path cwd) {
         rejectSymlinkPath(denyReadPath, "denyRead path must not cross a symbolic link");
         if (!Files.exists(denyReadPath, LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("missing denyRead path is unsupported by bubblewrap v1 policy builder: " + denyReadPath);
@@ -151,6 +158,24 @@ public final class BubblewrapCommandBuilder {
                 throw new IllegalArgumentException(
                     "denyRead ancestor of allowWrite is unsupported by bubblewrap v1 policy builder: " + denyReadPath
                 );
+            }
+        }
+        if (cwd != null && cwd.startsWith(denyReadPath)) {
+            throw new IllegalArgumentException("cwd inside denyRead is unsupported by bubblewrap v1 policy builder: " + cwd);
+        }
+    }
+
+    private void rejectNestedDenyReadMasks(LinkedHashSet<Path> denyReadMasks) {
+        List<Path> masks = List.copyOf(denyReadMasks);
+        for (int left = 0; left < masks.size(); left++) {
+            for (int right = left + 1; right < masks.size(); right++) {
+                Path leftPath = masks.get(left);
+                Path rightPath = masks.get(right);
+                if (leftPath.startsWith(rightPath) || rightPath.startsWith(leftPath)) {
+                    throw new IllegalArgumentException(
+                        "nested denyRead paths are unsupported by bubblewrap v1 policy builder: " + leftPath + " and " + rightPath
+                    );
+                }
             }
         }
     }

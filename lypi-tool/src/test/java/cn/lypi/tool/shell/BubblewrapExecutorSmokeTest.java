@@ -76,6 +76,8 @@ class BubblewrapExecutorSmokeTest {
 
         assertTrue(result.exitCode() != 0);
         assertTrue(result.metadata().sandboxed());
+        assertTrue(!result.stdout().contains("hidden"));
+        assertTrue(result.stderr().contains("Permission denied") || result.stderr().contains("No such file or directory"));
         assertEquals("hidden", Files.readString(secret.resolve("token")));
     }
 
