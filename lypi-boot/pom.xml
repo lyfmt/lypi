@@ -47,6 +47,10 @@
 		</dependency>
 		<dependency>
 			<groupId>cn.lypi</groupId>
+			<artifactId>lypi-runtime</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>cn.lypi</groupId>
 			<artifactId>lypi-transport-headless</artifactId>
 		</dependency>
 		<dependency>

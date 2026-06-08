@@ -42,6 +42,7 @@ public class LyPiToolAutoConfiguration {
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionPromptPort> promptPort
     ) {
+        EventBus resolvedEventBus = eventBus.getIfAvailable();
         DefaultToolRuntime runtime = new DefaultToolRuntime(
             new cn.lypi.tool.DefaultToolRegistry(),
             new cn.lypi.tool.ToolSchemaValidator(),
@@ -50,7 +51,8 @@ public class LyPiToolAutoConfiguration {
             new cn.lypi.tool.ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()),
             cn.lypi.tool.ToolExecutionInterceptors.noop(),
             securityRuntime,
-            permissionGate(eventBus.getIfAvailable(), promptPort.getIfAvailable())
+            permissionGate(resolvedEventBus, promptPort.getIfAvailable()),
+            resolvedEventBus
         );
         BuiltInTools.registerDefaults(runtime, executor);
         return runtime;

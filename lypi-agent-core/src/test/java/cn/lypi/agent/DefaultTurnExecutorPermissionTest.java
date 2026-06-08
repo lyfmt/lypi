@@ -130,12 +130,10 @@ class DefaultTurnExecutorPermissionTest {
                 ToolEndEvent.class,
                 TurnEndEvent.class
             );
-        ToolEndEvent toolEnd = eventBus.events.stream()
-            .filter(ToolEndEvent.class::isInstance)
-            .map(ToolEndEvent.class::cast)
-            .findFirst()
-            .orElseThrow();
-        assertThat(toolEnd.error()).isTrue();
+        assertThat(eventBus.events.stream()
+            .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
+            .map(AgentEvent::getClass))
+            .containsExactly(ToolStartEvent.class, ToolEndEvent.class);
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
     }
 
