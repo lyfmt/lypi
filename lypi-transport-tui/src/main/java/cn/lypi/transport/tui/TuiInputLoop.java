@@ -4,13 +4,15 @@ import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 final class TuiInputLoop {
     private final TuiSubmitHandler submitHandler;
     private final FrameSink frameSink;
     private final TuiRenderer renderer;
-    private final TuiScreen screen;
-    private final TuiLayout layout;
+    private TuiScreen screen;
+    private TuiLayout layout;
+    private final Supplier<TuiViewModel> viewSupplier;
     private final InputEditor editor = new InputEditor();
     private final KeyBindingRegistry bindings = KeyBindingRegistry.defaults();
     private boolean toolRunning;
@@ -22,11 +24,23 @@ final class TuiInputLoop {
         TuiScreen screen,
         TuiLayout layout
     ) {
+        this(submitHandler, frameSink, renderer, screen, layout, null);
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        FrameSink frameSink,
+        TuiRenderer renderer,
+        TuiScreen screen,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier
+    ) {
         this.submitHandler = submitHandler;
         this.frameSink = frameSink;
         this.renderer = renderer;
         this.screen = screen;
         this.layout = layout;
+        this.viewSupplier = viewSupplier == null ? this::emptyView : viewSupplier;
     }
 
     void acceptText(String text) {
@@ -73,6 +87,11 @@ final class TuiInputLoop {
         return editor.text();
     }
 
+    void updateViewport(TuiScreen screen, TuiLayout layout) {
+        this.screen = screen;
+        this.layout = layout;
+    }
+
     void setToolRunning(boolean toolRunning) {
         this.toolRunning = toolRunning;
     }
@@ -102,7 +121,7 @@ final class TuiInputLoop {
     }
 
     private void render() {
-        frameSink.render(renderer.render(emptyView(), screen, layout, editor.text()));
+        frameSink.render(renderer.render(viewSupplier.get(), screen, layout, editor.text()));
     }
 
     private TuiViewModel emptyView() {

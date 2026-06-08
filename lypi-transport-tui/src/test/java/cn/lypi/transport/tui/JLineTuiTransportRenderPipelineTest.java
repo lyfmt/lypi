@@ -14,8 +14,10 @@ import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportRenderPipelineTest {
@@ -72,6 +74,89 @@ class JLineTuiTransportRenderPipelineTest {
         assertEquals(2, transport.uiLockEntryCountForTest());
     }
 
+    @Test
+    void inputRerenderPreservesCurrentTranscriptView() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            40,
+            5,
+            new QueueInputSource("draft"),
+            new RecordingSubmitHandler()
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "## Done ##",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        transport.drainInputForTest();
+
+        assertEquals("Done", frames.getLast().getFirst());
+        assertEquals("> draft", frames.getLast().getLast());
+    }
+
+    @Test
+    void eventRerenderPreservesCurrentDraftInput() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            40,
+            5,
+            new QueueInputSource("draft"),
+            new RecordingSubmitHandler()
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        transport.drainInputForTest();
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "## Done ##",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+
+        assertEquals("Done", frames.getLast().getFirst());
+        assertEquals("> draft", frames.getLast().getLast());
+    }
+
+    @Test
+    void inputAfterResizeUsesUpdatedDimensions() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        QueueInputSource input = new QueueInputSource("abcdefghijklmnop");
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            20,
+            5,
+            input,
+            new RecordingSubmitHandler()
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        transport.resizeForTest(8, 4);
+        transport.drainInputForTest();
+
+        assertEquals(4, frames.getLast().size());
+        frames.getLast().forEach(line -> assertEquals(line, AnsiWidth.truncate(line, 8)));
+    }
+
     private static final class RecordingEventBus implements EventBus {
         private EventConsumer consumer;
 
@@ -88,6 +173,29 @@ class JLineTuiTransportRenderPipelineTest {
 
         void emit(AgentEvent event) {
             consumer.accept(new EventEnvelope("evt_1", "ses_1", 1, event));
+        }
+    }
+
+    private static final class QueueInputSource implements TerminalInputSource {
+        private final ArrayDeque<String> chunks;
+
+        private QueueInputSource(String... chunks) {
+            this.chunks = new ArrayDeque<>(List.of(chunks));
+        }
+
+        @Override
+        public Optional<String> read() {
+            return Optional.ofNullable(chunks.pollFirst());
+        }
+    }
+
+    private static final class RecordingSubmitHandler implements TuiSubmitHandler {
+        @Override
+        public void submitUserInput(String input) {
+        }
+
+        @Override
+        public void requestInterrupt(String reason) {
         }
     }
 }
