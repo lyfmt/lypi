@@ -1,8 +1,15 @@
 package cn.lypi.tool.builtin;
 
 import cn.lypi.contracts.runtime.Executor;
+import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.tool.builtin.subagent.AcceptMailboxMessageTool;
+import cn.lypi.tool.builtin.subagent.InterruptAgentTool;
+import cn.lypi.tool.builtin.subagent.ReadAgentResultTool;
+import cn.lypi.tool.builtin.subagent.ReadMailboxTool;
+import cn.lypi.tool.builtin.subagent.SpawnAgentTool;
 import java.util.List;
 import java.util.Objects;
 
@@ -31,6 +38,31 @@ public final class BuiltInTools {
     public static void registerDefaults(ToolRuntimePort runtime, Executor executor) {
         Objects.requireNonNull(runtime, "runtime must not be null");
         for (Tool<?, ?> tool : createDefaultTools(executor)) {
+            runtime.register(tool);
+        }
+    }
+
+    /**
+     * 创建 subagent mailbox 工具集合。
+     */
+    public static List<Tool<?, ?>> createSubagentTools(AgentCenterPort agentCenter, MailboxPort mailbox) {
+        Objects.requireNonNull(agentCenter, "agentCenter must not be null");
+        Objects.requireNonNull(mailbox, "mailbox must not be null");
+        return List.of(
+            new SpawnAgentTool(agentCenter),
+            new InterruptAgentTool(agentCenter),
+            new ReadAgentResultTool(agentCenter),
+            new ReadMailboxTool(mailbox),
+            new AcceptMailboxMessageTool(mailbox)
+        );
+    }
+
+    /**
+     * 注册 subagent mailbox 工具集合。
+     */
+    public static void registerSubagentTools(ToolRuntimePort runtime, AgentCenterPort agentCenter, MailboxPort mailbox) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        for (Tool<?, ?> tool : createSubagentTools(agentCenter, mailbox)) {
             runtime.register(tool);
         }
     }
