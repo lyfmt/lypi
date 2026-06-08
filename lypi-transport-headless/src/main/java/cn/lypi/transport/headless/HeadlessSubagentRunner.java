@@ -7,8 +7,10 @@ import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
@@ -20,16 +22,16 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class HeadlessSubagentRunner {
-    private final AgentCorePort agentCore;
+    private final AgentCoreFactoryPort agentCoreFactory;
     private final SessionManagerFactoryPort sessionManagerFactory;
     private final HeadlessSubagentJsonCodec codec;
 
     public HeadlessSubagentRunner(
-        AgentCorePort agentCore,
+        AgentCoreFactoryPort agentCoreFactory,
         SessionManagerFactoryPort sessionManagerFactory,
         HeadlessSubagentJsonCodec codec
     ) {
-        this.agentCore = Objects.requireNonNull(agentCore, "agentCore must not be null");
+        this.agentCoreFactory = Objects.requireNonNull(agentCoreFactory, "agentCoreFactory must not be null");
         this.sessionManagerFactory = Objects.requireNonNull(sessionManagerFactory, "sessionManagerFactory must not be null");
         this.codec = codec == null ? new HeadlessSubagentJsonCodec() : codec;
     }
@@ -55,7 +57,8 @@ public final class HeadlessSubagentRunner {
     public HeadlessSubagentOutput execute(HeadlessSubagentInput input) {
         validate(input);
         try {
-            sessionManagerFactory.open(input.cwd(), input.childSessionId());
+            SessionManagerPort childSessionManager = sessionManagerFactory.open(input.cwd(), input.childSessionId());
+            AgentCorePort agentCore = agentCoreFactory.create(input.cwd(), childSessionManager);
             TurnState state = agentCore.execute(new TurnRequest(
                 input.childSessionId(),
                 input.prompt(),

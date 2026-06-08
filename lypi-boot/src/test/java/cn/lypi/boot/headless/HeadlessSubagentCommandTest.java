@@ -9,6 +9,7 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -37,7 +38,7 @@ class HeadlessSubagentCommandTest {
     void autoConfigurationCreatesHeadlessSubagentCommandWhenDependenciesExist() {
         new ApplicationContextRunner()
             .withUserConfiguration(HeadlessSubagentCommandAutoConfiguration.class)
-            .withBean(AgentCorePort.class, () -> this::completedTurn)
+            .withBean(AgentCoreFactoryPort.class, () -> (cwd, sessionManager) -> request -> completedTurn(request, sessionManager))
             .withBean(SessionManagerFactoryPort.class, () -> this::sessionManager)
             .run(context -> assertThat(context).hasSingleBean(HeadlessSubagentCommand.class));
     }
@@ -46,7 +47,7 @@ class HeadlessSubagentCommandTest {
     void runWritesStructuredSubagentOutput() {
         SessionManagerImpl manager = new SessionManagerImpl(tempDir);
         HeadlessSubagentCommand command = new HeadlessSubagentCommand(
-            request -> completedTurn(request, manager),
+            (cwd, sessionManager) -> request -> completedTurn(request, sessionManager),
             (cwd, sessionId) -> {
                 manager.openOrCreate(sessionId);
                 return manager;

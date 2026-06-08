@@ -25,10 +25,12 @@ import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(LyPiSubagentProperties.class)
 public class LyPiRuntimeAutoConfiguration {
     private static final Path DEFAULT_CWD = Path.of(".").toAbsolutePath().normalize();
 
@@ -138,8 +140,8 @@ public class LyPiRuntimeAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public SubagentProcessRunner subagentProcessRunner() {
-        return new JsonSubagentProcessRunner(List.of());
+    public SubagentProcessRunner subagentProcessRunner(LyPiSubagentProperties properties) {
+        return new JsonSubagentProcessRunner(properties.getCommand());
     }
 
     /**
@@ -154,10 +156,11 @@ public class LyPiRuntimeAutoConfiguration {
         SubagentProcessRunner processRunner,
         DefaultMailboxService mailbox,
         MailboxDeliveryService deliveryService,
+        LyPiSubagentProperties properties,
         Clock clock
     ) {
         return new DefaultAgentCenter(
-            List.of(),
+            properties.getCommand(),
             childSessions,
             parentSession,
             processRunner,

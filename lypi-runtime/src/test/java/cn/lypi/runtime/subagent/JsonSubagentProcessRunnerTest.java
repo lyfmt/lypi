@@ -39,6 +39,20 @@ class JsonSubagentProcessRunnerTest {
         assertThat(output.childSessionId()).isEqualTo("ses_child");
     }
 
+    @Test
+    void startsProcessInRequestedCwd() throws Exception {
+        JsonSubagentProcessRunner runner = new JsonSubagentProcessRunner(List.of(
+            "python3",
+            "-c",
+            "import json, os, sys; sys.stdin.read(); print(json.dumps({'childSessionId':'ses_child','status':'SUCCEEDED','summary':os.getcwd(),'finalEntryId':'msg_final'}))"
+        ));
+
+        HeadlessSubagentOutput output = runner.start(input(30)).completion().get(3, TimeUnit.SECONDS);
+
+        assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+        assertThat(output.summary()).isEqualTo(tempDir.toAbsolutePath().normalize().toString());
+    }
+
     private HeadlessSubagentInput input(int timeoutSeconds) {
         return new HeadlessSubagentInput(
             "ses_child",

@@ -1,6 +1,6 @@
 package cn.lypi.boot.headless;
 
-import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.transport.headless.HeadlessSubagentJsonCodec;
 import cn.lypi.transport.headless.HeadlessSubagentRunner;
@@ -12,11 +12,11 @@ public final class HeadlessSubagentCommand {
     private final HeadlessSubagentRunner runner;
 
     public HeadlessSubagentCommand(
-        AgentCorePort agentCore,
+        AgentCoreFactoryPort agentCoreFactory,
         SessionManagerFactoryPort sessionManagerFactory,
         HeadlessSubagentJsonCodec codec
     ) {
-        this(new HeadlessSubagentRunner(agentCore, sessionManagerFactory, codec));
+        this(new HeadlessSubagentRunner(agentCoreFactory, sessionManagerFactory, codec));
     }
 
     public HeadlessSubagentCommand(HeadlessSubagentRunner runner) {

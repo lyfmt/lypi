@@ -36,7 +36,9 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
             throw new IllegalStateException("Subagent command is not configured");
         }
         try {
-            Process process = new ProcessBuilder(command).start();
+            ProcessBuilder processBuilder = new ProcessBuilder(command);
+            processBuilder.directory(input.cwd().toAbsolutePath().normalize().toFile());
+            Process process = processBuilder.start();
             objectMapper.writeValue(process.getOutputStream(), input);
             process.getOutputStream().close();
             AtomicBoolean interrupted = new AtomicBoolean(false);

@@ -1,6 +1,6 @@
 package cn.lypi.boot.headless;
 
-import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.transport.headless.HeadlessSubagentJsonCodec;
 import cn.lypi.transport.headless.HeadlessSubagentRunner;
@@ -25,13 +25,13 @@ public class HeadlessSubagentCommandAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnBean({AgentCorePort.class, SessionManagerFactoryPort.class})
+    @ConditionalOnBean({AgentCoreFactoryPort.class, SessionManagerFactoryPort.class})
     public HeadlessSubagentRunner headlessSubagentRunner(
-        AgentCorePort agentCore,
+        AgentCoreFactoryPort agentCoreFactory,
         SessionManagerFactoryPort sessionManagerFactory,
         HeadlessSubagentJsonCodec codec
     ) {
-        return new HeadlessSubagentRunner(agentCore, sessionManagerFactory, codec);
+        return new HeadlessSubagentRunner(agentCoreFactory, sessionManagerFactory, codec);
     }
 
     /**

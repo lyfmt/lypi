@@ -10,6 +10,7 @@ import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -34,10 +35,10 @@ import org.junit.jupiter.api.Test;
 class HeadlessSubagentRunnerTest {
     @Test
     void runReadsJsonExecutesChildTurnAndWritesJsonOutput() {
-        CapturingAgentCore agentCore = new CapturingAgentCore(TurnStatus.COMPLETED, "child final answer");
+        CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "child final answer");
         CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_final");
         HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
-        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCore, sessionFactory, codec);
+        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCoreFactory, sessionFactory, codec);
         String json = """
             {
               "childSessionId": "ses_child",
@@ -57,8 +58,10 @@ class HeadlessSubagentRunnerTest {
 
         assertThat(sessionFactory.openedCwd).isEqualTo(Path.of("/tmp/project"));
         assertThat(sessionFactory.openedSessionId).isEqualTo("ses_child");
-        assertThat(agentCore.request.sessionId()).isEqualTo("ses_child");
-        assertThat(agentCore.request.userInput()).isEqualTo("请审查代码");
+        assertThat(agentCoreFactory.createdCwd).isEqualTo(Path.of("/tmp/project"));
+        assertThat(agentCoreFactory.createdSessionManager).isSameAs(sessionFactory.openedSessionManager);
+        assertThat(agentCoreFactory.agentCore.request.sessionId()).isEqualTo("ses_child");
+        assertThat(agentCoreFactory.agentCore.request.userInput()).isEqualTo("请审查代码");
         assertThat(output.childSessionId()).isEqualTo("ses_child");
         assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
         assertThat(output.summary()).isEqualTo("child final answer");
@@ -69,7 +72,7 @@ class HeadlessSubagentRunnerTest {
     void runWritesStructuredFailureForInvalidInput() {
         HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
         HeadlessSubagentRunner runner = new HeadlessSubagentRunner(
-            new CapturingAgentCore(TurnStatus.COMPLETED, "unused"),
+            new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "unused"),
             new CapturingSessionFactory("entry_final"),
             codec
         );
@@ -80,6 +83,23 @@ class HeadlessSubagentRunnerTest {
 
         assertThat(output.status()).isEqualTo(SubagentRunStatus.FAILED);
         assertThat(output.errorMessage()).isPresent();
+    }
+
+    private static final class CapturingAgentCoreFactory implements AgentCoreFactoryPort {
+        private final CapturingAgentCore agentCore;
+        private Path createdCwd;
+        private SessionManagerPort createdSessionManager;
+
+        private CapturingAgentCoreFactory(TurnStatus status, String finalText) {
+            this.agentCore = new CapturingAgentCore(status, finalText);
+        }
+
+        @Override
+        public AgentCorePort create(Path cwd, SessionManagerPort sessionManager) {
+            this.createdCwd = cwd;
+            this.createdSessionManager = sessionManager;
+            return agentCore;
+        }
     }
 
     private static final class CapturingAgentCore implements AgentCorePort {
@@ -112,6 +132,7 @@ class HeadlessSubagentRunnerTest {
         private final String leafId;
         private Path openedCwd;
         private String openedSessionId;
+        private SessionManagerPort openedSessionManager;
 
         private CapturingSessionFactory(String leafId) {
             this.leafId = leafId;
@@ -121,7 +142,8 @@ class HeadlessSubagentRunnerTest {
         public SessionManagerPort open(Path cwd, String sessionId) {
             this.openedCwd = cwd;
             this.openedSessionId = sessionId;
-            return new MinimalSessionManager(sessionId, leafId);
+            this.openedSessionManager = new MinimalSessionManager(sessionId, leafId);
+            return openedSessionManager;
         }
     }
 

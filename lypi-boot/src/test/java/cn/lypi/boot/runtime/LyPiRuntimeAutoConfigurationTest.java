@@ -1,24 +1,26 @@
 package cn.lypi.boot.runtime;
 
+import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
+import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolResultContentBlock;
+import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
-import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
-import cn.lypi.contracts.common.ProgressSink;
-import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
-import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
@@ -27,11 +29,13 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.subagent.SubagentRunStatus;
+import cn.lypi.contracts.subagent.SubagentSpawnRequest;
+import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
-import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.runtime.event.InMemoryEventBus;
@@ -163,6 +167,46 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(context).hasSingleBean(SubagentProcessRunner.class);
                 assertThat(context).hasSingleBean(AgentCenterPort.class);
                 assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(null)).isFalse();
+            });
+    }
+
+    @Test
+    void bindsSubagentCommandToRunnerAndAgentCenter() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.subagent.command[0]=python3",
+                "lypi.subagent.command[1]=-c",
+                "lypi.subagent.command[2]=import json, sys; data=json.load(sys.stdin); print(json.dumps({'childSessionId':data['childSessionId'],'status':'SUCCEEDED','summary':'ok','finalEntryId':'msg_final'}))"
+            )
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+                sessionManager.openOrCreate("ses_parent");
+                sessionManager.appendMessage(new AgentMessage(
+                    "msg_parent",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new cn.lypi.contracts.context.TextContentBlock("parent", Map.of())),
+                    Instant.EPOCH,
+                    java.util.Optional.empty(),
+                    java.util.Optional.empty()
+                ));
+                AgentCenterPort agentCenter = context.getBean(AgentCenterPort.class);
+
+                SubagentSpawnResult result = agentCenter.spawn(new SubagentSpawnRequest(
+                    "ses_parent",
+                    sessionManager.currentView().leafId(),
+                    "执行检查",
+                    tempDir,
+                    List.of(),
+                    PermissionMode.DEFAULT_EXECUTE,
+                    30,
+                    java.util.Optional.empty(),
+                    java.util.Optional.empty()
+                ));
+
+                assertThat(result.status()).isEqualTo(SubagentRunStatus.STARTED);
+                assertThat(result.agentId()).isNotBlank();
             });
     }
 
