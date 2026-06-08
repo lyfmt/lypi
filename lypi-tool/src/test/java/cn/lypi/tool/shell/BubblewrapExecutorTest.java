@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.NetworkMode;
@@ -50,13 +52,32 @@ class BubblewrapExecutorTest {
             () -> Optional.of(fakeBwrap)
         );
 
-        ExecutionResult result = executor.execute(request("echo 'bwrap: user command failed' >&2; exit 3", false), progress -> {
+        ExecutionResult result = executor.execute(request("echo 'bwrap: user command failed' >&2; exit 1", false), progress -> {
         }, () -> false);
 
-        assertEquals(3, result.exitCode());
+        assertEquals(1, result.exitCode());
         assertTrue(result.stderr().contains("bwrap: user command failed"));
         assertTrue(result.metadata().sandboxed());
         assertEquals("bubblewrap", result.metadata().executorName());
+    }
+
+    @Test
+    void keepsSandboxStartedSentinelOutOfProgress() throws Exception {
+        Path fakeBwrap = fakeBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(fakeBwrap)
+        );
+        List<ToolProgress> progresses = new java.util.ArrayList<>();
+
+        ExecutionResult result = executor.execute(request("printf user-progress >&2", false), progresses::add, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("user-progress", result.stderr());
+        assertTrue(progresses.stream()
+            .filter(progress -> progress.kind() == ToolProgressKind.OUTPUT)
+            .noneMatch(progress -> progress.delta() != null && progress.delta().contains("__LYPI_BWRAP_STARTED__")));
     }
 
     @Test
@@ -114,6 +135,44 @@ class BubblewrapExecutorTest {
     }
 
     @Test
+    void fallsBackToHostExecutorWhenBwrapSetupFailsAfterPreflightByDefault() throws Exception {
+        Path setupFailingBwrap = setupFailingBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(setupFailingBwrap)
+        );
+
+        ExecutionResult result = executor.execute(request("printf host-after-setup-failure", false), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("host-after-setup-failure", result.stdout());
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("host", result.metadata().executorName());
+        assertTrue(result.metadata().diagnostic().orElseThrow().contains("bubblewrap execution failed"));
+    }
+
+    @Test
+    void failsWhenBwrapSetupFailsAfterPreflightAndPolicyRequiresSandbox() throws Exception {
+        Path setupFailingBwrap = setupFailingBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(setupFailingBwrap)
+        );
+
+        ExecutionResult result = executor.execute(request("printf ignored", true), progress -> {
+        }, () -> false);
+
+        assertNotEquals(0, result.exitCode());
+        assertTrue(result.stderr().contains("bwrap: setup failed"));
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+        assertTrue(result.metadata().diagnostic().orElseThrow().contains("bubblewrap execution failed"));
+    }
+
+    @Test
     void failsWhenBwrapPreflightFailsAndPolicyRequiresSandbox() throws Exception {
         Path failingBwrap = failingBwrap();
         BubblewrapExecutor executor = new BubblewrapExecutor(
@@ -160,6 +219,28 @@ class BubblewrapExecutorTest {
               shift
             fi
             exec "$@"
+            """);
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    private Path setupFailingBwrap() throws Exception {
+        Path script = tempDir.resolve("setup-failing-bwrap.sh");
+        Files.writeString(script, """
+            #!/bin/sh
+            if [ "${1:-}" = "--new-session" ]; then
+              while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+                shift
+              done
+              if [ "$1" = "--" ]; then
+                shift
+              fi
+              if [ "${1:-}" = "/usr/bin/true" ] || [ "${1:-}" = "/bin/true" ] || [ "${1:-}" = "true" ]; then
+                exec "$@"
+              fi
+            fi
+            echo 'bwrap: setup failed' >&2
+            exit 1
             """);
         script.toFile().setExecutable(true);
         return script;

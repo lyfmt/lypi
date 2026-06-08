@@ -2,6 +2,8 @@ package cn.lypi.tool.shell;
 
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
@@ -19,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -30,6 +33,7 @@ import java.util.function.Supplier;
 public final class BubblewrapExecutor implements Executor {
     private static final int UNAVAILABLE_EXIT_CODE = 127;
     private static final String UNAVAILABLE_MESSAGE = "bubblewrap unavailable";
+    private static final String SANDBOX_STARTED_SENTINEL_PREFIX = "__LYPI_BWRAP_STARTED__";
 
     private final BubblewrapCommandBuilder commandBuilder;
     private final Executor hostExecutor;
@@ -70,7 +74,9 @@ public final class BubblewrapExecutor implements Executor {
         if (!preflight.available()) {
             return handleUnavailable(request, progress, signal, preflight.diagnostic());
         }
-        List<String> argv = commandBuilder.build(request);
+        String sandboxStartedSentinel = sandboxStartedSentinel();
+        ExecutionRequest wrappedRequest = requestWithSandboxStartedSentinel(request, sandboxStartedSentinel);
+        List<String> argv = commandBuilder.build(wrappedRequest);
         java.util.ArrayList<String> executableArgv = new java.util.ArrayList<>(argv);
         executableArgv.set(0, bwrapPath.orElseThrow().toString());
         ExecutionRequest bwrapRequest = new ExecutionRequest(
@@ -80,11 +86,16 @@ public final class BubblewrapExecutor implements Executor {
             timeout(request),
             request.sandboxPolicy()
         );
-        ExecutionResult result = hostExecutor.execute(bwrapRequest, progress, signal);
-        if (isBubblewrapStartupFailure(result)) {
-            return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution failed"));
+        ExecutionResult result = hostExecutor.execute(
+            bwrapRequest,
+            progressWithoutSandboxStartedSentinel(progress, sandboxStartedSentinel),
+            signal
+        );
+        if (!sandboxStarted(result, sandboxStartedSentinel)) {
+            return handleExecutionFailure(request, progress, signal, result);
         }
-        return result.withMetadata(ExecutionMetadata.sandboxed(name()));
+        return withoutSandboxStartedSentinel(result, sandboxStartedSentinel)
+            .withMetadata(ExecutionMetadata.sandboxed(name()));
     }
 
     private ExecutionResult handleUnavailable(ExecutionRequest request, ProgressSink progress, AbortSignal signal, String diagnostic) {
@@ -101,6 +112,26 @@ public final class BubblewrapExecutor implements Executor {
         }
         return hostExecutor.execute(request, progress, signal)
             .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), diagnostic + "; fell back to host"));
+    }
+
+    private ExecutionResult handleExecutionFailure(
+        ExecutionRequest request,
+        ProgressSink progress,
+        AbortSignal signal,
+        ExecutionResult result
+    ) {
+        if (signal != null && signal.aborted()) {
+            return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution aborted"));
+        }
+        if (result.timedOut()) {
+            return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution timed out"));
+        }
+        SandboxRuntimePolicy policy = request.sandboxPolicy();
+        if (policy != null && policy.failIfUnavailable()) {
+            return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution failed"));
+        }
+        return hostExecutor.execute(request, progress, signal)
+            .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), "bubblewrap execution failed; fell back to host"));
     }
 
     private Duration timeout(ExecutionRequest request) {
@@ -190,10 +221,74 @@ public final class BubblewrapExecutor implements Executor {
         return "true";
     }
 
-    private boolean isBubblewrapStartupFailure(ExecutionResult result) {
-        return result.exitCode() == 1
-            && result.stdout().isBlank()
-            && result.stderr().startsWith("bwrap:");
+    private String sandboxStartedSentinel() {
+        return SANDBOX_STARTED_SENTINEL_PREFIX + UUID.randomUUID();
+    }
+
+    private ExecutionRequest requestWithSandboxStartedSentinel(ExecutionRequest request, String sentinel) {
+        if (request.command() == null || request.command().isEmpty()) {
+            throw new IllegalArgumentException("command must not be empty");
+        }
+        List<String> command = new ArrayList<>();
+        command.add("/bin/sh");
+        command.add("-c");
+        command.add("printf '%s\\n' \"$1\" >&2; shift; exec \"$@\"");
+        command.add("lypi-bwrap-wrapper");
+        command.add(sentinel);
+        command.addAll(request.command());
+        return new ExecutionRequest(List.copyOf(command), request.cwd(), request.env(), request.timeout(), request.sandboxPolicy());
+    }
+
+    private boolean sandboxStarted(ExecutionResult result, String sentinel) {
+        return result.stderr().contains(sentinel);
+    }
+
+    private ProgressSink progressWithoutSandboxStartedSentinel(ProgressSink progress, String sentinel) {
+        if (progress == null) {
+            return null;
+        }
+        return toolProgress -> {
+            if (toolProgress == null
+                || toolProgress.kind() != ToolProgressKind.OUTPUT
+                || !"stderr".equals(toolProgress.stream())
+                || toolProgress.delta() == null) {
+                progress.progress(toolProgress);
+                return;
+            }
+            String delta = removeSentinelLine(toolProgress.delta(), sentinel);
+            if (!delta.isEmpty()) {
+                progress.progress(ToolProgress.output(toolProgress.stream(), delta));
+            }
+        };
+    }
+
+    private ExecutionResult withoutSandboxStartedSentinel(ExecutionResult result, String sentinel) {
+        return new ExecutionResult(
+            result.exitCode(),
+            result.stdout(),
+            removeSentinelLine(result.stderr(), sentinel),
+            result.timedOut(),
+            result.persistedOutput(),
+            result.metadata()
+        );
+    }
+
+    private String removeSentinelLine(String stderr, String sentinel) {
+        int index = stderr.indexOf(sentinel);
+        if (index < 0) {
+            return stderr;
+        }
+        if (index > 0 && stderr.charAt(index - 1) != '\n') {
+            return stderr;
+        }
+        int end = index + sentinel.length();
+        if (end < stderr.length() && stderr.charAt(end) == '\r') {
+            end++;
+        }
+        if (end < stderr.length() && stderr.charAt(end) == '\n') {
+            end++;
+        }
+        return stderr.substring(0, index) + stderr.substring(end);
     }
 
     private static Optional<Path> findSystemBwrap() {
