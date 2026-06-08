@@ -42,6 +42,24 @@ class BubblewrapExecutorTest {
     }
 
     @Test
+    void keepsSandboxMetadataWhenSandboxedCommandWritesBwrapLikeStderr() throws Exception {
+        Path fakeBwrap = fakeBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(fakeBwrap)
+        );
+
+        ExecutionResult result = executor.execute(request("echo 'bwrap: user command failed' >&2; exit 3", false), progress -> {
+        }, () -> false);
+
+        assertEquals(3, result.exitCode());
+        assertTrue(result.stderr().contains("bwrap: user command failed"));
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+    }
+
+    @Test
     void fallsBackToHostExecutorWhenBwrapUnavailableByDefault() {
         BubblewrapExecutor executor = new BubblewrapExecutor(
             BubblewrapCommandBuilder.defaults(),

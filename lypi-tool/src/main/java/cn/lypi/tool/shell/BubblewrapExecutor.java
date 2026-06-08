@@ -191,7 +191,9 @@ public final class BubblewrapExecutor implements Executor {
     }
 
     private boolean isBubblewrapStartupFailure(ExecutionResult result) {
-        return result.exitCode() != 0 && result.stderr().contains("bwrap:");
+        return result.exitCode() == 1
+            && result.stdout().isBlank()
+            && result.stderr().startsWith("bwrap:");
     }
 
     private static Optional<Path> findSystemBwrap() {
