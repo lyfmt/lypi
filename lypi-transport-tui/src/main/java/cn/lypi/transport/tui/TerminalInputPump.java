@@ -10,6 +10,7 @@ final class TerminalInputPump {
     private final TerminalInputSource inputSource;
     private final KeyMapper keyMapper;
     private final TuiInputLoop inputLoop;
+    private StringBuilder pendingPaste;
 
     TerminalInputPump(TerminalInputSource inputSource, KeyMapper keyMapper, TuiInputLoop inputLoop) {
         this.inputSource = inputSource;
@@ -32,6 +33,10 @@ final class TerminalInputPump {
         if (chunk == null || chunk.isEmpty()) {
             return;
         }
+        if (pendingPaste != null) {
+            appendPasteChunk(chunk);
+            return;
+        }
         if (isBracketedPaste(chunk)) {
             inputLoop.acceptPaste(chunk.substring(
                 BRACKETED_PASTE_START.length(),
@@ -39,11 +44,29 @@ final class TerminalInputPump {
             ));
             return;
         }
+        if (chunk.startsWith(BRACKETED_PASTE_START)) {
+            pendingPaste = new StringBuilder();
+            appendPasteChunk(chunk.substring(BRACKETED_PASTE_START.length()));
+            return;
+        }
         if (isPlainText(chunk)) {
             inputLoop.acceptText(chunk);
             return;
         }
         keyMapper.map(chunk).ifPresent(inputLoop::acceptKey);
+    }
+
+    private void appendPasteChunk(String chunk) {
+        int end = chunk.indexOf(BRACKETED_PASTE_END);
+        if (end >= 0) {
+            pendingPaste.append(chunk, 0, end);
+            inputLoop.acceptPaste(pendingPaste.toString());
+            pendingPaste = null;
+            String remaining = chunk.substring(end + BRACKETED_PASTE_END.length());
+            dispatch(remaining);
+            return;
+        }
+        pendingPaste.append(chunk);
     }
 
     private boolean isBracketedPaste(String chunk) {
