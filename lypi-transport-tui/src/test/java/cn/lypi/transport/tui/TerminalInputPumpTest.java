@@ -52,7 +52,7 @@ class TerminalInputPumpTest {
 
         pump.drainAvailable();
 
-        assertEquals(List.of("[pasted 128 chars]"), submit.submitted);
+        assertEquals(List.of("a".repeat(128)), submit.submitted);
     }
 
     @Test

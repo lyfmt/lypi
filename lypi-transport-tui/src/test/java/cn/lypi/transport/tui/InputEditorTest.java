@@ -82,7 +82,7 @@ class InputEditorTest {
 
         editor.insertPaste("a".repeat(128));
 
-        assertEquals("[pasted 128 chars]", editor.text());
+        assertEquals("a".repeat(128), editor.text());
         editor.undo();
         assertEquals("", editor.text());
     }

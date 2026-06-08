@@ -1,5 +1,6 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.List;
@@ -15,6 +16,7 @@ final class TuiInputLoop {
     private final Supplier<TuiViewModel> viewSupplier;
     private final InputEditor editor = new InputEditor();
     private final KeyBindingRegistry bindings = KeyBindingRegistry.defaults();
+    private final TerminalInputPolicy inputPolicy = new TerminalInputPolicy();
     private boolean toolRunning;
     private boolean exitRequested;
 
@@ -55,6 +57,20 @@ final class TuiInputLoop {
     }
 
     void acceptKey(TerminalKey key) {
+        Optional<PermissionPromptView> prompt = viewSupplier.get().permissionPrompt();
+        if (prompt.isPresent() && key == TerminalKey.ENTER) {
+            PermissionPromptView currentPrompt = prompt.orElseThrow();
+            submitPermissionOption(currentPrompt, currentPrompt.defaultOptionId());
+            return;
+        }
+        TerminalInputDecision decision = inputPolicy.decide(key, inputContext(prompt));
+        if (decision.action() == TerminalInputAction.SUBMIT_PERMISSION_OPTION) {
+            prompt.ifPresent(value -> submitPermissionOption(value, decision.optionId().orElse("")));
+            if (prompt.isEmpty()) {
+                render();
+            }
+            return;
+        }
         if (key == TerminalKey.ENTER) {
             submitDraft();
             return;
@@ -129,6 +145,22 @@ final class TuiInputLoop {
             exitRequested = true;
             submitHandler.requestExit("ctrl-c");
         }
+        render();
+    }
+
+    private TerminalInputContext inputContext(Optional<PermissionPromptView> prompt) {
+        return new TerminalInputContext(
+            editor.text(),
+            toolRunning,
+            prompt.isPresent(),
+            prompt.isPresent() ? "permission" : "editor",
+            "editor",
+            prompt.map(PermissionPromptView::cancelOptionId).orElse("")
+        );
+    }
+
+    private void submitPermissionOption(PermissionPromptView prompt, String optionId) {
+        submitHandler.submitPermissionOption(prompt.toolUseId(), optionId);
         render();
     }
 

@@ -18,7 +18,7 @@ final class TuiRenderer {
     }
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input, int cursor) {
-        List<String> transcript = transcriptLines(view.blocks(), layout.width());
+        List<String> transcript = transcriptLines(view, layout.width());
         screen.setTranscript(transcript);
 
         List<String> lines = new ArrayList<>();
@@ -48,6 +48,17 @@ final class TuiRenderer {
                 lines.addAll(wrap(text, width));
             }
         }
+        return lines;
+    }
+
+    private List<String> transcriptLines(TuiViewModel view, int width) {
+        List<String> lines = transcriptLines(view.blocks(), width);
+        view.permissionPrompt().ifPresent(prompt -> {
+            lines.addAll(wrap("permission " + prompt.toolUseId() + ": " + prompt.reason(), width));
+            if (!prompt.rule().isBlank()) {
+                lines.addAll(wrap("rule: " + prompt.rule(), width));
+            }
+        });
         return lines;
     }
 

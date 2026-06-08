@@ -28,6 +28,16 @@ final class JLineTerminalIo implements TerminalIo {
     }
 
     @Override
+    public int width() {
+        return terminal.getWidth();
+    }
+
+    @Override
+    public int height() {
+        return terminal.getHeight();
+    }
+
+    @Override
     public AutoCloseable onResize(Runnable callback) throws IOException {
         Terminal.SignalHandler previous = terminal.handle(Terminal.Signal.WINCH, signal -> callback.run());
         return () -> terminal.handle(Terminal.Signal.WINCH, previous);

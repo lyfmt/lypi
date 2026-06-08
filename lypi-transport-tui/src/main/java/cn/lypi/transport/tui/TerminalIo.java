@@ -19,6 +19,16 @@ interface TerminalIo {
     void flush() throws IOException;
 
     /**
+     * 返回当前终端宽度。
+     */
+    int width();
+
+    /**
+     * 返回当前终端高度。
+     */
+    int height();
+
+    /**
      * 注册 resize 回调，并返回用于恢复原信号处理器的句柄。
      */
     AutoCloseable onResize(Runnable callback) throws IOException;

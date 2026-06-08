@@ -6,8 +6,6 @@ import java.util.Deque;
 import java.util.List;
 
 final class InputEditor {
-    private static final int LARGE_PASTE_THRESHOLD = 80;
-
     private final StringBuilder text = new StringBuilder();
     private final Deque<EditorSnapshot> undo = new ArrayDeque<>();
     private final List<String> killRing = new ArrayList<>();
@@ -43,11 +41,8 @@ final class InputEditor {
     void insertPaste(String value) {
         String paste = value == null ? "" : value;
         saveUndo();
-        String inserted = paste.length() >= LARGE_PASTE_THRESHOLD
-            ? "[pasted " + paste.length() + " chars]"
-            : paste;
-        text.insert(cursor, inserted);
-        cursor += inserted.length();
+        text.insert(cursor, paste);
+        cursor += paste.length();
         clearYankState();
         history.resetNavigation(text());
     }

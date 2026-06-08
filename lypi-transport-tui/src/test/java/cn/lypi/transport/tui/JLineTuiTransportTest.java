@@ -77,6 +77,33 @@ class JLineTuiTransportTest {
         assertTrue(io.output.toString().contains(TerminalSession.EXIT_ALTERNATE_SCREEN));
     }
 
+    @Test
+    void openResizeCallbackReadsCurrentTerminalDimensions() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            40,
+            4
+        );
+        io.output.setLength(0);
+
+        io.width = 12;
+        io.height = 6;
+        io.resizeCallback.run();
+
+        String frame = io.output.toString();
+        String rendered = frame.substring(frame.indexOf("\033[H\033[J") + "\033[H\033[J".length(), frame.indexOf("\033[?2026l"));
+        assertEquals(6, rendered.split("\n", -1).length);
+
+        transport.close();
+    }
+
     private SessionRuntimeState runtimeState() {
         return new SessionRuntimeState(
             "ses_1",
@@ -148,6 +175,10 @@ class JLineTuiTransportTest {
         private final StringBuilder output = new StringBuilder();
         private boolean rawModeEntered;
         private boolean rawModeRestored;
+        private int width = 40;
+        private int height = 4;
+        private Runnable resizeCallback = () -> {
+        };
 
         @Override
         public AutoCloseable enterRawMode() {
@@ -166,8 +197,19 @@ class JLineTuiTransportTest {
 
         @Override
         public AutoCloseable onResize(Runnable callback) throws IOException {
+            resizeCallback = callback;
             return () -> {
             };
+        }
+
+        @Override
+        public int width() {
+            return width;
+        }
+
+        @Override
+        public int height() {
+            return height;
         }
     }
 }

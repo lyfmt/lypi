@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.List;
@@ -99,5 +100,23 @@ class TuiRendererTest {
         List<String> lines = renderer.render(view, screen, new TuiLayout(8, 3), "abcdefgh", 8);
 
         assertEquals("> …efgh|CURSOR|", lines.get(2));
+    }
+
+    @Test
+    void permissionPromptIsRenderedInTranscriptArea() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(2);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.of(new PermissionPromptView("toolu_1", "Need approval", "bash:npm test", "allow_once", "cancel")),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 4), "");
+
+        assertEquals("permission toolu_1: Need approval", lines.get(0));
+        assertEquals("rule: bash:npm test", lines.get(1));
     }
 }

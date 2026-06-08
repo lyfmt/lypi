@@ -2,8 +2,12 @@ package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class TuiInputLoopTest {
@@ -88,6 +92,46 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void enterSubmitsPermissionDefaultOptionWhenPromptIsOpen() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4),
+            () -> permissionView("allow_once", "cancel")
+        );
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("toolu_1:allow_once"), submit.permissionOptions);
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void escapeAndCtrlCCancelPermissionPromptInsteadOfExitOrInterrupt() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4),
+            () -> permissionView("allow_once", "cancel")
+        );
+
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals(List.of("toolu_1:cancel", "toolu_1:cancel"), submit.permissionOptions);
+        assertEquals(0, submit.exits);
+        assertEquals(0, submit.interrupts);
+    }
+
+    @Test
     void upAndDownNavigateSubmittedHistory() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
@@ -148,6 +192,7 @@ class TuiInputLoopTest {
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
+        private final List<String> permissionOptions = new ArrayList<>();
         private int interrupts;
         private int exits;
 
@@ -165,5 +210,20 @@ class TuiInputLoopTest {
         public void requestExit(String reason) {
             exits++;
         }
+
+        @Override
+        public void submitPermissionOption(String toolUseId, String optionId) {
+            permissionOptions.add(toolUseId + ":" + optionId);
+        }
+    }
+
+    private static TuiViewModel permissionView(String defaultOptionId, String cancelOptionId) {
+        return new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.of(new PermissionPromptView("toolu_1", "Need approval", "bash:npm test", defaultOptionId, cancelOptionId)),
+            Optional.empty()
+        );
     }
 }

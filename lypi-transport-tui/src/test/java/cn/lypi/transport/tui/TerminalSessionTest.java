@@ -76,6 +76,16 @@ class TerminalSessionTest {
         }
 
         @Override
+        public int width() {
+            return 80;
+        }
+
+        @Override
+        public int height() {
+            return 24;
+        }
+
+        @Override
         public AutoCloseable onResize(Runnable callback) throws IOException {
             return () -> {
             };
@@ -98,6 +108,16 @@ class TerminalSessionTest {
 
         @Override
         public void flush() {
+        }
+
+        @Override
+        public int width() {
+            return 80;
+        }
+
+        @Override
+        public int height() {
+            return 24;
         }
 
         @Override

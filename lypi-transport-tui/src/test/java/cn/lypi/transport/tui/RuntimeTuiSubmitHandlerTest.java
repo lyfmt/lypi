@@ -14,6 +14,7 @@ import cn.lypi.contracts.event.EventConsumer;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.InterruptEvent;
+import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,6 +73,22 @@ class RuntimeTuiSubmitHandlerTest {
         assertTrue(core.started.await(2, TimeUnit.SECONDS));
         assertEquals(1, core.requests.size());
         core.release.countDown();
+    }
+
+    @Test
+    void submitPermissionOptionPublishesDecisionEvent() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, Runnable::run);
+
+        handler.submitPermissionOption("toolu_1", "allow_once");
+
+        PermissionDecisionEvent event = assertInstanceOf(PermissionDecisionEvent.class, events.published.getFirst());
+        assertEquals("ses_1", event.sessionId());
+        assertEquals("toolu_1", event.requestId());
+        assertEquals("toolu_1", event.toolUseId());
+        assertEquals("allow_once", event.selectedOptionId());
+        assertEquals("tui", event.metadata().get("source"));
     }
 
     private static final class RecordingCore implements AgentCorePort {

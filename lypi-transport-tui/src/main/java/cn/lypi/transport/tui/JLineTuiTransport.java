@@ -123,7 +123,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         JLineTuiTransport[] holder = new JLineTuiTransport[1];
         TerminalSession session = TerminalSession.open(io, () -> {
             if (holder[0] != null) {
-                holder[0].resize(width, height);
+                holder[0].resize(io.width(), io.height());
             }
         });
         TerminalFrameRenderer frameRenderer = new TerminalFrameRenderer(io);
