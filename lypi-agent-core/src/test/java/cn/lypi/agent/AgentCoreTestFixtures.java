@@ -1,6 +1,8 @@
 package cn.lypi.agent;
 
 import cn.lypi.agent.compact.CompactionCoordinator;
+import cn.lypi.agent.compact.NoopToolMicroCompactor;
+import cn.lypi.agent.compact.ToolMicroCompactor;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;
@@ -139,6 +141,32 @@ final class AgentCoreTestFixtures {
             toolRuntime,
             eventBus,
             contextAssembler,
+            new NoopToolMicroCompactor(),
+            compactionCoordinator,
+            memoryExtractionWorker
+        );
+    }
+
+    static AgentCoreRuntimePorts ports(
+        InMemorySessionManager session,
+        StubAiProvider aiProvider,
+        StubToolRuntime toolRuntime,
+        RecordingEventBus eventBus,
+        ContextAssembler contextAssembler,
+        ToolMicroCompactor toolMicroCompactor,
+        CompactionCoordinator compactionCoordinator,
+        MemoryExtractionWorker memoryExtractionWorker
+    ) {
+        return new AgentCoreRuntimePorts(
+            Path.of("."),
+            session,
+            aiProvider,
+            toolRuntime,
+            allowAllSecurityRuntime(),
+            fixedResourceRuntime("system"),
+            eventBus,
+            contextAssembler,
+            toolMicroCompactor,
             compactionCoordinator,
             memoryExtractionWorker
         );
@@ -154,6 +182,30 @@ final class AgentCoreTestFixtures {
         CompactionCoordinator compactionCoordinator,
         MemoryExtractionWorker memoryExtractionWorker
     ) {
+        return ports(
+            cwd,
+            session,
+            aiProvider,
+            toolRuntime,
+            eventBus,
+            contextAssembler,
+            new NoopToolMicroCompactor(),
+            compactionCoordinator,
+            memoryExtractionWorker
+        );
+    }
+
+    static AgentCoreRuntimePorts ports(
+        Path cwd,
+        InMemorySessionManager session,
+        StubAiProvider aiProvider,
+        StubToolRuntime toolRuntime,
+        RecordingEventBus eventBus,
+        ContextAssembler contextAssembler,
+        ToolMicroCompactor toolMicroCompactor,
+        CompactionCoordinator compactionCoordinator,
+        MemoryExtractionWorker memoryExtractionWorker
+    ) {
         return new AgentCoreRuntimePorts(
             cwd,
             session,
@@ -163,6 +215,7 @@ final class AgentCoreTestFixtures {
             fixedResourceRuntime("system"),
             eventBus,
             contextAssembler,
+            toolMicroCompactor,
             compactionCoordinator,
             memoryExtractionWorker
         );

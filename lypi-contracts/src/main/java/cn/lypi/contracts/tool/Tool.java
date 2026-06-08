@@ -16,6 +16,15 @@ public interface Tool<I, O> {
     String name();
 
     /**
+     * 返回模型可见的工具说明。
+     *
+     * NOTE: 默认使用工具名，具体工具可覆盖为更完整的 provider tool description。
+     */
+    default String description() {
+        return name();
+    }
+
+    /**
      * 返回工具别名。
      *
      * NOTE: 别名只用于解析，不应替代审计中的主工具名。

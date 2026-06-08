@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolDescriptor;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
@@ -45,6 +46,9 @@ class DefaultToolRegistryTest {
 
         ToolRegistrySnapshot snapshot = registry.snapshot();
 
-        assertEquals(List.of(new ToolDescriptor("read", List.of("cat"), true, false)), snapshot.tools());
+        assertEquals(
+            List.of(new ToolDescriptor("read", List.of("cat"), "read", new JsonSchema(Map.of()), true, false)),
+            snapshot.tools()
+        );
     }
 }

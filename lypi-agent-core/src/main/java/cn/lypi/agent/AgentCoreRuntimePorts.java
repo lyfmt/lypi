@@ -1,6 +1,8 @@
 package cn.lypi.agent;
 
 import cn.lypi.agent.compact.CompactionCoordinator;
+import cn.lypi.agent.compact.DefaultToolMicroCompactor;
+import cn.lypi.agent.compact.ToolMicroCompactor;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
@@ -19,10 +21,14 @@ public record AgentCoreRuntimePorts(
     ResourceRuntimePort resourceRuntime,
     EventBus eventBus,
     ContextAssembler contextAssembler,
+    ToolMicroCompactor toolMicroCompactor,
     CompactionCoordinator compactionCoordinator,
     MemoryExtractionWorker memoryExtractionWorker
 ) {
     public AgentCoreRuntimePorts {
         cwd = Objects.requireNonNull(cwd, "cwd must not be null").toAbsolutePath().normalize();
+        if (toolMicroCompactor == null) {
+            toolMicroCompactor = new DefaultToolMicroCompactor();
+        }
     }
 }

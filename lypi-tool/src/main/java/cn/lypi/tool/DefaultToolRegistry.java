@@ -48,6 +48,8 @@ public final class DefaultToolRegistry implements ToolRegistry {
             .map(tool -> new ToolDescriptor(
                 tool.name(),
                 safeAliases(tool),
+                tool.description(),
+                tool.inputSchema(),
                 readOnly(tool),
                 destructive(tool)
             ))
