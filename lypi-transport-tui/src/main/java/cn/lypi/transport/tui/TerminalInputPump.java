@@ -4,6 +4,9 @@ import java.io.IOException;
 import java.util.Optional;
 
 final class TerminalInputPump {
+    private static final String BRACKETED_PASTE_START = "\033[200~";
+    private static final String BRACKETED_PASTE_END = "\033[201~";
+
     private final TerminalInputSource inputSource;
     private final KeyMapper keyMapper;
     private final TuiInputLoop inputLoop;
@@ -29,11 +32,22 @@ final class TerminalInputPump {
         if (chunk == null || chunk.isEmpty()) {
             return;
         }
+        if (isBracketedPaste(chunk)) {
+            inputLoop.acceptPaste(chunk.substring(
+                BRACKETED_PASTE_START.length(),
+                chunk.length() - BRACKETED_PASTE_END.length()
+            ));
+            return;
+        }
         if (isPlainText(chunk)) {
             inputLoop.acceptText(chunk);
             return;
         }
         keyMapper.map(chunk).ifPresent(inputLoop::acceptKey);
+    }
+
+    private boolean isBracketedPaste(String chunk) {
+        return chunk.startsWith(BRACKETED_PASTE_START) && chunk.endsWith(BRACKETED_PASTE_END);
     }
 
     private boolean isPlainText(String chunk) {

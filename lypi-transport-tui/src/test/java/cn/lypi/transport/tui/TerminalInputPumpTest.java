@@ -33,6 +33,28 @@ class TerminalInputPumpTest {
         assertEquals("", loop.draft());
     }
 
+    @Test
+    void dispatchesBracketedPasteAsAtomicPaste() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4)
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("\033[200~" + "a".repeat(128) + "\033[201~", "\r"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+
+        assertEquals(List.of("[pasted 128 chars]"), submit.submitted);
+    }
+
     private static final class QueueInputSource implements TerminalInputSource {
         private final ArrayDeque<String> chunks;
 

@@ -34,6 +34,11 @@ final class TuiInputLoop {
         render();
     }
 
+    void acceptPaste(String text) {
+        editor.insertPaste(text);
+        render();
+    }
+
     void acceptKey(TerminalKey key) {
         if (key == TerminalKey.ENTER) {
             submitDraft();
