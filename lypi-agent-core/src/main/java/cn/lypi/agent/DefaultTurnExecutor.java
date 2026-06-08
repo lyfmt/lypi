@@ -2,12 +2,15 @@ package cn.lypi.agent;
 
 import cn.lypi.agent.compact.CompactionDecision;
 import cn.lypi.agent.compact.CompactionRequest;
+import cn.lypi.agent.compact.ToolMicroCompactRequest;
+import cn.lypi.agent.compact.ToolMicroCompactResult;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
+import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.ToolCallContentBlock;
@@ -42,6 +45,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private final AgentMessageFactory messageFactory;
     private final ToolCallMapper toolCallMapper;
     private final AgentCoreExceptionHandler exceptionHandler;
+    private final ContextBudgetEstimator budgetEstimator;
 
     public DefaultTurnExecutor(AgentCoreRuntimePorts ports, TurnIds ids, Clock clock) {
         this.ports = ports;
@@ -50,6 +54,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         this.messageFactory = new AgentMessageFactory(clock);
         this.toolCallMapper = new ToolCallMapper();
         this.exceptionHandler = new AgentCoreExceptionHandler(ports.eventBus(), messageFactory, clock);
+        this.budgetEstimator = new ContextBudgetEstimator();
     }
 
     @Override
@@ -184,15 +189,58 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             true
         );
         ContextAssembly assembly = ports.contextAssembler().build(contextBuildRequest);
+        ToolMicroCompactResult microCompact = ports.toolMicroCompactor().compact(new ToolMicroCompactRequest(
+            request.sessionId(),
+            leafEntryId,
+            assembly.branchEntryIds(),
+            assembly.snapshot(),
+            ports.toolRuntime().snapshot()
+        ));
+        ContextSnapshot microCompactedContext = microCompact.projectedToolUseIds().isEmpty()
+            ? microCompact.context()
+            : reestimateBudget(microCompact.context(), assembly.snapshot().budget());
+        ContextAssembly microCompactedAssembly = new ContextAssembly(
+            microCompactedContext,
+            assembly.branchEntryIds(),
+            assembly.appliedCompactionEntryIds(),
+            assembly.replacements(),
+            microCompactedContext.budget().estimatedContextTokens() > microCompactedContext.budget().autoCompactThreshold()
+        );
         CompactionDecision compaction = ports.compactionCoordinator().preflight(new CompactionRequest(
             request.sessionId(),
             leafEntryId,
             ports.cwd(),
             contextBuildRequest,
-            assembly,
+            microCompactedAssembly,
             request.abortSignal()
         ));
+        if (compaction.compacted()) {
+            ports.toolMicroCompactor().reset();
+        }
         return compaction.context();
+    }
+
+    private ContextSnapshot reestimateBudget(ContextSnapshot context, ContextBudget previousBudget) {
+        ContextBudget estimated = budgetEstimator.estimate(context);
+        ContextBudget budget = new ContextBudget(
+            estimated.estimatedContextTokens(),
+            previousBudget.effectiveContextWindow(),
+            previousBudget.autoCompactThreshold(),
+            previousBudget.turnOutputBudget(),
+            previousBudget.toolResultBudget(),
+            previousBudget.totalInputTokens(),
+            previousBudget.totalOutputTokens(),
+            previousBudget.estimatedCost()
+        );
+        return new ContextSnapshot(
+            context.systemPrompt(),
+            context.messages(),
+            context.model(),
+            context.thinkingLevel(),
+            context.mode(),
+            context.permissionMode(),
+            budget
+        );
     }
 
     private AgentMessage runModel(TurnRequest request, ContextSnapshot context) {

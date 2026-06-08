@@ -1,6 +1,7 @@
 package cn.lypi.agent;
 
 import cn.lypi.agent.compact.NoopCompactionCoordinator;
+import cn.lypi.agent.compact.NoopToolMicroCompactor;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -89,6 +90,7 @@ class DefaultTurnExecutorPermissionTest {
                 AgentCoreTestFixtures.fixedResourceRuntime("system"),
                 eventBus,
                 assembler,
+                new NoopToolMicroCompactor(),
                 new NoopCompactionCoordinator(),
                 new NoopMemoryExtractionWorker()
             ),
@@ -172,6 +174,7 @@ class DefaultTurnExecutorPermissionTest {
                 AgentCoreTestFixtures.fixedResourceRuntime("system"),
                 eventBus,
                 assembler,
+                new NoopToolMicroCompactor(),
                 new NoopCompactionCoordinator(),
                 new NoopMemoryExtractionWorker()
             ),
