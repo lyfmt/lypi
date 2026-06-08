@@ -29,6 +29,12 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.SessionContext;
+import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentResultRef;
@@ -178,12 +184,22 @@ class LyPiRuntimeAutoConfigurationTest {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
             .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
+            .withBean(SessionManagerPort.class, () -> new BranchingSessionManager(true))
             .run(context -> {
                 MailboxDeliveryGuard guard = context.getBean(MailboxDeliveryGuard.class);
 
                 assertThat(guard.canDeliver(mail("ses_parent"))).isTrue();
                 assertThat(guard.canDeliver(mail("ses_other"))).isFalse();
             });
+    }
+
+    @Test
+    void defaultDeliveryGuardKeepsMailboxPendingWhenCurrentBranchMovedAwayFromSpawnEntry() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
+            .withBean(SessionManagerPort.class, () -> new BranchingSessionManager(false))
+            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
     }
 
     @Test
@@ -375,6 +391,70 @@ class LyPiRuntimeAutoConfigurationTest {
         @Override
         public cn.lypi.contracts.subagent.MailboxCommandResult discard(String sessionId, String mailId) {
             return cn.lypi.contracts.subagent.MailboxCommandResult.failure("not used");
+        }
+    }
+
+    private static final class BranchingSessionManager implements SessionManagerPort {
+        private final boolean branchContainsSpawnEntry;
+
+        private BranchingSessionManager(boolean branchContainsSpawnEntry) {
+            this.branchContainsSpawnEntry = branchContainsSpawnEntry;
+        }
+
+        @Override
+        public SessionHandle openOrCreate(String sessionId) {
+            return new SessionHandle(sessionId, null, "leaf-1", Map.of());
+        }
+
+        @Override
+        public SessionHandle append(SessionEntry entry) {
+            return new SessionHandle("ses_parent", null, entry.id(), Map.of());
+        }
+
+        @Override
+        public SessionHandle switchLeaf(String leafId) {
+            return new SessionHandle("ses_parent", null, leafId, Map.of());
+        }
+
+        @Override
+        public List<SessionEntry> branch(String leafId) {
+            if (!branchContainsSpawnEntry) {
+                return List.of(new SessionInfoEntry("entry_other", null, Map.of(), Instant.EPOCH));
+            }
+            return List.of(
+                new SessionInfoEntry("entry_spawn", null, Map.of(), Instant.EPOCH),
+                new SessionInfoEntry(leafId, "entry_spawn", Map.of(), Instant.EPOCH)
+            );
+        }
+
+        @Override
+        public SessionView currentView() {
+            return new SessionView("ses_parent", "leaf-1");
+        }
+
+        @Override
+        public SessionView view(String leafId) {
+            return new SessionView("ses_parent", leafId);
+        }
+
+        @Override
+        public List<AgentMessage> transcript(String leafId) {
+            return List.of();
+        }
+
+        @Override
+        public SessionContext context(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle appendMessage(AgentMessage message) {
+            return new SessionHandle("ses_parent", null, message.id(), Map.of());
+        }
+
+        @Override
+        public SessionHandle fork(ForkRequest request) {
+            throw new UnsupportedOperationException();
         }
     }
 

@@ -6,6 +6,7 @@ import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.runtime.event.InMemoryEventBus;
@@ -121,7 +122,7 @@ public class LyPiRuntimeAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public MailboxDeliveryGuard mailboxDeliveryGuard(ObjectProvider<SessionRuntimeState> state) {
+    public MailboxDeliveryGuard mailboxDeliveryGuard(ObjectProvider<SessionRuntimeState> state, SessionManagerPort sessionManager) {
         return message -> {
             if (message == null) {
                 return false;
@@ -130,8 +131,26 @@ public class LyPiRuntimeAutoConfiguration {
             if (runtimeState == null || runtimeState.hasInterruptibleTool()) {
                 return false;
             }
-            return message.parentSessionId().equals(runtimeState.sessionId());
+            return message.parentSessionId().equals(runtimeState.sessionId())
+                && currentBranchContainsSpawnEntry(sessionManager, runtimeState, message.parentSpawnEntryId());
         };
+    }
+
+    private boolean currentBranchContainsSpawnEntry(
+        SessionManagerPort sessionManager,
+        SessionRuntimeState runtimeState,
+        String parentSpawnEntryId
+    ) {
+        if (parentSpawnEntryId == null || parentSpawnEntryId.isBlank()) {
+            return false;
+        }
+        try {
+            return sessionManager.branch(runtimeState.currentBranchLeafId()).stream()
+                .map(SessionEntry::id)
+                .anyMatch(parentSpawnEntryId::equals);
+        } catch (RuntimeException exception) {
+            return false;
+        }
     }
 
     /**
