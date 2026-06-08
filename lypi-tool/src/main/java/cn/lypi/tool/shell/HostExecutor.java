@@ -28,7 +28,8 @@ public final class HostExecutor implements Executor {
     private static final int TIMEOUT_EXIT_CODE = 124;
     private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(30);
     private static final Duration TERMINATION_GRACE = Duration.ofMillis(500);
-    private static final Duration OUTPUT_DRAIN_GRACE = Duration.ofMillis(100);
+    private static final Duration INITIAL_OUTPUT_DRAIN_GRACE = Duration.ofMillis(100);
+    private static final Duration FINAL_OUTPUT_DRAIN_GRACE = Duration.ofSeconds(1);
     private static final Set<String> SENSITIVE_ENV_KEYS = Set.of(
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
@@ -103,12 +104,12 @@ public final class HostExecutor implements Executor {
 
         WaitResult waitResult = waitForProcess(process, timeout(request), safeSignal);
         if (!waitResult.timedOut() && !waitResult.aborted()) {
-            waitForCollectors(OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
+            waitForCollectors(INITIAL_OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
             terminateDescendants(process);
-            waitForCollectors(OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
+            waitForCollectors(FINAL_OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
         } else {
             closeCollectors(stdout, stderr);
-            waitForCollectors(OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
+            waitForCollectors(FINAL_OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
         }
 
         int exitCode = waitResult.exitCode();

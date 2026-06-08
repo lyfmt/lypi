@@ -105,6 +105,38 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void rebindsExistingProtectedMetadataFileAsReadOnly() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path git = workspace.resolve(".git");
+        Files.writeString(git, "gitdir: ../.git/worktrees/example\n");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        ExecutionRequest request = request(cwd, policy(workspace, NetworkMode.DISABLED));
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request);
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertTrue(indexOfSequence(argv, "--ro-bind", git.toString(), git.toString()) > workspaceBind);
+    }
+
+    @Test
+    void rejectsProtectedMetadataSymlinkInsteadOfBuildingUnsafeBind() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Files.createDirectory(workspace.resolve("realgit"));
+        Path git = workspace.resolve(".git");
+        Files.createSymbolicLink(git, Path.of("realgit"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        ExecutionRequest request = request(cwd, policy(workspace, NetworkMode.DISABLED));
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request)
+        );
+
+        assertTrue(exception.getMessage().contains("protected metadata"));
+        assertTrue(exception.getMessage().contains("symbolic link"));
+    }
+
+    @Test
     void protectedMetadataReadonlyBindWinsOverNestedWritableRoot() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path git = Files.createDirectory(workspace.resolve(".git"));

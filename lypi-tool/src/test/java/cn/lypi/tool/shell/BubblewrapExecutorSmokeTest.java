@@ -36,34 +36,44 @@ class BubblewrapExecutorSmokeTest {
 
     @Test
     void keepsProtectedMetadataReadonlyWithRealBubblewrapWhenAvailable() throws Exception {
-        Files.createDirectory(tempDir.resolve(".git"));
         BubblewrapExecutor executor = new BubblewrapExecutor();
-        assumeTrue(realBubblewrapWorks(executor), "system bubblewrap is unavailable or cannot create namespaces");
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Files.createDirectory(workspace.resolve(".git"));
 
-        ExecutionResult result = executor.execute(request("printf protected > .git/HEAD"), progress -> {
+        ExecutionResult result = executor.execute(request("printf protected > .git/HEAD", workspace), progress -> {
         }, () -> false);
 
         assertTrue(result.exitCode() != 0);
         assertTrue(result.metadata().sandboxed());
-        assertTrue(!Files.exists(tempDir.resolve(".git/HEAD")));
+        assertTrue(!Files.exists(workspace.resolve(".git/HEAD")));
     }
 
     private boolean realBubblewrapWorks(BubblewrapExecutor executor) {
-        ExecutionResult result = executor.execute(request("true"), progress -> {
+        return realBubblewrapWorks(executor, tempDir);
+    }
+
+    private boolean realBubblewrapWorks(BubblewrapExecutor executor, Path cwd) {
+        ExecutionResult result = executor.execute(request("true", cwd), progress -> {
         }, () -> false);
         return result.exitCode() == 0 && result.metadata().sandboxed();
     }
 
     private ExecutionRequest request(String command) {
+        return request(command, tempDir);
+    }
+
+    private ExecutionRequest request(String command, Path cwd) {
         return new ExecutionRequest(
             List.of("bash", "-lc", command),
-            tempDir,
+            cwd,
             Map.of(),
             Duration.ofSeconds(5),
             new SandboxRuntimePolicy(
                 List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
                 List.of(),
-                List.of(tempDir),
+                List.of(cwd),
                 List.of(),
                 NetworkMode.DISABLED,
                 false,

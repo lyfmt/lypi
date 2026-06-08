@@ -152,6 +152,29 @@ class HostExecutorTest {
     }
 
     @Test
+    void waitsForProgressCallbackBeforeReturningAfterNormalExit() {
+        HostExecutor executor = new HostExecutor();
+        AtomicBoolean stdoutProgressDelivered = new AtomicBoolean(false);
+
+        ExecutionResult result = executor.execute(request("printf slow-progress"), progress -> {
+            if (progress.kind() == ToolProgressKind.OUTPUT
+                && "stdout".equals(progress.stream())
+                && progress.delta().contains("slow-progress")) {
+                try {
+                    Thread.sleep(800);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+                stdoutProgressDelivered.set(true);
+            }
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("slow-progress", result.stdout());
+        assertTrue(stdoutProgressDelivered.get());
+    }
+
+    @Test
     void capturesAllOutputBeforeReturning() {
         HostExecutor executor = new HostExecutor();
 

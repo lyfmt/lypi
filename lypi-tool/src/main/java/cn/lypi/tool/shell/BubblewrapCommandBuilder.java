@@ -127,17 +127,24 @@ public final class BubblewrapCommandBuilder {
     private List<Path> existingProtectedMetadataPaths(List<Path> writableRoots) {
         LinkedHashSet<Path> paths = new LinkedHashSet<>();
         for (Path writableRoot : writableRoots) {
-            if (isProtectedMetadataPath(writableRoot) && Files.exists(writableRoot, LinkOption.NOFOLLOW_LINKS)) {
+            if (isProtectedMetadataPath(writableRoot) && protectedMetadataPathExists(writableRoot)) {
                 paths.add(writableRoot);
             }
             for (String name : PROTECTED_METADATA_NAMES) {
                 Path path = writableRoot.resolve(name).normalize();
-                if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+                if (protectedMetadataPathExists(path)) {
                     paths.add(path);
                 }
             }
         }
         return List.copyOf(paths);
+    }
+
+    private boolean protectedMetadataPathExists(Path path) {
+        if (Files.isSymbolicLink(path)) {
+            throw new IllegalArgumentException("protected metadata path must not be a symbolic link: " + path);
+        }
+        return Files.exists(path, LinkOption.NOFOLLOW_LINKS);
     }
 
     private boolean isProtectedMetadataPath(Path path) {
