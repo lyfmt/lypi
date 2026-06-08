@@ -40,10 +40,42 @@ public final class BubblewrapCommandBuilder {
     /**
      * Bubblewrap argv 和需要在执行后清理的合成挂载目标。
      */
-    public record BuildResult(List<String> argv, List<Path> syntheticMountTargets) {
+    public record BuildResult(List<String> argv, List<SyntheticMountTarget> syntheticMountTargets) {
         public BuildResult {
             argv = List.copyOf(argv);
             syntheticMountTargets = List.copyOf(syntheticMountTargets);
+        }
+    }
+
+    /**
+     * 记录 bwrap 为缺失路径合成的宿主挂载目标。
+     */
+    public record SyntheticMountTarget(Path path, Kind kind) {
+        public SyntheticMountTarget {
+            Objects.requireNonNull(path, "path must not be null");
+            Objects.requireNonNull(kind, "kind must not be null");
+        }
+
+        /**
+         * 返回合成空文件目标。
+         */
+        public static SyntheticMountTarget emptyFile(Path path) {
+            return new SyntheticMountTarget(path, Kind.EMPTY_FILE);
+        }
+
+        /**
+         * 返回合成空目录目标。
+         */
+        public static SyntheticMountTarget emptyDirectory(Path path) {
+            return new SyntheticMountTarget(path, Kind.EMPTY_DIRECTORY);
+        }
+
+        /**
+         * 标识合成目标的预期文件类型。
+         */
+        public enum Kind {
+            EMPTY_FILE,
+            EMPTY_DIRECTORY
         }
     }
 
@@ -80,7 +112,7 @@ public final class BubblewrapCommandBuilder {
         }
         rejectUnsupportedDenyWrite(policy);
         List<String> argv = new ArrayList<>();
-        List<Path> syntheticMountTargets = new ArrayList<>();
+        List<SyntheticMountTarget> syntheticMountTargets = new ArrayList<>();
         argv.add("bwrap");
         argv.add("--new-session");
         argv.add("--die-with-parent");
@@ -144,7 +176,7 @@ public final class BubblewrapCommandBuilder {
         List<Path> denyReadPaths,
         List<Path> writableRoots,
         Path cwd,
-        List<Path> syntheticMountTargets
+        List<SyntheticMountTarget> syntheticMountTargets
     ) {
         Path normalizedCwd = cwd == null ? null : absoluteNormalized(cwd, "cwd");
         LinkedHashSet<Path> masks = new LinkedHashSet<>();
@@ -211,7 +243,7 @@ public final class BubblewrapCommandBuilder {
         List<String> argv,
         Path denyReadPath,
         List<Path> writableRoots,
-        List<Path> syntheticMountTargets
+        List<SyntheticMountTarget> syntheticMountTargets
     ) {
         List<Path> writableDescendants = writableDescendantsOf(denyReadPath, writableRoots);
         boolean missingPath = !Files.exists(denyReadPath, LinkOption.NOFOLLOW_LINKS);
@@ -243,7 +275,7 @@ public final class BubblewrapCommandBuilder {
         argv.add(EMPTY_FILE_FD);
         argv.add(denyReadPath.toString());
         if (missingPath) {
-            syntheticMountTargets.add(denyReadPath);
+            syntheticMountTargets.add(SyntheticMountTarget.emptyFile(denyReadPath));
         }
     }
 
@@ -365,7 +397,7 @@ public final class BubblewrapCommandBuilder {
         }
     }
 
-    private void appendProtectedMetadataMasks(List<String> argv, List<Path> writableRoots, List<Path> syntheticMountTargets) {
+    private void appendProtectedMetadataMasks(List<String> argv, List<Path> writableRoots, List<SyntheticMountTarget> syntheticMountTargets) {
         for (Path protectedMetadataPath : protectedMetadataPaths(writableRoots)) {
             appendProtectedMetadataMask(argv, protectedMetadataPath, syntheticMountTargets);
         }
@@ -387,7 +419,7 @@ public final class BubblewrapCommandBuilder {
         return List.copyOf(paths);
     }
 
-    private void appendProtectedMetadataMask(List<String> argv, Path path, List<Path> syntheticMountTargets) {
+    private void appendProtectedMetadataMask(List<String> argv, Path path, List<SyntheticMountTarget> syntheticMountTargets) {
         if (Files.isSymbolicLink(path)) {
             throw new IllegalArgumentException("protected metadata path must not be a symbolic link: " + path);
         }
@@ -396,7 +428,7 @@ public final class BubblewrapCommandBuilder {
             return;
         }
         appendReadonlyEmptyDirectoryMask(argv, path);
-        syntheticMountTargets.add(path);
+        syntheticMountTargets.add(SyntheticMountTarget.emptyDirectory(path));
     }
 
     private boolean isProtectedMetadataPath(Path path) {

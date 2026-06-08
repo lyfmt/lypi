@@ -284,6 +284,25 @@ class BubblewrapExecutorTest {
         assertEquals("bubblewrap", result.metadata().executorName());
     }
 
+    @Test
+    void keepsSyntheticFileWhenItWasFilledBeforeCleanup() throws Exception {
+        Path fillingBwrap = fillingRoBindDataTargetBwrap("host-content");
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(fillingBwrap)
+        );
+        Path missingSecret = tempDir.resolve("missing-secret").resolve("token");
+
+        ExecutionResult result = executor.execute(requestWithMissingDenyRead("printf sandbox", missingSecret), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("sandbox", result.stdout());
+        assertEquals("host-content", Files.readString(tempDir.resolve("missing-secret")));
+    }
+
     private ExecutionRequest request(String command, boolean failIfUnavailable) {
         return new ExecutionRequest(
             List.of("bash", "-lc", command),
@@ -321,6 +340,24 @@ class BubblewrapExecutorTest {
         );
     }
 
+    private ExecutionRequest requestWithMissingDenyRead(String command, Path missingDenyReadPath) {
+        return new ExecutionRequest(
+            List.of("bash", "-lc", command),
+            tempDir,
+            Map.of(),
+            Duration.ofSeconds(5),
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(missingDenyReadPath),
+                List.of(tempDir),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        );
+    }
+
     private Path fakeBwrap() throws Exception {
         Path script = tempDir.resolve("fake-bwrap.sh");
         Files.writeString(script, """
@@ -333,6 +370,35 @@ class BubblewrapExecutorTest {
             fi
             exec "$@"
             """);
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    private Path fillingRoBindDataTargetBwrap(String content) throws Exception {
+        Path contentFile = tempDir.resolve("ro-bind-data-content.txt");
+        Files.writeString(contentFile, content);
+        Path script = tempDir.resolve("filling-ro-bind-data-target-bwrap.sh");
+        Files.writeString(script, """
+            #!/bin/sh
+            content_file="%s"
+            while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+              if [ "$1" = "--ro-bind-data" ]; then
+                shift
+                fd="${1:-}"
+                shift
+                target="${1:-}"
+                if [ "$fd" = "0" ]; then
+                  mkdir -p "$(dirname "$target")"
+                  cat "$content_file" > "$target"
+                fi
+              fi
+              shift
+            done
+            if [ "$1" = "--" ]; then
+              shift
+            fi
+            exec "$@"
+            """.formatted(contentFile));
         script.toFile().setExecutable(true);
         return script;
     }

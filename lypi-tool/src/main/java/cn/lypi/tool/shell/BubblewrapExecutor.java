@@ -11,9 +11,12 @@ import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import java.io.IOException;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -117,17 +120,39 @@ public final class BubblewrapExecutor implements Executor {
             .withMetadata(ExecutionMetadata.sandboxed(name()));
     }
 
-    private void cleanupSyntheticMountTargets(List<Path> syntheticMountTargets) {
+    private void cleanupSyntheticMountTargets(List<BubblewrapCommandBuilder.SyntheticMountTarget> syntheticMountTargets) {
         syntheticMountTargets.stream()
-            .sorted((left, right) -> Integer.compare(right.getNameCount(), left.getNameCount()))
+            .sorted((left, right) -> Integer.compare(right.path().getNameCount(), left.path().getNameCount()))
             .forEach(this::deleteSyntheticMountTargetIfSafe);
     }
 
-    private void deleteSyntheticMountTargetIfSafe(Path path) {
+    private void deleteSyntheticMountTargetIfSafe(BubblewrapCommandBuilder.SyntheticMountTarget target) {
+        switch (target.kind()) {
+            case EMPTY_FILE -> deleteEmptyFileIfSafe(target.path());
+            case EMPTY_DIRECTORY -> deleteEmptyDirectoryIfSafe(target.path());
+        }
+    }
+
+    private void deleteEmptyFileIfSafe(Path path) {
         try {
-            Files.deleteIfExists(path);
+            BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (attributes.isRegularFile() && attributes.size() == 0) {
+                Files.deleteIfExists(path);
+            }
         } catch (IOException ignored) {
-            // 只清理空目录或合成空文件；如果路径被填充，保守保留，避免误删用户数据。
+            // NOTE: 路径已消失、被替换或无法安全确认为空文件时，保守保留。
+        }
+    }
+
+    private void deleteEmptyDirectoryIfSafe(Path path) {
+        try {
+            if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                Files.deleteIfExists(path);
+            }
+        } catch (DirectoryNotEmptyException ignored) {
+            // NOTE: 非空目录可能已有宿主数据，必须保留。
+        } catch (IOException ignored) {
+            // NOTE: 路径已消失、被替换或无法安全确认为空目录时，保守保留。
         }
     }
 
