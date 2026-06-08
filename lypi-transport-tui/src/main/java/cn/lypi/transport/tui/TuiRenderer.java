@@ -14,6 +14,10 @@ final class TuiRenderer {
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input) {
+        return render(view, screen, layout, input, -1);
+    }
+
+    List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input, int cursor) {
         List<String> transcript = transcriptLines(view.blocks(), layout.width());
         screen.setTranscript(transcript);
 
@@ -23,7 +27,7 @@ final class TuiRenderer {
             lines.add(i < visible.size() ? visible.get(i) : "");
         }
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
-        lines.add(AnsiWidth.truncate("> " + (input == null ? "" : input), layout.width()));
+        lines.add(inputLine(input, cursor, layout.width()));
         return lines;
     }
 
@@ -80,6 +84,19 @@ final class TuiRenderer {
             return AnsiWidth.truncate("tool " + status.permissionMode() + scroll, width);
         }
         return AnsiWidth.truncate(full, width);
+    }
+
+    private String inputLine(String input, int cursor, int width) {
+        String value = input == null ? "" : input;
+        if (cursor < 0) {
+            return AnsiWidth.truncate("> " + value, width);
+        }
+        int boundedCursor = Math.max(0, Math.min(cursor, value.length()));
+        String marked = "> "
+            + value.substring(0, boundedCursor)
+            + TerminalFrameRenderer.CURSOR_MARKER
+            + value.substring(boundedCursor);
+        return AnsiWidth.truncate(marked, width);
     }
 
     private String nullToEmpty(String value) {

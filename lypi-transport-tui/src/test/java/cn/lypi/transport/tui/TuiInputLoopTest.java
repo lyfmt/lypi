@@ -24,7 +24,26 @@ class TuiInputLoopTest {
 
         assertEquals(List.of("hello"), submit.submitted);
         assertEquals("", loop.draft());
-        assertEquals("> ", frames.getLast().lines().skip(3).findFirst().orElseThrow());
+        assertEquals("> |CURSOR|", frames.getLast().lines().skip(3).findFirst().orElseThrow());
+    }
+
+    @Test
+    void rendersCursorAtCurrentEditorPosition() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(30, 4)
+        );
+
+        loop.acceptText("alpha beta");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+
+        assertEquals("> alpha be|CURSOR|ta", frames.getLast().lines().skip(3).findFirst().orElseThrow());
     }
 
     @Test
@@ -54,6 +73,18 @@ class TuiInputLoopTest {
 
         assertEquals("", loop.draft());
         assertEquals(1, submit.interrupts);
+    }
+
+    @Test
+    void ctrlCRequestsExitWhenInputIsEmptyAndNoToolIsRunning() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
+        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals(1, submit.exits);
+        assertEquals(true, loop.exitRequested());
     }
 
     @Test
@@ -118,6 +149,7 @@ class TuiInputLoopTest {
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
         private int interrupts;
+        private int exits;
 
         @Override
         public void submitUserInput(String input) {
@@ -127,6 +159,11 @@ class TuiInputLoopTest {
         @Override
         public void requestInterrupt(String reason) {
             interrupts++;
+        }
+
+        @Override
+        public void requestExit(String reason) {
+            exits++;
         }
     }
 }

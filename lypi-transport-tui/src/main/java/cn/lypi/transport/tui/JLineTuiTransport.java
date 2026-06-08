@@ -141,6 +141,18 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         return "tui";
     }
 
+    /**
+     * 运行终端输入循环，直到用户请求退出。
+     */
+    public void runUntilExit() throws IOException {
+        while (!exitRequested() && !Thread.currentThread().isInterrupted()) {
+            drainInput();
+            if (!exitRequested()) {
+                sleepAfterEmptyPoll();
+            }
+        }
+    }
+
     @Override
     public void attach(EventBus events, SessionRuntimeState state) {
         synchronized (uiMonitor) {
@@ -162,7 +174,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             uiLockEntries++;
             reducer.reduce(event);
-            frameSink.render(tuiRenderer.render(reducer.view(), screen, layout, currentDraft()));
+            frameSink.render(tuiRenderer.render(reducer.view(), screen, layout, currentDraft(), currentCursor()));
         }
     }
 
@@ -198,6 +210,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
 
     boolean isUiLockedForTest() {
         return lastRenderHeldUiLock;
+    }
+
+    boolean exitRequestedForTest() {
+        return exitRequested();
     }
 
     @Override
@@ -250,11 +266,27 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             if (inputLoop != null) {
                 inputLoop.updateViewport(screen, layout);
             }
-            frameSink.render(tuiRenderer.render(reducer.view(), screen, layout, currentDraft()));
+            frameSink.render(tuiRenderer.render(reducer.view(), screen, layout, currentDraft(), currentCursor()));
         }
     }
 
     private String currentDraft() {
         return inputLoop == null ? "" : inputLoop.draft();
+    }
+
+    private int currentCursor() {
+        return inputLoop == null ? -1 : inputLoop.cursor();
+    }
+
+    private boolean exitRequested() {
+        return inputLoop != null && inputLoop.exitRequested();
+    }
+
+    private void sleepAfterEmptyPoll() {
+        try {
+            Thread.sleep(10L);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

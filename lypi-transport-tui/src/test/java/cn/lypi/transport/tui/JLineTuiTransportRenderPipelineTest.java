@@ -102,7 +102,7 @@ class JLineTuiTransportRenderPipelineTest {
         transport.drainInputForTest();
 
         assertEquals("Done", frames.getLast().getFirst());
-        assertEquals("> draft", frames.getLast().getLast());
+        assertEquals("> draft|CURSOR|", frames.getLast().getLast());
     }
 
     @Test
@@ -133,7 +133,37 @@ class JLineTuiTransportRenderPipelineTest {
         ));
 
         assertEquals("Done", frames.getLast().getFirst());
-        assertEquals("> draft", frames.getLast().getLast());
+        assertEquals("> draft|CURSOR|", frames.getLast().getLast());
+    }
+
+    @Test
+    void eventRerenderPreservesCurrentDraftCursor() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            40,
+            5,
+            new QueueInputSource("draft", "\033[D", "\033[D"),
+            new RecordingSubmitHandler()
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        transport.drainInputForTest();
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "## Done ##",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+
+        assertEquals("> dra|CURSOR|ft", frames.getLast().getLast());
     }
 
     @Test
@@ -155,6 +185,22 @@ class JLineTuiTransportRenderPipelineTest {
 
         assertEquals(4, frames.getLast().size());
         frames.getLast().forEach(line -> assertEquals(line, AnsiWidth.truncate(line, 8)));
+    }
+
+    @Test
+    void runUntilExitReturnsWhenCtrlCRequestsExit() throws Exception {
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            ignored -> {
+            },
+            40,
+            5,
+            new QueueInputSource("\u0003"),
+            new RecordingSubmitHandler()
+        );
+
+        transport.runUntilExit();
+
+        assertEquals(true, transport.exitRequestedForTest());
     }
 
     private static final class RecordingEventBus implements EventBus {

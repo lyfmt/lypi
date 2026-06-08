@@ -16,6 +16,7 @@ final class TuiInputLoop {
     private final InputEditor editor = new InputEditor();
     private final KeyBindingRegistry bindings = KeyBindingRegistry.defaults();
     private boolean toolRunning;
+    private boolean exitRequested;
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
@@ -87,6 +88,14 @@ final class TuiInputLoop {
         return editor.text();
     }
 
+    int cursor() {
+        return editor.cursor();
+    }
+
+    boolean exitRequested() {
+        return exitRequested;
+    }
+
     void updateViewport(TuiScreen screen, TuiLayout layout) {
         this.screen = screen;
         this.layout = layout;
@@ -116,12 +125,15 @@ final class TuiInputLoop {
         }
         if (toolRunning) {
             submitHandler.requestInterrupt("ctrl-c");
+        } else {
+            exitRequested = true;
+            submitHandler.requestExit("ctrl-c");
         }
         render();
     }
 
     private void render() {
-        frameSink.render(renderer.render(viewSupplier.get(), screen, layout, editor.text()));
+        frameSink.render(renderer.render(viewSupplier.get(), screen, layout, editor.text(), editor.cursor()));
     }
 
     private TuiViewModel emptyView() {
