@@ -3,7 +3,6 @@ package cn.lypi.agent.compact;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextSnapshot;
-import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CompactionPlan;
@@ -41,12 +40,18 @@ public final class DefaultCompactionPlanner implements CompactionPlanner {
             return Optional.empty();
         }
 
-        Optional<Integer> firstKeptIndex = firstKeptIndex(branchEntries, firstCandidateIndex);
-        if (firstKeptIndex.isEmpty() || firstKeptIndex.orElseThrow() <= firstCandidateIndex) {
+        List<SessionEntry> candidates = branchEntries.subList(firstCandidateIndex, branchEntries.size());
+        Optional<RoundCut> roundCut = firstKeptRound(candidates);
+        if (roundCut.isEmpty()) {
             return Optional.empty();
         }
 
-        List<String> summarizedEntryIds = branchEntries.subList(firstCandidateIndex, firstKeptIndex.orElseThrow()).stream()
+        int firstKeptIndex = firstCandidateIndex + roundCut.orElseThrow().firstKeptOffset();
+        if (firstKeptIndex <= firstCandidateIndex) {
+            return Optional.empty();
+        }
+
+        List<String> summarizedEntryIds = branchEntries.subList(firstCandidateIndex, firstKeptIndex).stream()
             .map(SessionEntry::id)
             .toList();
         if (summarizedEntryIds.isEmpty()) {
@@ -54,8 +59,8 @@ public final class DefaultCompactionPlanner implements CompactionPlanner {
         }
 
         return Optional.of(new CompactionPlan(
-            branchEntries.get(firstKeptIndex.orElseThrow() - 1).id(),
-            branchEntries.get(firstKeptIndex.orElseThrow()).id(),
+            branchEntries.get(firstKeptIndex - 1).id(),
+            branchEntries.get(firstKeptIndex).id(),
             summarizedEntryIds,
             CompactionKind.SESSION
         ));
@@ -74,42 +79,32 @@ public final class DefaultCompactionPlanner implements CompactionPlanner {
         return -1;
     }
 
-    private Optional<Integer> firstKeptIndex(List<SessionEntry> branchEntries, int firstCandidateIndex) {
-        int retainedTokens = 0;
-        int candidateIndex = branchEntries.size() - 1;
+    private Optional<RoundCut> firstKeptRound(List<SessionEntry> candidates) {
+        List<CompactionApiRound> rounds = CompactionApiRoundGrouper.groupEntries(candidates);
+        if (rounds.size() < 2) {
+            return Optional.empty();
+        }
 
-        for (int index = branchEntries.size() - 1; index >= firstCandidateIndex; index--) {
-            retainedTokens += estimateEntryTokens(branchEntries.get(index));
-            candidateIndex = index;
+        int retainedTokens = 0;
+        int firstKeptRoundIndex = rounds.size() - 1;
+
+        for (int index = rounds.size() - 1; index >= 0; index--) {
+            retainedTokens += estimateRoundTokens(rounds.get(index));
+            firstKeptRoundIndex = index;
             if (retainedTokens >= keepRecentTokens) {
                 break;
             }
         }
 
-        return nearestSafeBoundary(branchEntries, candidateIndex, firstCandidateIndex);
-    }
-
-    private Optional<Integer> nearestSafeBoundary(List<SessionEntry> branchEntries, int candidateIndex, int firstCandidateIndex) {
-        for (int index = candidateIndex; index < branchEntries.size(); index++) {
-            if (isSafeFirstKeptEntry(branchEntries.get(index))) {
-                return Optional.of(index);
-            }
+        if (firstKeptRoundIndex <= 0) {
+            firstKeptRoundIndex = 1;
         }
 
-        for (int index = candidateIndex - 1; index >= firstCandidateIndex; index--) {
-            if (isSafeFirstKeptEntry(branchEntries.get(index))) {
-                return Optional.of(index);
-            }
+        int firstKeptOffset = 0;
+        for (int index = 0; index < firstKeptRoundIndex; index++) {
+            firstKeptOffset += rounds.get(index).entries().size();
         }
-
-        return Optional.empty();
-    }
-
-    private boolean isSafeFirstKeptEntry(SessionEntry entry) {
-        if (!(entry instanceof MessageEntry messageEntry)) {
-            return true;
-        }
-        return messageEntry.message().kind() != MessageKind.TOOL_RESULT;
+        return Optional.of(new RoundCut(firstKeptOffset));
     }
 
     private int estimateEntryTokens(SessionEntry entry) {
@@ -125,8 +120,18 @@ public final class DefaultCompactionPlanner implements CompactionPlanner {
             .sum();
     }
 
+    private int estimateRoundTokens(CompactionApiRound round) {
+        int tokens = 0;
+        for (SessionEntry entry : round.entries()) {
+            tokens += estimateEntryTokens(entry);
+        }
+        return tokens;
+    }
+
     private int estimateBlockTokens(ContentBlock block) {
         String text = block.text() == null ? "" : block.text();
         return Math.max(1, text.length() / 4);
     }
+
+    private record RoundCut(int firstKeptOffset) {}
 }
