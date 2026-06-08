@@ -285,6 +285,28 @@ class BubblewrapExecutorTest {
     }
 
     @Test
+    void returnsFailureWhenPolicyBuilderRejectsRequest() throws Exception {
+        Path fakeBwrap = fakeBwrap();
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            new HostExecutor(),
+            () -> Optional.of(fakeBwrap)
+        );
+
+        ExecutionResult result = executor.execute(requestWithDenyWrite("printf should-not-run"), progress -> {
+        }, () -> false);
+
+        assertEquals(126, result.exitCode());
+        assertEquals("", result.stdout());
+        assertTrue(result.stderr().contains("bubblewrap policy rejected"));
+        assertTrue(result.stderr().contains("denyWrite"));
+        assertTrue(result.stderr().contains("unsupported"));
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+        assertTrue(result.metadata().diagnostic().orElseThrow().contains("policy rejected"));
+    }
+
+    @Test
     void keepsSyntheticFileWhenItWasFilledBeforeCleanup() throws Exception {
         Path fillingBwrap = fillingRoBindDataTargetBwrap("host-content");
         BubblewrapExecutor executor = new BubblewrapExecutor(
@@ -333,6 +355,24 @@ class BubblewrapExecutorTest {
                 List.of(secret),
                 List.of(tempDir),
                 List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        );
+    }
+
+    private ExecutionRequest requestWithDenyWrite(String command) {
+        return new ExecutionRequest(
+            List.of("bash", "-lc", command),
+            tempDir,
+            Map.of(),
+            Duration.ofSeconds(5),
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+                List.of(),
+                List.of(tempDir),
+                List.of(tempDir.resolve("blocked")),
                 NetworkMode.DISABLED,
                 false,
                 false

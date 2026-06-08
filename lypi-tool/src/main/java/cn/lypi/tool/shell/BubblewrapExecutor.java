@@ -36,6 +36,7 @@ import java.util.function.Supplier;
  */
 public final class BubblewrapExecutor implements Executor {
     private static final int UNAVAILABLE_EXIT_CODE = 127;
+    private static final int POLICY_REJECTED_EXIT_CODE = 126;
     private static final String UNAVAILABLE_MESSAGE = "bubblewrap unavailable";
     private static final String SANDBOX_STARTED_SENTINEL_PREFIX = "__LYPI_BWRAP_STARTED__";
 
@@ -90,10 +91,15 @@ public final class BubblewrapExecutor implements Executor {
         }
         String sandboxStartedSentinel = sandboxStartedSentinel();
         ExecutionRequest wrappedRequest = requestWithSandboxStartedSentinel(request, sandboxStartedSentinel);
-        BubblewrapCommandBuilder.BuildResult buildResult = commandBuilder.buildDetailed(
-            wrappedRequest,
-            new BubblewrapCommandBuilder.Options(mountProc)
-        );
+        BubblewrapCommandBuilder.BuildResult buildResult;
+        try {
+            buildResult = commandBuilder.buildDetailed(
+                wrappedRequest,
+                new BubblewrapCommandBuilder.Options(mountProc)
+            );
+        } catch (IllegalArgumentException exception) {
+            return policyRejected(exception);
+        }
         java.util.ArrayList<String> executableArgv = new java.util.ArrayList<>(buildResult.argv());
         executableArgv.set(0, bwrapPath.orElseThrow().toString());
         ExecutionRequest bwrapRequest = new ExecutionRequest(
@@ -118,6 +124,18 @@ public final class BubblewrapExecutor implements Executor {
         }
         return withoutSandboxStartedSentinel(result, sandboxStartedSentinel)
             .withMetadata(ExecutionMetadata.sandboxed(name()));
+    }
+
+    private ExecutionResult policyRejected(IllegalArgumentException exception) {
+        String diagnostic = "bubblewrap policy rejected: " + exception.getMessage();
+        return new ExecutionResult(
+            POLICY_REJECTED_EXIT_CODE,
+            "",
+            diagnostic,
+            false,
+            Optional.empty(),
+            ExecutionMetadata.unsandboxed(name(), diagnostic)
+        );
     }
 
     private void cleanupSyntheticMountTargets(List<BubblewrapCommandBuilder.SyntheticMountTarget> syntheticMountTargets) {
