@@ -8,6 +8,7 @@ import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -31,6 +32,20 @@ class BubblewrapExecutorSmokeTest {
         assertEquals("real-bwrap", result.stdout());
         assertTrue(result.metadata().sandboxed());
         assertEquals("bubblewrap", result.metadata().executorName());
+    }
+
+    @Test
+    void keepsProtectedMetadataReadonlyWithRealBubblewrapWhenAvailable() throws Exception {
+        Files.createDirectory(tempDir.resolve(".git"));
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        assumeTrue(realBubblewrapWorks(executor), "system bubblewrap is unavailable or cannot create namespaces");
+
+        ExecutionResult result = executor.execute(request("printf protected > .git/HEAD"), progress -> {
+        }, () -> false);
+
+        assertTrue(result.exitCode() != 0);
+        assertTrue(result.metadata().sandboxed());
+        assertTrue(!Files.exists(tempDir.resolve(".git/HEAD")));
     }
 
     private boolean realBubblewrapWorks(BubblewrapExecutor executor) {

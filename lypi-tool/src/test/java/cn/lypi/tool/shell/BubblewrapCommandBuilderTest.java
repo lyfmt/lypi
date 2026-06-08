@@ -74,6 +74,59 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void rebindsExistingProtectedMetadataUnderWritableWorkspaceAsReadOnly() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path git = Files.createDirectory(workspace.resolve(".git"));
+        Path codex = Files.createDirectory(workspace.resolve(".codex"));
+        Path agents = Files.createDirectory(workspace.resolve(".agents"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        ExecutionRequest request = request(cwd, policy(workspace, NetworkMode.DISABLED));
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request);
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(indexOfSequence(argv, "--ro-bind", git.toString(), git.toString()) > workspaceBind);
+        assertTrue(indexOfSequence(argv, "--ro-bind", codex.toString(), codex.toString()) > workspaceBind);
+        assertTrue(indexOfSequence(argv, "--ro-bind", agents.toString(), agents.toString()) > workspaceBind);
+    }
+
+    @Test
+    void skipsMissingProtectedMetadataPaths() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        ExecutionRequest request = request(cwd, policy(workspace, NetworkMode.DISABLED));
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request);
+
+        assertTrue(!containsSequence(argv, "--ro-bind", workspace.resolve(".git").toString(), workspace.resolve(".git").toString()));
+        assertTrue(!containsSequence(argv, "--ro-bind", workspace.resolve(".codex").toString(), workspace.resolve(".codex").toString()));
+        assertTrue(!containsSequence(argv, "--ro-bind", workspace.resolve(".agents").toString(), workspace.resolve(".agents").toString()));
+    }
+
+    @Test
+    void protectedMetadataReadonlyBindWinsOverNestedWritableRoot() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path git = Files.createDirectory(workspace.resolve(".git"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+            List.of(),
+            List.of(workspace, git),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int nestedWritableBind = indexOfSequence(argv, "--bind", git.toString(), git.toString());
+        assertTrue(nestedWritableBind >= 0, "test setup must include nested writable bind");
+        assertTrue(indexOfSequence(argv, "--ro-bind", git.toString(), git.toString()) > nestedWritableBind);
+    }
+
+    @Test
     void rejectsUnsupportedDenyPathsInsteadOfIgnoringThem() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path cwd = Files.createDirectory(workspace.resolve("src"));

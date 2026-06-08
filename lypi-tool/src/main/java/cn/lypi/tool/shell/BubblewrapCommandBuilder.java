@@ -3,8 +3,11 @@ package cn.lypi.tool.shell;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -19,6 +22,7 @@ public final class BubblewrapCommandBuilder {
         Path.of("/lib64"),
         Path.of("/etc")
     );
+    private static final List<String> PROTECTED_METADATA_NAMES = List.of(".git", ".codex", ".agents");
 
     /**
      * 控制 bwrap argv 中的可选运行时挂载。
@@ -80,11 +84,18 @@ public final class BubblewrapCommandBuilder {
         }
         argv.add("--tmpfs");
         argv.add("/tmp");
+        List<Path> writableMountPaths = new ArrayList<>();
         for (Path path : writablePaths(policy, request.cwd())) {
             Path mountPath = absoluteNormalized(path, "allowWrite");
+            writableMountPaths.add(mountPath);
             argv.add("--bind");
             argv.add(mountPath.toString());
             argv.add(mountPath.toString());
+        }
+        for (Path protectedMetadataPath : existingProtectedMetadataPaths(writableMountPaths)) {
+            argv.add("--ro-bind");
+            argv.add(protectedMetadataPath.toString());
+            argv.add(protectedMetadataPath.toString());
         }
         if (request.cwd() != null) {
             Path cwd = absoluteNormalized(request.cwd(), "cwd");
@@ -111,6 +122,27 @@ public final class BubblewrapCommandBuilder {
         if (!policy.denyRead().isEmpty() || !policy.denyWrite().isEmpty()) {
             throw new IllegalArgumentException("denyRead/denyWrite are unsupported by bubblewrap v1 policy builder");
         }
+    }
+
+    private List<Path> existingProtectedMetadataPaths(List<Path> writableRoots) {
+        LinkedHashSet<Path> paths = new LinkedHashSet<>();
+        for (Path writableRoot : writableRoots) {
+            if (isProtectedMetadataPath(writableRoot) && Files.exists(writableRoot, LinkOption.NOFOLLOW_LINKS)) {
+                paths.add(writableRoot);
+            }
+            for (String name : PROTECTED_METADATA_NAMES) {
+                Path path = writableRoot.resolve(name).normalize();
+                if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+                    paths.add(path);
+                }
+            }
+        }
+        return List.copyOf(paths);
+    }
+
+    private boolean isProtectedMetadataPath(Path path) {
+        Path fileName = path.getFileName();
+        return fileName != null && PROTECTED_METADATA_NAMES.contains(fileName.toString());
     }
 
     private Path absoluteNormalized(Path path, String label) {
