@@ -15,6 +15,7 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
@@ -37,6 +38,7 @@ import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
+import cn.lypi.runtime.event.InMemoryEventBus;
 import cn.lypi.tool.shell.BubblewrapExecutor;
 import cn.lypi.tool.shell.ExecutorRegistry;
 import cn.lypi.tool.shell.HostExecutor;
@@ -48,6 +50,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -183,6 +188,55 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
+    void tuiPermissionResponseUnlocksWaitingToolExecution() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        CountDownLatch requestPublished = new CountDownLatch(1);
+        List<AgentEvent> events = new ArrayList<>();
+        AtomicReference<PermissionRequestEvent> requestRef = new AtomicReference<>();
+        eventBus.subscribe(new EventFilter(Optional.empty(), Optional.empty()), envelope -> {
+            events.add(envelope.event());
+            if (envelope.event() instanceof PermissionRequestEvent request) {
+                requestRef.set(request);
+                requestPublished.countDown();
+            }
+        });
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(EventBus.class, () -> eventBus)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                runtime.register(new AskTool());
+
+                CompletableFuture<ToolResult<?>> resultFuture = CompletableFuture.supplyAsync(() -> runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "ask-test", Map.of("text", "approved"), "msg_1")),
+                    context()
+                ).getFirst());
+
+                assertThat(requestPublished.await(2, TimeUnit.SECONDS)).isTrue();
+                PermissionRequestEvent request = requestRef.get();
+                eventBus.publish(new PermissionResponseEvent(
+                    request.sessionId(),
+                    request.requestId(),
+                    request.defaultOptionId(),
+                    false,
+                    Instant.now()
+                ));
+
+                ToolResult<?> result = resultFuture.get(2, TimeUnit.SECONDS);
+
+                assertThat(result.isError()).isFalse();
+                assertThat(events).anySatisfy(event -> {
+                    assertThat(event).isInstanceOf(PermissionDecisionEvent.class);
+                    PermissionDecisionEvent decision = (PermissionDecisionEvent) event;
+                    assertThat(decision.requestId()).isEqualTo(request.requestId());
+                    assertThat(decision.selectedOptionId()).isEqualTo(request.defaultOptionId());
+                });
+            });
+    }
+
+    @Test
     void defaultRuntimePublishesToolLifecycleAndProgressWhenEventBusIsAvailable() {
         RecordingEventBus eventBus = new RecordingEventBus();
 
@@ -276,7 +330,8 @@ class LyPiToolAutoConfigurationTest {
 
         @Override
         public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
-            throw new AssertionError("ASK deny must prevent execution");
+            String output = String.valueOf(input.getOrDefault("text", "approved"));
+            return new ToolResult<>(output, false, List.of(serializeForContext(output)), Optional.empty());
         }
 
         @Override
