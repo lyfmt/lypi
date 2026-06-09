@@ -80,6 +80,21 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
+    void defaultToolRuntimeUsesConfiguredRuntimeCwd() {
+        Path runtimeCwd = Path.of("build/test-runtime-cwd").toAbsolutePath().normalize();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues("lypi.runtime.cwd=" + runtimeCwd)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(runtime.cwd()).isEqualTo(runtimeCwd);
+            });
+    }
+
+    @Test
     void bindsSandboxPropertiesIntoDefaultPolicyResolver() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)

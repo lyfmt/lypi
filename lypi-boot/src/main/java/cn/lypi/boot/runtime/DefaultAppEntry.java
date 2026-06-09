@@ -49,9 +49,7 @@ final class DefaultAppEntry implements AppEntry {
     @Override
     public void start(BootstrapRequest request) {
         BootstrapContext context = bootstrapService.bootstrap(request);
-        Optional<String> initialPrompt = request == null
-            ? Optional.empty()
-            : request.initialPrompt().filter(prompt -> !prompt.isBlank());
+        Optional<String> initialPrompt = initialPrompt(request);
         initialPrompt.ifPresent(prompt -> agentCore.execute(new TurnRequest(
                 context.session().sessionId(),
                 prompt,
@@ -79,5 +77,20 @@ final class DefaultAppEntry implements AppEntry {
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
             false
         ), agentCore, eventBus);
+    }
+
+    private Optional<String> initialPrompt(BootstrapRequest request) {
+        if (request == null) {
+            return Optional.empty();
+        }
+        Optional<String> configuredPrompt = request.initialPrompt().filter(prompt -> !prompt.isBlank());
+        if (configuredPrompt.isPresent()) {
+            return configuredPrompt;
+        }
+        String cliPrompt = String.join(" ", request.cliArgs()).trim();
+        if (cliPrompt.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(cliPrompt);
     }
 }

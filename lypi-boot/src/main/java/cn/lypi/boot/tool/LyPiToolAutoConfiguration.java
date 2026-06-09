@@ -20,6 +20,7 @@ import cn.lypi.tool.shell.HostExecutor;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import cn.lypi.transport.headless.HeadlessTransport;
+import java.nio.file.Path;
 import java.time.Instant;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -94,16 +95,21 @@ public class LyPiToolAutoConfiguration {
         SandboxPolicyResolver sandboxPolicyResolver,
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionResponseGate> responseGate,
-        ObjectProvider<PermissionPromptPort> promptPort
+        ObjectProvider<PermissionPromptPort> promptPort,
+        Environment environment
     ) {
         EventBus resolvedEventBus = eventBus.getIfAvailable();
+        String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
+        ToolRuntimeOptions options = ToolRuntimeOptions.builder()
+            .cwd(Path.of(configuredCwd))
+            .build();
         DefaultToolRuntime runtime = toolRuntime(
             resolvedEventBus,
             new cn.lypi.tool.DefaultToolRegistry(),
             new cn.lypi.tool.ToolSchemaValidator(),
             new cn.lypi.tool.ToolExecutionPlanner(),
             new cn.lypi.tool.ToolResultBudgeter(),
-            new cn.lypi.tool.ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()),
+            new cn.lypi.tool.ToolRuntimeContextFactory(options),
             cn.lypi.tool.ToolExecutionInterceptors.noop(),
             securityRuntime,
             responseGate.getIfAvailable(),

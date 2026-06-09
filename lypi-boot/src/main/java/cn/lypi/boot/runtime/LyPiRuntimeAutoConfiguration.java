@@ -207,13 +207,13 @@ public class LyPiRuntimeAutoConfiguration {
     /**
      * 创建 Spring Boot 启动回调。
      */
-    @Bean
+    @Bean("lyPiApplicationRunner")
     @ConditionalOnBean(AppEntry.class)
-    @ConditionalOnMissingBean(ApplicationRunner.class)
+    @ConditionalOnMissingBean(name = "lyPiApplicationRunner")
     public ApplicationRunner lyPiApplicationRunner(AppEntry appEntry, LyPiRuntimeProperties properties) {
         return args -> appEntry.start(new cn.lypi.contracts.bootstrap.BootstrapRequest(
             properties.getCwd(),
-            args == null ? List.of() : List.of(args.getSourceArgs()),
+            args == null ? List.of() : args.getNonOptionArgs(),
             Optional.of(properties.getSessionId()),
             Optional.ofNullable(properties.getInitialPrompt())
         ));
