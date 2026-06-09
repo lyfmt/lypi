@@ -5,10 +5,12 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.List;
 import java.util.Optional;
 import org.jline.terminal.Terminal;
 
@@ -91,15 +93,52 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         EventBus events,
         Terminal terminal
     ) throws IOException {
+        return open(state, core, events, terminal, List.of());
+    }
+
+    /**
+     * 打开带 slash command 支持的真实 JLine TUI transport。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        List<SlashCommand> slashCommands
+    ) throws IOException {
         JLineTerminalIo io = new JLineTerminalIo(terminal);
+        return open(
+            state,
+            core,
+            events,
+            io,
+            new JLineTerminalInputSource(terminal),
+            command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command),
+            slashCommands,
+            terminal.getWidth(),
+            terminal.getHeight()
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        java.util.concurrent.Executor executor,
+        List<SlashCommand> slashCommands,
+        int width,
+        int height
+    ) throws IOException {
         return open(
             state,
             events,
             io,
-            new JLineTerminalInputSource(terminal),
-            new RuntimeTuiSubmitHandler(state.sessionId(), core, events),
-            terminal.getWidth(),
-            terminal.getHeight()
+            inputSource,
+            new RuntimeTuiSubmitHandler(state.sessionId(), core, events, executor, slashCommands),
+            width,
+            height
         );
     }
 

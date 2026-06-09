@@ -75,6 +75,9 @@ final class DefaultAppEntry implements AppEntry {
             properties.getAgentMode(),
             properties.getPermissionMode(),
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
+            false,
+            false,
+            false,
             false
         ), agentCore, eventBus);
     }

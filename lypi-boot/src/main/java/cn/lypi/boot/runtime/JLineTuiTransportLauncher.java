@@ -3,13 +3,23 @@ package cn.lypi.boot.runtime;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.tui.SessionRuntimeState;
-import cn.lypi.transport.tui.JLineTuiTransport;
+import cn.lypi.contracts.tui.SlashCommand;
+import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.List;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 final class JLineTuiTransportLauncher implements TransportLauncher {
+    private final JLineTuiTransportFactory factory;
+    private final List<SlashCommand> slashCommands;
+
+    JLineTuiTransportLauncher(JLineTuiTransportFactory factory, List<SlashCommand> slashCommands) {
+        this.factory = factory;
+        this.slashCommands = slashCommands == null ? List.of() : List.copyOf(slashCommands);
+    }
+
     @Override
     public String name() {
         return "tui";
@@ -18,7 +28,7 @@ final class JLineTuiTransportLauncher implements TransportLauncher {
     @Override
     public void launch(SessionRuntimeState state, AgentCorePort core, EventBus events) {
         try (Terminal terminal = TerminalBuilder.builder().system(true).build();
-             JLineTuiTransport transport = JLineTuiTransport.open(state, core, events, terminal)) {
+             var transport = factory.open(state, core, events, terminal, slashCommands)) {
             transport.runUntilExit();
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);

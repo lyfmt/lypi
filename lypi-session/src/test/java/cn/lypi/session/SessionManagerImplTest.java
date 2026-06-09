@@ -9,8 +9,10 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
@@ -55,6 +57,15 @@ class SessionManagerImplTest {
         assertThat(reopenedEngine.branch("entry_2"))
             .extracting(SessionEntry::id)
             .containsExactly("entry_1", "entry_2");
+    }
+
+    @Test
+    void exposesSessionStorageRootSeparatelyFromExecutionCwd() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+
+        assertThat(engine)
+            .isInstanceOfSatisfying(SessionStorageRootPort.class,
+                storageRoot -> assertThat(storageRoot.sessionStorageRoot()).isEqualTo(tempDir));
     }
 
     @Test
@@ -213,6 +224,53 @@ class SessionManagerImplTest {
         assertThat(branched.leafId()).isEqualTo("right");
         assertThat(engine.branch("right")).extracting(SessionEntry::id).containsExactly("root", "right");
         assertThat(engine.branch("left")).extracting(SessionEntry::id).containsExactly("root", "left");
+    }
+
+    @Test
+    void appendAgentLifecycleEntryMovesInMemoryLeafForCurrentTurnBranching() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
+
+        SessionHandle handle = engine.append(new AgentLifecycleEntry(
+            "entry_agent",
+            "root",
+            "agent_1",
+            "ses_child",
+            "ses_main",
+            "finished",
+            Map.of(),
+            Instant.parse("2026-06-01T00:02:00Z")
+        ));
+
+        assertThat(handle.leafId()).isEqualTo("entry_agent");
+        assertThat(handle.byId()).containsKey("entry_agent");
+        assertThat(engine.branch("entry_agent")).extracting(SessionEntry::id).containsExactly("root", "entry_agent");
+    }
+
+    @Test
+    void openOrCreateRestoresLatestNonLifecycleLeafWhenLifecycleEntryWasLastJsonlLine() {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(sessionHeader("ses_main"));
+        store.append("ses_main", new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        store.append("ses_main", new CustomMessageEntry("left", "root", "left", Instant.parse("2026-06-01T00:01:00Z")));
+        store.append("ses_main", new AgentLifecycleEntry(
+            "entry_agent",
+            "root",
+            "agent_1",
+            "ses_child",
+            "ses_main",
+            "finished",
+            Map.of(),
+            Instant.parse("2026-06-01T00:02:00Z")
+        ));
+        SessionManager engine = new SessionManagerImpl(tempDir);
+
+        SessionHandle reopened = engine.openOrCreate("ses_main");
+
+        assertThat(reopened.leafId()).isEqualTo("left");
+        assertThat(reopened.byId()).containsKey("entry_agent");
     }
 
     @Test

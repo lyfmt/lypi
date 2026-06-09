@@ -14,6 +14,10 @@ public record SessionHeader(
     String id,
     Path cwd,
     Optional<String> parentSessionId,
+    Optional<String> parentSpawnEntryId,
+    int depth,
+    Optional<String> agentName,
+    Optional<String> agentRole,
     Instant timestamp,
     Optional<ModelSelection> initialModel,
     Optional<ThinkingLevel> initialThinkingLevel,
@@ -22,6 +26,9 @@ public record SessionHeader(
 ) {
     public SessionHeader {
         parentSessionId = parentSessionId == null ? Optional.empty() : parentSessionId;
+        parentSpawnEntryId = parentSpawnEntryId == null ? Optional.empty() : parentSpawnEntryId;
+        agentName = agentName == null ? Optional.empty() : agentName;
+        agentRole = agentRole == null ? Optional.empty() : agentRole;
         initialModel = initialModel == null ? Optional.empty() : initialModel;
         initialThinkingLevel = initialThinkingLevel == null ? Optional.empty() : initialThinkingLevel;
         initialAgentMode = initialAgentMode == null ? Optional.empty() : initialAgentMode;
@@ -42,6 +49,40 @@ public record SessionHeader(
             id,
             cwd,
             parentSessionId,
+            Optional.empty(),
+            0,
+            Optional.empty(),
+            Optional.empty(),
+            timestamp,
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    public SessionHeader(
+        String type,
+        int version,
+        String id,
+        Path cwd,
+        Optional<String> parentSessionId,
+        Optional<String> parentSpawnEntryId,
+        int depth,
+        Optional<String> agentName,
+        Optional<String> agentRole,
+        Instant timestamp
+    ) {
+        this(
+            type,
+            version,
+            id,
+            cwd,
+            parentSessionId,
+            parentSpawnEntryId,
+            depth,
+            agentName,
+            agentRole,
             timestamp,
             Optional.empty(),
             Optional.empty(),

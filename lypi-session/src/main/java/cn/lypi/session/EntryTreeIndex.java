@@ -1,5 +1,6 @@
 package cn.lypi.session;
 
+import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,7 +19,7 @@ final class EntryTreeIndex {
 
     EntryTreeIndex(List<SessionEntry> entries) {
         for (SessionEntry entry : entries) {
-            add(entry);
+            restore(entry);
         }
     }
 
@@ -63,6 +64,18 @@ final class EntryTreeIndex {
         String parentId = entry.parentId();
         if (parentId != null && !byId.containsKey(parentId)) {
             throw new SessionEngineException("Parent session entry does not exist: " + parentId);
+        }
+    }
+
+    private boolean advancesLeaf(SessionEntry entry) {
+        return !(entry instanceof AgentLifecycleEntry);
+    }
+
+    private void restore(SessionEntry entry) {
+        validateAppend(entry);
+        byId.put(entry.id(), entry);
+        if (advancesLeaf(entry)) {
+            leafId = entry.id();
         }
     }
 

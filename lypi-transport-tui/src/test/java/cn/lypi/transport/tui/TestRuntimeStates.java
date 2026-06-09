@@ -23,6 +23,9 @@ final class TestRuntimeStates {
             AgentMode.EXECUTE,
             PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(0, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
+            false,
+            false,
+            false,
             false
         );
     }
