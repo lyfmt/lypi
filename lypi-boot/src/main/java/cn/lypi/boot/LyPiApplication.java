@@ -30,6 +30,7 @@ public class LyPiApplication {
         application.setBannerMode(Banner.Mode.OFF);
         application.setLogStartupInfo(false);
         if (isHeadlessSubagent(args)) {
+            System.setProperty(LoggingSystem.SYSTEM_PROPERTY, LoggingSystem.NONE);
             application.setDefaultProperties(Map.of(
                 "logging.level.root", "off",
                 LoggingSystem.SYSTEM_PROPERTY, LoggingSystem.NONE

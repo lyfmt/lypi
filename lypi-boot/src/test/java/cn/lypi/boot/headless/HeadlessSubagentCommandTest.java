@@ -85,6 +85,23 @@ class HeadlessSubagentCommandTest {
     }
 
     @Test
+    void headlessApplicationForcesJvmLoggingSystemOffBeforeBootStarts() {
+        String previous = System.getProperty(LoggingSystem.SYSTEM_PROPERTY);
+        System.setProperty(LoggingSystem.SYSTEM_PROPERTY, "example.LoggingSystem");
+        try {
+            LyPiApplication.application(new String[] {"headless-subagent"});
+
+            assertThat(System.getProperty(LoggingSystem.SYSTEM_PROPERTY)).isEqualTo(LoggingSystem.NONE);
+        } finally {
+            if (previous == null) {
+                System.clearProperty(LoggingSystem.SYSTEM_PROPERTY);
+            } else {
+                System.setProperty(LoggingSystem.SYSTEM_PROPERTY, previous);
+            }
+        }
+    }
+
+    @Test
     void autoConfigurationCreatesHeadlessSubagentCommandWhenDependenciesExist() {
         new ApplicationContextRunner()
             .withUserConfiguration(HeadlessSubagentCommandAutoConfiguration.class)
