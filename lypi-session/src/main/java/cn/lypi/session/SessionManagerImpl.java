@@ -171,7 +171,7 @@ public final class SessionManagerImpl implements SessionManager {
         if (!sessionId.equals(request.sourceSessionId())) {
             throw new SessionEngineException("Fork source session does not match open session: " + request.sourceSessionId());
         }
-        return new ForkService(clock).fork(request, index);
+        return new ForkService(clock).fork(request, header, index);
     }
 
     private SessionHandle handle() {

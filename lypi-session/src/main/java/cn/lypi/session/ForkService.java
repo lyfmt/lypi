@@ -27,7 +27,7 @@ final class ForkService {
     /**
      * 从源索引派生新的 session。
      */
-    SessionHandle fork(ForkRequest request, EntryTreeIndex sourceIndex) {
+    SessionHandle fork(ForkRequest request, SessionHeader sourceHeader, EntryTreeIndex sourceIndex) {
         validateRequest(request);
         List<SessionEntry> path = sourceIndex.branch(request.forkPointEntryId());
         String forkSessionId = "ses_" + UUID.randomUUID().toString().replace("-", "");
@@ -37,7 +37,11 @@ final class ForkService {
             forkSessionId,
             request.targetCwd(),
             Optional.of(request.sourceSessionId()),
-            Instant.now(clock)
+            Instant.now(clock),
+            sourceHeader.initialModel(),
+            sourceHeader.initialThinkingLevel(),
+            sourceHeader.initialAgentMode(),
+            sourceHeader.initialPermissionMode()
         );
         JsonlSessionStore targetStore = new JsonlSessionStore(request.targetCwd());
         targetStore.create(header);
