@@ -781,6 +781,7 @@ class ContractSerializationTest {
                 new TuiThinkingBlock("block_thinking", "msg_01", "considering", true, true),
                 new TuiToolBlock(
                     "block_tool",
+                    "msg_01",
                     "toolu_01",
                     "bash",
                     TuiToolState.RUNNING,
@@ -807,6 +808,7 @@ class ContractSerializationTest {
         assertInstanceOf(TuiToolBlock.class, restored.blocks().get(2));
         assertInstanceOf(TuiErrorBlock.class, restored.blocks().get(3));
         TuiToolBlock tool = (TuiToolBlock) restored.blocks().get(2);
+        assertEquals("msg_01", tool.messageId());
         assertEquals(TuiToolState.RUNNING, tool.state());
         assertTrue(tool.active());
         assertTrue(restored.files().getFirst().path().endsWith(Path.of("src/App.java")));

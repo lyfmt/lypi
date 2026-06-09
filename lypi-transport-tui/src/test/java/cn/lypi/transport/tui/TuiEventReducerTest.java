@@ -305,11 +305,56 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void messageEndOnlyDeactivatesPendingToolBlocksFromSameMessage() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(toolCallDelta("msg_tool_call_1", "toolu_1", "read"));
+        reducer.reduce(toolCallDelta("msg_tool_call_2", "toolu_2", "grep"));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_tool_call_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(),
+            Optional.empty(),
+            Optional.of("tool_calls"),
+            Map.of(),
+            NOW
+        ));
+
+        TuiToolBlock first = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().get(0));
+        TuiToolBlock second = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().get(1));
+        assertEquals("msg_tool_call_1", first.messageId());
+        assertFalse(first.active());
+        assertEquals("msg_tool_call_2", second.messageId());
+        assertTrue(second.active());
+    }
+
+    @Test
     void replayInitializationCreatesEmptyFirstScreenWhenOnlySessionPointerExists() {
         TuiEventReducer reducer = TuiEventReducer.fromSessionView(new SessionView("ses_1", "leaf_1"));
 
         assertTrue(reducer.view().blocks().isEmpty());
         assertTrue(reducer.view().files().isEmpty());
         assertTrue(reducer.view().permissionPrompt().isEmpty());
+    }
+
+    private static MessageDeltaEvent toolCallDelta(String messageId, String toolUseId, String toolName) {
+        return new MessageDeltaEvent(
+            "ses_1",
+            messageId,
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            messageId + ":tool_call:" + toolUseId,
+            ContentBlockKind.TOOL_CALL,
+            "",
+            false,
+            Map.of(
+                "toolUseId", toolUseId,
+                "toolName", toolName,
+                "inputSummary", toolName
+            ),
+            NOW
+        );
     }
 }

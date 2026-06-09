@@ -2,6 +2,7 @@ package cn.lypi.contracts.tui;
 
 public record TuiToolBlock(
     String blockId,
+    String messageId,
     String toolUseId,
     String toolName,
     TuiToolState state,

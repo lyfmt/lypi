@@ -420,7 +420,11 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             messageId,
             cn.lypi.contracts.context.MessageRole.ASSISTANT,
             kind,
-            Map.of("streaming", true),
+            Map.of(
+                "streaming", true,
+                "kindProvisional", true,
+                "finalKindSource", "message_end"
+            ),
             clock.instant()
         ));
     }

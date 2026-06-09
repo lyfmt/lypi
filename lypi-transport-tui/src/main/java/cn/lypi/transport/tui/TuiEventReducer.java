@@ -150,6 +150,7 @@ public final class TuiEventReducer {
         String label = metadataString(event, "inputSummary", toolName);
         TuiToolBlock block = new TuiToolBlock(
             "tool:" + toolUseId,
+            event.messageId(),
             toolUseId,
             toolName,
             TuiToolState.PENDING,
@@ -188,10 +189,13 @@ public final class TuiEventReducer {
                         block.collapsed()
                     )
                 );
-                case TuiToolBlock block when block.state() == TuiToolState.PENDING && block.active() -> state.putBlock(
+                case TuiToolBlock block when event.messageId().equals(block.messageId())
+                    && block.state() == TuiToolState.PENDING
+                    && block.active() -> state.putBlock(
                     i,
                     new TuiToolBlock(
                         block.blockId(),
+                        block.messageId(),
                         block.toolUseId(),
                         block.toolName(),
                         block.state(),
@@ -209,6 +213,7 @@ public final class TuiEventReducer {
         String label = firstNonBlank(event.displayTitle(), event.inputSummary(), event.toolName());
         TuiToolBlock block = new TuiToolBlock(
             "tool:" + event.toolUseId(),
+            event.parentMessageId(),
             event.toolUseId(),
             event.toolName(),
             TuiToolState.RUNNING,
@@ -229,6 +234,7 @@ public final class TuiEventReducer {
             TuiToolBlock current = (TuiToolBlock) state.blocks().get(index);
             state.putBlock(index, new TuiToolBlock(
                 current.blockId(),
+                current.messageId(),
                 current.toolUseId(),
                 current.toolName(),
                 TuiToolState.RUNNING,
@@ -244,6 +250,7 @@ public final class TuiEventReducer {
             TuiToolState toolState = toolState(event.status());
             state.putBlock(index, new TuiToolBlock(
                 current.blockId(),
+                current.messageId(),
                 current.toolUseId(),
                 current.toolName(),
                 toolState,
