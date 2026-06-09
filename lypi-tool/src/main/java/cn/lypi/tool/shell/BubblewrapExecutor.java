@@ -44,7 +44,7 @@ import java.util.function.Supplier;
 /**
  * 使用系统 Bubblewrap 执行命令。
  *
- * NOTE: 第一版依赖系统 bwrap；不可用或启动失败时回退宿主执行器，并在 metadata 中标记未沙盒化。
+ * NOTE: 第一版依赖系统 bwrap；默认不可用或启动失败时回退宿主执行器，策略要求时拒绝执行。
  */
 public final class BubblewrapExecutor implements Executor {
     private static final int POLICY_VIOLATION_EXIT_CODE = 1;
@@ -493,6 +493,9 @@ public final class BubblewrapExecutor implements Executor {
     }
 
     private ExecutionResult handleUnavailable(ExecutionRequest request, ProgressSink progress, AbortSignal signal, String diagnostic) {
+        if (failIfUnavailable(request)) {
+            return sandboxUnavailableFailure(diagnostic);
+        }
         return hostExecutor.execute(request, progress, signal)
             .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), diagnostic + "; fell back to host"));
     }
@@ -509,8 +512,27 @@ public final class BubblewrapExecutor implements Executor {
         if (result.timedOut()) {
             return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution timed out"));
         }
+        if (failIfUnavailable(request)) {
+            return sandboxUnavailableFailure(executionFailureDiagnostic(result));
+        }
         return hostExecutor.execute(request, progress, signal)
-            .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), executionFailureDiagnostic(result)));
+            .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), executionFailureDiagnostic(result) + "; fell back to host"));
+    }
+
+    private boolean failIfUnavailable(ExecutionRequest request) {
+        SandboxRuntimePolicy policy = request.sandboxPolicy();
+        return policy != null && policy.failIfUnavailable();
+    }
+
+    private ExecutionResult sandboxUnavailableFailure(String diagnostic) {
+        return new ExecutionResult(
+            POLICY_REJECTED_EXIT_CODE,
+            "",
+            diagnostic,
+            false,
+            Optional.empty(),
+            ExecutionMetadata.unsandboxed(name(), diagnostic)
+        );
     }
 
     private String executionFailureDiagnostic(ExecutionResult result) {
@@ -519,7 +541,7 @@ public final class BubblewrapExecutor implements Executor {
         if (!stderr.isEmpty()) {
             diagnostic += ": " + stderr;
         }
-        return diagnostic + "; fell back to host";
+        return diagnostic;
     }
 
     private Duration timeout(ExecutionRequest request) {

@@ -132,21 +132,17 @@ class BubblewrapExecutorTest {
     }
 
     @Test
-    void fallsBackToHostWhenBwrapUnavailableAndPolicyRequiresSandbox() {
+    void failsWhenBwrapUnavailableAndPolicyRequiresSandbox() {
         BubblewrapExecutor executor = new BubblewrapExecutor(
             BubblewrapCommandBuilder.defaults(),
             new HostExecutor(),
             Optional::empty
         );
 
-        ExecutionResult result = executor.execute(request("printf host-with-required-sandbox", true), progress -> {
+        ExecutionResult result = executor.execute(request("printf should-not-run", true), progress -> {
         }, () -> false);
 
-        assertEquals(0, result.exitCode());
-        assertEquals("host-with-required-sandbox", result.stdout());
-        assertFalse(result.metadata().sandboxed());
-        assertEquals("host", result.metadata().executorName());
-        assertTrue(result.metadata().diagnostic().orElseThrow().contains("bubblewrap unavailable"));
+        assertSandboxUnavailableFailure(result, "bubblewrap unavailable");
     }
 
     @Test
@@ -206,7 +202,7 @@ class BubblewrapExecutorTest {
     }
 
     @Test
-    void fallsBackToHostWhenProcFallbackPreflightFailsAndPolicyRequiresSandbox() throws Exception {
+    void failsWhenProcFallbackPreflightFailsAndPolicyRequiresSandbox() throws Exception {
         Path procAndNoProcFailingBwrap = procAndNoProcFailingBwrap();
         BubblewrapExecutor executor = new BubblewrapExecutor(
             BubblewrapCommandBuilder.defaults(),
@@ -214,15 +210,10 @@ class BubblewrapExecutorTest {
             () -> Optional.of(procAndNoProcFailingBwrap)
         );
 
-        ExecutionResult result = executor.execute(request("printf host-after-proc-preflight", true), progress -> {
+        ExecutionResult result = executor.execute(request("printf should-not-run", true), progress -> {
         }, () -> false);
 
-        assertEquals(0, result.exitCode());
-        assertEquals("host-after-proc-preflight", result.stdout());
-        assertFalse(result.metadata().sandboxed());
-        assertEquals("host", result.metadata().executorName());
-        assertTrue(result.metadata().diagnostic().orElseThrow().contains("bubblewrap unavailable"));
-        assertTrue(result.metadata().diagnostic().orElseThrow().contains("preflight failed exit"));
+        assertSandboxUnavailableFailure(result, "preflight failed exit");
     }
 
     @Test
@@ -309,7 +300,7 @@ class BubblewrapExecutorTest {
     }
 
     @Test
-    void fallsBackToHostWhenBwrapSetupFailsAfterPreflightAndPolicyRequiresSandbox() throws Exception {
+    void failsWhenBwrapSetupFailsAfterPreflightAndPolicyRequiresSandbox() throws Exception {
         Path setupFailingBwrap = setupFailingBwrap();
         BubblewrapExecutor executor = new BubblewrapExecutor(
             BubblewrapCommandBuilder.defaults(),
@@ -317,19 +308,15 @@ class BubblewrapExecutorTest {
             () -> Optional.of(setupFailingBwrap)
         );
 
-        ExecutionResult result = executor.execute(request("printf host-after-setup-required", true), progress -> {
+        ExecutionResult result = executor.execute(request("printf should-not-run", true), progress -> {
         }, () -> false);
 
-        assertEquals(0, result.exitCode());
-        assertEquals("host-after-setup-required", result.stdout());
-        assertFalse(result.metadata().sandboxed());
-        assertEquals("host", result.metadata().executorName());
-        assertTrue(result.metadata().diagnostic().orElseThrow().contains("bubblewrap execution failed"));
+        assertSandboxUnavailableFailure(result, "bubblewrap execution failed");
         assertTrue(result.metadata().diagnostic().orElseThrow().contains("bwrap: setup failed"));
     }
 
     @Test
-    void fallsBackToHostWhenBwrapPreflightFailsAndPolicyRequiresSandbox() throws Exception {
+    void failsWhenBwrapPreflightFailsAndPolicyRequiresSandbox() throws Exception {
         Path failingBwrap = failingBwrap();
         BubblewrapExecutor executor = new BubblewrapExecutor(
             BubblewrapCommandBuilder.defaults(),
@@ -337,14 +324,10 @@ class BubblewrapExecutorTest {
             () -> Optional.of(failingBwrap)
         );
 
-        ExecutionResult result = executor.execute(request("printf host-after-preflight-required", true), progress -> {
+        ExecutionResult result = executor.execute(request("printf should-not-run", true), progress -> {
         }, () -> false);
 
-        assertEquals(0, result.exitCode());
-        assertEquals("host-after-preflight-required", result.stdout());
-        assertFalse(result.metadata().sandboxed());
-        assertEquals("host", result.metadata().executorName());
-        assertTrue(result.metadata().diagnostic().orElseThrow().contains("bubblewrap unavailable"));
+        assertSandboxUnavailableFailure(result, "bubblewrap unavailable");
     }
 
     @Test
@@ -555,6 +538,15 @@ class BubblewrapExecutorTest {
         assertEquals(0, firstResult.get().exitCode());
         assertEquals(0, secondResult.get().exitCode());
         assertEquals(1, host.maxActive());
+    }
+
+    private void assertSandboxUnavailableFailure(ExecutionResult result, String diagnosticFragment) {
+        assertEquals(126, result.exitCode());
+        assertEquals("", result.stdout());
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("bubblewrap", result.metadata().executorName());
+        assertTrue(result.metadata().diagnostic().orElseThrow().contains(diagnosticFragment));
+        assertTrue(!result.metadata().diagnostic().orElseThrow().contains("fell back to host"));
     }
 
     private ExecutionRequest request(String command, boolean failIfUnavailable) {
