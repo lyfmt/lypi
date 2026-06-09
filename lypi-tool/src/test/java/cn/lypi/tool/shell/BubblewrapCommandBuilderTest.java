@@ -127,6 +127,29 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void bindsWritableRootsFromParentToChildRegardlessOfPolicyOrder() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path child = Files.createDirectory(workspace.resolve("child"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(child, workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(workspace, policy));
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        int childBind = indexOfSequence(argv, "--bind", child.toString(), child.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(childBind >= 0, "child must be writable");
+        assertTrue(workspaceBind < childBind, "parent writable root must be bound before child writable root");
+    }
+
+    @Test
     void omitsNetworkUnshareForHostNetworkMode() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path cwd = Files.createDirectory(workspace.resolve("src"));
@@ -511,6 +534,33 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void rejectsAllowReadThroughSymlinkInsideWritableParent() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path realTarget = Files.createDirectory(tempDir.resolve("real-target"));
+        Path secret = Files.writeString(realTarget.resolve("secret.txt"), "secret");
+        Path link = workspace.resolve("link");
+        Files.createSymbolicLink(link, realTarget);
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), link.resolve(secret.getFileName())),
+            List.of(),
+            List.of(workspace, link),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("allowRead path must not cross a writable symbolic link"));
+        assertTrue(exception.getMessage().contains(link.toString()));
+    }
+
+    @Test
     void rejectsAllowWriteSymlinkTargetInsideProtectedMetadata() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path git = Files.createDirectory(workspace.resolve(".git"));
@@ -734,6 +784,32 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void rejectsMissingDenyReadBelowExistingFileAncestor() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path token = Files.writeString(workspace.resolve("token"), "secret");
+        Path missingSecret = token.resolve("secret");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(missingSecret),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("denyRead"));
+        assertTrue(exception.getMessage().contains("parent must be a directory"));
+        assertTrue(exception.getMessage().contains(token.toString()));
+    }
+
+    @Test
     void reopensWritableDirectoryUnderDenyReadAncestor() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path denied = Files.createDirectory(workspace.resolve("denied"));
@@ -761,6 +837,62 @@ class BubblewrapCommandBuilderTest {
         assertTrue(deniedMask < childTarget);
         assertTrue(childTarget < deniedReadonly);
         assertTrue(deniedReadonly < childRebind);
+    }
+
+    @Test
+    void reappliesAllowReadInsideWritableDescendantAfterDenyReadRebind() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Path writableChild = Files.createDirectory(denied.resolve("child"));
+        Path missingReadOnly = writableChild.resolve("generated").resolve("config.json");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), missingReadOnly),
+            List.of(denied),
+            List.of(workspace, writableChild),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request(cwd, policy), BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+        Path firstMissingComponent = writableChild.resolve("generated");
+
+        int childRebind = lastIndexOfSequence(argv, "--bind", writableChild.toString(), writableChild.toString());
+        int missingMask = lastIndexOfSequence(argv, "--ro-bind-data", "0", firstMissingComponent.toString());
+        assertTrue(childRebind > indexOfSequence(argv, "--remount-ro", denied.toString()));
+        assertTrue(missingMask > childRebind, "allowRead mask must be restored after denyRead reopens writable child");
+        assertTrue(result.syntheticMountTargets().stream().anyMatch(target -> firstMissingComponent.equals(target.path())));
+    }
+
+    @Test
+    void deduplicatesSharedMissingAllowReadMaskAfterDenyReadRebind() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Path writableChild = Files.createDirectory(denied.resolve("child"));
+        Path missingDirectory = writableChild.resolve("generated");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), missingDirectory.resolve("a.json"), missingDirectory.resolve("b.json")),
+            List.of(denied),
+            List.of(workspace, writableChild),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int childRebind = lastIndexOfSequence(argv, "--bind", writableChild.toString(), writableChild.toString());
+        int firstMask = indexOfSequence(argv, "--ro-bind-data", "0", missingDirectory.toString());
+        int lastMask = lastIndexOfSequence(argv, "--ro-bind-data", "0", missingDirectory.toString());
+        assertTrue(firstMask > 0);
+        assertTrue(lastMask > childRebind, "allowRead mask must be restored after denyRead reopens writable child");
+        assertEquals(2, countSequence(argv, "--ro-bind-data", "0", missingDirectory.toString()));
     }
 
     @Test
@@ -794,6 +926,314 @@ class BubblewrapCommandBuilderTest {
         assertTrue(childDirTarget < fileMountTarget);
         assertTrue(fileMountTarget < deniedReadonly);
         assertTrue(deniedReadonly < fileRebind);
+    }
+
+    @Test
+    void reappliesAllowReadUnderWritableRootBeforeNestedWritableBind() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path docs = Files.createDirectory(workspace.resolve("docs"));
+        Path publicDocs = Files.createDirectory(docs.resolve("public"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), docs),
+            List.of(),
+            List.of(workspace, publicDocs),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        int docsReadonly = lastIndexOfSequence(argv, "--ro-bind", docs.toString(), docs.toString());
+        int publicDocsBind = lastIndexOfSequence(argv, "--bind", publicDocs.toString(), publicDocs.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(docsReadonly > workspaceBind, "allowRead child must be reapplied after writable workspace bind");
+        assertTrue(publicDocsBind > docsReadonly, "nested writable child must be rebound after read-only parent");
+    }
+
+    @Test
+    void masksMissingAllowReadUnderWritableRoot() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path missingReadOnly = workspace.resolve("generated").resolve("config.json");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), missingReadOnly),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request(cwd, policy), BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+        Path firstMissingComponent = workspace.resolve("generated");
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        int missingMask = indexOfSequence(argv, "--ro-bind-data", "0", firstMissingComponent.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(missingMask > workspaceBind, "missing allowRead path must be masked after writable bind");
+        assertTrue(result.syntheticMountTargets().stream().anyMatch(target -> firstMissingComponent.equals(target.path())));
+    }
+
+    @Test
+    void rejectsMissingAllowReadBelowExistingFileAncestor() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path token = Files.writeString(workspace.resolve("token"), "secret");
+        Path missingReadOnly = token.resolve("config.json");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), missingReadOnly),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("allowRead"));
+        assertTrue(exception.getMessage().contains("parent must be a directory"));
+        assertTrue(exception.getMessage().contains(token.toString()));
+    }
+
+    @Test
+    void deduplicatesSharedMissingAllowReadMaskUnderWritableRoot() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path missingDirectory = workspace.resolve("generated");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), missingDirectory.resolve("a.json"), missingDirectory.resolve("b.json")),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        int missingMask = indexOfSequence(argv, "--ro-bind-data", "0", missingDirectory.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(missingMask > workspaceBind, "missing allowRead path must be masked after writable bind");
+        assertEquals(1, countSequence(argv, "--ro-bind-data", "0", missingDirectory.toString()));
+    }
+
+    @Test
+    void masksMissingAllowReadEvenWhenWritableRootItselfIsReadable() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path missingReadOnly = workspace.resolve("generated").resolve("config.json");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), workspace, missingReadOnly),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request(cwd, policy), BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+        Path firstMissingComponent = workspace.resolve("generated");
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        int missingMask = indexOfSequence(argv, "--ro-bind-data", "0", firstMissingComponent.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(missingMask > workspaceBind, "writable root allowRead entry must not hide deeper missing carveout");
+        assertTrue(result.syntheticMountTargets().stream().anyMatch(target -> firstMissingComponent.equals(target.path())));
+    }
+
+    @Test
+    void skipsMissingAllowReadUnderExistingReadonlyAncestor() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path docs = Files.createDirectory(workspace.resolve("docs"));
+        Path missingReadOnly = docs.resolve("generated").resolve("config.json");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), docs, missingReadOnly),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request(cwd, policy), BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+        Path firstMissingComponent = docs.resolve("generated");
+
+        int docsReadonly = lastIndexOfSequence(argv, "--ro-bind", docs.toString(), docs.toString());
+        assertTrue(docsReadonly > indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString()));
+        assertTrue(!containsSequence(argv, "--ro-bind-data", "0", firstMissingComponent.toString()));
+        assertTrue(result.syntheticMountTargets().stream().noneMatch(target -> firstMissingComponent.equals(target.path())));
+    }
+
+    @Test
+    void reappliesAllowReadInsideNestedWritableRootDespiteReadonlyAncestor() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path docs = Files.createDirectory(workspace.resolve("docs"));
+        Path publicDocs = Files.createDirectory(docs.resolve("public"));
+        Path secret = Files.writeString(publicDocs.resolve("secret.txt"), "secret");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), docs, secret),
+            List.of(),
+            List.of(workspace, publicDocs),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int docsReadonly = lastIndexOfSequence(argv, "--ro-bind", docs.toString(), docs.toString());
+        int publicDocsBind = lastIndexOfSequence(argv, "--bind", publicDocs.toString(), publicDocs.toString());
+        int secretReadonly = lastIndexOfSequence(argv, "--ro-bind", secret.toString(), secret.toString());
+        assertTrue(docsReadonly > indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString()));
+        assertTrue(publicDocsBind > docsReadonly);
+        assertTrue(secretReadonly > publicDocsBind);
+    }
+
+    @Test
+    void masksMissingAllowReadInsideNestedWritableRootDespiteReadonlyAncestor() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path docs = Files.createDirectory(workspace.resolve("docs"));
+        Path publicDocs = Files.createDirectory(docs.resolve("public"));
+        Path missingReadOnly = publicDocs.resolve("generated").resolve("config.json");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), docs, missingReadOnly),
+            List.of(),
+            List.of(workspace, publicDocs),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request(cwd, policy), BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+        Path firstMissingComponent = publicDocs.resolve("generated");
+
+        int publicDocsBind = lastIndexOfSequence(argv, "--bind", publicDocs.toString(), publicDocs.toString());
+        int missingMask = indexOfSequence(argv, "--ro-bind-data", "0", firstMissingComponent.toString());
+        assertTrue(publicDocsBind > lastIndexOfSequence(argv, "--ro-bind", docs.toString(), docs.toString()));
+        assertTrue(missingMask > publicDocsBind);
+        assertTrue(result.syntheticMountTargets().stream().anyMatch(target -> firstMissingComponent.equals(target.path())));
+    }
+
+    @Test
+    void masksMissingAllowReadProtectedMetadataAsReadonlyDirectory() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path git = workspace.resolve(".git");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), git),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request(cwd, policy), BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+
+        assertTrue(!containsSequence(argv, "--ro-bind-data", "0", git.toString()));
+        assertContainsSequence(
+            argv,
+            "--perms",
+            "555",
+            "--tmpfs",
+            git.toString(),
+            "--remount-ro",
+            git.toString()
+        );
+        assertEquals(
+            indexOfSequence(argv, "--perms", "555", "--tmpfs", git.toString(), "--remount-ro", git.toString()),
+            lastIndexOfSequence(argv, "--perms", "555", "--tmpfs", git.toString(), "--remount-ro", git.toString())
+        );
+        assertTrue(result.syntheticMountTargets().stream().anyMatch(target -> git.equals(target.path())));
+    }
+
+    @Test
+    void skipsMissingAllowReadUnderProtectedMetadata() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path git = Files.createDirectory(workspace.resolve(".git"));
+        Files.writeString(git.resolve("HEAD"), "ref: refs/heads/main\n");
+        Path missingConfig = git.resolve("config");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), missingConfig),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request(cwd, policy), BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+
+        assertTrue(!containsSequence(argv, "--ro-bind-data", "0", missingConfig.toString()));
+        assertTrue(result.syntheticMountTargets().stream().noneMatch(target -> missingConfig.equals(target.path())));
+        assertTrue(indexOfSequence(argv, "--ro-bind", git.toString(), git.toString()) > indexOfSequence(
+            argv,
+            "--bind",
+            workspace.toString(),
+            workspace.toString()
+        ));
+    }
+
+    @Test
+    void masksMissingNestedProtectedMetadataAllowReadWhenNotCoveredByProtectedRoot() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path pkg = Files.createDirectory(workspace.resolve("pkg"));
+        Path nestedGit = pkg.resolve(".git");
+        Path missingConfig = nestedGit.resolve("config");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), missingConfig),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        BubblewrapCommandBuilder.BuildResult result = BubblewrapCommandBuilder.defaults()
+            .buildDetailed(request(cwd, policy), BubblewrapCommandBuilder.Options.defaults());
+        List<String> argv = result.argv();
+
+        int workspaceBind = indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        int nestedGitMask = indexOfSequence(argv, "--ro-bind-data", "0", nestedGit.toString());
+        assertTrue(workspaceBind >= 0, "workspace must be writable");
+        assertTrue(nestedGitMask > workspaceBind, "nested metadata path is not covered by root metadata masks");
+        assertTrue(result.syntheticMountTargets().stream().anyMatch(target -> nestedGit.equals(target.path())));
     }
 
     @Test
@@ -900,6 +1340,20 @@ class BubblewrapCommandBuilderTest {
             }
         }
         return -1;
+    }
+
+    private int countSequence(List<String> argv, String... sequence) {
+        int count = 0;
+        for (int index = 0; index <= argv.size() - sequence.length; index++) {
+            boolean matches = true;
+            for (int offset = 0; offset < sequence.length; offset++) {
+                matches = matches && sequence[offset].equals(argv.get(index + offset));
+            }
+            if (matches) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private void assertCommandSuffix(List<String> argv, List<String> command) {

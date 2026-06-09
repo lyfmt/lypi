@@ -204,10 +204,25 @@ public final class BubblewrapCommandBuilder {
             Path mountPath = writableMount.mountPath();
             writableMountPaths.add(mountPath);
             appendWritableBind(argv, mountPath);
+            appendReadOnlyCarveouts(
+                argv,
+                readOnlyCarveoutsFor(mountPath, readOnlyPaths, writableMounts),
+                writableMountPaths,
+                syntheticMountTargets
+            );
         }
         appendProtectedMetadataMasks(argv, writableMountPaths, syntheticMountTargets, protectedCreateTargets);
         Path commandCwd = request.cwd() == null ? null : commandCwdForBwrap(request.cwd());
-        appendDenyReadMasks(argv, policy.denyRead(), writableMountPaths, commandCwd, syntheticMountTargets, protectedCreateTargets);
+        appendDenyReadMasks(
+            argv,
+            policy.denyRead(),
+            writableMountPaths,
+            readOnlyPaths,
+            writableMounts,
+            commandCwd,
+            syntheticMountTargets,
+            protectedCreateTargets
+        );
         if (commandCwd != null) {
             argv.add("--chdir");
             argv.add(commandCwd.toString());
@@ -222,10 +237,38 @@ public final class BubblewrapCommandBuilder {
     }
 
     private List<Path> normalizedReadOnlyPaths(SandboxRuntimePolicy policy, List<WritableMount> writableMounts) {
-        return readOnlyPaths(policy).stream()
-            .map(path -> absoluteNormalized(path, "allowRead"))
-            .map(path -> remapReadOnlyPathForWritableSymlinkTarget(path, writableMounts))
-            .toList();
+        List<Path> paths = new ArrayList<>();
+        for (Path path : readOnlyPaths(policy)) {
+            Path normalizedPath = absoluteNormalized(path, "allowRead");
+            rejectAllowReadThroughMutableWritableSymlink(normalizedPath, writableMounts);
+            paths.add(remapReadOnlyPathForWritableSymlinkTarget(normalizedPath, writableMounts));
+        }
+        return List.copyOf(paths);
+    }
+
+    private void rejectAllowReadThroughMutableWritableSymlink(Path path, List<WritableMount> writableMounts) {
+        Path current = path.getRoot();
+        if (current == null) {
+            current = Path.of("");
+        }
+        for (Path component : path) {
+            current = current.resolve(component);
+            if (Files.isSymbolicLink(current) && isMutableWritableSymlink(current, writableMounts)) {
+                throw new IllegalArgumentException("allowRead path must not cross a writable symbolic link: " + current);
+            }
+        }
+    }
+
+    private boolean isMutableWritableSymlink(Path symlink, List<WritableMount> writableMounts) {
+        for (WritableMount writableMount : writableMounts) {
+            if (symlink.startsWith(writableMount.requestedPath()) && !symlink.equals(writableMount.requestedPath())) {
+                return true;
+            }
+            if (symlink.startsWith(writableMount.mountPath()) && !symlink.equals(writableMount.mountPath())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Path remapReadOnlyPathForWritableSymlinkTarget(Path path, List<WritableMount> writableMounts) {
@@ -264,7 +307,141 @@ public final class BubblewrapCommandBuilder {
             }
             mounts.add(new WritableMount(allowWritePath, mountPath));
         }
+        mounts.sort((left, right) -> Integer.compare(pathDepth(left.mountPath()), pathDepth(right.mountPath())));
         return List.copyOf(mounts);
+    }
+
+    private List<Path> readOnlyCarveoutsFor(
+        Path writableRoot,
+        List<Path> readOnlyPaths,
+        List<WritableMount> writableMounts
+    ) {
+        return readOnlyPaths.stream()
+            .filter(path -> path.startsWith(writableRoot) && !path.equals(writableRoot))
+            .filter(path -> !hasExistingReadOnlyAncestorFor(path, writableRoot, readOnlyPaths, writableMounts))
+            .filter(path -> deepestWritableMountFor(path, writableMounts)
+                .map(writableMount -> writableMount.mountPath().equals(writableRoot))
+                .orElse(false))
+            .sorted((left, right) -> Integer.compare(pathDepth(left), pathDepth(right)))
+            .toList();
+    }
+
+    private boolean hasExistingReadOnlyAncestorFor(
+        Path path,
+        Path writableRoot,
+        List<Path> readOnlyPaths,
+        List<WritableMount> writableMounts
+    ) {
+        for (Path readOnlyPath : readOnlyPaths) {
+            if (!path.startsWith(readOnlyPath) || path.equals(readOnlyPath)) {
+                continue;
+            }
+            if (readOnlyPath.equals(writableRoot)) {
+                continue;
+            }
+            if (readOnlyPath.startsWith(writableRoot)
+                && Files.exists(readOnlyPath, LinkOption.NOFOLLOW_LINKS)
+                && deepestWritableMountFor(readOnlyPath, writableMounts)
+                    .map(writableMount -> writableMount.mountPath().equals(writableRoot))
+                    .orElse(false)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private java.util.Optional<WritableMount> deepestWritableMountFor(Path path, List<WritableMount> writableMounts) {
+        WritableMount selectedMount = null;
+        for (WritableMount writableMount : writableMounts) {
+            Path mountPath = writableMount.mountPath();
+            if (!path.startsWith(mountPath)) {
+                continue;
+            }
+            if (selectedMount == null || pathDepth(mountPath) > pathDepth(selectedMount.mountPath())) {
+                selectedMount = writableMount;
+            }
+        }
+        return java.util.Optional.ofNullable(selectedMount);
+    }
+
+    private void appendReadOnlyCarveouts(
+        List<String> argv,
+        List<Path> readOnlyCarveouts,
+        List<Path> writableRoots,
+        List<SyntheticMountTarget> syntheticMountTargets
+    ) {
+        LinkedHashSet<Path> mountedTargets = new LinkedHashSet<>();
+        for (Path readOnlyCarveout : readOnlyCarveouts) {
+            appendReadOnlyCarveout(argv, readOnlyCarveout, writableRoots, syntheticMountTargets, mountedTargets);
+        }
+    }
+
+    private void appendReadOnlyCarveout(
+        List<String> argv,
+        Path readOnlyPath,
+        List<Path> writableRoots,
+        List<SyntheticMountTarget> syntheticMountTargets,
+        LinkedHashSet<Path> mountedTargets
+    ) {
+        rejectSymlinkPath(readOnlyPath, "allowRead path must not cross a symbolic link");
+        if (Files.exists(readOnlyPath, LinkOption.NOFOLLOW_LINKS)) {
+            if (!mountedTargets.add(readOnlyPath)) {
+                return;
+            }
+            appendReadonlyBind(argv, readOnlyPath);
+            return;
+        }
+        Path firstMissingComponent = firstMissingComponent(readOnlyPath);
+        if (firstMissingComponent != null && isWithinWritableRoots(firstMissingComponent, writableRoots)) {
+            rejectMissingMountBelowNonDirectory(firstMissingComponent, "allowRead");
+            if (isHandledByProtectedMetadataRoot(firstMissingComponent, writableRoots)) {
+                return;
+            }
+            if (!mountedTargets.add(firstMissingComponent)) {
+                return;
+            }
+            appendReadonlyEmptyFileMask(argv, firstMissingComponent);
+            syntheticMountTargets.add(SyntheticMountTarget.emptyFile(firstMissingComponent));
+        }
+    }
+
+    private void rejectMissingMountBelowNonDirectory(Path firstMissingComponent, String label) {
+        Path parent = firstMissingComponent.getParent();
+        if (parent != null
+            && Files.exists(parent, LinkOption.NOFOLLOW_LINKS)
+            && !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalArgumentException(
+                label + " missing path parent must be a directory: " + parent
+            );
+        }
+    }
+
+    private boolean isHandledByProtectedMetadataRoot(Path path, List<Path> writableRoots) {
+        Path protectedMetadataRoot = nearestProtectedMetadataRoot(path);
+        if (protectedMetadataRoot == null) {
+            return false;
+        }
+        for (Path writableRoot : writableRoots) {
+            if (protectedMetadataRoot.equals(writableRoot) && isProtectedMetadataPath(writableRoot)) {
+                return true;
+            }
+            if (Files.isDirectory(writableRoot, LinkOption.NOFOLLOW_LINKS)
+                && writableRoot.equals(protectedMetadataRoot.getParent())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Path nearestProtectedMetadataRoot(Path path) {
+        Path current = path;
+        while (current != null) {
+            if (isProtectedMetadataPath(current)) {
+                return current;
+            }
+            current = current.getParent();
+        }
+        return null;
     }
 
     private List<Path> writablePaths(SandboxRuntimePolicy policy, Path cwd) {
@@ -284,6 +461,8 @@ public final class BubblewrapCommandBuilder {
         List<String> argv,
         List<Path> denyReadPaths,
         List<Path> writableRoots,
+        List<Path> readOnlyPaths,
+        List<WritableMount> writableMounts,
         Path cwd,
         List<SyntheticMountTarget> syntheticMountTargets,
         List<ProtectedCreateTarget> protectedCreateTargets
@@ -298,7 +477,15 @@ public final class BubblewrapCommandBuilder {
         }
         rejectNestedDenyReadMasks(masks);
         for (Path denyReadPath : masks) {
-            appendDenyReadMask(argv, denyReadPath, writableRoots, syntheticMountTargets, protectedCreateTargets);
+            appendDenyReadMask(
+                argv,
+                denyReadPath,
+                writableRoots,
+                readOnlyPaths,
+                writableMounts,
+                syntheticMountTargets,
+                protectedCreateTargets
+            );
         }
     }
 
@@ -309,6 +496,7 @@ public final class BubblewrapCommandBuilder {
         }
         Path firstMissingComponent = firstMissingComponent(denyReadPath);
         if (firstMissingComponent != null && isWithinWritableRoots(firstMissingComponent, writableRoots)) {
+            rejectMissingMountBelowNonDirectory(firstMissingComponent, "denyRead");
             return firstMissingComponent;
         }
         throw new IllegalArgumentException("missing denyRead path is unsupported by bubblewrap v1 policy builder: " + denyReadPath);
@@ -353,6 +541,8 @@ public final class BubblewrapCommandBuilder {
         List<String> argv,
         Path denyReadPath,
         List<Path> writableRoots,
+        List<Path> readOnlyPaths,
+        List<WritableMount> writableMounts,
         List<SyntheticMountTarget> syntheticMountTargets,
         List<ProtectedCreateTarget> protectedCreateTargets
     ) {
@@ -371,6 +561,12 @@ public final class BubblewrapCommandBuilder {
             argv.add(denyReadPath.toString());
             for (Path writableDescendant : writableDescendants) {
                 appendWritableBind(argv, writableDescendant);
+                appendReadOnlyCarveouts(
+                    argv,
+                    readOnlyCarveoutsFor(writableDescendant, readOnlyPaths, writableMounts),
+                    writableDescendants,
+                    syntheticMountTargets
+                );
             }
             appendProtectedMetadataMasks(argv, writableDescendants, syntheticMountTargets, protectedCreateTargets);
             return;

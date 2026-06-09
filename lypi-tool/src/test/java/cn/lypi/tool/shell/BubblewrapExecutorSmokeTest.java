@@ -164,6 +164,37 @@ class BubblewrapExecutorSmokeTest {
     }
 
     @Test
+    void masksMissingAllowReadPathInsideWritableRootWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path missingReadOnly = workspace.resolve("generated").resolve("config.json");
+
+        ExecutionResult result = executor.execute(request(
+            "mkdir -p generated 2>/dev/null || true; "
+                + "if printf leaked > generated/config.json 2>/dev/null; then printf leaked; else printf protected; fi; "
+                + "test ! -e generated/config.json",
+            workspace,
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc"), missingReadOnly),
+                List.of(),
+                List.of(workspace),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("protected", result.stdout());
+        assertTrue(!Files.exists(workspace.resolve("generated")));
+    }
+
+    @Test
     void reopensWritableChildUnderDenyReadDirectoryWithRealBubblewrapWhenAvailable() throws Exception {
         BubblewrapExecutor executor = new BubblewrapExecutor();
         Path probe = Files.createDirectory(tempDir.resolve("probe"));
@@ -193,6 +224,39 @@ class BubblewrapExecutorSmokeTest {
         assertEquals("blocked\nok", result.stdout());
         assertTrue(!result.stdout().contains("hidden"));
         assertEquals("ok", Files.readString(allowed.resolve("out")));
+    }
+
+    @Test
+    void restoresAllowReadMaskAfterReopeningWritableChildWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path denied = Files.createDirectory(workspace.resolve("denied"));
+        Path allowed = Files.createDirectory(denied.resolve("allowed"));
+        Path missingReadOnly = allowed.resolve("generated").resolve("config.json");
+
+        ExecutionResult result = executor.execute(request(
+            "mkdir -p denied/allowed/generated 2>/dev/null || true; "
+                + "if printf leaked > denied/allowed/generated/config.json 2>/dev/null; then printf leaked; else printf protected; fi; "
+                + "test ! -e denied/allowed/generated/config.json",
+            workspace,
+            new SandboxRuntimePolicy(
+                List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc"), missingReadOnly),
+                List.of(denied),
+                List.of(workspace, allowed),
+                List.of(),
+                NetworkMode.DISABLED,
+                false,
+                false
+            )
+        ), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("protected", result.stdout());
+        assertTrue(!Files.exists(allowed.resolve("generated")));
     }
 
     @Test
