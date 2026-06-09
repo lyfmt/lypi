@@ -7,6 +7,7 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxMessage;
@@ -15,10 +16,12 @@ import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 public final class DefaultMailboxService implements MailboxPort {
     private final JsonlMailboxStore store;
@@ -78,15 +81,15 @@ public final class DefaultMailboxService implements MailboxPort {
 
     @Override
     public synchronized MailboxCommandResult stash(String sessionId, String mailId) {
-        return updateStatus(sessionId, mailId, MailboxStatus.STASHED);
+        return updateStatus(sessionId, mailId, MailboxStatus.STASHED, "stash");
     }
 
     @Override
     public synchronized MailboxCommandResult discard(String sessionId, String mailId) {
-        return updateStatus(sessionId, mailId, MailboxStatus.DISCARDED);
+        return updateStatus(sessionId, mailId, MailboxStatus.DISCARDED, "discard");
     }
 
-    private MailboxCommandResult updateStatus(String sessionId, String mailId, MailboxStatus status) {
+    private MailboxCommandResult updateStatus(String sessionId, String mailId, MailboxStatus status, String action) {
         MailboxCommandResult sessionCheck = ensureCurrentSession(sessionId);
         if (!sessionCheck.success()) {
             return sessionCheck;
@@ -101,6 +104,7 @@ public final class DefaultMailboxService implements MailboxPort {
         }
         MailboxMessage updated = withStatus(message.get(), status);
         store.append(updated);
+        appendCommandFact(action, updated);
         return MailboxCommandResult.success(updated);
     }
 
@@ -155,6 +159,30 @@ public final class DefaultMailboxService implements MailboxPort {
             message.createdAt(),
             Instant.now(clock)
         );
+    }
+
+    private void appendCommandFact(String action, MailboxMessage message) {
+        sessionManager.append(new CustomEntry(
+            "entry_mailbox_" + message.mailId() + "_" + message.status().name().toLowerCase(Locale.ROOT)
+                + "_" + randomId(),
+            sessionManager.currentView().leafId(),
+            "mailbox_command",
+            Map.of(
+                "action", action,
+                "mailId", message.mailId(),
+                "agentId", message.agentId(),
+                "childSessionId", message.childSessionId(),
+                "parentSpawnEntryId", message.parentSpawnEntryId(),
+                "status", message.status().name(),
+                "summary", message.summary(),
+                "finalEntryId", message.contentRef().finalEntryId()
+            ),
+            Instant.now(clock)
+        ));
+    }
+
+    private String randomId() {
+        return UUID.randomUUID().toString().replace("-", "");
     }
 
     private AgentMessage message(MailboxMessage mailboxMessage) {

@@ -3,6 +3,7 @@ package cn.lypi.runtime.subagent;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionContext;
@@ -10,6 +11,7 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
+import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentResultRef;
@@ -57,6 +59,41 @@ class MailboxDeliveryServiceTest {
             .singleElement()
             .extracting(MailboxMessage::mailId)
             .isEqualTo("mail_01");
+    }
+
+    @Test
+    void stashAndDiscardAppendSessionFactsWithoutTranscriptMessages() {
+        CapturingSessionManager session = new CapturingSessionManager("ses_parent", "entry_current");
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            session,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        mailbox.publish(message(MailboxStatus.PENDING, NOW));
+
+        MailboxCommandResult stashed = mailbox.stash("ses_parent", "mail_01");
+        MailboxCommandResult discarded = mailbox.discard("ses_parent", "mail_01");
+
+        assertThat(stashed.success()).isTrue();
+        assertThat(discarded.success()).isTrue();
+        assertThat(session.messages).isEmpty();
+        assertThat(session.entries).hasSize(2);
+        assertThat(session.entries.getFirst())
+            .isInstanceOfSatisfying(CustomEntry.class, entry -> {
+                assertThat(entry.parentId()).isEqualTo("entry_current");
+                assertThat(entry.customType()).isEqualTo("mailbox_command");
+                assertThat(entry.data()).containsEntry("action", "stash");
+                assertThat(entry.data()).containsEntry("mailId", "mail_01");
+                assertThat(entry.data()).containsEntry("status", "STASHED");
+                assertThat(entry.data()).containsEntry("childSessionId", "ses_child");
+                assertThat(entry.data()).containsEntry("finalEntryId", "entry_final");
+            });
+        assertThat(session.entries.get(1))
+            .isInstanceOfSatisfying(CustomEntry.class, entry -> {
+                assertThat(entry.parentId()).isEqualTo(session.entries.getFirst().id());
+                assertThat(entry.data()).containsEntry("action", "discard");
+                assertThat(entry.data()).containsEntry("status", "DISCARDED");
+            });
     }
 
     @Test
@@ -194,6 +231,7 @@ class MailboxDeliveryServiceTest {
         private final String sessionId;
         private String leafId;
         private final List<AgentMessage> messages = new ArrayList<>();
+        private final List<SessionEntry> entries = new ArrayList<>();
 
         private CapturingSessionManager(String sessionId, String leafId) {
             this.sessionId = sessionId;
@@ -207,7 +245,9 @@ class MailboxDeliveryServiceTest {
 
         @Override
         public SessionHandle append(SessionEntry entry) {
-            throw new UnsupportedOperationException();
+            entries.add(entry);
+            leafId = entry.id();
+            return new SessionHandle(sessionId, null, leafId, Map.of());
         }
 
         @Override
