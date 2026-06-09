@@ -1,3 +1,7 @@
+spring:
+  main:
+    banner-mode: off
+
 lypi:
   ai:
     default-provider:

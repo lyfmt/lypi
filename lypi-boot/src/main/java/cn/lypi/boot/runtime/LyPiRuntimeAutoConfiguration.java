@@ -25,6 +25,7 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.runtime.event.InMemoryEventBus;
 import cn.lypi.runtime.subagent.ChildAgentSnapshot;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
@@ -45,6 +46,8 @@ import cn.lypi.session.DefaultSessionManagerFactory;
 import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.session.SessionTreeQuery;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
+import cn.lypi.transport.tui.JLineTuiTransport;
+import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -254,6 +257,16 @@ public class LyPiRuntimeAutoConfiguration {
     }
 
     /**
+     * 创建 /mailbox slash command 定义。
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "mailboxSlashCommand")
+    @ConditionalOnBean(MailboxSlashCommandHandler.class)
+    public SlashCommand mailboxSlashCommand(MailboxSlashCommandHandler handler) {
+        return handler.command();
+    }
+
+    /**
      * 创建默认 agent registry。
      */
     @Bean
@@ -292,6 +305,34 @@ public class LyPiRuntimeAutoConfiguration {
             }
             return sessionManager.currentView().sessionId();
         });
+    }
+
+    /**
+     * 创建 /agent slash command 定义。
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "agentSlashCommand")
+    @ConditionalOnBean(AgentSlashCommandHandler.class)
+    public SlashCommand agentSlashCommand(AgentSlashCommandHandler handler) {
+        return handler.command();
+    }
+
+    /**
+     * 聚合 TUI slash command 定义，供真实 TUI transport 打开时接入。
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "tuiSlashCommands")
+    public List<SlashCommand> tuiSlashCommands(ObjectProvider<SlashCommand> commands) {
+        return commands.orderedStream().toList();
+    }
+
+    /**
+     * 创建真实 TUI transport factory。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public JLineTuiTransportFactory jLineTuiTransportFactory() {
+        return JLineTuiTransport::open;
     }
 
     private RunningAgentSnapshotProvider runningAgentSnapshotProvider(

@@ -59,6 +59,7 @@ import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.runtime.event.InMemoryEventBus;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
@@ -68,6 +69,7 @@ import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
+import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
@@ -396,6 +398,32 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(registry.parentSessionId).isEqualTo("ses_parent");
                 assertThat(registry.statuses).containsExactly(AgentRunStatus.RUNNING);
             });
+    }
+
+    @Test
+    void exposesTuiSlashCommandsFromRegisteredHandlers() {
+        NoopMailbox mailbox = new NoopMailbox();
+        RecordingAgentRegistry registry = new RecordingAgentRegistry();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(MailboxPort.class, () -> mailbox)
+            .withBean(AgentRegistryPort.class, () -> registry)
+            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
+            .run(context -> {
+                List<?> slashCommands = (List<?>) context.getBean("tuiSlashCommands");
+
+                assertThat(slashCommands)
+                    .extracting(command -> ((SlashCommand) command).name())
+                    .containsExactly("mailbox", "agent");
+            });
+    }
+
+    @Test
+    void registersTuiTransportFactoryThatAcceptsSlashCommands() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .run(context -> assertThat(context).hasSingleBean(JLineTuiTransportFactory.class));
     }
 
     @Test

@@ -1,8 +1,11 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.agent.TurnRequest;
+import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
@@ -10,16 +13,24 @@ import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.ErrorEvent;
+import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.SlashCommand;
+import cn.lypi.contracts.tui.SlashCommandHandler;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -104,6 +115,35 @@ class JLineTuiTransportTest {
         transport.close();
     }
 
+    @Test
+    void openWithSlashCommandsExecutesSlashInputWithoutStartingTurn() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingCore core = new RecordingCore();
+        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("mailId: mail_1");
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            core,
+            events,
+            io,
+            new QueueInputSource("/mailbox accept mail_1", "\r"),
+            Runnable::run,
+            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), slash)),
+            40,
+            4
+        );
+
+        transport.drainInputForTest();
+
+        assertTrue(core.requests.isEmpty());
+        assertEquals(Map.of("action", "accept", "mailId", "mail_1"), slash.arguments);
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
+        assertEquals("mailId: mail_1", delta.delta());
+
+        transport.close();
+    }
+
     private SessionRuntimeState runtimeState() {
         return new SessionRuntimeState(
             "ses_1",
@@ -138,9 +178,11 @@ class JLineTuiTransportTest {
     private static final class RecordingEventBus implements EventBus {
         private EventConsumer consumer;
         private boolean subscribed;
+        private final List<AgentEvent> published = new ArrayList<>();
 
         @Override
         public void publish(AgentEvent event) {
+            published.add(event);
         }
 
         @Override
@@ -171,6 +213,48 @@ class JLineTuiTransportTest {
 
         @Override
         public void requestInterrupt(String reason) {
+        }
+    }
+
+    private static final class RecordingCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            return null;
+        }
+    }
+
+    private static final class RecordingSlashCommandHandler implements SlashCommandHandler {
+        private final String output;
+        private Map<String, String> arguments;
+
+        private RecordingSlashCommandHandler(String output) {
+            this.output = output;
+        }
+
+        @Override
+        public void handle(Map<String, String> arguments) {
+            this.arguments = arguments;
+        }
+
+        @Override
+        public String lastOutput() {
+            return output;
+        }
+    }
+
+    private static final class QueueInputSource implements TerminalInputSource {
+        private final ArrayDeque<String> chunks;
+
+        private QueueInputSource(String... chunks) {
+            this.chunks = new ArrayDeque<>(List.of(chunks));
+        }
+
+        @Override
+        public Optional<String> read() {
+            return Optional.ofNullable(chunks.pollFirst());
         }
     }
 

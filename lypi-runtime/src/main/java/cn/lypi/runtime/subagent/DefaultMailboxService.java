@@ -131,7 +131,11 @@ public final class DefaultMailboxService implements MailboxPort {
     }
 
     private SubagentRunStatus recoveredStatus(MailboxMessage message) {
-        return blank(message.contentRef().finalEntryId()) ? SubagentRunStatus.FAILED : SubagentRunStatus.SUCCEEDED;
+        return message.contentRef()
+            .status()
+            .orElseGet(() -> blank(message.contentRef().finalEntryId())
+                ? SubagentRunStatus.FAILED
+                : SubagentRunStatus.SUCCEEDED);
     }
 
     private boolean blank(String value) {

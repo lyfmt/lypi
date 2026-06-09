@@ -170,7 +170,7 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
             record.parentSessionId(),
             record.childSessionId(),
             record.parentSpawnEntryId(),
-            record.status(),
+            runStatus(record, mailboxMessage),
             mailboxStatus,
             summary,
             finalEntryId,
@@ -190,6 +190,27 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
             return "[" + record.agentRole().get() + "]";
         }
         return blank(record.agentId()) ? record.childSessionId() : record.agentId();
+    }
+
+    private AgentRunStatus runStatus(AgentRecord record, MailboxMessage mailboxMessage) {
+        if (record.status() != AgentRunStatus.UNKNOWN || mailboxMessage == null) {
+            return record.status();
+        }
+        Optional<AgentRunStatus> status = mailboxMessage.contentRef().status().map(this::agentRunStatus);
+        if (status.isPresent()) {
+            return status.orElseThrow();
+        }
+        return blank(mailboxMessage.contentRef().finalEntryId()) ? AgentRunStatus.FAILED : AgentRunStatus.SUCCEEDED;
+    }
+
+    private AgentRunStatus agentRunStatus(cn.lypi.contracts.subagent.SubagentRunStatus status) {
+        return switch (status) {
+            case RUNNING, STARTED -> AgentRunStatus.RUNNING;
+            case SUCCEEDED -> AgentRunStatus.SUCCEEDED;
+            case FAILED -> AgentRunStatus.FAILED;
+            case TIMED_OUT -> AgentRunStatus.TIMED_OUT;
+            case INTERRUPTED -> AgentRunStatus.INTERRUPTED;
+        };
     }
 
     private AgentRunStatus status(String lifecycle) {

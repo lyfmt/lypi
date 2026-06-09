@@ -15,6 +15,7 @@ import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentResultRef;
+import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -141,6 +142,86 @@ class DefaultAgentRegistryTest {
             assertThat(view.finalEntryId()).hasValue("entry_final");
             assertThat(view.parentSpawnEntryId()).isEqualTo("entry_spawn");
         });
+    }
+
+    @Test
+    void derivesCompletedStatusFromMailboxWhenFinishedLifecycleIsSidecarOnly() {
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_leaf");
+        parentSession.append(new AgentLifecycleEntry(
+            "entry_spawn",
+            "entry_leaf",
+            "agent_1",
+            "ses_child",
+            "ses_parent",
+            "spawned",
+            Map.of(),
+            NOW
+        ));
+        DefaultMailboxService mailbox = mailbox(parentSession);
+        mailbox.publish(new MailboxMessage(
+            "mail_1",
+            "agent_1",
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "完成摘要",
+            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
+            MailboxStatus.PENDING,
+            NOW.plusSeconds(2),
+            NOW.plusSeconds(2)
+        ));
+        DefaultAgentRegistry registry = new DefaultAgentRegistry(
+            parentSession,
+            mailbox,
+            parentSessionId -> List.of(),
+            parentSessionId -> List.of()
+        );
+
+        List<AgentView> views = registry.list("ses_parent", Set.of(AgentRunStatus.SUCCEEDED));
+
+        assertThat(views).singleElement().satisfies(view -> {
+            assertThat(view.status()).isEqualTo(AgentRunStatus.SUCCEEDED);
+            assertThat(view.finalEntryId()).hasValue("entry_final");
+        });
+    }
+
+    @Test
+    void derivesFailedStatusFromMailboxEvenWhenFinalEntryExists() {
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_leaf");
+        parentSession.append(new AgentLifecycleEntry(
+            "entry_spawn",
+            "entry_leaf",
+            "agent_1",
+            "ses_child",
+            "ses_parent",
+            "spawned",
+            Map.of(),
+            NOW
+        ));
+        DefaultMailboxService mailbox = mailbox(parentSession);
+        mailbox.publish(new MailboxMessage(
+            "mail_1",
+            "agent_1",
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "执行失败",
+            new SubagentResultRef("ses_child", "entry_final", Optional.empty(), Optional.of(SubagentRunStatus.FAILED)),
+            MailboxStatus.PENDING,
+            NOW.plusSeconds(2),
+            NOW.plusSeconds(2)
+        ));
+        DefaultAgentRegistry registry = new DefaultAgentRegistry(
+            parentSession,
+            mailbox,
+            parentSessionId -> List.of(),
+            parentSessionId -> List.of()
+        );
+
+        assertThat(registry.list("ses_parent", Set.of(AgentRunStatus.SUCCEEDED))).isEmpty();
+        assertThat(registry.list("ses_parent", Set.of(AgentRunStatus.FAILED)))
+            .singleElement()
+            .satisfies(view -> assertThat(view.status()).isEqualTo(AgentRunStatus.FAILED));
     }
 
     @Test

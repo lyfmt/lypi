@@ -14,10 +14,16 @@ import cn.lypi.contracts.event.EventConsumer;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.InterruptEvent;
+import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.MessageEndEvent;
+import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.tui.SlashCommand;
+import cn.lypi.contracts.tui.SlashCommandHandler;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
@@ -90,6 +96,48 @@ class RuntimeTuiSubmitHandlerTest {
         assertEquals(false, event.fromKeyboardCancel());
     }
 
+    @Test
+    void slashCommandInputRunsHandlerAndPublishesLocalOutputWithoutStartingTurn() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("mailId: mail_1");
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), slash))
+        );
+
+        handler.submitUserInput("/mailbox accept mail_1");
+
+        assertTrue(core.requests.isEmpty());
+        assertEquals(Map.of("action", "accept", "mailId", "mail_1"), slash.arguments);
+        MessageStartEvent start = assertInstanceOf(MessageStartEvent.class, events.published.getFirst());
+        assertEquals("ses_1", start.sessionId());
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
+        assertEquals("ses_1", delta.sessionId());
+        assertEquals("mailId: mail_1", delta.delta());
+        assertInstanceOf(MessageEndEvent.class, events.published.get(2));
+    }
+
+    @Test
+    void regularInputStillStartsTurnWhenSlashCommandsAreRegistered() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+        );
+
+        handler.submitUserInput("hello");
+
+        assertEquals("hello", core.requests.getFirst().userInput());
+    }
+
     private static final class RecordingCore implements AgentCorePort {
         private final List<TurnRequest> requests = new ArrayList<>();
 
@@ -115,6 +163,24 @@ class RuntimeTuiSubmitHandlerTest {
                 Thread.currentThread().interrupt();
             }
             return null;
+        }
+    }
+
+    private static final class RecordingSlashCommandHandler implements SlashCommandHandler {
+        private final String output;
+        private Map<String, String> arguments;
+
+        private RecordingSlashCommandHandler(String output) {
+            this.output = output;
+        }
+
+        @Override
+        public void handle(Map<String, String> arguments) {
+            this.arguments = arguments;
+        }
+
+        public String lastOutput() {
+            return output;
         }
     }
 

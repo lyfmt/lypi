@@ -9,9 +9,11 @@ import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentResultRef;
+import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -143,6 +145,34 @@ class MailboxDeliveryServiceTest {
         assertThat(mailbox.discard("ses_parent", "mail_01").success()).isFalse();
 
         assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING))).hasSize(1);
+    }
+
+    @Test
+    void readResultUsesPersistedRunStatusEvenWhenFinalEntryExists() {
+        CapturingSessionManager session = new CapturingSessionManager("ses_parent", "entry_current");
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            session,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        mailbox.publish(new MailboxMessage(
+            "mail_01",
+            "agent_01",
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "执行失败",
+            new SubagentResultRef("ses_child", "entry_final", Optional.empty(), Optional.of(SubagentRunStatus.FAILED)),
+            MailboxStatus.PENDING,
+            NOW,
+            NOW
+        ));
+
+        Optional<HeadlessSubagentOutput> result = mailbox.readResult("ses_child");
+
+        assertThat(result).isPresent();
+        assertThat(result.get().status()).isEqualTo(SubagentRunStatus.FAILED);
+        assertThat(result.get().finalEntryId()).hasValue("entry_final");
     }
 
     private MailboxMessage message(MailboxStatus status, Instant now) {

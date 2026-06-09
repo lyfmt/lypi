@@ -251,7 +251,12 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             running.parentSessionId(),
             running.parentSpawnEntryId(),
             mailboxSummary(output),
-            new SubagentResultRef(running.childSessionId(), output.finalEntryId().orElse(""), Optional.empty()),
+            new SubagentResultRef(
+                running.childSessionId(),
+                output.finalEntryId().orElse(""),
+                Optional.empty(),
+                Optional.of(output.status())
+            ),
             MailboxStatus.PENDING,
             now,
             now

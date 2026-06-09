@@ -23,7 +23,9 @@ import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.transport.headless.HeadlessSubagentJsonCodec;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -32,7 +34,9 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.boot.SpringApplication;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class HeadlessSubagentCommandTest {
     @TempDir
@@ -43,6 +47,39 @@ class HeadlessSubagentCommandTest {
         Method main = LyPiApplication.class.getDeclaredMethod("main", String[].class);
 
         assertThat(main).isNotNull();
+    }
+
+    @Test
+    void applicationEntryPointCanBeCreatedWithProgrammaticDefaults() {
+        SpringApplication application = LyPiApplication.application();
+
+        assertThat(application).isNotNull();
+    }
+
+    @Test
+    void defaultConfigurationDisablesSpringBootBanner() throws Exception {
+        try (InputStream input = HeadlessSubagentCommandTest.class.getResourceAsStream("/application.yml")) {
+            assertThat(input).isNotNull();
+            String yaml = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(yaml).contains("banner-mode: off");
+            assertThat(yaml).doesNotContain("root: off");
+        }
+    }
+
+    @Test
+    void headlessApplicationDefaultsDisableRootLoggingOnlyForJsonProtocolMode() {
+        SpringApplication headless = LyPiApplication.application(new String[] {"--lypi.headless.subagent=true"});
+        SpringApplication regular = LyPiApplication.application();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> headlessDefaults = (Map<String, Object>) ReflectionTestUtils.getField(
+            headless,
+            "defaultProperties"
+        );
+        Object regularDefaults = ReflectionTestUtils.getField(regular, "defaultProperties");
+
+        assertThat(headlessDefaults).containsEntry("logging.level.root", "off");
+        assertThat(regularDefaults).isNull();
     }
 
     @Test
