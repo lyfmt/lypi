@@ -12,6 +12,7 @@ final class KeyMapper {
             case "\u001a" -> Optional.of(TerminalKey.CTRL_Z);
             case "\033" -> Optional.of(TerminalKey.ESC);
             case "\r", "\n" -> Optional.of(TerminalKey.ENTER);
+            case "\u007f", "\b" -> Optional.of(TerminalKey.BACKSPACE);
             case "\033\u007f" -> Optional.of(TerminalKey.ALT_BACKSPACE);
             case "\033y" -> Optional.of(TerminalKey.ALT_Y);
             case "\033[3;3~" -> Optional.of(TerminalKey.ALT_DELETE);

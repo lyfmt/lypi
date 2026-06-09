@@ -13,6 +13,7 @@ final class KeyBindingRegistry {
     static KeyBindingRegistry defaults() {
         Map<TerminalKey, TerminalInputAction> bindings = new EnumMap<>(TerminalKey.class);
         bindings.put(TerminalKey.MODIFIED_ENTER, TerminalInputAction.INSERT_NEWLINE);
+        bindings.put(TerminalKey.BACKSPACE, TerminalInputAction.DELETE_PREVIOUS_CHARACTER);
         bindings.put(TerminalKey.ALT_BACKSPACE, TerminalInputAction.DELETE_PREVIOUS_WORD);
         bindings.put(TerminalKey.ALT_DELETE, TerminalInputAction.DELETE_NEXT_WORD);
         bindings.put(TerminalKey.CTRL_U, TerminalInputAction.DELETE_LINE_BEFORE_CURSOR);
@@ -48,6 +49,7 @@ final class KeyBindingRegistry {
 
     private static TerminalKey keyAlias(String alias) {
         return switch (normalize(alias)) {
+            case "backspace" -> TerminalKey.BACKSPACE;
             case "alt+backspace" -> TerminalKey.ALT_BACKSPACE;
             case "alt+delete" -> TerminalKey.ALT_DELETE;
             case "togglethinking" -> TerminalKey.CTRL_O;
@@ -58,6 +60,7 @@ final class KeyBindingRegistry {
 
     private static TerminalInputAction actionAlias(String alias) {
         return switch (normalize(alias)) {
+            case "deletepreviouscharacter" -> TerminalInputAction.DELETE_PREVIOUS_CHARACTER;
             case "deletepreviousword" -> TerminalInputAction.DELETE_PREVIOUS_WORD;
             case "deletenextword" -> TerminalInputAction.DELETE_NEXT_WORD;
             case "togglethinking" -> TerminalInputAction.TOGGLE_THINKING;

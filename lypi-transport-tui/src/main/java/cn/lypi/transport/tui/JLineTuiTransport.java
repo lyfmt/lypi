@@ -65,12 +65,13 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         FrameSink frameSink,
         int width,
         int height,
+        SessionRuntimeState state,
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler,
         TerminalSession terminalSession
     ) {
         this.renderer = null;
-        this.reducer = new TuiEventReducer();
+        this.reducer = TuiEventReducer.fromRuntimeState(state);
         this.tuiRenderer = new TuiRenderer();
         int safeWidth = safeWidth(width);
         int safeHeight = safeHeight(height);
@@ -114,7 +115,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler
     ) {
-        return new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, null);
+        return new JLineTuiTransport(frameSink, width, height, null, inputSource, submitHandler, null);
     }
 
     static JLineTuiTransport open(
@@ -140,10 +141,16 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 throw new UncheckedIOException(exception);
             }
         };
-        JLineTuiTransport transport = new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, session);
+        JLineTuiTransport transport = new JLineTuiTransport(frameSink, width, height, state, inputSource, submitHandler, session);
         holder[0] = transport;
-        transport.attach(events, state);
-        return transport;
+        try {
+            transport.attach(events, state);
+            transport.renderCurrentFrameUnderUiLock();
+            return transport;
+        } catch (RuntimeException exception) {
+            closeAfterOpenFailure(transport, exception);
+            throw exception;
+        }
     }
 
     @Override
@@ -184,9 +191,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             uiLockEntries++;
             reducer.reduce(event);
-            TuiViewModel view = reducer.view();
-            syncInputLoopToolState(view);
-            frameSink.render(tuiRenderer.render(view, screen, layout, currentDraft(), currentCursor()));
+            renderCurrentFrame();
+        }
+    }
+
+    void renderCurrentFrameUnderUiLock() {
+        synchronized (uiMonitor) {
+            uiLockEntries++;
+            renderCurrentFrame();
         }
     }
 
@@ -255,6 +267,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         }
     }
 
+    private static void closeAfterOpenFailure(JLineTuiTransport transport, RuntimeException original) {
+        try {
+            transport.close();
+        } catch (Exception closeFailure) {
+            original.addSuppressed(closeFailure);
+        }
+    }
+
     private void runUiMutation(Runnable mutation) {
         synchronized (uiMonitor) {
             uiLockEntries++;
@@ -284,8 +304,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             if (inputLoop != null) {
                 inputLoop.updateViewport(screen, layout);
             }
-            frameSink.render(tuiRenderer.render(reducer.view(), screen, layout, currentDraft(), currentCursor()));
+            renderCurrentFrame();
         }
+    }
+
+    private void renderCurrentFrame() {
+        TuiViewModel view = reducer.view();
+        syncInputLoopToolState(view);
+        frameSink.render(tuiRenderer.render(view, screen, layout, currentDraft(), currentCursor()));
     }
 
     private String currentDraft() {

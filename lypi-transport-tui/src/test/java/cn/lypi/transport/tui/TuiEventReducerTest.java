@@ -25,6 +25,7 @@ import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolResultSummary;
+import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiBlockKind;
 import cn.lypi.contracts.tui.TuiErrorBlock;
@@ -337,6 +338,18 @@ class TuiEventReducerTest {
         assertTrue(reducer.view().blocks().isEmpty());
         assertTrue(reducer.view().files().isEmpty());
         assertTrue(reducer.view().permissionPrompt().isEmpty());
+    }
+
+    @Test
+    void runtimeStateInitializesStatusBar() {
+        TuiEventReducer reducer = TuiEventReducer.fromRuntimeState(TestRuntimeStates.basic("ses_1"));
+
+        StatusBarState status = reducer.view().statusBar();
+        assertEquals("ses_1", status.sessionId());
+        assertEquals("gpt-5.4", status.model());
+        assertEquals("EXECUTE", status.mode());
+        assertEquals("DEFAULT_EXECUTE", status.permissionMode());
+        assertTrue(reducer.view().blocks().isEmpty(), "new session transcript stays empty");
     }
 
     private static MessageDeltaEvent toolCallDelta(String messageId, String toolUseId, String toolName) {
