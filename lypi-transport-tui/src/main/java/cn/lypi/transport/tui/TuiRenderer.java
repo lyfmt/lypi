@@ -9,8 +9,11 @@ import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 final class TuiRenderer {
+    private static final String INPUT_BACKGROUND = "\033[48;5;236m";
+    private static final String ANSI_RESET = "\033[0m";
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input) {
@@ -26,8 +29,8 @@ final class TuiRenderer {
         for (int i = 0; i < layout.transcriptHeight(); i++) {
             lines.add(i < visible.size() ? visible.get(i) : "");
         }
-        lines.add(statusLine(view.statusBar(), screen, layout.width()));
         lines.add(inputLine(input, cursor, layout.width()));
+        lines.add(statusLine(view.statusBar(), screen, layout.width()));
         return lines;
     }
 
@@ -39,11 +42,13 @@ final class TuiRenderer {
                 case TuiThinkingBlock thinking -> thinking.collapsed()
                     ? "thinking: collapsed"
                     : "thinking: " + thinking.content();
-                case TuiToolBlock tool -> "tool " + tool.toolName() + ": " + tool.label();
+                case TuiToolBlock tool -> null;
                 case TuiErrorBlock error -> "error: " + error.message();
             };
             if (block instanceof TuiMessageBlock message) {
                 lines.addAll(markdownRenderer.render(message.content(), width));
+            } else if (block instanceof TuiToolBlock tool) {
+                lines.addAll(toolLines(tool, width));
             } else {
                 lines.addAll(wrap(text, width));
             }
@@ -59,6 +64,24 @@ final class TuiRenderer {
                 lines.addAll(wrap("rule: " + prompt.rule(), width));
             }
         });
+        if (view.runtimeLine() != null && !view.runtimeLine().isBlank()) {
+            lines.addAll(wrap("· " + view.runtimeLine(), width));
+        }
+        return lines;
+    }
+
+    private List<String> toolLines(TuiToolBlock tool, int width) {
+        List<String> lines = new ArrayList<>();
+        lines.addAll(wrap("tool " + tool.state().name().toLowerCase(Locale.ROOT) + " " + tool.toolName() + ": " + tool.label(), width));
+        if (tool.details() == null || tool.details().isBlank()) {
+            return lines;
+        }
+        for (String detailLine : tool.details().split("\\R", -1)) {
+            if (detailLine.isBlank()) {
+                continue;
+            }
+            lines.addAll(wrap("  " + detailLine, width));
+        }
         return lines;
     }
 
@@ -98,6 +121,10 @@ final class TuiRenderer {
     }
 
     private String inputLine(String input, int cursor, int width) {
+        return INPUT_BACKGROUND + rawInputLine(input, cursor, width) + ANSI_RESET;
+    }
+
+    private String rawInputLine(String input, int cursor, int width) {
         String value = input == null ? "" : input;
         if (cursor < 0) {
             return AnsiWidth.truncate("> " + value, width);

@@ -28,7 +28,7 @@ class TuiInputLoopTest {
 
         assertEquals(List.of("hello"), submit.submitted);
         assertEquals("", loop.draft());
-        assertEquals("> |CURSOR|", frames.getLast().lines().skip(3).findFirst().orElseThrow());
+        assertEquals("\033[48;5;236m> |CURSOR|\033[0m", frames.getLast().lines().skip(2).findFirst().orElseThrow());
     }
 
     @Test
@@ -47,7 +47,7 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.LEFT);
         loop.acceptKey(TerminalKey.LEFT);
 
-        assertEquals("> alpha be|CURSOR|ta", frames.getLast().lines().skip(3).findFirst().orElseThrow());
+        assertEquals("\033[48;5;236m> alpha be|CURSOR|ta\033[0m", frames.getLast().lines().skip(2).findFirst().orElseThrow());
     }
 
     @Test
@@ -68,7 +68,7 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.BACKSPACE);
 
         assertEquals("acd", loop.draft());
-        assertEquals("> a|CURSOR|cd", frames.getLast().lines().skip(3).findFirst().orElseThrow());
+        assertEquals("\033[48;5;236m> a|CURSOR|cd\033[0m", frames.getLast().lines().skip(2).findFirst().orElseThrow());
     }
 
     @Test

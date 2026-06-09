@@ -9,15 +9,26 @@ import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.event.CompactEndEvent;
+import cn.lypi.contracts.event.CompactStartEvent;
 import cn.lypi.contracts.event.ErrorEvent;
+import cn.lypi.contracts.event.InterruptEvent;
+import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
+import cn.lypi.contracts.event.MemoryWriteEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.RetryEndEvent;
+import cn.lypi.contracts.event.RetryStartEvent;
+import cn.lypi.contracts.event.SessionStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.event.TurnEndEvent;
+import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -34,6 +45,7 @@ import cn.lypi.contracts.tui.TuiThinkingBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +54,311 @@ import org.junit.jupiter.api.Test;
 
 class TuiEventReducerTest {
     private static final Instant NOW = Instant.parse("2026-06-07T09:00:00Z");
+
+    @Test
+    void messageEndSnapshotCreatesUserAndNonStreamingAssistantBlocks() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageStartEvent("ses_1", "msg_user", MessageRole.USER, MessageKind.TEXT, Map.of(), NOW));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot("msg_user:text:0", ContentBlockKind.TEXT, "请修复 TUI", Map.of())),
+            Optional.empty(),
+            Optional.empty(),
+            Map.of(),
+            NOW
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_assistant",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot("msg_assistant:text:0", ContentBlockKind.TEXT, "已收到", Map.of())),
+            Optional.empty(),
+            Optional.of("stop"),
+            Map.of(),
+            NOW
+        ));
+
+        TuiMessageBlock user = assertInstanceOf(TuiMessageBlock.class, reducer.view().blocks().get(0));
+        TuiMessageBlock assistant = assertInstanceOf(TuiMessageBlock.class, reducer.view().blocks().get(1));
+        assertEquals("user", user.role());
+        assertEquals("请修复 TUI", user.content());
+        assertFalse(user.streaming());
+        assertEquals("assistant", assistant.role());
+        assertEquals("已收到", assistant.content());
+        assertFalse(assistant.streaming());
+    }
+
+    @Test
+    void messageEndSnapshotCreatesThinkingErrorAndToolCallBlocksWhenNoDeltaArrived() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.ERROR,
+            List.of(
+                new MessageBlockSnapshot("think_1", ContentBlockKind.THINKING, "分析中", Map.of()),
+                new MessageBlockSnapshot("err_1", ContentBlockKind.ERROR, "provider failed", Map.of()),
+                new MessageBlockSnapshot("tool_1", ContentBlockKind.TOOL_CALL, "", Map.of(
+                    "toolUseId", "toolu_1",
+                    "toolName", "bash",
+                    "inputSummary", "mvn test"
+                ))
+            ),
+            Optional.empty(),
+            Optional.of("error"),
+            Map.of(),
+            NOW
+        ));
+
+        TuiThinkingBlock thinking = assertInstanceOf(TuiThinkingBlock.class, reducer.view().blocks().get(0));
+        TuiErrorBlock error = assertInstanceOf(TuiErrorBlock.class, reducer.view().blocks().get(1));
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().get(2));
+        assertEquals("分析中", thinking.content());
+        assertFalse(thinking.streaming());
+        assertEquals("provider failed", error.message());
+        assertEquals("toolu_1", tool.toolUseId());
+        assertEquals("bash", tool.toolName());
+        assertEquals("mvn test", tool.label());
+        assertFalse(tool.active());
+    }
+
+    @Test
+    void messageEndSnapshotDoesNotDuplicateDeltaBlockContent() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "hello",
+            false,
+            Map.of(),
+            NOW
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot("block_1", ContentBlockKind.TEXT, "hello", Map.of())),
+            Optional.empty(),
+            Optional.of("stop"),
+            Map.of(),
+            NOW
+        ));
+
+        assertEquals(1, reducer.view().blocks().size());
+        TuiMessageBlock message = assertInstanceOf(TuiMessageBlock.class, reducer.view().blocks().getFirst());
+        assertEquals("hello", message.content());
+        assertFalse(message.streaming());
+    }
+
+    @Test
+    void messageEndSnapshotReplacesEmptyStartPlaceholderWhenBlockIdDiffers() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageStartEvent("ses_1", "msg_1", MessageRole.ASSISTANT, MessageKind.TEXT, Map.of(), NOW));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot("block_1", ContentBlockKind.TEXT, "hello", Map.of())),
+            Optional.empty(),
+            Optional.of("stop"),
+            Map.of(),
+            NOW
+        ));
+
+        assertEquals(1, reducer.view().blocks().size());
+        TuiMessageBlock message = assertInstanceOf(TuiMessageBlock.class, reducer.view().blocks().getFirst());
+        assertEquals("block_1", message.blockId());
+        assertEquals("hello", message.content());
+        assertFalse(message.streaming());
+    }
+
+    @Test
+    void nonProvisionalAssistantMessageStartCreatesPlaceholder() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageStartEvent("ses_1", "msg_1", MessageRole.ASSISTANT, MessageKind.TEXT, Map.of(), NOW));
+
+        TuiMessageBlock message = assertInstanceOf(TuiMessageBlock.class, reducer.view().blocks().getFirst());
+        assertEquals("msg_1:text:0", message.blockId());
+        assertEquals("assistant", message.role());
+        assertEquals("", message.content());
+        assertTrue(message.streaming());
+    }
+
+    @Test
+    void provisionalAssistantMessageStartWaitsForDeltaOrSnapshotBlockKind() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageStartEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            Map.of("kindProvisional", true),
+            NOW
+        ));
+
+        assertEquals(0, reducer.view().blocks().size());
+    }
+
+    @Test
+    void toolProgressAndEndPopulateRenderableDetails() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new ToolStartEvent(
+            "ses_1",
+            "toolu_1",
+            "msg_1",
+            "turn_1",
+            "bash",
+            "Bash",
+            "mvn test",
+            Map.of("command", "mvn test"),
+            NOW,
+            NOW
+        ));
+        reducer.reduce(new ToolProgressEvent("ses_1", "toolu_1", ToolProgress.output("stdout", "line 1\n"), NOW));
+        reducer.reduce(new ToolProgressEvent("ses_1", "toolu_1", ToolProgress.output("stderr", "warn\n"), NOW));
+        reducer.reduce(new ToolProgressEvent("ses_1", "toolu_1", ToolProgress.percent("tests", 50.0), NOW));
+        reducer.reduce(new ToolEndEvent(
+            "ses_1",
+            "toolu_1",
+            ToolExecutionStatus.SUCCEEDED,
+            0,
+            new ToolResultSummary("bash succeeded", "10 tests passed", false, 0, false, 42L, Map.of("preview", "BUILD SUCCESS")),
+            new ToolOutputRef("ref_1", "ses_1", "toolu_1", "text/plain", "file", "target/out.log", "sha256:1", 42L, Map.of()),
+            NOW,
+            NOW.plusMillis(20),
+            20L,
+            Map.of(),
+            NOW.plusMillis(20)
+        ));
+
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().getFirst());
+        assertEquals(TuiToolState.DONE, tool.state());
+        assertFalse(tool.active());
+        assertTrue(tool.details().contains("stdout: line 1"));
+        assertTrue(tool.details().contains("stderr: warn"));
+        assertTrue(tool.details().contains("tests 50%"));
+        assertTrue(tool.details().contains("exit 0"));
+        assertTrue(tool.details().contains("10 tests passed"));
+        assertTrue(tool.details().contains("BUILD SUCCESS"));
+    }
+
+    @Test
+    void toolEndUsesOutputRefPreviewBeforeSummaryMetadataPreview() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new ToolStartEvent(
+            "ses_1",
+            "toolu_1",
+            "msg_1",
+            "turn_1",
+            "bash",
+            "Bash",
+            "mvn test",
+            Map.of(),
+            NOW,
+            NOW
+        ));
+        reducer.reduce(new ToolEndEvent(
+            "ses_1",
+            "toolu_1",
+            ToolExecutionStatus.SUCCEEDED,
+            0,
+            new ToolResultSummary("bash succeeded", "10 tests passed", false, 0, false, 42L, Map.of("preview", "summary preview")),
+            new ToolOutputRef(
+                "ref_1",
+                "ses_1",
+                "toolu_1",
+                "text/plain",
+                "pending",
+                "",
+                "sha256:1",
+                42L,
+                Map.of("preview", "ref preview")
+            ),
+            NOW,
+            NOW.plusMillis(20),
+            20L,
+            Map.of(),
+            NOW.plusMillis(20)
+        ));
+
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().getFirst());
+        assertTrue(tool.details().contains("ref preview"));
+        assertTrue(!tool.details().contains("summary preview"));
+    }
+
+    @Test
+    void toolEndMapsFailureTimeoutAndCancellationStates() {
+        assertToolEndState(ToolExecutionStatus.FAILED, TuiToolState.FAILED);
+        assertToolEndState(ToolExecutionStatus.TIMED_OUT, TuiToolState.FAILED);
+        assertToolEndState(ToolExecutionStatus.CANCELLED, TuiToolState.CANCELLED);
+    }
+
+    @Test
+    void runtimeEventsUpdateEphemeralRuntimeLineWithoutAddingBlocks() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+
+        reducer.reduce(new TurnStartEvent("ses_1", "turn_1", NOW));
+        assertEquals("turn running turn_1", reducer.view().runtimeLine());
+        assertEquals(0, reducer.view().blocks().size());
+
+        reducer.reduce(new RetryStartEvent("ses_1", 2, "rate limit", NOW));
+        assertEquals("retrying attempt 2 rate limit", reducer.view().runtimeLine());
+
+        reducer.reduce(new RetryEndEvent("ses_1", 2, true, NOW));
+        assertEquals("turn running turn_1", reducer.view().runtimeLine());
+
+        reducer.reduce(new CompactStartEvent("ses_1", "session", NOW));
+        assertEquals("compacting session", reducer.view().runtimeLine());
+
+        reducer.reduce(new CompactEndEvent("ses_1", "compact_1", NOW));
+        assertEquals("turn running turn_1", reducer.view().runtimeLine());
+
+        reducer.reduce(new InterruptEvent("ses_1", "user cancelled", NOW));
+        assertEquals("interrupted user cancelled", reducer.view().runtimeLine());
+
+        reducer.reduce(new TurnEndEvent("ses_1", "turn_1", "completed", NOW));
+        assertEquals("", reducer.view().runtimeLine());
+        assertEquals("EXECUTE", reducer.view().statusBar().mode());
+        assertEquals(0, reducer.view().blocks().size());
+    }
+
+    @Test
+    void sessionStartUpdatesStatusBarAndResponseMemoryEventsDoNotRender() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+
+        reducer.reduce(new SessionStartEvent("ses_2", NOW));
+
+        assertEquals("ses_2", reducer.view().statusBar().sessionId());
+        assertEquals("", reducer.view().runtimeLine());
+        assertEquals(0, reducer.view().blocks().size());
+
+        reducer.reduce(new PermissionResponseEvent("ses_2", "req_1", "allow_once", false, NOW));
+        reducer.reduce(new MemoryWriteEvent("ses_2", Path.of("MEMORY.md"), NOW));
+
+        assertEquals("ses_2", reducer.view().statusBar().sessionId());
+        assertEquals("", reducer.view().runtimeLine());
+        assertEquals(0, reducer.view().blocks().size());
+        assertTrue(reducer.view().permissionPrompt().isEmpty());
+    }
 
     @Test
     void runtimeStateProjectsStatusBarAndToolRunningState() {
@@ -437,5 +754,38 @@ class TuiEventReducerTest {
             ),
             NOW
         );
+    }
+
+    private static void assertToolEndState(ToolExecutionStatus status, TuiToolState expectedState) {
+        TuiEventReducer reducer = new TuiEventReducer();
+        reducer.reduce(new ToolStartEvent(
+            "ses_1",
+            "toolu_1",
+            "msg_1",
+            "turn_1",
+            "bash",
+            "Bash",
+            "mvn test",
+            Map.of(),
+            NOW,
+            NOW
+        ));
+        reducer.reduce(new ToolEndEvent(
+            "ses_1",
+            "toolu_1",
+            status,
+            status == ToolExecutionStatus.CANCELLED ? null : 1,
+            new ToolResultSummary("bash " + status.name().toLowerCase(), "summary", status != ToolExecutionStatus.SUCCEEDED, 1, false, 0L, Map.of()),
+            null,
+            NOW,
+            NOW.plusMillis(20),
+            20L,
+            Map.of(),
+            NOW.plusMillis(20)
+        ));
+
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().getFirst());
+        assertEquals(expectedState, tool.state());
+        assertFalse(tool.active());
     }
 }

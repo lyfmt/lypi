@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.TuiMessageBlock;
+import cn.lypi.contracts.tui.TuiToolBlock;
+import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.List;
 import java.util.Optional;
@@ -30,8 +32,8 @@ class TuiRendererTest {
         assertEquals(4, lines.size());
         assertEquals("hello world", lines.get(0));
         assertEquals("", lines.get(1));
-        assertTrue(lines.get(2).contains("tool"));
-        assertEquals("> draft", lines.get(3));
+        assertEquals("\033[48;5;236m> draft\033[0m", lines.get(2));
+        assertTrue(lines.get(3).contains("tool"));
     }
 
     @Test
@@ -48,7 +50,7 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "");
 
-        assertTrue(lines.get(1).contains("tool"));
+        assertTrue(lines.get(2).contains("tool"));
     }
 
     @Test
@@ -74,11 +76,11 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(120, 3), "");
 
-        assertEquals("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE", lines.get(1));
-        assertFalse(lines.get(1).contains("cwd:"));
-        assertFalse(lines.get(1).contains("leaf:"));
-        assertFalse(lines.get(1).contains("ctx:"));
-        assertFalse(lines.get(1).contains("tool:interruptible"));
+        assertEquals("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE", lines.get(2));
+        assertFalse(lines.get(2).contains("cwd:"));
+        assertFalse(lines.get(2).contains("leaf:"));
+        assertFalse(lines.get(2).contains("ctx:"));
+        assertFalse(lines.get(2).contains("tool:interruptible"));
     }
 
     @Test
@@ -113,7 +115,7 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(30, 3), "alpha beta", 6);
 
-        assertEquals("> alpha |CURSOR|beta", lines.get(2));
+        assertEquals("\033[48;5;236m> alpha |CURSOR|beta\033[0m", lines.get(1));
     }
 
     @Test
@@ -130,7 +132,7 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(8, 3), "abcdefgh", 8);
 
-        assertEquals("> …efgh|CURSOR|", lines.get(2));
+        assertEquals("\033[48;5;236m> …efgh|CURSOR|\033[0m", lines.get(1));
     }
 
     @Test
@@ -149,5 +151,64 @@ class TuiRendererTest {
 
         assertEquals("permission toolu_1: Need approval", lines.get(0));
         assertEquals("rule: bash:npm test", lines.get(1));
+    }
+
+    @Test
+    void runtimeLineUsesTranscriptSpaceOnlyWhenActive() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(3);
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock("b1", "m1", "assistant", "line1", false),
+                new TuiMessageBlock("b2", "m2", "assistant", "line2", false),
+                new TuiMessageBlock("b3", "m3", "assistant", "line3", false)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            "retrying attempt 2 rate limit",
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 5), "");
+
+        assertEquals("line2", lines.get(0));
+        assertEquals("line3", lines.get(1));
+        assertEquals("· retrying attempt 2 rate limit", lines.get(2));
+        assertTrue(lines.get(3).startsWith("\033[48;5;236m> "));
+        assertTrue(lines.get(4).contains("ses_1"));
+
+        TuiScreen screenWithoutRuntime = new TuiScreen(3);
+        TuiViewModel withoutRuntime = new TuiViewModel(
+            view.blocks(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        List<String> withoutRuntimeLines = renderer.render(withoutRuntime, screenWithoutRuntime, new TuiLayout(40, 5), "");
+
+        assertEquals("line1", withoutRuntimeLines.get(0));
+        assertEquals("line2", withoutRuntimeLines.get(1));
+        assertEquals("line3", withoutRuntimeLines.get(2));
+    }
+
+    @Test
+    void toolDetailsRenderBelowToolHeader() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(3);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock("tool:1", "msg_1", "toolu_1", "bash", TuiToolState.DONE, "Bash", "stdout: ok\nexit 0", false)),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 5), "");
+
+        assertEquals("tool done bash: Bash", lines.get(0));
+        assertEquals("  stdout: ok", lines.get(1));
+        assertEquals("  exit 0", lines.get(2));
     }
 }
