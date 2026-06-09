@@ -13,6 +13,8 @@ import java.util.Optional;
 import org.jline.terminal.Terminal;
 
 public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
+    private static final int DEFAULT_TERMINAL_WIDTH = 80;
+    private static final int DEFAULT_TERMINAL_HEIGHT = 24;
     private static final int MAX_INPUT_CHUNKS_PER_DRAIN = 32;
 
     private final Object uiMonitor = new Object();
@@ -49,8 +51,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.renderer = null;
         this.reducer = new TuiEventReducer();
         this.tuiRenderer = new TuiRenderer();
-        this.screen = new TuiScreen(Math.max(1, height - 2));
-        this.layout = new TuiLayout(width, height);
+        int safeWidth = safeWidth(width);
+        int safeHeight = safeHeight(height);
+        this.screen = new TuiScreen(Math.max(1, safeHeight - 2));
+        this.layout = new TuiLayout(safeWidth, safeHeight);
         this.frameSink = frameSink;
         this.inputPump = null;
         this.inputLoop = null;
@@ -68,8 +72,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.renderer = null;
         this.reducer = new TuiEventReducer();
         this.tuiRenderer = new TuiRenderer();
-        this.screen = new TuiScreen(Math.max(1, height - 2));
-        this.layout = new TuiLayout(width, height);
+        int safeWidth = safeWidth(width);
+        int safeHeight = safeHeight(height);
+        this.screen = new TuiScreen(Math.max(1, safeHeight - 2));
+        this.layout = new TuiLayout(safeWidth, safeHeight);
         this.frameSink = frameSink;
         this.inputLoop = new TuiInputLoop(submitHandler, frameSink, tuiRenderer, screen, layout, reducer::view);
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
@@ -271,8 +277,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             if (reducer == null) {
                 return;
             }
-            screen = new TuiScreen(Math.max(1, height - 2));
-            layout = new TuiLayout(width, height);
+            int safeWidth = safeWidth(width);
+            int safeHeight = safeHeight(height);
+            screen = new TuiScreen(Math.max(1, safeHeight - 2));
+            layout = new TuiLayout(safeWidth, safeHeight);
             if (inputLoop != null) {
                 inputLoop.updateViewport(screen, layout);
             }
@@ -308,5 +316,13 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private static int safeWidth(int width) {
+        return width > 0 ? width : DEFAULT_TERMINAL_WIDTH;
+    }
+
+    private static int safeHeight(int height) {
+        return height > 1 ? height : DEFAULT_TERMINAL_HEIGHT;
     }
 }

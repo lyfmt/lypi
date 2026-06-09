@@ -21,6 +21,8 @@ import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
+import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import java.nio.file.Path;
@@ -47,6 +49,74 @@ class SessionManagerReplayTest {
         assertThat(context.messages()).isEmpty();
         assertThat(context.branchEntryIds()).isEmpty();
         assertThat(context.appliedCompactionEntryIds()).isEmpty();
+        assertThat(context.model()).isEqualTo(new ModelSelection("default", "default", ThinkingLevel.MEDIUM));
+        assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
+        assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+    }
+
+    @Test
+    void emptySessionUsesConfiguredInitialState() {
+        SessionManager manager = new SessionManagerImpl(
+            tempDir,
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        );
+        manager.openOrCreate("ses_main");
+
+        SessionContext context = manager.context(null);
+
+        assertThat(context.model()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
+        assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
+        assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+    }
+
+    @Test
+    void newSessionPersistsConfiguredInitialStateForStableReplay() {
+        SessionManager firstManager = new SessionManagerImpl(
+            tempDir,
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        );
+        SessionHandle firstHandle = firstManager.openOrCreate("ses_main");
+
+        SessionManager reopenedWithDifferentDefaults = new SessionManagerImpl(
+            tempDir,
+            new ModelSelection("anthropic", "claude-sonnet", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.PLAN,
+            PermissionMode.PLAN
+        );
+        SessionHandle reopened = reopenedWithDifferentDefaults.openOrCreate("ses_main");
+
+        assertThat(reopened.leafId()).isEqualTo(firstHandle.leafId());
+        SessionContext context = reopenedWithDifferentDefaults.context(reopened.leafId());
+        assertThat(context.model()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
+        assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
+        assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+    }
+
+    @Test
+    void legacySessionWithoutInitialStateUsesStableLegacyDefaults() {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(new SessionHeader("session", 1, "ses_legacy", tempDir, Optional.empty(), NOW));
+        SessionManager manager = new SessionManagerImpl(
+            tempDir,
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.PLAN,
+            PermissionMode.PLAN
+        );
+        manager.openOrCreate("ses_legacy");
+
+        SessionContext context = manager.context(null);
+
         assertThat(context.model()).isEqualTo(new ModelSelection("default", "default", ThinkingLevel.MEDIUM));
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
         assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);

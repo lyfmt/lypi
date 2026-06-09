@@ -1,6 +1,8 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.event.AgentEvent;
@@ -102,6 +104,63 @@ class JLineTuiTransportTest {
         assertEquals(6, rendered.split("\n", -1).length);
 
         transport.close();
+    }
+
+    @Test
+    void openFallsBackWhenTerminalSizeUnavailable() {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+
+        assertDoesNotThrow(() -> {
+            JLineTuiTransport transport = JLineTuiTransport.open(
+                runtimeState(),
+                events,
+                io,
+                () -> Optional.empty(),
+                new RecordingSubmitHandler(),
+                0,
+                0
+            );
+            transport.close();
+        });
+    }
+
+    @Test
+    void resizeFallsBackWhenTerminalSizeUnavailable() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            40,
+            4
+        );
+
+        io.width = 0;
+        io.height = 0;
+
+        assertDoesNotThrow(() -> io.resizeCallback.run());
+        transport.close();
+    }
+
+    @Test
+    void withInputFallsBackWhenTerminalSizeUnavailable() {
+        assertDoesNotThrow(() -> JLineTuiTransport.withInput(
+            ignored -> {
+            },
+            0,
+            0,
+            () -> Optional.of("draft"),
+            new RecordingSubmitHandler()
+        ).drainInputForTest());
+    }
+
+    @Test
+    void layoutStillRejectsInvalidDimensions() {
+        assertThrows(IllegalArgumentException.class, () -> new TuiLayout(0, 0));
     }
 
     private SessionRuntimeState runtimeState() {
