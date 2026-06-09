@@ -33,6 +33,10 @@ import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ProviderRetryNotice;
+import cn.lypi.contracts.runtime.ExecutionMetadata;
+import cn.lypi.contracts.runtime.ExecutionResult;
+import cn.lypi.contracts.runtime.NetworkMode;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -79,6 +83,49 @@ class ContractSerializationTest {
     private final ObjectMapper mapper = new ObjectMapper()
         .registerModule(new Jdk8Module())
         .registerModule(new JavaTimeModule());
+
+    @Test
+    void sandboxRuntimePolicyRoundTripKeepsNetworkModeWithoutDomainFields() throws Exception {
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(Path.of("/secret")),
+            List.of(Path.of("/workspace")),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        String json = mapper.writeValueAsString(policy);
+        SandboxRuntimePolicy restored = mapper.readValue(json, SandboxRuntimePolicy.class);
+
+        assertTrue(json.contains("\"networkMode\":\"DISABLED\""));
+        assertTrue(!json.contains("allowedDomains"));
+        assertTrue(!json.contains("deniedDomains"));
+        assertEquals(NetworkMode.DISABLED, restored.networkMode());
+        assertEquals(false, restored.failIfUnavailable());
+        assertEquals(false, restored.autoAllowBashIfSandboxed());
+    }
+
+    @Test
+    void executionResultRoundTripKeepsSandboxMetadata() throws Exception {
+        ExecutionResult result = new ExecutionResult(
+            0,
+            "out",
+            "err",
+            false,
+            Optional.empty(),
+            new ExecutionMetadata(true, "bubblewrap", Optional.empty())
+        );
+
+        String json = mapper.writeValueAsString(result);
+        ExecutionResult restored = mapper.readValue(json, ExecutionResult.class);
+
+        assertTrue(json.contains("\"sandboxed\":true"));
+        assertTrue(json.contains("\"executorName\":\"bubblewrap\""));
+        assertEquals(true, restored.metadata().sandboxed());
+        assertEquals("bubblewrap", restored.metadata().executorName());
+    }
 
     @Test
     void sessionEntryRoundTripUsesTypeDiscriminator() throws Exception {

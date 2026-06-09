@@ -3,12 +3,14 @@ package cn.lypi.tool.shell;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.Map;
@@ -27,7 +29,8 @@ public final class HostExecutor implements Executor {
     private static final int TIMEOUT_EXIT_CODE = 124;
     private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(30);
     private static final Duration TERMINATION_GRACE = Duration.ofMillis(500);
-    private static final Duration OUTPUT_DRAIN_GRACE = Duration.ofMillis(100);
+    private static final Duration INITIAL_OUTPUT_DRAIN_GRACE = Duration.ofMillis(100);
+    private static final Duration FINAL_OUTPUT_DRAIN_GRACE = Duration.ofSeconds(1);
     private static final Set<String> SENSITIVE_ENV_KEYS = Set.of(
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
@@ -78,7 +81,14 @@ public final class HostExecutor implements Executor {
         } : progress;
         AbortSignal safeSignal = signal == null ? () -> false : signal;
         if (safeSignal.aborted()) {
-            return new ExecutionResult(ABORT_EXIT_CODE, "", "command aborted before start", false, Optional.empty());
+            return new ExecutionResult(
+                ABORT_EXIT_CODE,
+                "",
+                "command aborted before start",
+                false,
+                Optional.empty(),
+                ExecutionMetadata.unsandboxed(name())
+            );
         }
 
         Process process;
@@ -95,12 +105,12 @@ public final class HostExecutor implements Executor {
 
         WaitResult waitResult = waitForProcess(process, timeout(request), safeSignal);
         if (!waitResult.timedOut() && !waitResult.aborted()) {
-            waitForCollectors(OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
+            waitForCollectors(INITIAL_OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
             terminateDescendants(process);
-            waitForCollectors(OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
+            waitForCollectors(FINAL_OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
         } else {
             closeCollectors(stdout, stderr);
-            waitForCollectors(OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
+            waitForCollectors(FINAL_OUTPUT_DRAIN_GRACE, stdoutThread, stderrThread);
         }
 
         int exitCode = waitResult.exitCode();
@@ -109,11 +119,19 @@ public final class HostExecutor implements Executor {
         } else if (waitResult.aborted()) {
             exitCode = exitCode == 0 ? ABORT_EXIT_CODE : exitCode;
         }
-        return new ExecutionResult(exitCode, stdout.output(), stderr.output(), waitResult.timedOut(), Optional.empty());
+        return new ExecutionResult(
+            exitCode,
+            stdout.output(),
+            stderr.output(),
+            waitResult.timedOut(),
+            Optional.empty(),
+            ExecutionMetadata.unsandboxed(name())
+        );
     }
 
     private Process startProcess(ExecutionRequest request) throws IOException {
         ProcessBuilder builder = new ProcessBuilder(request.command());
+        builder.redirectInput(ProcessBuilder.Redirect.from(Path.of("/dev/null").toFile()));
         if (request.cwd() != null) {
             builder.directory(request.cwd().toFile());
         }
