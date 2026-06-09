@@ -76,6 +76,7 @@ public final class DefaultMailboxService implements MailboxPort {
         MailboxMessage delivered = withStatus(message.get(), MailboxStatus.DELIVERED);
         sessionManager.appendMessage(message(delivered));
         store.append(delivered);
+        appendCommandFact("accept", delivered);
         return MailboxCommandResult.success(delivered);
     }
 

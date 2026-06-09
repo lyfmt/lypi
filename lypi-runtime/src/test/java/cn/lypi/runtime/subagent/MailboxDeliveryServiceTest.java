@@ -97,6 +97,32 @@ class MailboxDeliveryServiceTest {
     }
 
     @Test
+    void acceptAppendsDeliveredTranscriptAndSessionFact() {
+        CapturingSessionManager session = new CapturingSessionManager("ses_parent", "entry_current");
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            session,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        mailbox.publish(message(MailboxStatus.PENDING, NOW));
+
+        MailboxCommandResult accepted = mailbox.accept("ses_parent", "mail_01");
+
+        assertThat(accepted.success()).isTrue();
+        assertThat(session.messages).hasSize(1);
+        assertThat(session.entries).singleElement()
+            .isInstanceOfSatisfying(CustomEntry.class, entry -> {
+                assertThat(entry.parentId()).isEqualTo("entry_message_1");
+                assertThat(entry.customType()).isEqualTo("mailbox_command");
+                assertThat(entry.data()).containsEntry("action", "accept");
+                assertThat(entry.data()).containsEntry("mailId", "mail_01");
+                assertThat(entry.data()).containsEntry("status", "DELIVERED");
+                assertThat(entry.data()).containsEntry("childSessionId", "ses_child");
+                assertThat(entry.data()).containsEntry("finalEntryId", "entry_final");
+            });
+    }
+
+    @Test
     void deliveryGuardKeepsBusySessionPendingAndAllowsIdleAutoAccept() {
         CapturingSessionManager session = new CapturingSessionManager("ses_parent", "entry_current");
         DefaultMailboxService mailbox = new DefaultMailboxService(

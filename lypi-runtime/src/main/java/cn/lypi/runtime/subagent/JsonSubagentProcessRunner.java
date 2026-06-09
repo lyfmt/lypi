@@ -25,6 +25,7 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
         this.command = command == null ? List.of() : List.copyOf(command);
         objectMapper = new ObjectMapper();
         objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        objectMapper.configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
         objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
         objectMapper.registerModule(new Jdk8Module());
         objectMapper.registerModule(new JavaTimeModule());

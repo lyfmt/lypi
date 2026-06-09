@@ -53,6 +53,21 @@ class JsonSubagentProcessRunnerTest {
         assertThat(output.summary()).isEqualTo(tempDir.toAbsolutePath().normalize().toString());
     }
 
+    @Test
+    void rejectsStdoutWithTrailingNonJsonTokens() throws Exception {
+        JsonSubagentProcessRunner runner = new JsonSubagentProcessRunner(List.of(
+            "python3",
+            "-c",
+            "import json, sys; sys.stdin.read(); print(json.dumps({'childSessionId':'ses_child','status':'SUCCEEDED','summary':'done','finalEntryId':'entry_final'})); print('Started LyPiApplication')"
+        ));
+
+        HeadlessSubagentOutput output = runner.start(input(30)).completion().get(3, TimeUnit.SECONDS);
+
+        assertThat(output.status()).isEqualTo(SubagentRunStatus.FAILED);
+        assertThat(output.errorMessage()).hasValueSatisfying(message ->
+            assertThat(message).contains("Failed to read subagent output"));
+    }
+
     private HeadlessSubagentInput input(int timeoutSeconds) {
         return new HeadlessSubagentInput(
             "ses_child",
