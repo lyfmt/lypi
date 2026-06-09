@@ -59,6 +59,21 @@ class OpenAiChatCompletionsStreamNormalizerTest {
     }
 
     @Test
+    void preservesNullValuesInToolCallArguments() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        List<AssistantStreamEvent> events = normalizer.normalize("""
+            {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\\"path\\":null}"}}]}}]}
+            """);
+
+        assertThat(events).singleElement().isInstanceOfSatisfying(ToolCallDelta.class, delta -> {
+            assertThat(delta.partialInput()).containsKey("path");
+            assertThat(delta.partialInput().get("path")).isNull();
+            assertThat(delta.complete()).isTrue();
+        });
+    }
+
+    @Test
     void ignoresNullUsageAndKeepsNormalizingDeltas() {
         OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
 

@@ -69,6 +69,24 @@ class OpenAiResponsesStreamNormalizerTest {
     }
 
     @Test
+    void preservesNullValuesInToolCallArguments() {
+        OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+
+        normalizer.normalize("""
+            {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"item-1","call_id":"call-1","name":"read_file"}}
+            """);
+        List<AssistantStreamEvent> events = normalizer.normalize("""
+            {"type":"response.function_call_arguments.done","item_id":"item-1","output_index":1,"arguments":"{\\"path\\":null}"}
+            """);
+
+        assertThat(events).singleElement().isInstanceOfSatisfying(ToolCallDelta.class, delta -> {
+            assertThat(delta.partialInput()).containsKey("path");
+            assertThat(delta.partialInput().get("path")).isNull();
+            assertThat(delta.complete()).isTrue();
+        });
+    }
+
+    @Test
     void normalizesProviderErrorsAndMalformedJson() {
         OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
 
