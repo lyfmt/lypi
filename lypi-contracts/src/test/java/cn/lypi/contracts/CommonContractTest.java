@@ -27,6 +27,7 @@ import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
@@ -167,6 +168,7 @@ class CommonContractTest {
             () -> assertMethod(MailboxPort.class, "stash", 2),
             () -> assertMethod(MailboxPort.class, "discard", 2),
             () -> assertMethod(SessionManagerFactoryPort.class, "open", 2),
+            () -> assertMethod(SessionStorageRootPort.class, "sessionStorageRoot", 0),
             () -> assertMethod(ProgressSink.class, "progress", 1),
             () -> assertMethod(ToolProgressEvent.class, "progress", 0)
         );

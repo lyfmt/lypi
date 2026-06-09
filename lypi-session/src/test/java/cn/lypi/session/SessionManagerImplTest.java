@@ -7,6 +7,7 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
@@ -50,6 +51,15 @@ class SessionManagerImplTest {
         assertThat(reopenedEngine.branch("entry_2"))
             .extracting(SessionEntry::id)
             .containsExactly("entry_1", "entry_2");
+    }
+
+    @Test
+    void exposesSessionStorageRootSeparatelyFromExecutionCwd() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+
+        assertThat(engine)
+            .isInstanceOfSatisfying(SessionStorageRootPort.class,
+                storageRoot -> assertThat(storageRoot.sessionStorageRoot()).isEqualTo(tempDir));
     }
 
     @Test

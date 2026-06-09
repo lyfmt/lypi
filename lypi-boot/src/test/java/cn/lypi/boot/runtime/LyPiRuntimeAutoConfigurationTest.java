@@ -38,6 +38,7 @@ import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
@@ -313,6 +314,36 @@ class LyPiRuntimeAutoConfigurationTest {
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
             .withBean(SessionManagerPort.class, () -> sessionManager)
             .run(context -> assertThat(context.getBean(SessionManagerPort.class)).isSameAs(sessionManager));
+    }
+
+    @Test
+    void defaultChildAgentSnapshotProviderUsesSessionManagerStorageRoot() {
+        SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        sessionManager.openOrCreate("ses_parent");
+        ChildSessionPort childSessions = context -> {
+            throw new UnsupportedOperationException("not used");
+        };
+        new cn.lypi.session.ChildSessionService().create(new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            tempDir,
+            tempDir.resolve("child-exec"),
+            1,
+            java.util.Optional.of("Scout"),
+            java.util.Optional.of("explorer")
+        ));
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(SessionManagerPort.class, () -> sessionManager)
+            .withBean(ChildSessionPort.class, () -> childSessions)
+            .run(context -> assertThat(context.getBean(ChildAgentSnapshotProvider.class).childAgents("ses_parent"))
+                .singleElement()
+                .satisfies(child -> {
+                    assertThat(child.childSessionId()).isEqualTo("ses_child");
+                    assertThat(child.parentSpawnEntryId()).isEqualTo("entry_spawn");
+                }));
     }
 
     @Test

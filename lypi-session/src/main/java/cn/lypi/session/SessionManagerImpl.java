@@ -1,6 +1,7 @@
 package cn.lypi.session;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionContext;
@@ -20,7 +21,7 @@ import java.util.Optional;
  *
  * NOTE: 该实现编排 JSONL store、entry tree 和 fork 服务，不处理模型或工具执行。
  */
-public final class SessionManagerImpl implements SessionManager {
+public final class SessionManagerImpl implements SessionManager, SessionStorageRootPort {
     private final Path cwd;
     private final JsonlSessionStore store;
     private final Clock clock;
@@ -117,6 +118,14 @@ public final class SessionManagerImpl implements SessionManager {
     public SessionContext context(String leafId) {
         ensureOpen();
         return replayProjector.context(branch(leafId));
+    }
+
+    /**
+     * 返回该 manager 使用的 session 存储根目录。
+     */
+    @Override
+    public Path sessionStorageRoot() {
+        return cwd;
     }
 
     /**

@@ -19,6 +19,7 @@ import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.session.SessionEntry;
@@ -145,8 +146,8 @@ public class LyPiRuntimeAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(ChildAgentSnapshotProvider.class)
-    public ChildAgentSnapshotProvider childAgentSnapshotProvider() {
-        SessionTreeQuery query = new SessionTreeQuery(DEFAULT_CWD);
+    public ChildAgentSnapshotProvider childAgentSnapshotProvider(ObjectProvider<SessionManagerPort> sessionManager) {
+        SessionTreeQuery query = new SessionTreeQuery(sessionStorageRoot(sessionManager.getIfAvailable()));
         return parentSessionId -> query.children(parentSessionId).stream()
             .map(this::childAgentSnapshot)
             .toList();
@@ -167,8 +168,8 @@ public class LyPiRuntimeAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public JsonlMailboxStore jsonlMailboxStore() {
-        return new JsonlMailboxStore(DEFAULT_CWD);
+    public JsonlMailboxStore jsonlMailboxStore(ObjectProvider<SessionManagerPort> sessionManager) {
+        return new JsonlMailboxStore(sessionStorageRoot(sessionManager.getIfAvailable()));
     }
 
     /**
@@ -395,12 +396,19 @@ public class LyPiRuntimeAutoConfiguration {
             properties.getCommand(),
             childSessions,
             parentSession,
-            DEFAULT_CWD,
+            sessionStorageRoot(parentSession),
             sessionManagerFactory,
             processRunner,
             mailbox,
             deliveryService,
             clock
         );
+    }
+
+    private Path sessionStorageRoot(SessionManagerPort sessionManager) {
+        if (sessionManager instanceof SessionStorageRootPort storageRoot) {
+            return storageRoot.sessionStorageRoot();
+        }
+        return DEFAULT_CWD;
     }
 }
