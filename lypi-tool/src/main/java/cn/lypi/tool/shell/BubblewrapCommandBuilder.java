@@ -169,13 +169,19 @@ public final class BubblewrapCommandBuilder {
         if (policy.networkMode() == NetworkMode.DISABLED) {
             argv.add("--unshare-net");
         }
-        argv.add("--tmpfs");
-        argv.add("/");
-        for (Path path : readOnlyPaths(policy)) {
-            Path mountPath = absoluteNormalized(path, "allowRead");
-            argv.add("--ro-bind-try");
-            argv.add(mountPath.toString());
-            argv.add(mountPath.toString());
+        List<Path> readOnlyPaths = normalizedReadOnlyPaths(policy);
+        if (readOnlyPaths.contains(Path.of("/"))) {
+            argv.add("--ro-bind");
+            argv.add("/");
+            argv.add("/");
+        } else {
+            argv.add("--tmpfs");
+            argv.add("/");
+            for (Path mountPath : readOnlyPaths) {
+                argv.add("--ro-bind-try");
+                argv.add(mountPath.toString());
+                argv.add(mountPath.toString());
+            }
         }
         argv.add("--dev");
         argv.add("/dev");
@@ -206,6 +212,12 @@ public final class BubblewrapCommandBuilder {
 
     private List<Path> readOnlyPaths(SandboxRuntimePolicy policy) {
         return policy.allowRead().isEmpty() ? SandboxPlatformPaths.defaultReadOnlyPaths() : policy.allowRead();
+    }
+
+    private List<Path> normalizedReadOnlyPaths(SandboxRuntimePolicy policy) {
+        return readOnlyPaths(policy).stream()
+            .map(path -> absoluteNormalized(path, "allowRead"))
+            .toList();
     }
 
     private List<Path> writablePaths(SandboxRuntimePolicy policy, Path cwd) {

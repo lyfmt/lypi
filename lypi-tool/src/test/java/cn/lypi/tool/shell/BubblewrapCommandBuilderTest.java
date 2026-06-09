@@ -54,6 +54,58 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void usesReadonlyFullRootWhenAllowReadContainsRoot() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/")),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(cwd, policy));
+
+        int readonlyRoot = indexOfSequence(argv, "--ro-bind", "/", "/");
+        assertTrue(readonlyRoot >= 0, "full-read policy must mount / as read-only root");
+        assertTrue(!containsSequence(argv, "--tmpfs", "/"));
+        assertTrue(readonlyRoot < indexOfSequence(argv, "--dev", "/dev"));
+        assertTrue(readonlyRoot < indexOfSequence(argv, "--tmpfs", "/tmp"));
+        assertTrue(readonlyRoot < indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString()));
+        assertTrue(!containsSequence(argv, "--ro-bind-try", "/usr", "/usr"));
+        assertContainsSequence(argv, "--dev", "/dev");
+        assertContainsSequence(argv, "--tmpfs", "/tmp");
+        assertContainsSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertContainsSequence(argv, "--chdir", cwd.toString());
+    }
+
+    @Test
+    void validatesAllAllowReadPathsEvenWhenRootIsAllowed() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/"), Path.of("relative-read")),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("allowRead"));
+        assertTrue(exception.getMessage().contains("absolute"));
+    }
+
+    @Test
     void omitsNetworkUnshareForHostNetworkMode() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path cwd = Files.createDirectory(workspace.resolve("src"));
