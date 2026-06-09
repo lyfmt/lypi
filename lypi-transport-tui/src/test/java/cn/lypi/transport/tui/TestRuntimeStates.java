@@ -16,14 +16,31 @@ final class TestRuntimeStates {
     static SessionRuntimeState basic(String sessionId) {
         return new SessionRuntimeState(
             sessionId,
-            Path.of("."),
+            Path.of("/home/lyfmt/src/study/ly-pi"),
             "leaf_1",
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
             PermissionMode.DEFAULT_EXECUTE,
-            new ContextBudget(0, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
+            new ContextBudget(1234, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
             false,
+            false,
+            false,
+            false
+        );
+    }
+
+    static SessionRuntimeState interruptible(String sessionId) {
+        return new SessionRuntimeState(
+            sessionId,
+            Path.of("/home/lyfmt/src/study/ly-pi"),
+            "leaf_1",
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            new ContextBudget(1234, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
+            true,
             false,
             false,
             false
