@@ -7,6 +7,7 @@ import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
+import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
@@ -169,6 +170,11 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         if (running == null) {
             return MailboxCommandResult.failure("Agent is not running: " + agentId);
         }
+        try {
+            appendInterruptFact(running);
+        } catch (RuntimeException exception) {
+            return MailboxCommandResult.failure("Failed to persist interrupt command: " + exception.getMessage());
+        }
         running.handle().interrupt();
         return MailboxCommandResult.success(null);
     }
@@ -240,6 +246,22 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             Optional.empty(),
             Optional.ofNullable(failure == null ? "Subagent failed" : failure.getMessage())
         );
+    }
+
+    private void appendInterruptFact(RunningAgent running) {
+        parentSession.append(new CustomEntry(
+            "entry_agent_command_" + randomId(),
+            parentSession.currentView().leafId(),
+            "agent_command",
+            Map.of(
+                "action", "interrupt",
+                "agentId", running.agentId(),
+                "childSessionId", running.childSessionId(),
+                "parentSessionId", running.parentSessionId(),
+                "parentSpawnEntryId", running.parentSpawnEntryId()
+            ),
+            Instant.now(clock)
+        ));
     }
 
     private MailboxMessage mailboxMessage(RunningAgent running, HeadlessSubagentOutput output) {

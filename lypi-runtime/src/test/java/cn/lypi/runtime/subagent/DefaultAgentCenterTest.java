@@ -9,6 +9,7 @@ import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
+import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
@@ -243,6 +244,56 @@ class DefaultAgentCenterTest {
             .singleElement()
             .extracting(MailboxMessage::summary)
             .isEqualTo("已中断");
+    }
+
+    @Test
+    void interruptPersistsCommandFactBeforeSubagentCompletes() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult result = center.spawn(new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请审查代码",
+            tempDir,
+            List.of(),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            Optional.empty(),
+            Optional.empty()
+        ));
+        parentSession.switchLeaf("entry_parent");
+
+        center.interrupt(result.agentId());
+
+        assertThat(parentSession.entries)
+            .filteredOn(CustomEntry.class::isInstance)
+            .map(CustomEntry.class::cast)
+            .singleElement()
+            .satisfies(entry -> {
+                assertThat(entry.parentId()).isEqualTo("entry_parent");
+                assertThat(entry.customType()).isEqualTo("agent_command");
+                assertThat(entry.data()).containsEntry("action", "interrupt");
+                assertThat(entry.data()).containsEntry("agentId", result.agentId());
+                assertThat(entry.data()).containsEntry("childSessionId", result.childSessionId());
+                assertThat(entry.data()).containsEntry("parentSpawnEntryId", result.parentSpawnEntryId());
+            });
     }
 
     @Test
