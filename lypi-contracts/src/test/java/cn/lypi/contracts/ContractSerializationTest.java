@@ -56,6 +56,8 @@ import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.subagent.AgentRunStatus;
+import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentResultRef;
@@ -260,6 +262,30 @@ class ContractSerializationTest {
 
         assertEquals(message, restoredMessage);
         assertTrue(messageJson.contains("\"status\":\"PENDING\""));
+    }
+
+    @Test
+    void agentViewRoundTripKeepsManagementFields() throws Exception {
+        AgentView view = new AgentView(
+            "agent_01",
+            "Scout [explorer]",
+            "ses_parent",
+            "ses_child",
+            "entry_spawn",
+            AgentRunStatus.RUNNING,
+            Optional.of(MailboxStatus.PENDING),
+            Optional.of("完成摘要"),
+            Optional.of("entry_final"),
+            Optional.of("Scout"),
+            Optional.of("explorer")
+        );
+
+        String json = mapper.writeValueAsString(view);
+        AgentView restored = mapper.readValue(json, AgentView.class);
+
+        assertEquals(view, restored);
+        assertTrue(json.contains("\"status\":\"RUNNING\""));
+        assertTrue(json.contains("\"mailboxStatus\":\"PENDING\""));
     }
 
     @Test
