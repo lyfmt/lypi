@@ -102,7 +102,7 @@ class JLineTuiTransportTest {
             io,
             () -> Optional.empty(),
             new RecordingSubmitHandler(),
-            40,
+            120,
             4
         );
 

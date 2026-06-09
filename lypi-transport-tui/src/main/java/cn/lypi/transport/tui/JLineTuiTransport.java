@@ -213,6 +213,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     public void attach(EventBus events, SessionRuntimeState state) {
         synchronized (uiMonitor) {
             closeSubscription();
+            if (reducer != null) {
+                reducer.configureRuntimeState(state);
+                syncInputLoopToolState(reducer.view());
+            }
             subscription = events.subscribe(
                 new EventFilter(Optional.ofNullable(state).map(SessionRuntimeState::sessionId), Optional.empty()),
                 envelope -> {
@@ -365,10 +369,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         if (inputLoop == null) {
             return;
         }
-        boolean toolRunning = view.blocks()
+        boolean activeToolBlock = view.blocks()
             .stream()
             .anyMatch(block -> block instanceof TuiToolBlock tool && tool.active());
-        inputLoop.setToolRunning(toolRunning);
+        inputLoop.setToolRunning(activeToolBlock || view.statusBar().hasInterruptibleTool());
     }
 
     private boolean exitRequested() {

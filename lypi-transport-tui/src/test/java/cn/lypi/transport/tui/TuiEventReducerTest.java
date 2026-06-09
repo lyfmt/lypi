@@ -44,6 +44,71 @@ class TuiEventReducerTest {
     private static final Instant NOW = Instant.parse("2026-06-07T09:00:00Z");
 
     @Test
+    void runtimeStateProjectsStatusBarAndToolRunningState() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+
+        assertEquals("ses_1", reducer.view().statusBar().sessionId());
+        assertEquals("gpt-5.4", reducer.view().statusBar().model());
+        assertEquals("EXECUTE", reducer.view().statusBar().mode());
+        assertEquals("DEFAULT_EXECUTE", reducer.view().statusBar().permissionMode());
+        assertEquals("ly-pi", reducer.view().statusBar().cwd());
+        assertEquals("leaf_1", reducer.view().statusBar().branchLeafId());
+        assertEquals("1234/200000tok", reducer.view().statusBar().budget());
+        assertFalse(reducer.view().statusBar().hasInterruptibleTool());
+
+        reducer.reduce(new ToolStartEvent("ses_1", "toolu_1", "bash", NOW));
+
+        assertEquals("EXECUTE", reducer.view().statusBar().mode());
+        assertTrue(reducer.view().statusBar().hasInterruptibleTool());
+
+        reducer.reduce(new ToolEndEvent("ses_1", "toolu_1", false, NOW.plusMillis(10)));
+
+        assertEquals("EXECUTE", reducer.view().statusBar().mode());
+        assertFalse(reducer.view().statusBar().hasInterruptibleTool());
+    }
+
+    @Test
+    void repeatedToolStartDoesNotKeepStatusBarRunningAfterSingleEnd() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+
+        reducer.reduce(new ToolStartEvent("ses_1", "toolu_1", "bash", NOW));
+        reducer.reduce(new ToolStartEvent("ses_1", "toolu_1", "bash", NOW.plusMillis(1)));
+        reducer.reduce(new ToolEndEvent("ses_1", "toolu_1", false, NOW.plusMillis(2)));
+
+        assertEquals("EXECUTE", reducer.view().statusBar().mode());
+    }
+
+    @Test
+    void runtimeInterruptibleToolProjectsInterruptibleStateWithoutChangingVisibleMode() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.interruptible("ses_1"));
+
+        assertEquals("EXECUTE", reducer.view().statusBar().mode());
+        assertTrue(reducer.view().statusBar().hasInterruptibleTool());
+    }
+
+    @Test
+    void runtimeInterruptibleToolEndRestoresAgentModeWithoutExistingToolBlock() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.interruptible("ses_1"));
+
+        reducer.reduce(new ToolEndEvent("ses_1", "toolu_1", false, NOW.plusMillis(1)));
+
+        assertEquals("EXECUTE", reducer.view().statusBar().mode());
+        assertFalse(reducer.view().statusBar().hasInterruptibleTool());
+    }
+
+    @Test
+    void configureRuntimeStateClearsPreviousRunningToolState() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+        reducer.reduce(new ToolStartEvent("ses_1", "toolu_1", "bash", NOW));
+
+        reducer.configureRuntimeState(TestRuntimeStates.basic("ses_2"));
+
+        assertEquals("ses_2", reducer.view().statusBar().sessionId());
+        assertEquals("EXECUTE", reducer.view().statusBar().mode());
+        assertFalse(reducer.view().statusBar().hasInterruptibleTool());
+    }
+
+    @Test
     void reducesMessageThinkingAndToolEventsToLightweightBlocks() {
         TuiEventReducer reducer = new TuiEventReducer();
 
@@ -349,6 +414,9 @@ class TuiEventReducerTest {
         assertEquals("gpt-5.4", status.model());
         assertEquals("EXECUTE", status.mode());
         assertEquals("DEFAULT_EXECUTE", status.permissionMode());
+        assertEquals("ly-pi", status.cwd());
+        assertEquals("leaf_1", status.branchLeafId());
+        assertEquals("1234/200000tok", status.budget());
         assertTrue(reducer.view().blocks().isEmpty(), "new session transcript stays empty");
     }
 

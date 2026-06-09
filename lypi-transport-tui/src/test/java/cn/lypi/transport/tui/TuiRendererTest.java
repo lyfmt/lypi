@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.tui.StatusBarState;
@@ -48,6 +49,36 @@ class TuiRendererTest {
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "");
 
         assertTrue(lines.get(1).contains("tool"));
+    }
+
+    @Test
+    void statusBarDoesNotRenderInternalRuntimeFields() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState(
+                "ses_1",
+                "gpt-5.4",
+                "EXECUTE",
+                "DEFAULT_EXECUTE",
+                "long-project-name",
+                "leaf_1234567890",
+                "1234/200000tok",
+                true
+            ),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(120, 3), "");
+
+        assertEquals("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE", lines.get(1));
+        assertFalse(lines.get(1).contains("cwd:"));
+        assertFalse(lines.get(1).contains("leaf:"));
+        assertFalse(lines.get(1).contains("ctx:"));
+        assertFalse(lines.get(1).contains("tool:interruptible"));
     }
 
     @Test

@@ -7,31 +7,32 @@ import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 final class TuiRenderState {
     private final List<TuiBlock> blocks = new ArrayList<>();
     private final List<SessionFileView> files = new ArrayList<>();
     private final Map<String, Integer> blockIndexes = new HashMap<>();
     private final Map<String, Integer> toolIndexes = new HashMap<>();
-    private final StatusBarState statusBar;
     private PermissionPromptView permissionPrompt;
     private DiffView diffView;
+    private StatusBarState statusBar = new StatusBarState("", "", "ready", "");
+    private String agentMode = "ready";
+    private boolean runtimeInterruptibleTool;
+    private final Set<String> runningToolUseIds = new HashSet<>();
 
     TuiRenderState() {
-        this(new StatusBarState("", "", "ready", ""));
     }
 
     TuiRenderState(SessionRuntimeState runtimeState) {
-        this(statusBar(runtimeState));
-    }
-
-    private TuiRenderState(StatusBarState statusBar) {
-        this.statusBar = statusBar;
+        configure(runtimeState);
     }
 
     List<TuiBlock> blocks() {
@@ -68,6 +69,44 @@ final class TuiRenderState {
         this.permissionPrompt = null;
     }
 
+    void configure(SessionRuntimeState runtimeState) {
+        if (runtimeState == null) {
+            statusBar = new StatusBarState("", "", "ready", "");
+            agentMode = "ready";
+            runtimeInterruptibleTool = false;
+            runningToolUseIds.clear();
+            return;
+        }
+        agentMode = enumLabel(runtimeState.agentMode());
+        runtimeInterruptibleTool = runtimeState.hasInterruptibleTool();
+        runningToolUseIds.clear();
+        statusBar = new StatusBarState(
+            valueOrEmpty(runtimeState.sessionId()),
+            modelLabel(runtimeState),
+            currentMode(),
+            enumLabel(runtimeState.permissionMode()),
+            pathLabel(runtimeState.cwd()),
+            valueOrEmpty(runtimeState.currentBranchLeafId()),
+            budgetLabel(runtimeState),
+            runtimeState.hasInterruptibleTool()
+        );
+    }
+
+    void toolStarted(String toolUseId) {
+        if (toolUseId != null && !toolUseId.isBlank()) {
+            runningToolUseIds.add(toolUseId);
+        }
+        statusBar = withMode(currentMode());
+    }
+
+    void toolEnded(String toolUseId) {
+        if (toolUseId != null && !toolUseId.isBlank()) {
+            runningToolUseIds.remove(toolUseId);
+        }
+        runtimeInterruptibleTool = false;
+        statusBar = withMode(currentMode());
+    }
+
     TuiViewModel view() {
         return new TuiViewModel(
             blocks,
@@ -78,17 +117,55 @@ final class TuiRenderState {
         );
     }
 
-    private static StatusBarState statusBar(SessionRuntimeState runtimeState) {
-        if (runtimeState == null) {
-            return new StatusBarState("", "", "ready", "");
-        }
-        String model = runtimeState.model() == null ? "" : runtimeState.model().modelId();
-        String mode = runtimeState.agentMode() == null ? "" : runtimeState.agentMode().name();
-        String permissionMode = runtimeState.permissionMode() == null ? "" : runtimeState.permissionMode().name();
-        return new StatusBarState(nullToEmpty(runtimeState.sessionId()), nullToEmpty(model), mode, permissionMode);
+    private StatusBarState withMode(String mode) {
+        return new StatusBarState(
+            statusBar.sessionId(),
+            statusBar.model(),
+            mode,
+            statusBar.permissionMode(),
+            statusBar.cwd(),
+            statusBar.branchLeafId(),
+            statusBar.budget(),
+            runtimeInterruptibleTool || !runningToolUseIds.isEmpty()
+        );
     }
 
-    private static String nullToEmpty(String value) {
+    private String currentMode() {
+        return agentMode;
+    }
+
+    private String modelLabel(SessionRuntimeState runtimeState) {
+        if (runtimeState.model() == null) {
+            return "";
+        }
+        return valueOrEmpty(runtimeState.model().modelId());
+    }
+
+    private String enumLabel(Enum<?> value) {
+        return value == null ? "" : value.name();
+    }
+
+    private String pathLabel(Path path) {
+        if (path == null) {
+            return "";
+        }
+        Path fileName = path.getFileName();
+        return fileName == null ? path.toString() : fileName.toString();
+    }
+
+    private String budgetLabel(SessionRuntimeState runtimeState) {
+        if (runtimeState.budget() == null) {
+            return "";
+        }
+        int used = runtimeState.budget().estimatedContextTokens();
+        int window = runtimeState.budget().effectiveContextWindow();
+        if (window <= 0) {
+            return used <= 0 ? "" : used + "tok";
+        }
+        return used + "/" + window + "tok";
+    }
+
+    private String valueOrEmpty(String value) {
         return value == null ? "" : value;
     }
 }
