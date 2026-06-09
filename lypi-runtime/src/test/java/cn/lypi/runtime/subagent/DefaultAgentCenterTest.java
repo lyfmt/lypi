@@ -246,6 +246,61 @@ class DefaultAgentCenterTest {
     }
 
     @Test
+    void runningAgentsSnapshotTracksStartedAgentsUntilCompletion() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        SubagentSpawnResult result = center.spawn(new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请审查代码",
+            tempDir,
+            List.of(),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            Optional.of("Scout"),
+            Optional.of("explorer")
+        ));
+
+        assertThat(center.runningAgents("ses_parent"))
+            .singleElement()
+            .satisfies(snapshot -> {
+                assertThat(snapshot.agentId()).isEqualTo(result.agentId());
+                assertThat(snapshot.childSessionId()).isEqualTo(result.childSessionId());
+                assertThat(snapshot.parentSpawnEntryId()).isEqualTo(result.parentSpawnEntryId());
+                assertThat(snapshot.agentName()).hasValue("Scout");
+                assertThat(snapshot.agentRole()).hasValue("explorer");
+            });
+
+        processRunner.complete(new HeadlessSubagentOutput(
+            result.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "完成摘要",
+            Optional.of("entry_final"),
+            Optional.empty()
+        ));
+
+        assertThat(center.runningAgents("ses_parent")).isEmpty();
+    }
+
+    @Test
     void failedAndTimedOutRunsPublishReadableMailboxAndLifecycleStatus() {
         CapturingChildSessions childSessions = new CapturingChildSessions();
         CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");

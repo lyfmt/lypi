@@ -25,7 +25,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class DefaultAgentCenter implements AgentCenterPort {
+public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSnapshotProvider {
     private final List<String> command;
     private final ChildSessionPort childSessions;
     private final SessionManagerPort parentSession;
@@ -118,7 +118,16 @@ public final class DefaultAgentCenter implements AgentCenterPort {
                 Optional.ofNullable(exception.getMessage())
             );
             completeStartedAgent(
-                new RunningAgent(agentId, childSessionId, request.parentSessionId(), parentSpawnEntryId, parentCwd, null),
+                new RunningAgent(
+                    agentId,
+                    childSessionId,
+                    request.parentSessionId(),
+                    parentSpawnEntryId,
+                    request.agentName(),
+                    request.agentRole(),
+                    parentCwd,
+                    null
+                ),
                 output
             );
             return new SubagentSpawnResult(
@@ -132,7 +141,16 @@ public final class DefaultAgentCenter implements AgentCenterPort {
         }
         runningByAgentId.put(
             agentId,
-            new RunningAgent(agentId, childSessionId, request.parentSessionId(), parentSpawnEntryId, parentCwd, handle)
+            new RunningAgent(
+                agentId,
+                childSessionId,
+                request.parentSessionId(),
+                parentSpawnEntryId,
+                request.agentName(),
+                request.agentRole(),
+                parentCwd,
+                handle
+            )
         );
         handle.completion().whenComplete((output, failure) -> complete(agentId, output, failure));
         return new SubagentSpawnResult(
@@ -162,6 +180,24 @@ public final class DefaultAgentCenter implements AgentCenterPort {
             return Optional.of(result);
         }
         return mailbox.readResult(childSessionId);
+    }
+
+    @Override
+    public List<RunningAgentSnapshot> runningAgents(String parentSessionId) {
+        if (parentSessionId == null || parentSessionId.isBlank()) {
+            return List.of();
+        }
+        return runningByAgentId.values().stream()
+            .filter(running -> parentSessionId.equals(running.parentSessionId()))
+            .map(running -> new RunningAgentSnapshot(
+                running.agentId(),
+                running.childSessionId(),
+                running.parentSessionId(),
+                running.parentSpawnEntryId(),
+                running.agentName(),
+                running.agentRole()
+            ))
+            .toList();
     }
 
     private void complete(String agentId, HeadlessSubagentOutput output, Throwable failure) {
@@ -260,6 +296,8 @@ public final class DefaultAgentCenter implements AgentCenterPort {
         String childSessionId,
         String parentSessionId,
         String parentSpawnEntryId,
+        Optional<String> agentName,
+        Optional<String> agentRole,
         Path parentCwd,
         SubagentProcessHandle handle
     ) {}
