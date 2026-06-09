@@ -51,6 +51,27 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void backspaceDeletesPreviousCharacterAndRerendersInput() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(30, 4)
+        );
+
+        loop.acceptText("abcd");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.BACKSPACE);
+
+        assertEquals("acd", loop.draft());
+        assertEquals("> a|CURSOR|cd", frames.getLast().lines().skip(3).findFirst().orElseThrow());
+    }
+
+    @Test
     void modifiedEnterInsertsNewlineInsteadOfSubmitting() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {

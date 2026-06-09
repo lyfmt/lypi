@@ -26,6 +26,7 @@ import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.SlashCommandHandler;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -85,6 +86,48 @@ class JLineTuiTransportTest {
         assertTrue(io.output.toString().contains("\033[?2026h\033[H\033[Jerror: boom"));
 
         transport.close();
+
+        assertTrue(io.rawModeRestored);
+        assertTrue(io.output.toString().contains(TerminalSession.EXIT_ALTERNATE_SCREEN));
+    }
+
+    @Test
+    void openRendersInitialFrameFromRuntimeState() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            40,
+            4
+        );
+
+        String frame = io.output.toString();
+        assertTrue(frame.contains("\033[?2026h\033[H\033[J"));
+        assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
+        assertTrue(frame.contains("> "));
+
+        transport.close();
+    }
+
+    @Test
+    void openClosesTerminalSessionWhenInitialFrameRenderFails() {
+        FailingInitialFrameTerminalIo io = new FailingInitialFrameTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+
+        assertThrows(UncheckedIOException.class, () -> JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            40,
+            4
+        ));
 
         assertTrue(io.rawModeRestored);
         assertTrue(io.output.toString().contains(TerminalSession.EXIT_ALTERNATE_SCREEN));
@@ -356,6 +399,47 @@ class JLineTuiTransportTest {
         @Override
         public int height() {
             return height;
+        }
+    }
+
+    private static final class FailingInitialFrameTerminalIo implements TerminalIo {
+        private final StringBuilder output = new StringBuilder();
+        private boolean rawModeRestored;
+        private int writesUntilFailure = 5;
+
+        @Override
+        public AutoCloseable enterRawMode() {
+            return () -> rawModeRestored = true;
+        }
+
+        @Override
+        public void write(String value) throws IOException {
+            if (writesUntilFailure == 0) {
+                writesUntilFailure--;
+                throw new IOException("initial frame failed");
+            }
+            writesUntilFailure--;
+            output.append(value);
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public AutoCloseable onResize(Runnable callback) {
+            return () -> {
+            };
+        }
+
+        @Override
+        public int width() {
+            return 40;
+        }
+
+        @Override
+        public int height() {
+            return 4;
         }
     }
 }

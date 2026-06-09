@@ -15,6 +15,7 @@ import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.TuiErrorBlock;
 import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.TuiThinkingBlock;
@@ -39,6 +40,13 @@ public final class TuiEventReducer {
     public static TuiEventReducer fromSessionView(SessionView sessionView) {
         // NOTE: SessionView 只包含指针信息，不在 reducer 中发明恢复提示内容。
         return new TuiEventReducer(new TuiRenderState());
+    }
+
+    /**
+     * 从运行时状态初始化首屏。
+     */
+    public static TuiEventReducer fromRuntimeState(SessionRuntimeState runtimeState) {
+        return new TuiEventReducer(new TuiRenderState(runtimeState));
     }
 
     /**
