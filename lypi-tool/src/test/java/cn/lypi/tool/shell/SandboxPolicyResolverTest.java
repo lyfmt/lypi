@@ -24,6 +24,9 @@ class SandboxPolicyResolverTest {
 
         assertTrue(policy.allowRead().contains(Path.of("/usr")));
         assertTrue(policy.allowRead().contains(Path.of("/bin")));
+        assertTrue(policy.allowRead().contains(Path.of("/sbin")));
+        assertTrue(policy.allowRead().contains(Path.of("/nix/store")));
+        assertTrue(policy.allowRead().contains(Path.of("/run/current-system/sw")));
         assertTrue(policy.allowWrite().contains(workspace.toRealPath()));
         assertEquals(NetworkMode.DISABLED, policy.networkMode());
         assertEquals(false, policy.failIfUnavailable());

@@ -10,14 +10,6 @@ import java.util.Objects;
  * 生成 Bubblewrap 第一版白名单挂载策略。
  */
 public final class DefaultSandboxPolicyResolver implements SandboxPolicyResolver {
-    private static final List<Path> SYSTEM_READ_ONLY_PATHS = List.of(
-        Path.of("/usr"),
-        Path.of("/bin"),
-        Path.of("/lib"),
-        Path.of("/lib64"),
-        Path.of("/etc")
-    );
-
     private final SandboxPolicyOptions options;
 
     public DefaultSandboxPolicyResolver(SandboxPolicyOptions options) {
@@ -30,7 +22,7 @@ public final class DefaultSandboxPolicyResolver implements SandboxPolicyResolver
         Path realWorkspace = realPath(workspace, "workspace");
         realPath(cwd, "cwd");
         return new SandboxRuntimePolicy(
-            SYSTEM_READ_ONLY_PATHS,
+            SandboxPlatformPaths.defaultReadOnlyPaths(),
             List.of(),
             List.of(realWorkspace),
             List.of(),

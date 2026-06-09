@@ -38,9 +38,12 @@ class BubblewrapCommandBuilderTest {
         assertTrue(emptyRoot < indexOfSequence(argv, "--ro-bind-try", "/usr", "/usr"));
         assertContainsSequence(argv, "--ro-bind-try", "/usr", "/usr");
         assertContainsSequence(argv, "--ro-bind-try", "/bin", "/bin");
+        assertContainsSequence(argv, "--ro-bind-try", "/sbin", "/sbin");
         assertContainsSequence(argv, "--ro-bind-try", "/lib", "/lib");
         assertContainsSequence(argv, "--ro-bind-try", "/lib64", "/lib64");
         assertContainsSequence(argv, "--ro-bind-try", "/etc", "/etc");
+        assertContainsSequence(argv, "--ro-bind-try", "/nix/store", "/nix/store");
+        assertContainsSequence(argv, "--ro-bind-try", "/run/current-system/sw", "/run/current-system/sw");
         assertContainsSequence(argv, "--dev", "/dev");
         assertContainsSequence(argv, "--proc", "/proc");
         assertTrue(indexOfSequence(argv, "--tmpfs", "/tmp") < indexOfSequence(argv, "--bind", workspace.toString(), workspace.toString()));
@@ -647,7 +650,7 @@ class BubblewrapCommandBuilderTest {
 
     private SandboxRuntimePolicy policy(Path workspace, NetworkMode networkMode) {
         return new SandboxRuntimePolicy(
-            List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+            List.of(),
             List.of(),
             List.of(workspace),
             List.of(),

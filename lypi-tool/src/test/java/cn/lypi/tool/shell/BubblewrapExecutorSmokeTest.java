@@ -55,6 +55,23 @@ class BubblewrapExecutorSmokeTest {
     }
 
     @Test
+    void exposesPlatformDefaultSbinWithRealBubblewrapWhenAvailable() throws Exception {
+        BubblewrapExecutor executor = new BubblewrapExecutor();
+        Path probe = Files.createDirectory(tempDir.resolve("probe"));
+        assumeTrue(realBubblewrapWorks(executor, probe), "system bubblewrap is unavailable or cannot create namespaces");
+        assumeTrue(Files.exists(Path.of("/sbin")), "host /sbin is unavailable");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        SandboxRuntimePolicy policy = new DefaultSandboxPolicyResolver(SandboxPolicyOptions.defaults()).resolve(workspace, workspace);
+
+        ExecutionResult result = executor.execute(request("test -e /sbin && printf visible", workspace, policy), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.metadata().sandboxed());
+        assertEquals("visible", result.stdout());
+    }
+
+    @Test
     void keepsProtectedMetadataReadonlyWithRealBubblewrapWhenAvailable() throws Exception {
         BubblewrapExecutor executor = new BubblewrapExecutor();
         Path probe = Files.createDirectory(tempDir.resolve("probe"));

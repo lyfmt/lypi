@@ -18,13 +18,6 @@ import java.util.Objects;
  */
 public final class BubblewrapCommandBuilder {
     private static final String EMPTY_FILE_FD = "0";
-    private static final List<Path> DEFAULT_READ_ONLY_PATHS = List.of(
-        Path.of("/usr"),
-        Path.of("/bin"),
-        Path.of("/lib"),
-        Path.of("/lib64"),
-        Path.of("/etc")
-    );
     private static final List<String> PROTECTED_METADATA_NAMES = List.of(".git", ".codex", ".agents");
 
     /**
@@ -212,7 +205,7 @@ public final class BubblewrapCommandBuilder {
     }
 
     private List<Path> readOnlyPaths(SandboxRuntimePolicy policy) {
-        return policy.allowRead().isEmpty() ? DEFAULT_READ_ONLY_PATHS : policy.allowRead();
+        return policy.allowRead().isEmpty() ? SandboxPlatformPaths.defaultReadOnlyPaths() : policy.allowRead();
     }
 
     private List<Path> writablePaths(SandboxRuntimePolicy policy, Path cwd) {
