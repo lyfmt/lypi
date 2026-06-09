@@ -2,234 +2,227 @@
 #
 # 使用方式：
 # 1. 复制本文件为 application.yml，或把需要的片段合并到运行环境配置。
-# 2. 不要把真实 API Key、访问令牌、私有 URL 写入仓库；敏感值统一通过环境变量注入。
-# 3. 本文件只覆盖当前代码真实读取的 Spring 配置项。MCP 当前通过 JSON 文件扫描，
-#    见文件末尾「MCP 静态配置说明」。
+# 2. 默认内置配置可直接工作；本文件所有 YAML 片段默认保持注释状态。
+# 3. 只有需要覆盖默认值、关闭默认能力或新增 Provider/Model 时，才取消对应片段注释。
+# 4. 配置优先级高于内置默认：同 provider + model 会覆盖内置模型元数据，新 provider 或新 model 会追加注册。
+# 5. 不要把真实 API Key、访问令牌、私有 URL 写入仓库；敏感值统一通过环境变量注入。
+#
+# NOTE: 运行 cwd 由启动请求和运行时默认值决定，不建议写入 application.yml。
 
-lypi:
-  runtime:
-    # 重要性：必须关注。运行时工作目录用于会话文件、资源发现和工具相对路径解析。
-    # 建议：服务端部署使用绝对路径；本地调试可使用当前项目根目录。
-    cwd: .
-
-    # 重要性：生产建议。默认会话 ID，用于未显式传入 sessionId 的启动场景。
-    # 建议：交互式单用户可保持 default；多用户或自动化任务应显式传入独立会话 ID。
-    session-id: default
-
-    # 重要性：必须关注。运行时默认 Provider，进入 ModelSelection。
-    # 说明：通常与 lypi.ai.default-provider 保持一致。
-    default-provider: openai
-
-    # 重要性：必须关注。运行时默认模型，进入 ModelSelection。
-    # 说明：通常与 lypi.ai.default-model 保持一致。
-    default-model: gpt-5-mini
-
-    # 重要性：生产建议。默认思考强度，影响模型选择和请求构建。
-    # 可选值：off、minimal、low、medium、high、xhigh、max。
-    thinking-level: medium
-
-    # 重要性：必须关注。Agent 执行模式。
-    # 可选值：plan、execute、bypass。
-    # 建议：默认 execute；需要只规划不执行时使用 plan。
-    agent-mode: execute
-
-    # 重要性：必须关注。权限模式决定工具调用是否需要审批以及默认放行范围。
-    # 可选值：plan、default_execute、accept_edits、dont_ask、bypass。
-    # 建议：默认 default_execute；高信任自动化场景才考虑 dont_ask 或 bypass。
-    permission-mode: default_execute
-
-    # 重要性：生产建议。启动传输入口。
-    # 当前内置值：headless、tui。
-    # 建议：自动化或测试使用 headless；终端交互使用 tui。
-    transport: headless
-
-    # 重要性：调试可选。应用启动后立即执行的一轮用户输入。
-    # 建议：常驻服务保持为空；一次性命令或冒烟测试可通过环境变量传入。
-    initial-prompt: "${LYPI_INITIAL_PROMPT:}"
-
-  ai:
-    # 重要性：兼容字段。AI 模块会绑定该值，但当前默认运行模型选择以 lypi.runtime.default-provider 为准。
-    # 建议：为减少配置歧义，保持它与 lypi.runtime.default-provider 一致。
-    default-provider: openai
-
-    # 重要性：兼容字段。AI 模块会绑定该值，但当前会话初始化和默认 ModelSelection 以 lypi.runtime.default-model 为准。
-    # 建议：为减少配置歧义，保持它与 lypi.runtime.default-model 一致。
-    default-model: gpt-5-mini
-
-    compaction-summary:
-      # 重要性：生产建议。开启后创建 AI compact summary summarizer Bean。
-      # NOTE: 当前默认 AgentCore 仍使用 NoopCompactionCoordinator；该开关不等同于默认链路自动启用压缩。
-      # 取舍：真正接入 DefaultCompactionCoordinator 后，开启会增加模型调用成本；关闭时 summarizer 会 fail-safe 不可用。
-      enabled: false
-
-      # 重要性：兼容字段。AI 摘要失败后的策略名仍可绑定。
-      # 可选值：fallback_deterministic、skip_compaction。
-      # NOTE: 确定性摘要器已删除，fallback_deterministic 仅保留旧配置兼容；当前行为与 skip_compaction 一样回到原上下文。
-      fallback-policy: fallback_deterministic
-
-    # 重要性：必须关注。providers 是模型访问能力的核心注册表。
-    # 说明：只有 enabled=true 且 base-url 有值的 OPENAI_COMPATIBLE Provider 会创建运行时适配器。
-    providers:
-      openai:
-        # 重要性：必须关注。控制该 Provider 是否参与模型注册和请求路由。
-        enabled: true
-
-        # 重要性：必须关注。当前运行时支持 OpenAI 兼容接口。
-        # 可选值：openai_compatible。
-        api-style: openai_compatible
-
-        # 重要性：必须关注。主请求协议风格。
-        # 可选值：responses、chat_completions。
-        # 建议：新 Provider 优先使用 responses；仅兼容旧服务时使用 chat_completions。
-        request-style: responses
-
-        # 重要性：生产建议。主请求协议失败或不兼容时的备用协议。
-        # 建议：若供应商只支持单一协议，保持与 request-style 一致。
-        fallback-request-style: chat_completions
-
-        # 重要性：生产建议。Provider 传输层选择。
-        # 可选值：auto、sse、websocket。
-        # 建议：默认 auto，由适配器根据请求风格选择传输。
-        transport: auto
-
-        # 重要性：必须关注。OpenAI 兼容服务根地址。
-        # 示例：https://api.openai.com/v1、https://api.vendor.example/v1。
-        base-url: https://api.openai.com/v1
-
-        # 重要性：调试可选。WebSocket 模式的路径，通常保持默认 /v1/responses。
-        websocket-path: /v1/responses
-
-        # 重要性：调试可选。显式覆盖 WebSocket 完整地址；为空时由 base-url 和 websocket-path 推导。
-        websocket-url:
-
-        # 重要性：必须关注。Provider 认证凭证。
-        # 安全：不要写真实密钥；通过环境变量注入。
-        api-key: "${OPENAI_API_KEY:}"
-
-        # 重要性：生产建议。单次 Provider 调用超时时间。
-        # 格式：Spring Duration，例如 30s、2m。
-        timeout: 30s
-
-        # 重要性：生产建议。Provider 失败后的最大重试次数。
-        # 建议：交互式场景 2-3 次；批处理可视供应商限流策略调整。
-        max-retries: 3
-
-        # 重要性：兼容扩展。供应商私有参数或请求构建器兼容开关。
-        # 说明：敏感键会在模型描述 compat 中被脱敏；仍不建议写明文密钥。
-        compat:
-          organization: "${OPENAI_ORG_ID:}"
-          project: "${OPENAI_PROJECT_ID:}"
-          safe-flag: true
-
-        model-discovery:
-          # 重要性：生产建议。开启后从远端 /models 或 /model 拉取模型描述。
-          # 取舍：可减少本地模型维护，但启动或刷新时依赖网络与供应商接口兼容性。
-          enabled: false
-
-          # 重要性：兼容扩展。远端模型发现候选路径，按顺序尝试。
-          paths:
-            - /models
-            - /model
-
-        # 重要性：必须关注。静态模型元数据用于上下文预算、输出预算、能力选择和成本估算。
-        # 说明：远端发现关闭时，这里是项目内模型注册的主要来源。
-        models:
-          - # 重要性：必须关注。模型 ID 必须与实际 Provider 接口接受的 model 字段一致。
-            model-id: gpt-5-mini
-
-            # 重要性：必须关注。上下文窗口大小，影响上下文装配和压缩触发判断。
-            context-window: 256000
-
-            # 重要性：必须关注。最大输出 Token，影响请求生成参数和预算控制。
-            max-output-tokens: 16384
-
-            # 重要性：生产建议。模型是否支持 thinking/reasoning 类参数。
-            supports-thinking: true
-
-            # 重要性：生产建议。模型是否支持图片输入。
-            supports-image-input: true
-
-            # 重要性：成本治理。输入 Token 单价，当前用作成本画像，不直接参与计费。
-            input-token-cost: 0
-
-            # 重要性：成本治理。输出 Token 单价，当前用作成本画像，不直接参与计费。
-            output-token-cost: 0
-
-            # 重要性：成本治理。成本币种。
-            currency: USD
-
-            # 重要性：兼容扩展。模型级 compat 会覆盖 Provider 级同名 compat。
-            compat:
-              vendor: openai
-
-          - model-id: gpt-5
-            context-window: 400000
-            max-output-tokens: 32768
-            supports-thinking: true
-            supports-image-input: true
-            input-token-cost: 0
-            output-token-cost: 0
-            currency: USD
-            compat:
-              vendor: openai
-
-      local:
-        # 重要性：调试可选。本地或私有 OpenAI 兼容服务示例，默认禁用。
-        enabled: false
-        api-style: openai_compatible
-        request-style: chat_completions
-        fallback-request-style: chat_completions
-        transport: auto
-
-        # 重要性：必须关注。启用本地 Provider 前确认服务地址和 /v1 路径是否匹配。
-        base-url: http://127.0.0.1:8000/v1
-        websocket-path: /v1/responses
-        websocket-url:
-        api-key: "${LOCAL_LLM_API_KEY:}"
-        timeout: 60s
-        max-retries: 1
-        compat:
-          vendor: local
-        model-discovery:
-          enabled: false
-          paths:
-            - /models
-        models:
-          - model-id: local-model
-            context-window: 32768
-            max-output-tokens: 4096
-            supports-thinking: false
-            supports-image-input: false
-            input-token-cost: 0
-            output-token-cost: 0
-            currency: USD
-            compat:
-              vendor: local
-
-  tool:
-    # 重要性：必须关注。tool 板块控制内置工具执行策略，尤其是 shell 沙盒。
-    sandbox:
-      # 重要性：必须关注。启用后 Bash 等命令工具会优先走沙盒执行器。
-      # 建议：生产和日常开发保持 true；只有在环境明确不支持沙盒且可接受风险时才关闭。
-      enabled: true
-
-      # 重要性：必须关注。沙盒内网络访问策略。
-      # 可选值：disabled、host。
-      # 建议：默认 disabled，避免工具调用意外访问网络；确需联网安装依赖或访问服务时再切换 host。
-      network-mode: disabled
-
-      # 重要性：生产建议。沙盒不可用时是否直接失败。
-      # true：缺少 bubblewrap 等沙盒能力时拒绝执行，更安全。
-      # false：允许回退到宿主机执行器，更方便但风险更高。
-      fail-if-unavailable: false
-
-      # 重要性：生产建议。命令已在沙盒中执行时是否自动放行 bash 权限。
-      # 取舍：true 可减少交互确认；false 更严格，适合权限审计优先的环境。
-      auto-allow-bash-if-sandboxed: false
+# lypi:
+#   runtime:
+#     # 重要性：可选覆盖。默认会话 ID，用于未显式传入 sessionId 的启动场景。
+#     # 建议：交互式单用户通常无需配置；多用户或自动化任务应在启动请求中显式传入独立 sessionId。
+#     session-id: default
+#
+#     # 重要性：可选覆盖。运行时默认 Provider，进入 ModelSelection。
+#     # 内置默认：openai。仅在默认会话要切到其他 Provider 时取消注释。
+#     default-provider: openai
+#
+#     # 重要性：可选覆盖。运行时默认模型，进入 ModelSelection。
+#     # 内置默认：gpt-5-mini。仅在默认会话要切到其他模型时取消注释。
+#     default-model: gpt-5-mini
+#
+#     # 重要性：可选覆盖。默认思考强度，影响模型选择和请求构建。
+#     # 可选值：off、minimal、low、medium、high、xhigh、max。
+#     thinking-level: medium
+#
+#     # 重要性：可选覆盖。Agent 执行模式。
+#     # 可选值：plan、execute、bypass。
+#     # 建议：默认 execute；需要只规划不执行时使用 plan。
+#     agent-mode: execute
+#
+#     # 重要性：必须谨慎。权限模式决定工具调用是否需要审批以及默认放行范围。
+#     # 可选值：plan、default_execute、accept_edits、dont_ask、bypass。
+#     # 建议：默认 default_execute；高信任自动化场景才考虑 dont_ask 或 bypass。
+#     permission-mode: default_execute
+#
+#     # 重要性：可选覆盖。启动传输入口。
+#     # 当前内置值：headless、tui。
+#     # 建议：自动化或测试使用 headless；终端交互使用 tui。
+#     transport: headless
+#
+#     # 重要性：调试可选。应用启动后立即执行的一轮用户输入。
+#     # 建议：常驻服务保持为空；一次性命令或冒烟测试可通过环境变量传入。
+#     initial-prompt: "${LYPI_INITIAL_PROMPT:}"
+#
+#   ai:
+#     # 重要性：兼容字段。当前默认运行模型选择以 lypi.runtime.default-provider 为准。
+#     # 建议：除非兼容旧配置读取方，否则不要配置；配置时保持与 runtime.default-provider 一致。
+#     default-provider: openai
+#
+#     # 重要性：兼容字段。当前默认运行模型选择以 lypi.runtime.default-model 为准。
+#     # 建议：除非兼容旧配置读取方，否则不要配置；配置时保持与 runtime.default-model 一致。
+#     default-model: gpt-5-mini
+#
+#     compaction-summary:
+#       # 重要性：可选能力。开启后创建 AI compact summary summarizer Bean。
+#       # NOTE: 当前默认 AgentCore 仍使用 NoopCompactionCoordinator；该开关不等同于默认链路自动启用压缩。
+#       # 取舍：真正接入 DefaultCompactionCoordinator 后，开启会增加模型调用成本。
+#       enabled: false
+#
+#       # 重要性：兼容字段。AI 摘要失败后的策略名仍可绑定。
+#       # 可选值：fallback_deterministic、skip_compaction。
+#       # NOTE: 确定性摘要器已删除，fallback_deterministic 仅保留旧配置兼容；当前行为与 skip_compaction 一样回到原上下文。
+#       fallback-policy: fallback_deterministic
+#
+#     # 重要性：可选覆盖或扩展。providers 用于覆盖内置 Provider 或新增 OpenAI 兼容 Provider。
+#     # 说明：内置 openai 可省略；配置 openai 会覆盖同名内置 adapter，配置新名称会追加 provider。
+#     # 关闭内置 openai 时，只需要取消注释：
+#     # providers:
+#     #   openai:
+#     #     enabled: false
+#     providers:
+#       openai:
+#         # 重要性：可选覆盖。控制该 Provider 是否参与模型注册和请求路由。
+#         # 同名 openai 配置 enabled=false 会关闭内置 OpenAI adapter。
+#         enabled: true
+#
+#         # 重要性：必须关注。当前运行时支持 OpenAI 兼容接口。
+#         # 可选值：openai_compatible。
+#         api-style: openai_compatible
+#
+#         # 重要性：可选覆盖。主请求协议风格。
+#         # 可选值：responses、chat_completions。
+#         # 建议：新 Provider 优先使用 responses；仅兼容旧服务时使用 chat_completions。
+#         request-style: responses
+#
+#         # 重要性：可选覆盖。主请求协议失败或不兼容时的备用协议。
+#         # 建议：若供应商只支持单一协议，保持与 request-style 一致。
+#         fallback-request-style: chat_completions
+#
+#         # 重要性：可选覆盖。Provider 传输层选择。
+#         # 可选值：auto、sse、websocket。
+#         # 建议：默认 auto，由适配器根据请求风格选择传输。
+#         transport: auto
+#
+#         # 重要性：必须关注。OpenAI 兼容服务根地址。
+#         # 示例：https://api.openai.com/v1、https://api.vendor.example/v1。
+#         base-url: https://api.openai.com/v1
+#
+#         # 重要性：调试可选。WebSocket 模式的路径，通常保持默认 /v1/responses。
+#         websocket-path: /v1/responses
+#
+#         # 重要性：调试可选。显式覆盖 WebSocket 完整地址；为空时由 base-url 和 websocket-path 推导。
+#         websocket-url:
+#
+#         # 重要性：必须关注。Provider 认证凭证。
+#         # 安全：不要写真实密钥；通过环境变量注入。
+#         api-key: "${OPENAI_API_KEY:}"
+#
+#         # 重要性：生产建议。单次 Provider 调用超时时间。
+#         # 格式：Spring Duration，例如 30s、2m。
+#         timeout: 30s
+#
+#         # 重要性：生产建议。Provider 失败后的最大重试次数。
+#         # 建议：交互式场景 2-3 次；批处理可视供应商限流策略调整。
+#         max-retries: 3
+#
+#         # 重要性：兼容扩展。供应商私有参数或请求构建器兼容开关。
+#         # 说明：敏感键会在模型描述 compat 中被脱敏；仍不建议写明文密钥。
+#         compat:
+#           organization: "${OPENAI_ORG_ID:}"
+#           project: "${OPENAI_PROJECT_ID:}"
+#           safe-flag: true
+#
+#         model-discovery:
+#           # 重要性：可选能力。开启后从远端 /models 或 /model 拉取模型描述。
+#           # 取舍：可减少本地模型维护，但启动或刷新时依赖网络与供应商接口兼容性。
+#           enabled: false
+#
+#           # 重要性：兼容扩展。远端模型发现候选路径，按顺序尝试。
+#           paths:
+#             - /models
+#             - /model
+#
+#         # 重要性：可选覆盖或扩展。静态模型元数据用于上下文预算、输出预算、能力选择和成本估算。
+#         # 说明：同 provider + model-id 会覆盖内置模型描述；新增 model-id 会追加注册。
+#         models:
+#           - # 重要性：必须关注。模型 ID 必须与实际 Provider 接口接受的 model 字段一致。
+#             model-id: gpt-5-mini
+#
+#             # 重要性：必须关注。上下文窗口大小，影响上下文装配和压缩触发判断。
+#             context-window: 256000
+#
+#             # 重要性：必须关注。最大输出 Token，影响请求生成参数和预算控制。
+#             max-output-tokens: 16384
+#
+#             # 重要性：生产建议。模型是否支持 thinking/reasoning 类参数。
+#             supports-thinking: true
+#
+#             # 重要性：生产建议。模型是否支持图片输入。
+#             supports-image-input: true
+#
+#             # 重要性：成本治理。输入 Token 单价，当前用作成本画像，不直接参与计费。
+#             input-token-cost: 0
+#
+#             # 重要性：成本治理。输出 Token 单价，当前用作成本画像，不直接参与计费。
+#             output-token-cost: 0
+#
+#             # 重要性：成本治理。成本币种。
+#             currency: USD
+#
+#             # 重要性：兼容扩展。模型级 compat 会覆盖 Provider 级同名 compat。
+#             compat:
+#               vendor: openai
+#
+#       fixture:
+#         # 重要性：扩展示例。新增 Provider 时复制该结构并改名。
+#         enabled: true
+#         api-style: openai_compatible
+#         request-style: chat_completions
+#         fallback-request-style: chat_completions
+#         transport: auto
+#         base-url: https://api.fixture.example/v1
+#         websocket-path: /v1/responses
+#         websocket-url:
+#         api-key: "${FIXTURE_API_KEY:}"
+#         timeout: 60s
+#         max-retries: 1
+#         compat:
+#           vendor: fixture
+#         model-discovery:
+#           enabled: false
+#           paths:
+#             - /models
+#         models:
+#           - model-id: fixture-model
+#             context-window: 64000
+#             max-output-tokens: 8192
+#             supports-thinking: false
+#             supports-image-input: false
+#             input-token-cost: 0
+#             output-token-cost: 0
+#             currency: USD
+#             compat:
+#               vendor: fixture
+#
+#   tool:
+#     # 重要性：可选覆盖。tool 板块控制内置工具执行策略，尤其是 shell 沙盒。
+#     sandbox:
+#       # 重要性：必须谨慎。启用后 Bash 等命令工具会优先走沙盒执行器。
+#       # 建议：生产和日常开发保持 true；只有在环境明确不支持沙盒且可接受风险时才关闭。
+#       enabled: true
+#
+#       # 重要性：必须关注。沙盒内网络访问策略。
+#       # 可选值：disabled、host。
+#       # 建议：默认 disabled，避免工具调用意外访问网络；确需联网安装依赖或访问服务时再切换 host。
+#       network-mode: disabled
+#
+#       # 重要性：生产建议。沙盒不可用时是否直接失败。
+#       # true：缺少 bubblewrap 等沙盒能力时拒绝执行，更安全。
+#       # false：允许回退到宿主机执行器，更方便但风险更高。
+#       fail-if-unavailable: false
+#
+#       # 重要性：生产建议。命令已在沙盒中执行时是否自动放行 bash 权限。
+#       # 取舍：true 可减少交互确认；false 更严格，适合权限审计优先的环境。
+#       auto-allow-bash-if-sandboxed: false
 
 # MCP 静态配置说明：
 #
 # 重要性：工具扩展。MCP Server 当前不是 Spring YAML 配置项，不会从 lypi.mcp 读取。
+# 默认无需写入 application.yml；需要扩展工具时，使用 JSON 文件。
+#
 # 实际扫描位置：
 # - 用户级：<user-root>/mcp.json
 # - 用户级目录：<user-root>/mcp/*.json

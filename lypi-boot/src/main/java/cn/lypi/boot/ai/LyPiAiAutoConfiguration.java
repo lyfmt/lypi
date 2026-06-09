@@ -15,6 +15,8 @@ import cn.lypi.ai.model.ModelDescriptorSource;
 import cn.lypi.ai.model.RemoteModelDescriptorSource;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.model.StaticModelDescriptorSource;
+import cn.lypi.ai.provider.RequestStyle;
+import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
 import cn.lypi.ai.provider.openai.OpenAiProviderConfig;
 import cn.lypi.agent.compact.AiCompactionSummarizer;
@@ -45,6 +47,11 @@ import org.springframework.context.annotation.Bean;
 @AutoConfiguration
 @EnableConfigurationProperties(LyPiAiProperties.class)
 public class LyPiAiAutoConfiguration {
+    private static final String BUILTIN_OPENAI_PROVIDER = "openai";
+    private static final String OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
+    private static final String BUILTIN_OPENAI_WEBSOCKET_PATH = "/v1/responses";
+    private static final Duration BUILTIN_OPENAI_TIMEOUT = Duration.ofSeconds(30);
+
     @Bean
     @ConditionalOnMissingBean
     public ModelRegistry modelRegistry(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
@@ -103,15 +110,30 @@ public class LyPiAiAutoConfiguration {
 
     private ModelDescriptorSource modelDescriptorSource(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
         List<ModelDescriptorSource> sources = new ArrayList<>();
-        sources.add(new BuiltinModelDescriptorSource());
+        sources.add(new StaticModelDescriptorSource(builtinModelDescriptors(properties)));
         sources.add(new StaticModelDescriptorSource(modelDescriptors(properties)));
         sources.add(new StaticModelDescriptorSource(remoteModelDescriptors(properties, discoveryClient)));
         return new CompositeModelDescriptorSource(sources);
     }
 
+    private List<ModelDescriptor> builtinModelDescriptors(LyPiAiProperties properties) {
+        if (isBuiltinOpenAiDisabled(properties)) {
+            return List.of();
+        }
+        ProviderProperties provider = mergedBuiltinOpenAiProvider(properties.getProviders().get(BUILTIN_OPENAI_PROVIDER));
+        return new BuiltinModelDescriptorSource().list().stream()
+            .map(descriptor -> withProviderOverrides(descriptor, provider))
+            .toList();
+    }
+
+    private boolean isBuiltinOpenAiDisabled(LyPiAiProperties properties) {
+        ProviderProperties provider = properties.getProviders().get(BUILTIN_OPENAI_PROVIDER);
+        return provider != null && provider.isEnabledConfigured() && !provider.isEnabled();
+    }
+
     private List<ModelDescriptor> modelDescriptors(LyPiAiProperties properties) {
         List<ModelDescriptor> descriptors = new ArrayList<>();
-        properties.getProviders().forEach((providerName, provider) -> {
+        effectiveProviders(properties).forEach((providerName, provider) -> {
             if (!provider.isEnabled() || provider.getBaseUrl() == null) {
                 return;
             }
@@ -127,7 +149,7 @@ public class LyPiAiAutoConfiguration {
 
     private List<ModelDescriptor> remoteModelDescriptors(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
         List<ModelDescriptor> descriptors = new ArrayList<>();
-        properties.getProviders().forEach((providerName, provider) -> {
+        effectiveProviders(properties).forEach((providerName, provider) -> {
             if (!provider.isEnabled() || provider.getBaseUrl() == null || !provider.getModelDiscovery().isEnabled()) {
                 return;
             }
@@ -183,14 +205,95 @@ public class LyPiAiAutoConfiguration {
     }
 
     private List<OpenAiCompatibleProviderAdapter> buildOpenAiProviderAdapters(LyPiAiProperties properties) {
-        List<OpenAiCompatibleProviderAdapter> adapters = new ArrayList<>();
-        properties.getProviders().forEach((providerName, provider) -> {
+        Map<String, OpenAiCompatibleProviderAdapter> adapters = new LinkedHashMap<>();
+        effectiveProviders(properties).forEach((providerName, provider) -> {
             if (!supportsOpenAiAdapter(provider)) {
                 return;
             }
-            adapters.add(openAiProviderAdapter(openAiConfig(providerName, provider)));
+            adapters.put(providerName, openAiProviderAdapter(openAiConfig(providerName, provider)));
         });
-        return adapters;
+        return new ArrayList<>(adapters.values());
+    }
+
+    private Map<String, ProviderProperties> effectiveProviders(LyPiAiProperties properties) {
+        Map<String, ProviderProperties> providers = new LinkedHashMap<>();
+        if (!isBuiltinOpenAiDisabled(properties)) {
+            providers.put(BUILTIN_OPENAI_PROVIDER, mergedBuiltinOpenAiProvider(properties.getProviders().get(BUILTIN_OPENAI_PROVIDER)));
+        }
+        properties.getProviders().forEach((providerName, provider) -> {
+            if (BUILTIN_OPENAI_PROVIDER.equals(providerName)) {
+                return;
+            }
+            providers.put(providerName, provider);
+        });
+        return providers;
+    }
+
+    private ProviderProperties mergedBuiltinOpenAiProvider(ProviderProperties configured) {
+        ProviderProperties provider = builtinOpenAiProvider();
+        if (configured == null) {
+            return provider;
+        }
+        copyProviderOverrides(provider, configured);
+        return provider;
+    }
+
+    private ProviderProperties builtinOpenAiProvider() {
+        ProviderProperties provider = new ProviderProperties();
+        provider.setEnabled(true);
+        provider.setApiStyle(ApiStyle.OPENAI_COMPATIBLE);
+        provider.setRequestStyle(RequestStyle.RESPONSES);
+        provider.setFallbackRequestStyle(RequestStyle.CHAT_COMPLETIONS);
+        provider.setTransport(TransportMode.AUTO);
+        provider.setBaseUrl(java.net.URI.create("https://api.openai.com/v1"));
+        provider.setWebsocketPath(BUILTIN_OPENAI_WEBSOCKET_PATH);
+        provider.setApiKey(environmentValue(OPENAI_API_KEY_ENV));
+        provider.setTimeout(BUILTIN_OPENAI_TIMEOUT);
+        provider.setMaxRetries(3);
+        return provider;
+    }
+
+    private void copyProviderOverrides(ProviderProperties target, ProviderProperties source) {
+        if (source.isEnabledConfigured()) {
+            target.setEnabled(source.isEnabled());
+        }
+        if (source.isApiStyleConfigured()) {
+            target.setApiStyle(source.getApiStyle());
+        }
+        if (source.isRequestStyleConfigured()) {
+            target.setRequestStyle(source.getRequestStyle());
+        }
+        if (source.isFallbackRequestStyleConfigured()) {
+            target.setFallbackRequestStyle(source.getFallbackRequestStyle());
+        }
+        if (source.isTransportConfigured()) {
+            target.setTransport(source.getTransport());
+        }
+        if (source.isBaseUrlConfigured()) {
+            target.setBaseUrl(source.getBaseUrl());
+        }
+        if (source.isWebsocketPathConfigured()) {
+            target.setWebsocketPath(source.getWebsocketPath());
+        }
+        if (source.isWebsocketUrlConfigured()) {
+            target.setWebsocketUrl(source.getWebsocketUrl());
+        }
+        if (source.isApiKeyConfigured()) {
+            target.setApiKey(source.getApiKey());
+        }
+        if (source.isTimeoutConfigured()) {
+            target.setTimeout(source.getTimeout());
+        }
+        if (source.isMaxRetriesConfigured()) {
+            target.setMaxRetries(source.getMaxRetries());
+        }
+        target.setCompat(source.getCompat());
+        target.setModelDiscovery(source.getModelDiscovery());
+        target.setModels(source.getModels());
+    }
+
+    private String environmentValue(String name) {
+        return Optional.ofNullable(System.getenv(name)).orElse("");
     }
 
     private OpenAiCompatibleProviderAdapter openAiProviderAdapter(OpenAiProviderConfig config) {
@@ -212,7 +315,7 @@ public class LyPiAiAutoConfiguration {
             provider.getBaseUrl(),
             Optional.ofNullable(provider.getWebsocketUrl()),
             valueOrDefault(provider.getWebsocketPath(), "/v1/responses"),
-            provider.getApiKey(),
+            valueOrDefault(provider.getApiKey(), ""),
             provider.getRequestStyle(),
             provider.getFallbackRequestStyle(),
             provider.getTransport(),
@@ -227,6 +330,21 @@ public class LyPiAiAutoConfiguration {
         compat.putAll(providerCompat);
         compat.putAll(modelCompat);
         return CompatSanitizer.sanitize(compat);
+    }
+
+    private ModelDescriptor withProviderOverrides(ModelDescriptor descriptor, ProviderProperties provider) {
+        return new ModelDescriptor(
+            descriptor.provider(),
+            descriptor.modelId(),
+            provider.getBaseUrl(),
+            valueOrDefault(provider.getApiStyle(), descriptor.apiStyle()),
+            descriptor.contextWindow(),
+            descriptor.maxOutputTokens(),
+            descriptor.supportsThinking(),
+            descriptor.supportsImageInput(),
+            descriptor.costProfile(),
+            sanitizedCompat(provider.getCompat(), descriptor.compat())
+        );
     }
 
     private static <T> T valueOrDefault(T value, T defaultValue) {

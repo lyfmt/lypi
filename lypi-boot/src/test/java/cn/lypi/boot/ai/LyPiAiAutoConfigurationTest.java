@@ -9,6 +9,7 @@ import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
+import cn.lypi.ai.provider.openai.OpenAiProviderConfig;
 import cn.lypi.agent.compact.AiCompactionSummarizer;
 import cn.lypi.agent.compact.CompactSummaryRequest;
 import cn.lypi.agent.compact.CompactionSummarizer;
@@ -23,8 +24,9 @@ import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CompactionPlan;
-import java.net.URI;
+import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -107,7 +109,62 @@ class LyPiAiAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasSingleBean(ModelRegistry.class);
                 assertThat(context.getBean(ModelRegistry.class).list()).isNotEmpty();
-                assertThat(context).doesNotHaveBean(OpenAiCompatibleProviderAdapter.class);
+                assertThat(context.getBean("openAiCompatibleProviderAdapters", List.class)).hasSize(1);
+                assertThat(context.getBean(ApiProviderRegistry.class).find(cn.lypi.contracts.model.ApiStyle.OPENAI_COMPATIBLE))
+                    .isPresent();
+            });
+    }
+
+    @Test
+    void explicitOpenAiProviderConfigurationOverridesBuiltInAdapter() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.ai.providers.openai.base-url=https://api.openai.test/v1",
+                "lypi.ai.providers.openai.api-key=fixture-token"
+            )
+            .run(context -> {
+                List<?> adapters = context.getBean("openAiCompatibleProviderAdapters", List.class);
+                OpenAiCompatibleProviderAdapter adapter = (OpenAiCompatibleProviderAdapter) adapters.getFirst();
+
+                assertThat(adapters).hasSize(1);
+                assertThat(config(adapter).baseUrl()).hasToString("https://api.openai.test/v1");
+                assertThat(config(adapter).apiKey()).isEqualTo("fixture-token");
+                assertThat(config(adapter).fallbackRequestStyle()).isEqualTo(RequestStyle.CHAT_COMPLETIONS);
+                assertThat(context.getBean(ModelRegistry.class).list()).singleElement()
+                    .satisfies(descriptor -> assertThat(descriptor.baseUrl()).hasToString("https://api.openai.test/v1"));
+            });
+    }
+
+    @Test
+    void configuredOpenAiModelOverridesBuiltInDescriptorWithoutRepeatingProviderTransportFields() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.ai.providers.openai.enabled=true",
+                "lypi.ai.providers.openai.models[0].model-id=gpt-5-mini",
+                "lypi.ai.providers.openai.models[0].context-window=256000",
+                "lypi.ai.providers.openai.models[0].max-output-tokens=32768"
+            )
+            .run(context -> {
+                assertThat(context.getBean(ModelRegistry.class).list()).singleElement().satisfies(descriptor -> {
+                    assertThat(descriptor.provider()).isEqualTo("openai");
+                    assertThat(descriptor.modelId()).isEqualTo("gpt-5-mini");
+                    assertThat(descriptor.baseUrl()).hasToString("https://api.openai.com/v1");
+                    assertThat(descriptor.contextWindow()).isEqualTo(256000);
+                    assertThat(descriptor.maxOutputTokens()).isEqualTo(32768);
+                });
+            });
+    }
+
+    @Test
+    void explicitOpenAiProviderDisableRemovesBuiltInAdapter() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues("lypi.ai.providers.openai.enabled=false")
+            .run(context -> {
+                assertThat(context.getBean("openAiCompatibleProviderAdapters", List.class)).isEmpty();
+                assertThat(context.getBean(ModelRegistry.class).list()).isEmpty();
             });
     }
 
@@ -212,6 +269,7 @@ class LyPiAiAutoConfigurationTest {
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(ApiProviderRegistry.class);
+                assertThat(context.getBean("openAiCompatibleProviderAdapters", List.class)).hasSize(2);
                 assertThat(context.getBean(ModelRegistry.class).list())
                     .extracting(descriptor -> descriptor.provider() + ":" + descriptor.modelId())
                     .contains("openai:gpt-5-mini", "fixture:fixture-model");
@@ -238,6 +296,16 @@ class LyPiAiAutoConfigurationTest {
         @Override
         public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
             throw new AssertionError("Remote discovery should not be called when disabled.");
+        }
+    }
+
+    private static OpenAiProviderConfig config(OpenAiCompatibleProviderAdapter adapter) {
+        try {
+            Field field = OpenAiCompatibleProviderAdapter.class.getDeclaredField("config");
+            field.setAccessible(true);
+            return (OpenAiProviderConfig) field.get(adapter);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("Unable to read OpenAI adapter config", e);
         }
     }
 
