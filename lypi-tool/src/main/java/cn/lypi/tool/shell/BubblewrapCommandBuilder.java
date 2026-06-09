@@ -126,6 +126,13 @@ public final class BubblewrapCommandBuilder {
         }
     }
 
+    private record WritableMount(Path requestedPath, Path mountPath) {
+        private WritableMount {
+            Objects.requireNonNull(requestedPath, "requestedPath must not be null");
+            Objects.requireNonNull(mountPath, "mountPath must not be null");
+        }
+    }
+
     /**
      * 返回默认 Bubblewrap argv 构建器。
      */
@@ -169,7 +176,8 @@ public final class BubblewrapCommandBuilder {
         if (policy.networkMode() == NetworkMode.DISABLED) {
             argv.add("--unshare-net");
         }
-        List<Path> readOnlyPaths = normalizedReadOnlyPaths(policy);
+        List<WritableMount> writableMounts = writableMounts(policy, request.cwd());
+        List<Path> readOnlyPaths = normalizedReadOnlyPaths(policy, writableMounts);
         if (readOnlyPaths.contains(Path.of("/"))) {
             argv.add("--ro-bind");
             argv.add("/");
@@ -192,21 +200,17 @@ public final class BubblewrapCommandBuilder {
         argv.add("--tmpfs");
         argv.add("/tmp");
         List<Path> writableMountPaths = new ArrayList<>();
-        for (Path path : writablePaths(policy, request.cwd())) {
-            Path mountPath = absoluteNormalized(path, "allowWrite");
-            if (!Files.exists(mountPath, LinkOption.NOFOLLOW_LINKS)) {
-                continue;
-            }
-            rejectSymlinkPath(mountPath, "allowWrite path must not cross a symbolic link");
+        for (WritableMount writableMount : writableMounts) {
+            Path mountPath = writableMount.mountPath();
             writableMountPaths.add(mountPath);
             appendWritableBind(argv, mountPath);
         }
         appendProtectedMetadataMasks(argv, writableMountPaths, syntheticMountTargets, protectedCreateTargets);
-        appendDenyReadMasks(argv, policy.denyRead(), writableMountPaths, request.cwd(), syntheticMountTargets, protectedCreateTargets);
-        if (request.cwd() != null) {
-            Path cwd = absoluteNormalized(request.cwd(), "cwd");
+        Path commandCwd = request.cwd() == null ? null : commandCwdForBwrap(request.cwd());
+        appendDenyReadMasks(argv, policy.denyRead(), writableMountPaths, commandCwd, syntheticMountTargets, protectedCreateTargets);
+        if (commandCwd != null) {
             argv.add("--chdir");
-            argv.add(cwd.toString());
+            argv.add(commandCwd.toString());
         }
         argv.add("--");
         argv.addAll(request.command());
@@ -217,10 +221,50 @@ public final class BubblewrapCommandBuilder {
         return policy.allowRead().isEmpty() ? SandboxPlatformPaths.defaultReadOnlyPaths() : policy.allowRead();
     }
 
-    private List<Path> normalizedReadOnlyPaths(SandboxRuntimePolicy policy) {
+    private List<Path> normalizedReadOnlyPaths(SandboxRuntimePolicy policy, List<WritableMount> writableMounts) {
         return readOnlyPaths(policy).stream()
             .map(path -> absoluteNormalized(path, "allowRead"))
+            .map(path -> remapReadOnlyPathForWritableSymlinkTarget(path, writableMounts))
             .toList();
+    }
+
+    private Path remapReadOnlyPathForWritableSymlinkTarget(Path path, List<WritableMount> writableMounts) {
+        WritableMount selectedMount = null;
+        for (WritableMount writableMount : writableMounts) {
+            if (writableMount.requestedPath().equals(writableMount.mountPath()) || !path.startsWith(writableMount.requestedPath())) {
+                continue;
+            }
+            if (selectedMount == null || pathDepth(writableMount.requestedPath()) > pathDepth(selectedMount.requestedPath())) {
+                selectedMount = writableMount;
+            }
+        }
+        if (selectedMount == null) {
+            return path;
+        }
+        if (path.equals(selectedMount.requestedPath())) {
+            return selectedMount.mountPath();
+        }
+        return selectedMount.mountPath().resolve(selectedMount.requestedPath().relativize(path)).normalize();
+    }
+
+    private List<WritableMount> writableMounts(SandboxRuntimePolicy policy, Path cwd) {
+        List<WritableMount> mounts = new ArrayList<>();
+        for (Path path : writablePaths(policy, cwd)) {
+            Path allowWritePath = absoluteNormalized(path, "allowWrite");
+            if (!Files.exists(allowWritePath, LinkOption.NOFOLLOW_LINKS)) {
+                continue;
+            }
+            rejectProtectedMetadataDescendant(allowWritePath);
+            rejectProtectedMetadataSymlinkRoot(allowWritePath);
+            Path mountPath = canonicalTargetIfSymlinkedPath(allowWritePath, "allowWrite");
+            if (mountPath == null) {
+                mountPath = allowWritePath;
+            } else {
+                rejectProtectedMetadataSymlinkTarget(allowWritePath, mountPath);
+            }
+            mounts.add(new WritableMount(allowWritePath, mountPath));
+        }
+        return List.copyOf(mounts);
     }
 
     private List<Path> writablePaths(SandboxRuntimePolicy policy, Path cwd) {
@@ -464,6 +508,53 @@ public final class BubblewrapCommandBuilder {
         }
     }
 
+    private Path commandCwdForBwrap(Path cwd) {
+        Path normalizedCwd = absoluteNormalized(cwd, "cwd");
+        Path canonicalCwd = canonicalTargetIfSymlinkedPath(normalizedCwd, "cwd");
+        return canonicalCwd == null ? normalizedCwd : canonicalCwd;
+    }
+
+    private void rejectProtectedMetadataDescendant(Path path) {
+        if (isProtectedMetadataDescendant(path)) {
+            throw new IllegalArgumentException("allowWrite path must not be protected metadata descendant: " + path);
+        }
+    }
+
+    private void rejectProtectedMetadataSymlinkRoot(Path path) {
+        if (isProtectedMetadataPath(path) && Files.isSymbolicLink(path)) {
+            throw new IllegalArgumentException("protected metadata path must not be a symbolic link: " + path);
+        }
+    }
+
+    private void rejectProtectedMetadataSymlinkTarget(Path requestedPath, Path mountPath) {
+        if (isProtectedMetadataPathOrDescendant(mountPath)) {
+            throw new IllegalArgumentException(
+                "allowWrite symbolic link target must not be protected metadata: " + requestedPath + " -> " + mountPath
+            );
+        }
+    }
+
+    private Path canonicalTargetIfSymlinkedPath(Path path, String label) {
+        Path current = path.getRoot();
+        if (current == null) {
+            current = Path.of("");
+        }
+        for (Path component : path) {
+            current = current.resolve(component);
+            if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+                return null;
+            }
+            if (Files.isSymbolicLink(current)) {
+                try {
+                    return path.toRealPath();
+                } catch (IOException exception) {
+                    throw new IllegalArgumentException(label + " symbolic link target cannot be resolved: " + path, exception);
+                }
+            }
+        }
+        return null;
+    }
+
     private void appendProtectedMetadataMasks(
         List<String> argv,
         List<Path> writableRoots,
@@ -586,6 +677,28 @@ public final class BubblewrapCommandBuilder {
     private boolean isProtectedMetadataPath(Path path) {
         Path fileName = path.getFileName();
         return fileName != null && PROTECTED_METADATA_NAMES.contains(fileName.toString());
+    }
+
+    private boolean isProtectedMetadataDescendant(Path path) {
+        Path current = path.getParent();
+        while (current != null) {
+            if (isProtectedMetadataPath(current)) {
+                return true;
+            }
+            current = current.getParent();
+        }
+        return false;
+    }
+
+    private boolean isProtectedMetadataPathOrDescendant(Path path) {
+        Path current = path;
+        while (current != null) {
+            if (isProtectedMetadataPath(current)) {
+                return true;
+            }
+            current = current.getParent();
+        }
+        return false;
     }
 
     private Path absoluteNormalized(Path path, String label) {

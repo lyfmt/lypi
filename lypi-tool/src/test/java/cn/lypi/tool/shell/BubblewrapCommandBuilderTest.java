@@ -362,6 +362,57 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void rejectsAllowWriteProtectedMetadataSymlinkRoot() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path realGit = Files.createDirectory(tempDir.resolve("realgit"));
+        Path git = workspace.resolve(".git");
+        Files.createSymbolicLink(git, realGit);
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(git),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("protected metadata"));
+        assertTrue(exception.getMessage().contains("symbolic link"));
+    }
+
+    @Test
+    void rejectsAllowWriteProtectedMetadataDescendant() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path git = Files.createDirectory(workspace.resolve(".git"));
+        Path config = Files.writeString(git.resolve("config"), "secret");
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(config),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("allowWrite"));
+        assertTrue(exception.getMessage().contains("protected metadata"));
+    }
+
+    @Test
     void protectedMetadataReadonlyBindWinsOverNestedWritableRoot() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path git = Files.createDirectory(workspace.resolve(".git"));
@@ -409,15 +460,68 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
-    void rejectsAllowWriteSymlinkInsteadOfLeavingAliasBypass() throws Exception {
+    void bindsCanonicalTargetForAllowWriteSymlinkAndCanonicalizesCwd() throws Exception {
         Path realWorkspace = Files.createDirectory(tempDir.resolve("real-workspace"));
         Path workspaceLink = tempDir.resolve("workspace-link");
         Files.createSymbolicLink(workspaceLink, realWorkspace);
-        Path cwd = Files.createDirectory(realWorkspace.resolve("src"));
+        Path realCwd = Files.createDirectory(realWorkspace.resolve("src"));
+        Path linkCwd = workspaceLink.resolve("src");
         SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
             List.of(Path.of("/usr")),
             List.of(),
             List.of(workspaceLink),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(linkCwd, policy));
+
+        assertContainsSequence(argv, "--bind", realWorkspace.toString(), realWorkspace.toString());
+        assertTrue(!containsSequence(argv, "--bind", workspaceLink.toString(), workspaceLink.toString()));
+        assertContainsSequence(argv, "--chdir", realCwd.toString());
+        assertTrue(!argv.contains(linkCwd.toString()));
+    }
+
+    @Test
+    void rejectsDenyReadUnderSymlinkWritableRootAlias() throws Exception {
+        Path realWorkspace = Files.createDirectory(tempDir.resolve("real-workspace"));
+        Path workspaceLink = tempDir.resolve("workspace-link");
+        Files.createSymbolicLink(workspaceLink, realWorkspace);
+        Path secret = Files.createDirectory(realWorkspace.resolve("secret"));
+        Files.createDirectory(realWorkspace.resolve("src"));
+        Path linkCwd = workspaceLink.resolve("src");
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(workspaceLink),
+            List.of(workspaceLink.resolve(secret.getFileName())),
+            List.of(workspaceLink),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> BubblewrapCommandBuilder.defaults().build(request(linkCwd, policy))
+        );
+
+        assertTrue(exception.getMessage().contains("denyRead path must not cross a symbolic link"));
+    }
+
+    @Test
+    void rejectsAllowWriteSymlinkTargetInsideProtectedMetadata() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path git = Files.createDirectory(workspace.resolve(".git"));
+        Path config = Files.writeString(git.resolve("config"), "secret");
+        Path configLink = workspace.resolve("config-link");
+        Files.createSymbolicLink(configLink, config);
+        Path cwd = Files.createDirectory(workspace.resolve("src"));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(configLink),
             List.of(),
             NetworkMode.DISABLED,
             false,
@@ -429,7 +533,35 @@ class BubblewrapCommandBuilderTest {
             () -> BubblewrapCommandBuilder.defaults().build(request(cwd, policy))
         );
 
-        assertTrue(exception.getMessage().contains("allowWrite path must not cross a symbolic link"));
+        assertTrue(exception.getMessage().contains("protected metadata"));
+        assertTrue(exception.getMessage().contains("symbolic link target"));
+    }
+
+    @Test
+    void remapsAllowReadUnderSymlinkWritableRootToCanonicalTarget() throws Exception {
+        Path realWorkspace = Files.createDirectory(tempDir.resolve("real-workspace"));
+        Path workspaceLink = tempDir.resolve("workspace-link");
+        Files.createSymbolicLink(workspaceLink, realWorkspace);
+        Path secret = Files.createDirectory(realWorkspace.resolve("secret"));
+        Path realCwd = Files.createDirectory(realWorkspace.resolve("src"));
+        Path linkCwd = workspaceLink.resolve("src");
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(workspaceLink),
+            List.of(secret),
+            List.of(workspaceLink),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(linkCwd, policy));
+
+        assertContainsSequence(argv, "--ro-bind-try", realWorkspace.toString(), realWorkspace.toString());
+        assertTrue(!argv.contains(workspaceLink.toString()));
+        assertContainsSequence(argv, "--bind", realWorkspace.toString(), realWorkspace.toString());
+        assertContainsSequence(argv, "--perms", "000", "--tmpfs", secret.toString(), "--remount-ro", secret.toString());
+        assertContainsSequence(argv, "--chdir", realCwd.toString());
     }
 
     @Test
