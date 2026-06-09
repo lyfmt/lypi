@@ -4,6 +4,7 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.tool.BlockingPermissionGate;
 import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.EventPublishingPermissionGate;
@@ -18,6 +19,8 @@ import cn.lypi.tool.shell.ExecutorRegistry;
 import cn.lypi.tool.shell.HostExecutor;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
+import cn.lypi.transport.headless.HeadlessTransport;
+import java.time.Instant;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -115,7 +118,19 @@ public class LyPiToolAutoConfiguration {
     @Bean
     @ConditionalOnBean(EventBus.class)
     @ConditionalOnMissingBean({PermissionResponseGate.class, PermissionPromptPort.class})
-    public PermissionResponseGate permissionResponseGate(EventBus eventBus) {
+    public PermissionResponseGate permissionResponseGate(
+        EventBus eventBus,
+        ObjectProvider<HeadlessTransport> headlessTransports
+    ) {
+        if (headlessTransports.stream().findAny().isPresent()) {
+            return requestEvent -> new PermissionResponse(
+                requestEvent.sessionId(),
+                requestEvent.requestId(),
+                "deny",
+                false,
+                Instant.now()
+            );
+        }
         return new EventBusPermissionResponseGate(eventBus);
     }
 

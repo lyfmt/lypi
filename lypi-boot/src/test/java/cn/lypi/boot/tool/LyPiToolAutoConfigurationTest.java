@@ -188,6 +188,36 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
+    void headlessTransportDeniesAskPermissionWithoutWaitingForResponse() throws Exception {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        List<AgentEvent> events = new ArrayList<>();
+        eventBus.subscribe(new EventFilter(Optional.empty(), Optional.empty()), envelope -> events.add(envelope.event()));
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(EventBus.class, () -> eventBus)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(cn.lypi.transport.headless.HeadlessTransport.class, LyPiToolAutoConfigurationTest::headlessTransport)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                runtime.register(new AskTool());
+
+                CompletableFuture<ToolResult<?>> resultFuture = CompletableFuture.supplyAsync(() -> runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "ask-test", Map.of("text", "ignored"), "msg_1")),
+                    context()
+                ).getFirst());
+
+                ToolResult<?> result = resultFuture.get(500, TimeUnit.MILLISECONDS);
+
+                assertThat(result.isError()).isTrue();
+                assertThat(((ToolResultContentBlock) result.newMessages().getFirst().content().getFirst()).text())
+                    .contains("权限请求未获允许");
+                assertThat(events.stream().map(AgentEvent::getClass))
+                    .containsSequence(PermissionRequestEvent.class, PermissionDecisionEvent.class);
+            });
+    }
+
+    @Test
     void tuiPermissionResponseUnlocksWaitingToolExecution() {
         InMemoryEventBus eventBus = new InMemoryEventBus();
         CountDownLatch requestPublished = new CountDownLatch(1);
@@ -289,6 +319,19 @@ class LyPiToolAutoConfigurationTest {
             PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO)
         );
+    }
+
+    private static cn.lypi.transport.headless.HeadlessTransport headlessTransport() {
+        return new cn.lypi.transport.headless.HeadlessTransport() {
+            @Override
+            public String name() {
+                return "headless";
+            }
+
+            @Override
+            public void attach(EventBus events, cn.lypi.contracts.tui.SessionRuntimeState state) {
+            }
+        };
     }
 
     private static final class RecordingEventBus implements EventBus {
