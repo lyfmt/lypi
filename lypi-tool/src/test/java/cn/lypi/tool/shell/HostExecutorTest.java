@@ -10,6 +10,7 @@ import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
+import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,6 +42,8 @@ class HostExecutorTest {
         assertEquals("", result.stderr());
         assertFalse(result.timedOut());
         assertEquals(Optional.empty(), result.persistedOutput());
+        assertFalse(result.metadata().sandboxed());
+        assertEquals("host", result.metadata().executorName());
     }
 
     @Test
@@ -154,6 +157,29 @@ class HostExecutorTest {
     }
 
     @Test
+    void waitsForProgressCallbackBeforeReturningAfterNormalExit() {
+        HostExecutor executor = new HostExecutor();
+        AtomicBoolean stdoutProgressDelivered = new AtomicBoolean(false);
+
+        ExecutionResult result = executor.execute(request("printf slow-progress"), progress -> {
+            if (progress.kind() == ToolProgressKind.OUTPUT
+                && "stdout".equals(progress.stream())
+                && progress.delta().contains("slow-progress")) {
+                try {
+                    Thread.sleep(800);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+                stdoutProgressDelivered.set(true);
+            }
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("slow-progress", result.stdout());
+        assertTrue(stdoutProgressDelivered.get());
+    }
+
+    @Test
     void capturesAllOutputBeforeReturning() {
         HostExecutor executor = new HostExecutor();
 
@@ -162,6 +188,30 @@ class HostExecutorTest {
 
         assertEquals(0, result.exitCode());
         assertEquals(20000, result.stdout().lines().count());
+    }
+
+    @Test
+    void providesEndOfFileOnStdinForNonInteractiveCommands() {
+        HostExecutor executor = new HostExecutor();
+
+        ExecutionResult result = executor.execute(rawRequest(List.of("cat"), tempDir, Map.of(), Duration.ofMillis(300)), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("", result.stdout());
+        assertEquals("", result.stderr());
+        assertFalse(result.timedOut());
+    }
+
+    @Test
+    void connectsChildStdinToDevNull() {
+        HostExecutor executor = new HostExecutor();
+
+        ExecutionResult result = executor.execute(request("readlink /proc/self/fd/0"), progress -> {
+        }, () -> false);
+
+        assertEquals(0, result.exitCode());
+        assertEquals("/dev/null", result.stdout().trim());
     }
 
     @Test
@@ -193,7 +243,7 @@ class HostExecutorTest {
             cwd,
             env,
             timeout,
-            new SandboxRuntimePolicy(List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), true, true)
+            new SandboxRuntimePolicy(List.of(), List.of(), List.of(), List.of(), NetworkMode.DISABLED, false, false)
         );
     }
 }

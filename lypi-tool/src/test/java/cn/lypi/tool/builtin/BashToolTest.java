@@ -12,6 +12,7 @@ import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
+import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.tool.ToolResult;
@@ -34,7 +35,8 @@ class BashToolTest {
     @Test
     void mapsCommandToExecutionRequestAndResult() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(7, "out", "err", false, Optional.empty()));
-        BashTool tool = new BashTool(executor);
+        RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
+        BashTool tool = new BashTool(executor, resolver);
         List<ToolProgress> progresses = new ArrayList<>();
 
         ToolResult<String> result = tool.execute(
@@ -47,7 +49,12 @@ class BashToolTest {
         assertEquals(List.of("bash", "-lc", "echo hi"), executor.request.get().command());
         assertEquals(tempDir, executor.request.get().cwd());
         assertEquals(Duration.ofSeconds(3), executor.request.get().timeout());
-        assertTrue(executor.request.get().sandboxPolicy().failIfUnavailable());
+        assertSame(resolver.policy, executor.request.get().sandboxPolicy());
+        assertEquals(tempDir, resolver.workspace.get());
+        assertEquals(tempDir, resolver.cwd.get());
+        assertEquals(NetworkMode.DISABLED, executor.request.get().sandboxPolicy().networkMode());
+        assertFalse(executor.request.get().sandboxPolicy().failIfUnavailable());
+        assertFalse(executor.request.get().sandboxPolicy().autoAllowBashIfSandboxed());
         assertTrue(result.output().contains("exitCode=7"));
         assertTrue(result.output().contains("stdout:\nout"));
         assertTrue(result.output().contains("stderr:\nerr"));
@@ -132,6 +139,18 @@ class BashToolTest {
         return new ToolUseContext("ses_1", "msg_1", tempDir, Map.copyOf(metadata));
     }
 
+    private SandboxRuntimePolicy defaultPolicy() {
+        return new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(tempDir),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+    }
+
     private static final class RecordingExecutor implements Executor {
         private final ExecutionResult result;
         private final AtomicReference<ExecutionRequest> request = new AtomicReference<>();
@@ -152,6 +171,23 @@ class BashToolTest {
             this.signal.set(signal);
             progress.progress(ToolProgress.status("executor progress", null));
             return result;
+        }
+    }
+
+    private static final class RecordingSandboxPolicyResolver implements cn.lypi.tool.shell.SandboxPolicyResolver {
+        private final SandboxRuntimePolicy policy;
+        private final AtomicReference<Path> workspace = new AtomicReference<>();
+        private final AtomicReference<Path> cwd = new AtomicReference<>();
+
+        private RecordingSandboxPolicyResolver(SandboxRuntimePolicy policy) {
+            this.policy = policy;
+        }
+
+        @Override
+        public SandboxRuntimePolicy resolve(Path workspace, Path cwd) {
+            this.workspace.set(workspace);
+            this.cwd.set(cwd);
+            return policy;
         }
     }
 }

@@ -15,6 +15,9 @@ import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
+import cn.lypi.tool.shell.SandboxPolicyOptions;
+import cn.lypi.tool.shell.SandboxPolicyResolver;
 import java.nio.file.Path;
 import java.io.IOException;
 import java.time.Duration;
@@ -26,21 +29,17 @@ import java.util.Optional;
 public final class BashTool extends AbstractFileTool {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(120);
     private static final AbortSignal NOT_ABORTED = () -> false;
-    private static final SandboxRuntimePolicy DEFAULT_SANDBOX_POLICY = new SandboxRuntimePolicy(
-        List.of(),
-        List.of(),
-        List.of(),
-        List.of(),
-        List.of(),
-        List.of(),
-        true,
-        true
-    );
 
     private final Executor executor;
+    private final SandboxPolicyResolver sandboxPolicyResolver;
 
     public BashTool(Executor executor) {
+        this(executor, new DefaultSandboxPolicyResolver(SandboxPolicyOptions.defaults()));
+    }
+
+    public BashTool(Executor executor, SandboxPolicyResolver sandboxPolicyResolver) {
         this.executor = Objects.requireNonNull(executor, "executor must not be null");
+        this.sandboxPolicyResolver = Objects.requireNonNull(sandboxPolicyResolver, "sandboxPolicyResolver must not be null");
     }
 
     @Override
@@ -87,12 +86,13 @@ public final class BashTool extends AbstractFileTool {
             Path cwd = resolvePath(input, context, "cwd");
             requireRealPathInsideWorkspace(cwd, context);
             Duration timeout = Duration.ofSeconds(intInput(input, "timeoutSeconds", (int) DEFAULT_TIMEOUT.toSeconds(), 1, 86_400));
+            SandboxRuntimePolicy sandboxPolicy = sandboxPolicyResolver.resolve(context.cwd(), cwd);
             ExecutionRequest request = new ExecutionRequest(
                 List.of("bash", "-lc", input.get("command").toString()),
                 cwd,
                 Map.of(),
                 timeout,
-                DEFAULT_SANDBOX_POLICY
+                sandboxPolicy
             );
             progress.progress(ToolProgress.phase("running", "执行 shell 命令"));
             ExecutionResult result = executor.execute(request, progress, abortSignal(context));
@@ -136,6 +136,11 @@ public final class BashTool extends AbstractFileTool {
         builder.append("exitCode=").append(result.exitCode());
         if (result.timedOut()) {
             builder.append("\ntimedOut=true");
+        }
+        if (result.metadata() != null && !result.metadata().executorName().isBlank()) {
+            builder.append("\nexecutor=").append(result.metadata().executorName());
+            builder.append("\nsandboxed=").append(result.metadata().sandboxed());
+            result.metadata().diagnostic().ifPresent(diagnostic -> builder.append("\ndiagnostic=").append(diagnostic));
         }
         if (result.stdout() != null && !result.stdout().isBlank()) {
             builder.append("\nstdout:\n").append(result.stdout());
