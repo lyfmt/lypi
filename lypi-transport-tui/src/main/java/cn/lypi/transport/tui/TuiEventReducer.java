@@ -46,7 +46,23 @@ public final class TuiEventReducer {
      * 从运行时状态初始化首屏。
      */
     public static TuiEventReducer fromRuntimeState(SessionRuntimeState runtimeState) {
-        return new TuiEventReducer(new TuiRenderState(runtimeState));
+        TuiEventReducer reducer = new TuiEventReducer(new TuiRenderState());
+        reducer.configureRuntimeState(runtimeState);
+        return reducer;
+    }
+
+    /**
+     * 从运行时状态初始化首屏状态栏。
+     */
+    public static TuiEventReducer withRuntimeState(SessionRuntimeState runtimeState) {
+        return fromRuntimeState(runtimeState);
+    }
+
+    /**
+     * 更新运行时状态栏投影。
+     */
+    public void configureRuntimeState(SessionRuntimeState runtimeState) {
+        state.configure(runtimeState);
     }
 
     /**
@@ -235,6 +251,7 @@ public final class TuiEventReducer {
         } else {
             state.putBlock(index, block);
         }
+        state.toolStarted(event.toolUseId());
     }
 
     private void reduceToolProgress(ToolProgressEvent event) {
@@ -266,6 +283,7 @@ public final class TuiEventReducer {
                 false
             ));
         });
+        state.toolEnded(event.toolUseId());
     }
 
     private void reducePermissionRequest(PermissionRequestEvent event) {

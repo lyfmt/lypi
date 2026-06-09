@@ -49,6 +49,66 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
+    void eventRenderProjectsRuntimeStateIntoStatusBar() {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 120, 4);
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "hello",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+
+        assertEquals(
+            "ses_1 gpt-5.4:thinking=high execute default_execute cwd:ly-pi leaf:leaf_1 ctx:1234/200000tok",
+            frames.getLast().get(2)
+        );
+    }
+
+    @Test
+    void inputRerenderPreservesRuntimeStatusBar() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            120,
+            4,
+            new QueueInputSource("draft"),
+            new RecordingSubmitHandler()
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "hello",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        transport.drainInputForTest();
+
+        assertEquals(
+            "ses_1 gpt-5.4:thinking=high execute default_execute cwd:ly-pi leaf:leaf_1 ctx:1234/200000tok",
+            frames.getLast().get(2)
+        );
+        assertEquals("> draft|CURSOR|", frames.getLast().getLast());
+    }
+
+    @Test
     void resizeRerendersCurrentViewWithUpdatedDimensionsUnderUiLock() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
@@ -243,6 +303,26 @@ class JLineTuiTransportRenderPipelineTest {
 
         transport.attach(events, TestRuntimeStates.basic("ses_1"));
         events.emit(new ToolStartEvent("ses_1", "tool_1", "bash", Instant.parse("2026-06-09T00:00:00Z")));
+        transport.drainInputForTest();
+
+        assertEquals(1, submit.interrupts);
+        assertEquals(false, transport.exitRequestedForTest());
+    }
+
+    @Test
+    void ctrlCInterruptsRuntimeInterruptibleToolWithoutToolStartReplay() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            ignored -> {
+            },
+            40,
+            5,
+            new QueueInputSource("\u0003"),
+            submit
+        );
+
+        transport.attach(events, TestRuntimeStates.interruptible("ses_1"));
         transport.drainInputForTest();
 
         assertEquals(1, submit.interrupts);

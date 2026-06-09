@@ -1,6 +1,7 @@
 package cn.lypi.contracts;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -907,7 +908,16 @@ class ContractSerializationTest {
                 ),
                 new TuiErrorBlock("block_error", "boom")
             ),
-            new StatusBarState("ses_01", "gpt-5.4", "running", "main"),
+            new StatusBarState(
+                "ses_01",
+                "gpt-5.4",
+                "running",
+                "main",
+                "ly-pi",
+                "leaf_01",
+                "1234/200000tok",
+                true
+            ),
             List.of(new SessionFileView(Path.of("src/App.java"), Set.of(), Instant.parse("2026-06-01T12:00:00Z"), Map.of())),
             Optional.of(new PermissionPromptView("perm_toolu_01", "toolu_01", "Need approval", "allow_once", "allow_once", "cancel")),
             Optional.of(new DiffView("src/App.java", "diff://ses_01/src/App.java"))
@@ -925,6 +935,10 @@ class ContractSerializationTest {
         assertInstanceOf(TuiToolBlock.class, restored.blocks().get(2));
         assertInstanceOf(TuiErrorBlock.class, restored.blocks().get(3));
         TuiToolBlock tool = (TuiToolBlock) restored.blocks().get(2);
+        assertEquals("ly-pi", restored.statusBar().cwd());
+        assertEquals("leaf_01", restored.statusBar().branchLeafId());
+        assertEquals("1234/200000tok", restored.statusBar().budget());
+        assertTrue(restored.statusBar().hasInterruptibleTool());
         assertEquals("msg_01", tool.messageId());
         assertEquals(TuiToolState.RUNNING, tool.state());
         assertTrue(tool.active());
@@ -932,6 +946,30 @@ class ContractSerializationTest {
         assertEquals("perm_toolu_01", restored.permissionPrompt().orElseThrow().requestId());
         assertEquals("cancel", restored.permissionPrompt().orElseThrow().cancelOptionId());
         assertEquals("diff://ses_01/src/App.java", restored.diffView().orElseThrow().diffRef());
+    }
+
+    @Test
+    void statusBarStateReadsLegacyFourFieldJson() throws Exception {
+        StatusBarState restored = mapper.readValue(
+            """
+                {
+                  "sessionId": "ses_legacy",
+                  "model": "gpt-5.4",
+                  "mode": "execute",
+                  "permissionMode": "default_execute"
+                }
+                """,
+            StatusBarState.class
+        );
+
+        assertEquals("ses_legacy", restored.sessionId());
+        assertEquals("gpt-5.4", restored.model());
+        assertEquals("execute", restored.mode());
+        assertEquals("default_execute", restored.permissionMode());
+        assertEquals("", restored.cwd());
+        assertEquals("", restored.branchLeafId());
+        assertEquals("", restored.budget());
+        assertFalse(restored.hasInterruptibleTool());
     }
 
     private <T extends ContentBlock> void assertContentBlockRoundTrip(

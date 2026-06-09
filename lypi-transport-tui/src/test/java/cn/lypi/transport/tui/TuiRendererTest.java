@@ -51,6 +51,32 @@ class TuiRendererTest {
     }
 
     @Test
+    void statusBarPreservesInterruptibleToolOnNarrowWidth() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState(
+                "session-long",
+                "very-long-model",
+                "running",
+                "default_execute",
+                "long-project-name",
+                "leaf_1234567890",
+                "1234/200000tok",
+                true
+            ),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(12, 3), "");
+
+        assertTrue(lines.get(1).contains("tool"));
+    }
+
+    @Test
     void messageBlocksUseMarkdownRenderer() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(2);
