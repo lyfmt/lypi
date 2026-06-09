@@ -82,6 +82,28 @@ final class TestTools {
         };
     }
 
+    static Tool<Map<String, Object>, String> requiredTextEcho(String name) {
+        return new EchoTool(name, List.of(), false, false, false, Duration.ZERO) {
+            @Override
+            public JsonSchema inputSchema() {
+                return new JsonSchema(Map.of(
+                    "type", "object",
+                    "required", List.of("text"),
+                    "properties", Map.of("text", Map.of("type", "string"))
+                ));
+            }
+        };
+    }
+
+    static Tool<Map<String, Object>, String> inputInvalidEcho(String name) {
+        return new EchoTool(name, List.of(), false, false, false, Duration.ZERO) {
+            @Override
+            public ValidationResult validateInput(Map<String, Object> input, ToolUseContext context) {
+                return new ValidationResult(false, List.of("bad input"));
+            }
+        };
+    }
+
     static Tool<Map<String, Object>, String> countingTool(
         String name,
         InterruptBehavior interruptBehavior,

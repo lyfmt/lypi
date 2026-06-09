@@ -6,6 +6,7 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -100,5 +101,28 @@ class ToolCallMapperTest {
 
         assertThat(requests).hasSize(1);
         assertThat(requests.getFirst().input()).containsAllEntriesOf(input);
+    }
+
+    @Test
+    void keepsNullStructuredInputValuesFromMetadata() {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("path", null);
+        AgentMessage assistant = new AgentMessage(
+            "msg-a",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new ToolCallContentBlock("toolu-1", "read", "", Map.of(
+                "input", input,
+                "complete", true
+            ))),
+            NOW,
+            Optional.empty(),
+            Optional.of("tool_calls")
+        );
+
+        List<ToolUseRequest> requests = new ToolCallMapper().requestsFrom(assistant);
+
+        assertThat(requests).hasSize(1);
+        assertThat(requests.getFirst().input()).containsEntry("path", null);
     }
 }

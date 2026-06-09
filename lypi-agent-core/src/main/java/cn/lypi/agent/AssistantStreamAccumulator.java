@@ -17,6 +17,7 @@ import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.model.ToolCallDelta;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -137,7 +138,7 @@ public final class AssistantStreamAccumulator {
                 toolName,
                 "",
                 Map.of(
-                    "input", Map.copyOf(input),
+                    "input", Collections.unmodifiableMap(new LinkedHashMap<>(input)),
                     "complete", complete
                 )
             );

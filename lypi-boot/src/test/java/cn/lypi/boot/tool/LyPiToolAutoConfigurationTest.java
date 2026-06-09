@@ -25,6 +25,7 @@ import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -38,7 +39,12 @@ import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.runtime.event.InMemoryEventBus;
+import cn.lypi.tool.shell.BubblewrapExecutor;
+import cn.lypi.tool.shell.ExecutorRegistry;
+import cn.lypi.tool.shell.HostExecutor;
+import cn.lypi.tool.shell.SandboxPolicyResolver;
 import java.math.BigDecimal;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -55,18 +61,41 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LyPiToolAutoConfigurationTest {
     @Test
-    void createsHostExecutorAndRegistersDefaultTools() {
+    void createsSandboxExecutorChainAndRegistersDefaultTools() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
             .run(context -> {
-                assertThat(context).hasSingleBean(Executor.class);
-                assertThat(context.getBean(Executor.class).name()).isEqualTo("host");
+                assertThat(context).hasSingleBean(HostExecutor.class);
+                assertThat(context).hasSingleBean(BubblewrapExecutor.class);
+                assertThat(context).hasSingleBean(SandboxPolicyResolver.class);
+                assertThat(context).hasSingleBean(ExecutorRegistry.class);
+                assertThat(context.getBean(Executor.class).name()).isEqualTo("executor-registry");
 
                 ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
                 assertThat(runtime.resolve("bash")).isPresent();
                 assertThat(runtime.resolve("read")).isPresent();
                 assertThat(runtime.resolve("glob")).isPresent();
+            });
+    }
+
+    @Test
+    void bindsSandboxPropertiesIntoDefaultPolicyResolver() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.tool.sandbox.network-mode=host",
+                "lypi.tool.sandbox.fail-if-unavailable=true"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+
+                cn.lypi.contracts.runtime.SandboxRuntimePolicy policy = resolver.resolve(Path.of(".").toAbsolutePath(), Path.of(".").toAbsolutePath());
+
+                assertThat(policy.networkMode()).isEqualTo(NetworkMode.HOST);
+                assertThat(policy.failIfUnavailable()).isTrue();
+                assertThat(policy.autoAllowBashIfSandboxed()).isFalse();
             });
     }
 
@@ -124,9 +153,16 @@ class LyPiToolAutoConfigurationTest {
                     .contains("用户拒绝");
                 assertThat(promptHandle.get()).isNotNull();
                 assertThat(promptHandle.get().request().toolUseId()).isEqualTo("toolu_1");
-                assertThat(eventBus.events).hasSize(2);
-                assertThat(eventBus.events.get(0)).isInstanceOf(PermissionRequestEvent.class);
-                assertThat(eventBus.events.get(1)).isInstanceOf(PermissionDecisionEvent.class);
+                assertThat(eventBus.events).extracting(Object::getClass)
+                    .containsExactly(
+                        ToolStartEvent.class,
+                        PermissionRequestEvent.class,
+                        PermissionDecisionEvent.class,
+                        ToolEndEvent.class
+                    );
+                ToolEndEvent end = (ToolEndEvent) eventBus.events.get(3);
+                assertThat(end.error()).isTrue();
+                assertThat(end.resultSummary().summary()).contains("用户拒绝");
             });
     }
 
@@ -201,7 +237,7 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
-    void defaultRuntimePublishesToolProgressWhenEventBusIsAvailable() {
+    void defaultRuntimePublishesToolLifecycleAndProgressWhenEventBusIsAvailable() {
         RecordingEventBus eventBus = new RecordingEventBus();
 
         new ApplicationContextRunner()
@@ -218,14 +254,18 @@ class LyPiToolAutoConfigurationTest {
                 ).getFirst();
 
                 assertThat(result.isError()).isFalse();
-                assertThat(eventBus.events).anySatisfy(event -> {
-                    assertThat(event).isInstanceOf(ToolProgressEvent.class);
-                    ToolProgressEvent progress = (ToolProgressEvent) event;
-                    assertThat(progress.toolUseId()).isEqualTo("toolu_1");
-                    assertThat(progress.progress().title()).isEqualTo("working");
-                });
-                assertThat(eventBus.events).noneMatch(ToolStartEvent.class::isInstance);
-                assertThat(eventBus.events).noneMatch(ToolEndEvent.class::isInstance);
+                assertThat(eventBus.events).extracting(Object::getClass)
+                    .containsExactly(ToolStartEvent.class, ToolProgressEvent.class, ToolEndEvent.class);
+                ToolStartEvent start = (ToolStartEvent) eventBus.events.get(0);
+                assertThat(start.toolUseId()).isEqualTo("toolu_1");
+                assertThat(start.parentMessageId()).isEqualTo("msg_1");
+                ToolProgressEvent progress = (ToolProgressEvent) eventBus.events.get(1);
+                assertThat(progress.toolUseId()).isEqualTo("toolu_1");
+                assertThat(progress.progress().title()).isEqualTo("working");
+                ToolEndEvent end = (ToolEndEvent) eventBus.events.get(2);
+                assertThat(end.toolUseId()).isEqualTo("toolu_1");
+                assertThat(end.error()).isFalse();
+                assertThat(end.durationMillis()).isGreaterThanOrEqualTo(0L);
             });
     }
 

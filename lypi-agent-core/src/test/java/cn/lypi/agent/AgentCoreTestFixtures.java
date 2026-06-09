@@ -30,6 +30,7 @@ import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -599,6 +600,7 @@ final class AgentCoreTestFixtures {
 
     static final class StubToolRuntime implements ToolRuntimePort {
         final List<List<ToolUseRequest>> requests = new ArrayList<>();
+        final List<ToolRuntimeInvocation> invocations = new ArrayList<>();
         private final List<List<ToolResult<?>>> results = new ArrayList<>();
         private final List<RuntimeException> failures = new ArrayList<>();
         private final Map<String, Tool<?, ?>> toolsByNameOrAlias = new LinkedHashMap<>();
@@ -641,6 +643,20 @@ final class AgentCoreTestFixtures {
 
         @Override
         public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
+            return executeQueued(requests);
+        }
+
+        @Override
+        public List<ToolResult<?>> execute(
+            List<ToolUseRequest> requests,
+            ContextSnapshot context,
+            ToolRuntimeInvocation invocation
+        ) {
+            invocations.add(invocation);
+            return executeQueued(requests);
+        }
+
+        private List<ToolResult<?>> executeQueued(List<ToolUseRequest> requests) {
             this.requests.add(List.copyOf(requests));
             if (!failures.isEmpty()) {
                 throw failures.removeFirst();

@@ -8,9 +8,15 @@ public record SandboxRuntimePolicy(
     List<Path> denyRead,
     List<Path> allowWrite,
     List<Path> denyWrite,
-    List<String> allowedDomains,
-    List<String> deniedDomains,
+    NetworkMode networkMode,
     boolean failIfUnavailable,
     boolean autoAllowBashIfSandboxed
-) {}
-
+) {
+    public SandboxRuntimePolicy {
+        allowRead = allowRead == null ? List.of() : List.copyOf(allowRead);
+        denyRead = denyRead == null ? List.of() : List.copyOf(denyRead);
+        allowWrite = allowWrite == null ? List.of() : List.copyOf(allowWrite);
+        denyWrite = denyWrite == null ? List.of() : List.copyOf(denyWrite);
+        networkMode = networkMode == null ? NetworkMode.DISABLED : networkMode;
+    }
+}

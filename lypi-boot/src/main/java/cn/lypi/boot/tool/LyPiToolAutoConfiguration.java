@@ -12,22 +12,68 @@ import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.PermissionResponseGate;
 import cn.lypi.tool.ToolRuntimeOptions;
 import cn.lypi.tool.builtin.BuiltInTools;
+import cn.lypi.tool.shell.BubblewrapExecutor;
+import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
+import cn.lypi.tool.shell.ExecutorRegistry;
 import cn.lypi.tool.shell.HostExecutor;
+import cn.lypi.tool.shell.SandboxPolicyOptions;
+import cn.lypi.tool.shell.SandboxPolicyResolver;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(LyPiToolProperties.class)
 public class LyPiToolAutoConfiguration {
     /**
      * 创建默认宿主机命令执行器。
      */
     @Bean
     @ConditionalOnMissingBean(Executor.class)
-    public Executor hostExecutor() {
+    public HostExecutor hostExecutor() {
         return new HostExecutor();
+    }
+
+    /**
+     * 创建默认 Bubblewrap 命令执行器。
+     */
+    @Bean
+    @ConditionalOnBean(HostExecutor.class)
+    @ConditionalOnMissingBean(BubblewrapExecutor.class)
+    public BubblewrapExecutor bubblewrapExecutor(HostExecutor hostExecutor) {
+        return new BubblewrapExecutor(hostExecutor);
+    }
+
+    /**
+     * 创建默认沙盒策略解析器。
+     */
+    @Bean
+    @ConditionalOnMissingBean(SandboxPolicyResolver.class)
+    public SandboxPolicyResolver sandboxPolicyResolver(LyPiToolProperties properties) {
+        LyPiToolProperties.SandboxProperties sandbox = properties.getSandbox();
+        return new DefaultSandboxPolicyResolver(new SandboxPolicyOptions(
+            sandbox.getNetworkMode(),
+            sandbox.isFailIfUnavailable()
+        ));
+    }
+
+    /**
+     * 创建默认执行器注册表。
+     */
+    @Bean
+    @Primary
+    @ConditionalOnBean({HostExecutor.class, BubblewrapExecutor.class})
+    @ConditionalOnMissingBean(value = Executor.class, ignored = {HostExecutor.class, BubblewrapExecutor.class})
+    public ExecutorRegistry executorRegistry(
+        HostExecutor hostExecutor,
+        BubblewrapExecutor bubblewrapExecutor,
+        LyPiToolProperties properties
+    ) {
+        return new ExecutorRegistry(hostExecutor, bubblewrapExecutor, properties.getSandbox().isEnabled());
     }
 
     /**
@@ -41,6 +87,7 @@ public class LyPiToolAutoConfiguration {
     public ToolRuntimePort toolRuntime(
         SecurityRuntimePort securityRuntime,
         Executor executor,
+        SandboxPolicyResolver sandboxPolicyResolver,
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionResponseGate> responseGate,
         ObjectProvider<PermissionPromptPort> promptPort
@@ -58,7 +105,7 @@ public class LyPiToolAutoConfiguration {
             responseGate.getIfAvailable(),
             promptPort.getIfAvailable()
         );
-        BuiltInTools.registerDefaults(runtime, executor);
+        BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
         return runtime;
     }
 
