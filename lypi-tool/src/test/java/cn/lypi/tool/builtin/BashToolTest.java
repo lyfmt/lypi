@@ -132,6 +132,32 @@ class BashToolTest {
         assertEquals(PermissionBehavior.ASK, tool.checkPermissions(input, context(Map.of())).behavior());
     }
 
+    @Test
+    void allowsToolPermissionWhenSandboxAutoAllowIsFailSafe() {
+        BashTool tool = new BashTool(
+            new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())),
+            new RecordingSandboxPolicyResolver(policy(true, true))
+        );
+
+        assertEquals(
+            PermissionBehavior.ALLOW,
+            tool.checkPermissions(Map.of("command", "echo hi"), context(Map.of())).behavior()
+        );
+    }
+
+    @Test
+    void stillAsksWhenSandboxAutoAllowCanFallbackToHost() {
+        BashTool tool = new BashTool(
+            new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())),
+            new RecordingSandboxPolicyResolver(policy(false, true))
+        );
+
+        assertEquals(
+            PermissionBehavior.ASK,
+            tool.checkPermissions(Map.of("command", "echo hi"), context(Map.of())).behavior()
+        );
+    }
+
     private ToolUseContext context(Map<String, Object> extraMetadata) {
         java.util.LinkedHashMap<String, Object> metadata = new java.util.LinkedHashMap<>();
         metadata.put("toolUseId", "toolu_1");
@@ -140,14 +166,18 @@ class BashToolTest {
     }
 
     private SandboxRuntimePolicy defaultPolicy() {
+        return policy(false, false);
+    }
+
+    private SandboxRuntimePolicy policy(boolean failIfUnavailable, boolean autoAllowBashIfSandboxed) {
         return new SandboxRuntimePolicy(
             List.of(Path.of("/usr")),
             List.of(),
             List.of(tempDir),
             List.of(),
             NetworkMode.DISABLED,
-            false,
-            false
+            failIfUnavailable,
+            autoAllowBashIfSandboxed
         );
     }
 

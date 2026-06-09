@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
@@ -19,7 +20,12 @@ import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.runtime.ExecutionRequest;
+import cn.lypi.contracts.runtime.ExecutionResult;
+import cn.lypi.contracts.runtime.Executor;
+import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -30,17 +36,23 @@ import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import cn.lypi.tool.builtin.BashTool;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class DefaultToolRuntimeTest {
+    @TempDir
+    Path tempDir;
+
     @Test
     void executesRegisteredToolAndReturnsBudgetedResult() {
         DefaultToolRuntime runtime = new DefaultToolRuntime(allowAllSecurity());
@@ -190,6 +202,37 @@ class DefaultToolRuntimeTest {
 
         assertTrue(result.isError());
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("权限请求未获允许"));
+    }
+
+    @Test
+    void sandboxAutoAllowBashToolPermissionDoesNotInvokeDenyingGate() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "done", "", false, Optional.empty()));
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(tempDir),
+            List.of(),
+            NetworkMode.DISABLED,
+            true,
+            true
+        );
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(tempDir).build(),
+            allowAllSecurity(),
+            PermissionGate.denying(),
+            null
+        );
+        runtime.register(new BashTool(executor, (workspace, cwd) -> policy));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("command", "echo done"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(1, executor.calls.get());
+        assertEquals(List.of("bash", "-lc", "echo done"), executor.request.get().command());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("stdout:\ndone"));
     }
 
     @Test
@@ -1085,6 +1128,32 @@ class DefaultToolRuntimeTest {
         public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
             return () -> {
             };
+        }
+    }
+
+    private static final class RecordingExecutor implements Executor {
+        private final ExecutionResult result;
+        private final AtomicInteger calls = new AtomicInteger();
+        private final AtomicReference<ExecutionRequest> request = new AtomicReference<>();
+
+        private RecordingExecutor(ExecutionResult result) {
+            this.result = result;
+        }
+
+        @Override
+        public String name() {
+            return "recording";
+        }
+
+        @Override
+        public ExecutionResult execute(
+            ExecutionRequest request,
+            ProgressSink progress,
+            cn.lypi.contracts.common.AbortSignal signal
+        ) {
+            calls.incrementAndGet();
+            this.request.set(request);
+            return result;
         }
     }
 }

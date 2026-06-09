@@ -9,10 +9,7 @@ import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
-import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
-import cn.lypi.contracts.security.PermissionDecisionReason;
-import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
@@ -32,6 +29,7 @@ public final class BashTool extends AbstractFileTool {
 
     private final Executor executor;
     private final SandboxPolicyResolver sandboxPolicyResolver;
+    private final BashPermissionPolicy permissionPolicy;
 
     public BashTool(Executor executor) {
         this(executor, new DefaultSandboxPolicyResolver(SandboxPolicyOptions.defaults()));
@@ -40,6 +38,7 @@ public final class BashTool extends AbstractFileTool {
     public BashTool(Executor executor, SandboxPolicyResolver sandboxPolicyResolver) {
         this.executor = Objects.requireNonNull(executor, "executor must not be null");
         this.sandboxPolicyResolver = Objects.requireNonNull(sandboxPolicyResolver, "sandboxPolicyResolver must not be null");
+        this.permissionPolicy = new BashPermissionPolicy(this.sandboxPolicyResolver);
     }
 
     @Override
@@ -70,13 +69,13 @@ public final class BashTool extends AbstractFileTool {
 
     @Override
     public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
-        return new PermissionDecision(
-            PermissionBehavior.ASK,
-            PermissionDecisionReason.BASH_RISK,
-            "执行 shell 命令需要确认。",
-            Optional.<PermissionUpdate>empty(),
-            Map.of("tool", name(), "command", input.getOrDefault("command", "").toString())
-        );
+        try {
+            Path cwd = resolvePath(input, context, "cwd");
+            requireRealPathInsideWorkspace(cwd, context);
+            return permissionPolicy.decide(input, context, cwd);
+        } catch (RuntimeException | IOException exception) {
+            return permissionPolicy.ask(input);
+        }
     }
 
     @Override

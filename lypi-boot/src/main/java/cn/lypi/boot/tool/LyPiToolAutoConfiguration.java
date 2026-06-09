@@ -60,7 +60,8 @@ public class LyPiToolAutoConfiguration {
         LyPiToolProperties.SandboxProperties sandbox = properties.getSandbox();
         return new DefaultSandboxPolicyResolver(new SandboxPolicyOptions(
             sandbox.getNetworkMode(),
-            sandbox.isFailIfUnavailable()
+            sandbox.isFailIfUnavailable(),
+            sandbox.isEnabled() && sandbox.isAutoAllowBashIfSandboxed()
         ));
     }
 
