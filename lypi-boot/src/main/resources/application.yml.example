@@ -48,22 +48,23 @@ lypi:
     initial-prompt: "${LYPI_INITIAL_PROMPT:}"
 
   ai:
-    # 重要性：必须关注。默认 Provider 决定未显式指定模型来源时优先使用哪个供应商。
-    # 要求：值应匹配 providers 下的键，例如 openai、local、fixture。
+    # 重要性：兼容字段。AI 模块会绑定该值，但当前默认运行模型选择以 lypi.runtime.default-provider 为准。
+    # 建议：为减少配置歧义，保持它与 lypi.runtime.default-provider 一致。
     default-provider: openai
 
-    # 重要性：必须关注。默认模型用于会话初始化、压缩摘要等未显式覆盖的模型选择场景。
-    # 要求：值应匹配对应 Provider 的 models[].model-id，或内置模型注册表中的模型名。
+    # 重要性：兼容字段。AI 模块会绑定该值，但当前会话初始化和默认 ModelSelection 以 lypi.runtime.default-model 为准。
+    # 建议：为减少配置歧义，保持它与 lypi.runtime.default-model 一致。
     default-model: gpt-5-mini
 
     compaction-summary:
-      # 重要性：生产建议。开启后会使用 AI 生成上下文压缩摘要；关闭时压缩摘要能力不可用。
-      # 取舍：开启会增加一次模型调用成本；关闭更保守，但长上下文场景可用性较弱。
+      # 重要性：生产建议。开启后创建 AI compact summary summarizer Bean。
+      # NOTE: 当前默认 AgentCore 仍使用 NoopCompactionCoordinator；该开关不等同于默认链路自动启用压缩。
+      # 取舍：真正接入 DefaultCompactionCoordinator 后，开启会增加模型调用成本；关闭时 summarizer 会 fail-safe 不可用。
       enabled: false
 
-      # 重要性：必须关注。AI 摘要失败或不可用时的降级策略。
+      # 重要性：兼容字段。AI 摘要失败后的策略名仍可绑定。
       # 可选值：fallback_deterministic、skip_compaction。
-      # 建议：默认 fallback_deterministic 更稳妥；需要严格避免非 AI 摘要时可选 skip_compaction。
+      # NOTE: 确定性摘要器已删除，fallback_deterministic 仅保留旧配置兼容；当前行为与 skip_compaction 一样回到原上下文。
       fallback-policy: fallback_deterministic
 
     # 重要性：必须关注。providers 是模型访问能力的核心注册表。
@@ -238,6 +239,7 @@ lypi:
 # 支持字段：
 # - mcpServers 或 servers：Server 映射表。
 # - transport：STDIO 或 HTTP，默认 STDIO。
+# - url：HTTP transport 的服务地址；transport 为 HTTP 时必须非空。
 # - command：STDIO 命令，可为字符串或字符串数组。
 # - args：STDIO 命令参数数组。
 # - env：Server 环境变量映射。
@@ -254,6 +256,10 @@ lypi:
 #       "env": {"ROOT": "/tmp"},
 #       "startupTimeoutSeconds": 10,
 #       "callTimeoutSeconds": 60
+#     },
+#     "remote": {
+#       "transport": "HTTP",
+#       "url": "https://mcp.example.com"
 #     }
 #   }
 # }
