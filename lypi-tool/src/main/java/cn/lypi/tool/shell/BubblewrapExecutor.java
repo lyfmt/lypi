@@ -44,11 +44,10 @@ import java.util.function.Supplier;
 /**
  * 使用系统 Bubblewrap 执行命令。
  *
- * NOTE: 第一版依赖系统 bwrap；不可用时按 SandboxRuntimePolicy 决定失败或回退宿主执行器。
+ * NOTE: 第一版依赖系统 bwrap；不可用或启动失败时回退宿主执行器，并在 metadata 中标记未沙盒化。
  */
 public final class BubblewrapExecutor implements Executor {
     private static final int POLICY_VIOLATION_EXIT_CODE = 1;
-    private static final int UNAVAILABLE_EXIT_CODE = 127;
     private static final int POLICY_REJECTED_EXIT_CODE = 126;
     private static final String UNAVAILABLE_MESSAGE = "bubblewrap unavailable";
     private static final String SANDBOX_STARTED_SENTINEL_PREFIX = "__LYPI_BWRAP_STARTED__";
@@ -494,17 +493,6 @@ public final class BubblewrapExecutor implements Executor {
     }
 
     private ExecutionResult handleUnavailable(ExecutionRequest request, ProgressSink progress, AbortSignal signal, String diagnostic) {
-        SandboxRuntimePolicy policy = request.sandboxPolicy();
-        if (requiresSandbox(policy)) {
-            return new ExecutionResult(
-                UNAVAILABLE_EXIT_CODE,
-                "",
-                diagnostic,
-                false,
-                Optional.empty(),
-                ExecutionMetadata.unsandboxed(name(), diagnostic)
-            );
-        }
         return hostExecutor.execute(request, progress, signal)
             .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), diagnostic + "; fell back to host"));
     }
@@ -521,17 +509,17 @@ public final class BubblewrapExecutor implements Executor {
         if (result.timedOut()) {
             return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution timed out"));
         }
-        SandboxRuntimePolicy policy = request.sandboxPolicy();
-        if (requiresSandbox(policy)) {
-            return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution failed"));
-        }
         return hostExecutor.execute(request, progress, signal)
-            .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), "bubblewrap execution failed; fell back to host"));
+            .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), executionFailureDiagnostic(result)));
     }
 
-    private boolean requiresSandbox(SandboxRuntimePolicy policy) {
-        return policy != null
-            && (policy.failIfUnavailable() || !policy.denyRead().isEmpty() || !policy.denyWrite().isEmpty());
+    private String executionFailureDiagnostic(ExecutionResult result) {
+        String diagnostic = "bubblewrap execution failed exit " + result.exitCode();
+        String stderr = result.stderr() == null ? "" : result.stderr().trim();
+        if (!stderr.isEmpty()) {
+            diagnostic += ": " + stderr;
+        }
+        return diagnostic + "; fell back to host";
     }
 
     private Duration timeout(ExecutionRequest request) {
