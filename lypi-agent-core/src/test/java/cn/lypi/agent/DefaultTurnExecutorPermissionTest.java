@@ -197,6 +197,7 @@ class DefaultTurnExecutorPermissionTest {
                 MessageStartEvent.class,
                 MessageEndEvent.class,
                 MessageStartEvent.class,
+                cn.lypi.contracts.event.MessageDeltaEvent.class,
                 MessageEndEvent.class,
                 ToolStartEvent.class,
                 PermissionRequestEvent.class,
@@ -209,8 +210,8 @@ class DefaultTurnExecutorPermissionTest {
                 MessageEndEvent.class,
                 TurnEndEvent.class
             );
-        PermissionDecisionEvent decision = (PermissionDecisionEvent) eventBus.events.get(7);
-        ToolEndEvent toolEnd = (ToolEndEvent) eventBus.events.get(8);
+        PermissionDecisionEvent decision = (PermissionDecisionEvent) eventBus.events.get(8);
+        ToolEndEvent toolEnd = (ToolEndEvent) eventBus.events.get(9);
         assertThat(decision.decision().behavior()).isEqualTo(PermissionBehavior.DENY);
         assertThat(toolEnd.error()).isTrue();
         assertThat(session.messages()).extracting(AgentMessage::role)

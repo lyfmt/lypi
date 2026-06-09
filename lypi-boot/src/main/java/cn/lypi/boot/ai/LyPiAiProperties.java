@@ -77,16 +77,27 @@ public class LyPiAiProperties {
 
     public static class ProviderProperties {
         private boolean enabled;
+        private boolean enabledConfigured;
         private ApiStyle apiStyle = ApiStyle.OPENAI_COMPATIBLE;
+        private boolean apiStyleConfigured;
         private RequestStyle requestStyle = RequestStyle.RESPONSES;
+        private boolean requestStyleConfigured;
         private RequestStyle fallbackRequestStyle = RequestStyle.RESPONSES;
+        private boolean fallbackRequestStyleConfigured;
         private TransportMode transport = TransportMode.AUTO;
+        private boolean transportConfigured;
         private URI baseUrl;
+        private boolean baseUrlConfigured;
         private String websocketPath = "/v1/responses";
+        private boolean websocketPathConfigured;
         private URI websocketUrl;
+        private boolean websocketUrlConfigured;
         private String apiKey;
+        private boolean apiKeyConfigured;
         private Duration timeout = Duration.ofSeconds(30);
+        private boolean timeoutConfigured;
         private int maxRetries = 3;
+        private boolean maxRetriesConfigured;
         private Map<String, Object> compat = new LinkedHashMap<>();
         private List<ModelProperties> models = new ArrayList<>();
         private ModelDiscoveryProperties modelDiscovery = new ModelDiscoveryProperties();
@@ -97,6 +108,11 @@ public class LyPiAiProperties {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+            this.enabledConfigured = true;
+        }
+
+        boolean isEnabledConfigured() {
+            return enabledConfigured;
         }
 
         public ApiStyle getApiStyle() {
@@ -105,6 +121,11 @@ public class LyPiAiProperties {
 
         public void setApiStyle(ApiStyle apiStyle) {
             this.apiStyle = apiStyle;
+            this.apiStyleConfigured = true;
+        }
+
+        boolean isApiStyleConfigured() {
+            return apiStyleConfigured;
         }
 
         public RequestStyle getRequestStyle() {
@@ -113,6 +134,11 @@ public class LyPiAiProperties {
 
         public void setRequestStyle(RequestStyle requestStyle) {
             this.requestStyle = requestStyle;
+            this.requestStyleConfigured = true;
+        }
+
+        boolean isRequestStyleConfigured() {
+            return requestStyleConfigured;
         }
 
         public RequestStyle getFallbackRequestStyle() {
@@ -121,6 +147,11 @@ public class LyPiAiProperties {
 
         public void setFallbackRequestStyle(RequestStyle fallbackRequestStyle) {
             this.fallbackRequestStyle = fallbackRequestStyle;
+            this.fallbackRequestStyleConfigured = true;
+        }
+
+        boolean isFallbackRequestStyleConfigured() {
+            return fallbackRequestStyleConfigured;
         }
 
         public TransportMode getTransport() {
@@ -129,6 +160,11 @@ public class LyPiAiProperties {
 
         public void setTransport(TransportMode transport) {
             this.transport = transport;
+            this.transportConfigured = true;
+        }
+
+        boolean isTransportConfigured() {
+            return transportConfigured;
         }
 
         public URI getBaseUrl() {
@@ -137,6 +173,11 @@ public class LyPiAiProperties {
 
         public void setBaseUrl(URI baseUrl) {
             this.baseUrl = baseUrl;
+            this.baseUrlConfigured = true;
+        }
+
+        boolean isBaseUrlConfigured() {
+            return baseUrlConfigured;
         }
 
         public String getWebsocketPath() {
@@ -145,6 +186,11 @@ public class LyPiAiProperties {
 
         public void setWebsocketPath(String websocketPath) {
             this.websocketPath = websocketPath;
+            this.websocketPathConfigured = true;
+        }
+
+        boolean isWebsocketPathConfigured() {
+            return websocketPathConfigured;
         }
 
         public URI getWebsocketUrl() {
@@ -153,6 +199,11 @@ public class LyPiAiProperties {
 
         public void setWebsocketUrl(URI websocketUrl) {
             this.websocketUrl = websocketUrl;
+            this.websocketUrlConfigured = true;
+        }
+
+        boolean isWebsocketUrlConfigured() {
+            return websocketUrlConfigured;
         }
 
         public String getApiKey() {
@@ -161,6 +212,11 @@ public class LyPiAiProperties {
 
         public void setApiKey(String apiKey) {
             this.apiKey = apiKey;
+            this.apiKeyConfigured = true;
+        }
+
+        boolean isApiKeyConfigured() {
+            return apiKeyConfigured;
         }
 
         public Duration getTimeout() {
@@ -169,6 +225,11 @@ public class LyPiAiProperties {
 
         public void setTimeout(Duration timeout) {
             this.timeout = timeout;
+            this.timeoutConfigured = true;
+        }
+
+        boolean isTimeoutConfigured() {
+            return timeoutConfigured;
         }
 
         public int getMaxRetries() {
@@ -177,6 +238,11 @@ public class LyPiAiProperties {
 
         public void setMaxRetries(int maxRetries) {
             this.maxRetries = maxRetries;
+            this.maxRetriesConfigured = true;
+        }
+
+        boolean isMaxRetriesConfigured() {
+            return maxRetriesConfigured;
         }
 
         public Map<String, Object> getCompat() {

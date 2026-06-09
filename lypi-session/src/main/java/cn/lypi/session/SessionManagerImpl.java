@@ -1,7 +1,11 @@
 package cn.lypi.session;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
+import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionContext;
@@ -15,6 +19,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Objects;
 
 /**
  * SessionManager 的默认实现。
@@ -25,9 +30,10 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     private final Path cwd;
     private final JsonlSessionStore store;
     private final Clock clock;
-    private final SessionReplayProjector replayProjector = new SessionReplayProjector();
+    private final SessionReplayProjector replayProjector;
     private final SessionFileQuery fileQuery = new SessionFileQuery();
     private String sessionId;
+    private SessionHeader header;
     private EntryTreeIndex index;
 
     public SessionManagerImpl(Path cwd) {
@@ -35,9 +41,28 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     }
 
     SessionManagerImpl(Path cwd, Clock clock) {
+        this(cwd, clock, new SessionReplayProjector());
+    }
+
+    public SessionManagerImpl(
+        Path cwd,
+        ModelSelection defaultModel,
+        ThinkingLevel defaultThinkingLevel,
+        AgentMode defaultMode,
+        PermissionMode defaultPermissionMode
+    ) {
+        this(
+            cwd,
+            Clock.systemUTC(),
+            new SessionReplayProjector(defaultModel, defaultThinkingLevel, defaultMode, defaultPermissionMode)
+        );
+    }
+
+    private SessionManagerImpl(Path cwd, Clock clock, SessionReplayProjector replayProjector) {
         this.cwd = cwd;
         this.clock = clock;
         this.store = new JsonlSessionStore(cwd);
+        this.replayProjector = Objects.requireNonNull(replayProjector, "replayProjector must not be null");
     }
 
     /**
@@ -47,9 +72,10 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     public SessionHandle openOrCreate(String sessionId) {
         this.sessionId = sessionId;
         if (!store.exists(sessionId)) {
-            store.create(new SessionHeader("session", 1, sessionId, cwd, Optional.empty(), Instant.now(clock)));
+            store.create(initialHeader(sessionId));
         }
         SessionFile sessionFile = store.read(sessionId);
+        header = sessionFile.header();
         index = new EntryTreeIndex(sessionFile.entries());
         return handle();
     }
@@ -105,7 +131,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     @Override
     public List<AgentMessage> transcript(String leafId) {
         ensureOpen();
-        return replayProjector.transcript(branch(leafId));
+        return replayProjector.transcript(header, branch(leafId));
     }
 
     @Override
@@ -117,7 +143,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     @Override
     public SessionContext context(String leafId) {
         ensureOpen();
-        return replayProjector.context(branch(leafId));
+        return replayProjector.context(header, branch(leafId));
     }
 
     /**
@@ -154,15 +180,34 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
         if (!sessionId.equals(request.sourceSessionId())) {
             throw new SessionEngineException("Fork source session does not match open session: " + request.sourceSessionId());
         }
-        return new ForkService(clock).fork(request, index);
+        return new ForkService(clock).fork(request, header, index);
     }
 
     private SessionHandle handle() {
         return new SessionHandle(sessionId, store.sessionFile(sessionId), index.leafId(), index.byId());
     }
 
+    private SessionHeader initialHeader(String sessionId) {
+        return new SessionHeader(
+            "session",
+            1,
+            sessionId,
+            cwd,
+            Optional.empty(),
+            Optional.empty(),
+            0,
+            Optional.empty(),
+            Optional.empty(),
+            Instant.now(clock),
+            Optional.of(replayProjector.defaultModel()),
+            Optional.of(replayProjector.defaultThinkingLevel()),
+            Optional.of(replayProjector.defaultMode()),
+            Optional.of(replayProjector.defaultPermissionMode())
+        );
+    }
+
     private void ensureOpen() {
-        if (sessionId == null || index == null) {
+        if (sessionId == null || header == null || index == null) {
             throw new SessionEngineException("Session is not open");
         }
     }

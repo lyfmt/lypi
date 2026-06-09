@@ -17,18 +17,54 @@ import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Objects;
 
 final class SessionReplayProjector {
+    private static final ModelSelection DEFAULT_MODEL = new ModelSelection("default", "default", ThinkingLevel.MEDIUM);
+
+    private final ModelSelection defaultModel;
+    private final ThinkingLevel defaultThinkingLevel;
+    private final AgentMode defaultMode;
+    private final PermissionMode defaultPermissionMode;
+
+    SessionReplayProjector() {
+        this(DEFAULT_MODEL, ThinkingLevel.MEDIUM, AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE);
+    }
+
+    SessionReplayProjector(
+        ModelSelection defaultModel,
+        ThinkingLevel defaultThinkingLevel,
+        AgentMode defaultMode,
+        PermissionMode defaultPermissionMode
+    ) {
+        this.defaultModel = Objects.requireNonNull(defaultModel, "defaultModel must not be null");
+        this.defaultThinkingLevel = Objects.requireNonNull(defaultThinkingLevel, "defaultThinkingLevel must not be null");
+        this.defaultMode = Objects.requireNonNull(defaultMode, "defaultMode must not be null");
+        this.defaultPermissionMode = Objects.requireNonNull(defaultPermissionMode, "defaultPermissionMode must not be null");
+    }
+
     SessionContext context(List<SessionEntry> branch) {
-        ModelSelection model = new ModelSelection("default", "default", ThinkingLevel.MEDIUM);
-        ThinkingLevel thinkingLevel = ThinkingLevel.MEDIUM;
-        AgentMode mode = AgentMode.EXECUTE;
-        PermissionMode permissionMode = PermissionMode.DEFAULT_EXECUTE;
+        return context(null, branch);
+    }
+
+    SessionContext context(SessionHeader header, List<SessionEntry> branch) {
+        ModelSelection model = defaultModel;
+        ThinkingLevel thinkingLevel = defaultThinkingLevel;
+        AgentMode mode = defaultMode;
+        PermissionMode permissionMode = defaultPermissionMode;
+        if (header != null) {
+            model = header.initialModel().orElse(DEFAULT_MODEL);
+            thinkingLevel = header.initialThinkingLevel().orElse(ThinkingLevel.MEDIUM);
+            mode = header.initialAgentMode().orElse(AgentMode.EXECUTE);
+            permissionMode = header.initialPermissionMode().orElse(PermissionMode.DEFAULT_EXECUTE);
+            model = withThinkingLevel(model, thinkingLevel);
+        }
         List<AgentMessage> messages = new ArrayList<>();
         List<String> branchEntryIds = new ArrayList<>();
         CompactionEntry latestCompaction = null;
@@ -74,6 +110,26 @@ final class SessionReplayProjector {
 
     List<AgentMessage> transcript(List<SessionEntry> branch) {
         return context(branch).messages();
+    }
+
+    List<AgentMessage> transcript(SessionHeader header, List<SessionEntry> branch) {
+        return context(header, branch).messages();
+    }
+
+    ModelSelection defaultModel() {
+        return defaultModel;
+    }
+
+    ThinkingLevel defaultThinkingLevel() {
+        return defaultThinkingLevel;
+    }
+
+    AgentMode defaultMode() {
+        return defaultMode;
+    }
+
+    PermissionMode defaultPermissionMode() {
+        return defaultPermissionMode;
     }
 
     private List<AgentMessage> applyCompaction(

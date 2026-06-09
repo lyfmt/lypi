@@ -101,7 +101,13 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(SessionManagerPort.class)
     public SessionManagerPort sessionManager(LyPiRuntimeProperties properties) {
-        return new SessionManagerImpl(properties.getCwd());
+        return new SessionManagerImpl(
+            properties.getCwd(),
+            new ModelSelection(properties.getDefaultProvider(), properties.getDefaultModel(), properties.getThinkingLevel()),
+            properties.getThinkingLevel(),
+            properties.getAgentMode(),
+            properties.getPermissionMode()
+        );
     }
 
     /**

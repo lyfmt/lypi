@@ -7,11 +7,16 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
+import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
@@ -393,6 +398,31 @@ class SessionManagerImplTest {
         SessionHandle reopened = targetEngine.openOrCreate(forked.sessionId());
         assertThat(reopened.leafId()).isEqualTo(forked.leafId());
         assertThat(reopened.byId()).containsKeys("root", "left", forked.leafId());
+    }
+
+    @Test
+    void forkPreservesSourceInitialRuntimeStateWhenReopened() {
+        ModelSelection sourceModel = new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH);
+        SessionManager sourceEngine = new SessionManagerImpl(
+            tempDir,
+            sourceModel,
+            ThinkingLevel.HIGH,
+            AgentMode.PLAN,
+            PermissionMode.PLAN
+        );
+        sourceEngine.openOrCreate("ses_main");
+        sourceEngine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        Path targetCwd = tempDir.resolve("fork-cwd");
+
+        SessionHandle forked = sourceEngine.fork(new ForkRequest("ses_main", "root", targetCwd, "explore"));
+
+        SessionManager targetEngine = new SessionManagerImpl(targetCwd);
+        targetEngine.openOrCreate(forked.sessionId());
+        SessionContext context = targetEngine.context(forked.leafId());
+        assertThat(context.model()).isEqualTo(sourceModel);
+        assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
+        assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.PLAN);
     }
 
     @Test

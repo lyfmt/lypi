@@ -493,6 +493,36 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void applicationRunnerUsesRuntimeDefaultModelForNewSession() throws Exception {
+        RecordingAiProvider provider = new RecordingAiProvider(List.of(
+            new AssistantStart("msg-final"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(
+                LyPiToolAutoConfiguration.class,
+                LyPiRuntimeAutoConfiguration.class
+            ))
+            .withPropertyValues(
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.session-id=session-runtime-default-model",
+                "lypi.runtime.transport=headless"
+            )
+            .withBean(AiProviderRuntimePort.class, () -> provider)
+            .run(context -> {
+                context.getBean("lyPiApplicationRunner", ApplicationRunner.class)
+                    .run(new DefaultApplicationArguments("hello"));
+
+                assertThat(provider.context.get()).isNotNull();
+                assertThat(provider.context.get().model())
+                    .isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
+            });
+    }
+
+    @Test
     void applicationRunnerIgnoresOptionArgsWhenBuildingCliPrompt() throws Exception {
         RecordingCore core = new RecordingCore();
 
@@ -1249,6 +1279,21 @@ class LyPiRuntimeAutoConfigurationTest {
                 throw new AssertionError("没有可用的测试模型流");
             }
             return new ListAssistantEventStream(scripts.get(nextScript++));
+        }
+    }
+
+    private static final class RecordingAiProvider implements AiProviderRuntimePort {
+        private final List<AssistantStreamEvent> events;
+        private final AtomicReference<ContextSnapshot> context = new AtomicReference<>();
+
+        private RecordingAiProvider(List<AssistantStreamEvent> events) {
+            this.events = List.copyOf(events);
+        }
+
+        @Override
+        public AssistantEventStream stream(ContextSnapshot context, cn.lypi.contracts.common.AbortSignal signal) {
+            this.context.set(context);
+            return new ListAssistantEventStream(events);
         }
     }
 
