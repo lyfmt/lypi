@@ -106,6 +106,27 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void skipsMissingWritableRoots() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path missing = tempDir.resolve("missing-workspace");
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(workspace, missing),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(workspace, policy));
+
+        assertContainsSequence(argv, "--bind", workspace.toString(), workspace.toString());
+        assertTrue(!containsSequence(argv, "--bind", missing.toString(), missing.toString()));
+        assertTrue(!argv.contains(missing.toString()));
+    }
+
+    @Test
     void omitsNetworkUnshareForHostNetworkMode() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path cwd = Files.createDirectory(workspace.resolve("src"));

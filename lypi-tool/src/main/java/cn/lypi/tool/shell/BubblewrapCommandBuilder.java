@@ -194,6 +194,9 @@ public final class BubblewrapCommandBuilder {
         List<Path> writableMountPaths = new ArrayList<>();
         for (Path path : writablePaths(policy, request.cwd())) {
             Path mountPath = absoluteNormalized(path, "allowWrite");
+            if (!Files.exists(mountPath, LinkOption.NOFOLLOW_LINKS)) {
+                continue;
+            }
             rejectSymlinkPath(mountPath, "allowWrite path must not cross a symbolic link");
             writableMountPaths.add(mountPath);
             appendWritableBind(argv, mountPath);
