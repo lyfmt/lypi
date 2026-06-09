@@ -1,6 +1,7 @@
 package cn.lypi.transport.headless;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
@@ -59,5 +60,44 @@ class HeadlessSubagentJsonCodecTest {
 
         assertThat(restored).isEqualTo(output);
         assertThat(out.toString(StandardCharsets.UTF_8)).contains("\"status\":\"FAILED\"");
+    }
+
+    @Test
+    void readInputRejectsTrailingNonJsonTokens() {
+        HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
+        String json = """
+            {
+              "childSessionId": "ses_child",
+              "parentSessionId": "ses_parent",
+              "parentSpawnEntryId": "entry_spawn",
+              "prompt": "请审查代码",
+              "cwd": "/tmp/project",
+              "permissionMode": "DEFAULT_EXECUTE",
+              "timeoutSeconds": 30
+            }
+            Started LyPiApplication
+            """;
+
+        assertThatThrownBy(() -> codec.readInput(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8))))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid headless subagent input JSON");
+    }
+
+    @Test
+    void readOutputRejectsTrailingNonJsonTokens() {
+        HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
+        String json = """
+            {
+              "childSessionId": "ses_child",
+              "status": "SUCCEEDED",
+              "summary": "完成",
+              "finalEntryId": "entry_final"
+            }
+            Started LyPiApplication
+            """;
+
+        assertThatThrownBy(() -> codec.readOutput(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8))))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid headless subagent output JSON");
     }
 }
