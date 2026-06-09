@@ -24,6 +24,7 @@ import cn.lypi.transport.headless.HeadlessSubagentJsonCodec;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -37,6 +38,9 @@ import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.logging.LoggingSystem;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.annotation.Bean;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class HeadlessSubagentCommandTest {
@@ -155,6 +159,53 @@ class HeadlessSubagentCommandTest {
     }
 
     @Test
+    void headlessSpringApplicationStdoutContainsOnlySubagentJson() {
+        HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
+        ByteArrayOutputStream input = new ByteArrayOutputStream();
+        codec.writeInput(new HeadlessSubagentInput(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "执行检查",
+            tempDir,
+            List.of(),
+            PermissionMode.DEFAULT_EXECUTE,
+            30
+        ), input);
+        InputStream previousIn = System.in;
+        PrintStream previousOut = System.out;
+        String previousLoggingSystem = System.getProperty(LoggingSystem.SYSTEM_PROPERTY);
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        String[] args = {"headless-subagent"};
+
+        try (PrintStream capturedOut = new PrintStream(stdout, true, StandardCharsets.UTF_8)) {
+            System.setIn(new ByteArrayInputStream(input.toByteArray()));
+            System.setOut(capturedOut);
+            SpringApplication application = LyPiApplication.application(args);
+            application.addPrimarySources(List.of(HeadlessProtocolTestConfiguration.class));
+            try (ConfigurableApplicationContext context = application.run(args)) {
+                assertThat(context.getBean(HeadlessSubagentApplicationRunner.class).getExitCode()).isZero();
+            }
+        } finally {
+            System.setIn(previousIn);
+            System.setOut(previousOut);
+            if (previousLoggingSystem == null) {
+                System.clearProperty(LoggingSystem.SYSTEM_PROPERTY);
+            } else {
+                System.setProperty(LoggingSystem.SYSTEM_PROPERTY, previousLoggingSystem);
+            }
+        }
+
+        String text = stdout.toString(StandardCharsets.UTF_8);
+        assertThat(text).startsWith("{");
+        assertThat(text).doesNotContain("Spring").doesNotContain("Started");
+        HeadlessSubagentOutput result = codec.readOutput(new ByteArrayInputStream(stdout.toByteArray()));
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+        assertThat(result.summary()).isEqualTo("子任务完成");
+        assertThat(result.finalEntryId()).isPresent();
+    }
+
+    @Test
     void applicationRunnerFailsFastWhenHeadlessFlagHasNoCommand() {
         HeadlessSubagentApplicationRunner runner = new HeadlessSubagentApplicationRunner(
             () -> null,
@@ -234,5 +285,43 @@ class HeadlessSubagentCommandTest {
         SessionManagerImpl manager = new SessionManagerImpl(cwd);
         manager.openOrCreate(sessionId);
         return manager;
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class HeadlessProtocolTestConfiguration {
+        @Bean
+        AgentCoreFactoryPort agentCoreFactory() {
+            return (cwd, sessionManager) -> request -> completedTurn(request, sessionManager);
+        }
+
+        @Bean
+        SessionManagerFactoryPort sessionManagerFactory() {
+            return (cwd, sessionId) -> {
+                SessionManagerImpl manager = new SessionManagerImpl(cwd);
+                manager.openOrCreate(sessionId);
+                return manager;
+            };
+        }
+
+        private TurnState completedTurn(TurnRequest request, SessionManagerPort sessionManager) {
+            AgentMessage assistant = new AgentMessage(
+                "msg_assistant",
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                List.of(new TextContentBlock("子任务完成", Map.of())),
+                Instant.EPOCH,
+                Optional.empty(),
+                Optional.empty()
+            );
+            sessionManager.appendMessage(assistant);
+            return new TurnState(
+                "turn_1",
+                request.sessionId(),
+                null,
+                List.of(assistant),
+                0,
+                TurnStatus.COMPLETED
+            );
+        }
     }
 }
