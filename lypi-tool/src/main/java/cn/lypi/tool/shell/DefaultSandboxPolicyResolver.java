@@ -28,7 +28,7 @@ public final class DefaultSandboxPolicyResolver implements SandboxPolicyResolver
             List.of(),
             options.networkMode(),
             options.failIfUnavailable(),
-            false
+            options.autoAllowBashIfSandboxed()
         );
     }
 

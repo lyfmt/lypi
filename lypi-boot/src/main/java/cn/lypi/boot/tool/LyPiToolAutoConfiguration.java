@@ -23,16 +23,18 @@ import cn.lypi.tool.shell.HostExecutor;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import cn.lypi.transport.headless.HeadlessTransport;
+import java.nio.file.Path;
 import java.time.Instant;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.core.env.Environment;
 
-@Configuration(proxyBeanMethods = false)
+@AutoConfiguration
 @EnableConfigurationProperties(LyPiToolProperties.class)
 public class LyPiToolAutoConfiguration {
     /**
@@ -63,7 +65,8 @@ public class LyPiToolAutoConfiguration {
         LyPiToolProperties.SandboxProperties sandbox = properties.getSandbox();
         return new DefaultSandboxPolicyResolver(new SandboxPolicyOptions(
             sandbox.getNetworkMode(),
-            sandbox.isFailIfUnavailable()
+            sandbox.isFailIfUnavailable(),
+            sandbox.isEnabled() && sandbox.isAutoAllowBashIfSandboxed()
         ));
     }
 
@@ -99,16 +102,21 @@ public class LyPiToolAutoConfiguration {
         SandboxPolicyResolver sandboxPolicyResolver,
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionResponseGate> responseGate,
-        ObjectProvider<PermissionPromptPort> promptPort
+        ObjectProvider<PermissionPromptPort> promptPort,
+        Environment environment
     ) {
         EventBus resolvedEventBus = eventBus.getIfAvailable();
+        String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
+        ToolRuntimeOptions options = ToolRuntimeOptions.builder()
+            .cwd(Path.of(configuredCwd))
+            .build();
         DefaultToolRuntime runtime = toolRuntime(
             resolvedEventBus,
             new cn.lypi.tool.DefaultToolRegistry(),
             new cn.lypi.tool.ToolSchemaValidator(),
             new cn.lypi.tool.ToolExecutionPlanner(),
             new cn.lypi.tool.ToolResultBudgeter(),
-            new cn.lypi.tool.ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()),
+            new cn.lypi.tool.ToolRuntimeContextFactory(options),
             cn.lypi.tool.ToolExecutionInterceptors.noop(),
             securityRuntime,
             responseGate.getIfAvailable(),
@@ -132,13 +140,13 @@ public class LyPiToolAutoConfiguration {
      * 创建事件总线权限响应 gate。
      */
     @Bean
-    @ConditionalOnBean(EventBus.class)
     @ConditionalOnMissingBean({PermissionResponseGate.class, PermissionPromptPort.class})
     public PermissionResponseGate permissionResponseGate(
-        EventBus eventBus,
-        ObjectProvider<HeadlessTransport> headlessTransports
+        ObjectProvider<EventBus> eventBus,
+        ObjectProvider<HeadlessTransport> headlessTransports,
+        Environment environment
     ) {
-        if (headlessTransports.stream().findAny().isPresent()) {
+        if (headlessTransports.stream().findAny().isPresent() || !"tui".equalsIgnoreCase(environment.getProperty("lypi.runtime.transport", "headless"))) {
             return requestEvent -> new PermissionResponse(
                 requestEvent.sessionId(),
                 requestEvent.requestId(),
@@ -147,7 +155,17 @@ public class LyPiToolAutoConfiguration {
                 Instant.now()
             );
         }
-        return new EventBusPermissionResponseGate(eventBus);
+        EventBus resolvedEventBus = eventBus.getIfAvailable();
+        if (resolvedEventBus == null) {
+            return requestEvent -> new PermissionResponse(
+                requestEvent.sessionId(),
+                requestEvent.requestId(),
+                requestEvent.cancelOptionId(),
+                true,
+                Instant.now()
+            );
+        }
+        return new EventBusPermissionResponseGate(resolvedEventBus);
     }
 
     private DefaultToolRuntime toolRuntime(

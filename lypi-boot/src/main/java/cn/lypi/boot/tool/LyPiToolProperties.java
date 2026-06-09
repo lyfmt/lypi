@@ -19,6 +19,7 @@ public class LyPiToolProperties {
         private boolean enabled = true;
         private NetworkMode networkMode = NetworkMode.DISABLED;
         private boolean failIfUnavailable;
+        private boolean autoAllowBashIfSandboxed;
 
         public boolean isEnabled() {
             return enabled;
@@ -42,6 +43,14 @@ public class LyPiToolProperties {
 
         public void setFailIfUnavailable(boolean failIfUnavailable) {
             this.failIfUnavailable = failIfUnavailable;
+        }
+
+        public boolean isAutoAllowBashIfSandboxed() {
+            return autoAllowBashIfSandboxed;
+        }
+
+        public void setAutoAllowBashIfSandboxed(boolean autoAllowBashIfSandboxed) {
+            this.autoAllowBashIfSandboxed = autoAllowBashIfSandboxed;
         }
     }
 }

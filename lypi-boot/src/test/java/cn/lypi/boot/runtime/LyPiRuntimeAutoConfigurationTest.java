@@ -1,8 +1,15 @@
 package cn.lypi.boot.runtime;
 
-import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
 import cn.lypi.agent.compact.CompactSummaryResult;
 import cn.lypi.agent.compact.CompactionSummarizer;
+import cn.lypi.boot.BootstrapService;
+import cn.lypi.boot.ai.LyPiAiAutoConfiguration;
+import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
+import cn.lypi.contracts.agent.TurnRequest;
+import cn.lypi.contracts.agent.TurnState;
+import cn.lypi.contracts.agent.TurnStatus;
+import cn.lypi.contracts.bootstrap.BootstrapContext;
+import cn.lypi.contracts.bootstrap.BootstrapRequest;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
@@ -16,16 +23,26 @@ import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
-import cn.lypi.contracts.model.TokenUsage;
+import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantEventStream;
+import cn.lypi.contracts.model.AssistantStart;
+import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.model.TokenUsage;
+import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
-import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
+import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.runtime.AppEntry;
 import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.LyPiRuntime;
 import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
@@ -67,6 +84,7 @@ import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
+import cn.lypi.security.DefaultPolicyEngine;
 import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
@@ -77,11 +95,19 @@ import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -90,10 +116,25 @@ class LyPiRuntimeAutoConfigurationTest {
     @TempDir
     Path tempDir;
 
+    private ApplicationContextRunner runtimeConfiguration() {
+        return new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withPropertyValues("lypi.runtime.cwd=" + tempDir);
+    }
+
+    private ApplicationContextRunner runtimeAutoConfigurations() {
+        return new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(
+                LyPiAiAutoConfiguration.class,
+                LyPiToolAutoConfiguration.class,
+                LyPiRuntimeAutoConfiguration.class
+            ))
+            .withPropertyValues("lypi.runtime.cwd=" + tempDir);
+    }
+
     @Test
     void createsDefaultInMemoryEventBusWhenMissing() {
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+        runtimeConfiguration()
             .run(context -> {
                 assertThat(context).hasSingleBean(EventBus.class);
                 assertThat(context.getBean(EventBus.class)).isInstanceOf(InMemoryEventBus.class);
@@ -104,8 +145,7 @@ class LyPiRuntimeAutoConfigurationTest {
     void keepsUserProvidedEventBus() {
         EventBus customEventBus = new RecordingEventBus();
 
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+        runtimeConfiguration()
             .withBean(EventBus.class, () -> customEventBus)
             .run(context -> {
                 assertThat(context).hasSingleBean(EventBus.class);
@@ -119,8 +159,7 @@ class LyPiRuntimeAutoConfigurationTest {
         RecordingTransport second = new RecordingTransport("second");
         SessionRuntimeState state = sessionState();
 
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+        runtimeConfiguration()
             .withBean("firstTransport", TransportAdapter.class, () -> first)
             .withBean("secondTransport", TransportAdapter.class, () -> second)
             .withBean(SessionRuntimeState.class, () -> state)
@@ -138,8 +177,7 @@ class LyPiRuntimeAutoConfigurationTest {
     void connectorCanAttachExplicitSessionStateWhenNoStateBeanExists() {
         RecordingTransport transport = new RecordingTransport("transport");
 
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+        runtimeConfiguration()
             .withBean(TransportAdapter.class, () -> transport)
             .run(context -> {
                 SessionRuntimeState state = sessionState();
@@ -152,12 +190,426 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void createsDefaultRuntimeBeanGraph() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini"
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(SecurityRuntimePort.class);
+                assertThat(context.getBean(SecurityRuntimePort.class)).isInstanceOf(DefaultPolicyEngine.class);
+                assertThat(context).hasSingleBean(SessionManagerPort.class);
+                assertThat(context).hasSingleBean(ResourceRuntimePort.class);
+                assertThat(context).hasSingleBean(AiProviderRuntimePort.class);
+                assertThat(context).hasSingleBean(ToolRuntimePort.class);
+                assertThat(context).hasSingleBean(AgentCorePort.class);
+                assertThat(context).hasSingleBean(LyPiRuntime.class);
+
+                LyPiRuntime runtime = context.getBean(LyPiRuntime.class);
+                assertThat(runtime.sessionManager()).isSameAs(context.getBean(SessionManagerPort.class));
+                assertThat(runtime.agentCore()).isSameAs(context.getBean(AgentCorePort.class));
+                assertThat(runtime.aiProvider()).isSameAs(context.getBean(AiProviderRuntimePort.class));
+                assertThat(runtime.toolRuntime()).isSameAs(context.getBean(ToolRuntimePort.class));
+                assertThat(runtime.securityRuntime()).isSameAs(context.getBean(SecurityRuntimePort.class));
+                assertThat(runtime.resourceRuntime()).isSameAs(context.getBean(ResourceRuntimePort.class));
+            });
+    }
+
+    @Test
+    void defaultRuntimeExecutesToolCallsWithConfiguredRuntimeCwd() throws Exception {
+        java.nio.file.Files.writeString(tempDir.resolve("target-file.txt"), "from configured cwd");
+
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(
+                LyPiToolAutoConfiguration.class,
+                LyPiRuntimeAutoConfiguration.class
+            ))
+            .withPropertyValues(
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir
+            )
+            .withBean(AiProviderRuntimePort.class, () -> new ScriptedAiProvider(List.of(
+                List.of(
+                    new AssistantStart("msg-tool-call"),
+                    new ToolCallDelta("toolu-1", "read", Map.of("path", "target-file.txt"), true),
+                    new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+                ),
+                List.of(
+                    new AssistantStart("msg-final"),
+                    new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+                )
+            )))
+            .run(context -> {
+                TurnState state = context.getBean(AgentCorePort.class).execute(new TurnRequest(
+                    "session-runtime-cwd",
+                    "read file",
+                    Optional.empty(),
+                    () -> false
+                ));
+
+                List<String> toolTexts = state.newMessages().stream()
+                    .flatMap(message -> message.content().stream())
+                    .filter(ToolResultContentBlock.class::isInstance)
+                    .map(ToolResultContentBlock.class::cast)
+                    .map(ToolResultContentBlock::text)
+                    .toList();
+                assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+                assertThat(toolTexts).anySatisfy(text -> assertThat(text).contains("from configured cwd"));
+            });
+    }
+
+    @Test
+    void bootstrapServiceBuildsContextFromRuntimePorts() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(BootstrapService.class);
+
+                BootstrapService bootstrapService = context.getBean(BootstrapService.class);
+                BootstrapContext bootstrap = bootstrapService.bootstrap(new BootstrapRequest(
+                    tempDir,
+                    List.of(),
+                    Optional.of("session-bootstrap"),
+                    Optional.empty()
+                ));
+
+                assertThat(bootstrap.cwd()).isEqualTo(tempDir.toAbsolutePath().normalize());
+                assertThat(bootstrap.projectRoot()).isEqualTo(tempDir.toAbsolutePath().normalize());
+                assertThat(bootstrap.session().sessionId()).isEqualTo("session-bootstrap");
+                assertThat(bootstrap.session().sessionFile()).exists();
+                assertThat(bootstrap.resources()).isNotNull();
+                assertThat(bootstrap.toolRegistry().tools()).isNotEmpty();
+                assertThat(bootstrap.modelSelection()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
+                assertThat(bootstrap.systemPrompt()).isNotNull();
+            });
+    }
+
+    @Test
+    void appEntryRunsInitialPromptAfterBootstrap() {
+        RecordingCore core = new RecordingCore();
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir
+            )
+            .withBean(AgentCorePort.class, () -> core)
+            .run(context -> {
+                AppEntry appEntry = context.getBean(AppEntry.class);
+                appEntry.start(new BootstrapRequest(
+                    tempDir,
+                    List.of(),
+                    Optional.of("session-app-entry"),
+                    Optional.of("hello")
+                ));
+
+                assertThat(core.request.get()).isNotNull();
+                assertThat(core.request.get().sessionId()).isEqualTo("session-app-entry");
+                assertThat(core.request.get().userInput()).isEqualTo("hello");
+                assertThat(core.request.get().abortSignal().aborted()).isFalse();
+                assertThat(core.request.get().maxToolRounds()).isEqualTo(TurnRequest.DEFAULT_MAX_TOOL_ROUNDS);
+                assertThat(tempDir.resolve(".lypi/sessions/session-app-entry.jsonl")).exists();
+            });
+    }
+
+    @Test
+    void appEntryLaunchesTuiWhenSelected() {
+        RecordingCore core = new RecordingCore();
+        RecordingTransportLauncher launcher = new RecordingTransportLauncher("tui");
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.transport=tui"
+            )
+            .withBean(AgentCorePort.class, () -> core)
+            .withBean(TransportLauncher.class, () -> launcher)
+            .run(context -> {
+                AppEntry appEntry = context.getBean(AppEntry.class);
+                appEntry.start(new BootstrapRequest(
+                    tempDir,
+                    List.of(),
+                    Optional.of("session-tui"),
+                    Optional.empty()
+                ));
+
+                assertThat(launcher.state.get()).isNotNull();
+                assertThat(launcher.state.get().sessionId()).isEqualTo("session-tui");
+                assertThat(launcher.core.get()).isSameAs(core);
+                assertThat(launcher.events.get()).isSameAs(context.getBean(EventBus.class));
+                assertThat(core.request.get()).isNull();
+            });
+    }
+
+    @Test
+    void blankInitialPromptFallsBackToTuiWhenSelected() {
+        RecordingCore core = new RecordingCore();
+        RecordingTransportLauncher launcher = new RecordingTransportLauncher("tui");
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.transport=tui"
+            )
+            .withBean(AgentCorePort.class, () -> core)
+            .withBean(TransportLauncher.class, () -> launcher)
+            .run(context -> {
+                AppEntry appEntry = context.getBean(AppEntry.class);
+                appEntry.start(new BootstrapRequest(
+                    tempDir,
+                    List.of(),
+                    Optional.of("session-blank-prompt"),
+                    Optional.of("   ")
+                ));
+
+                assertThat(launcher.state.get()).isNotNull();
+                assertThat(launcher.state.get().sessionId()).isEqualTo("session-blank-prompt");
+                assertThat(core.request.get()).isNull();
+            });
+    }
+
+    @Test
+    void createsApplicationRunnerThatStartsAppEntry() throws Exception {
+        RecordingAppEntry appEntry = new RecordingAppEntry();
+
+        runtimeConfiguration()
+            .withPropertyValues(
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.session-id=session-runner",
+                "lypi.runtime.initial-prompt=from runner"
+            )
+            .withBean(AppEntry.class, () -> appEntry)
+            .run(context -> {
+                assertThat(context).hasSingleBean(ApplicationRunner.class);
+
+                context.getBean(ApplicationRunner.class).run(null);
+
+                assertThat(appEntry.request.get()).isNotNull();
+                assertThat(appEntry.request.get().cwd()).isEqualTo(tempDir.toAbsolutePath().normalize());
+                assertThat(appEntry.request.get().sessionId()).contains("session-runner");
+                assertThat(appEntry.request.get().initialPrompt()).contains("from runner");
+            });
+    }
+
+    @Test
+    void applicationRunnerKeepsLyPiEntryWhenExternalRunnerExists() throws Exception {
+        RecordingAppEntry appEntry = new RecordingAppEntry();
+        ApplicationRunner externalRunner = args -> {
+        };
+
+        runtimeConfiguration()
+            .withPropertyValues(
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.session-id=session-named-runner",
+                "lypi.runtime.initial-prompt=from named runner"
+            )
+            .withBean(AppEntry.class, () -> appEntry)
+            .withBean("externalRunner", ApplicationRunner.class, () -> externalRunner)
+            .run(context -> {
+                assertThat(context).hasBean("externalRunner");
+                assertThat(context).hasBean("lyPiApplicationRunner");
+
+                context.getBean("lyPiApplicationRunner", ApplicationRunner.class).run(null);
+
+                assertThat(appEntry.request.get()).isNotNull();
+                assertThat(appEntry.request.get().initialPrompt()).contains("from named runner");
+            });
+    }
+
+    @Test
+    void applicationRunnerBacksOffWhenLyPiRunnerBeanNameExists() {
+        ApplicationRunner customLyPiRunner = args -> {
+        };
+
+        runtimeConfiguration()
+            .withBean(AppEntry.class, RecordingAppEntry::new)
+            .withBean("lyPiApplicationRunner", ApplicationRunner.class, () -> customLyPiRunner)
+            .run(context -> assertThat(context.getBean("lyPiApplicationRunner", ApplicationRunner.class))
+                .isSameAs(customLyPiRunner));
+    }
+
+    @Test
+    void applicationRunnerSourceArgsBecomeHeadlessInitialPrompt() throws Exception {
+        RecordingCore core = new RecordingCore();
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.session-id=session-source-args",
+                "lypi.runtime.transport=headless"
+            )
+            .withBean(AgentCorePort.class, () -> core)
+            .run(context -> {
+                context.getBean("lyPiApplicationRunner", ApplicationRunner.class)
+                    .run(new DefaultApplicationArguments("hello", "from", "jar"));
+
+                assertThat(core.request.get()).isNotNull();
+                assertThat(core.request.get().sessionId()).isEqualTo("session-source-args");
+                assertThat(core.request.get().userInput()).isEqualTo("hello from jar");
+            });
+    }
+
+    @Test
+    void applicationRunnerIgnoresOptionArgsWhenBuildingCliPrompt() throws Exception {
+        RecordingCore core = new RecordingCore();
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.session-id=session-option-args",
+                "lypi.runtime.transport=headless"
+            )
+            .withBean(AgentCorePort.class, () -> core)
+            .run(context -> {
+                context.getBean("lyPiApplicationRunner", ApplicationRunner.class)
+                    .run(new DefaultApplicationArguments(
+                        "--spring.profiles.active=test",
+                        "--lypi.runtime.cwd=/ignored",
+                        "hello"
+                    ));
+
+                assertThat(core.request.get()).isNotNull();
+                assertThat(core.request.get().userInput()).isEqualTo("hello");
+            });
+    }
+
+    @Test
+    void applicationRunnerConfiguredInitialPromptWinsOverCliArgs() throws Exception {
+        RecordingCore core = new RecordingCore();
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.session-id=session-prompt-precedence",
+                "lypi.runtime.initial-prompt=configured prompt",
+                "lypi.runtime.transport=headless"
+            )
+            .withBean(AgentCorePort.class, () -> core)
+            .run(context -> {
+                context.getBean("lyPiApplicationRunner", ApplicationRunner.class)
+                    .run(new DefaultApplicationArguments("cli", "prompt"));
+
+                assertThat(core.request.get()).isNotNull();
+                assertThat(core.request.get().userInput()).isEqualTo("configured prompt");
+            });
+    }
+
+    @Test
+    void tuiRuntimePermissionResponseUnlocksAskTool() {
+        CountDownLatch requestPublished = new CountDownLatch(1);
+        AtomicReference<PermissionRequestEvent> requestRef = new AtomicReference<>();
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.transport=tui"
+            )
+            .run(context -> {
+                EventBus eventBus = context.getBean(EventBus.class);
+                eventBus.subscribe(new EventFilter(Optional.empty(), Optional.empty()), envelope -> {
+                    if (envelope.event() instanceof PermissionRequestEvent request) {
+                        requestRef.set(request);
+                        requestPublished.countDown();
+                    }
+                });
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                runtime.register(new SuccessTool());
+
+                CompletableFuture<ToolResult<?>> resultFuture = CompletableFuture.supplyAsync(() -> runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "ask-probe", Map.of("path", "pom.xml"), "msg_1")),
+                    contextSnapshot()
+                ).getFirst());
+
+                assertThat(requestPublished.await(2, TimeUnit.SECONDS)).isTrue();
+                PermissionRequestEvent request = requestRef.get();
+                eventBus.publish(new PermissionResponseEvent(
+                    request.sessionId(),
+                    request.requestId(),
+                    request.defaultOptionId(),
+                    false,
+                    Instant.now()
+                ));
+
+                ToolResult<?> result = resultFuture.get(2, TimeUnit.SECONDS);
+
+                assertThat(result.isError()).isFalse();
+            });
+    }
+
+    @Test
+    void headlessRuntimeDeniesAskToolWithoutWaitingForPermissionResponse() throws Exception {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.transport=headless"
+            )
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                runtime.register(new SuccessTool());
+
+                CompletableFuture<ToolResult<?>> resultFuture = CompletableFuture.supplyAsync(() -> runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "ask-probe", Map.of("path", "pom.xml"), "msg_1")),
+                    contextSnapshot()
+                ).getFirst());
+
+                ToolResult<?> result = resultFuture.get(500, TimeUnit.MILLISECONDS);
+
+                assertThat(result.isError()).isTrue();
+                assertThat(((ToolResultContentBlock) result.newMessages().getFirst().content().getFirst()).text())
+                    .contains("权限请求未获允许");
+            });
+    }
+
+    @Test
     void runtimeAndToolAutoConfigurationShareDefaultEventBusWithTransports() {
         RecordingTransport transport = new RecordingTransport("transport");
         List<EventEnvelope> receivedEvents = new ArrayList<>();
 
         new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class, LyPiToolAutoConfiguration.class)
+            .withConfiguration(AutoConfigurations.of(
+                LyPiToolAutoConfiguration.class,
+                LyPiRuntimeAutoConfiguration.class
+            ))
+            .withPropertyValues("lypi.runtime.cwd=" + tempDir)
             .withBean(TransportAdapter.class, () -> transport)
             .withBean(SessionRuntimeState.class, LyPiRuntimeAutoConfigurationTest::sessionState)
             .withBean(SecurityRuntimePort.class, () -> LyPiRuntimeAutoConfigurationTest::allowAllSecurity)
@@ -694,6 +1146,89 @@ class LyPiRuntimeAutoConfigurationTest {
         @Override
         public SessionHandle fork(ForkRequest request) {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    private static final class RecordingCore implements AgentCorePort {
+        private final AtomicReference<TurnRequest> request = new AtomicReference<>();
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            this.request.set(request);
+            return new TurnState("turn-1", request.sessionId(), null, List.of(), 0, TurnStatus.COMPLETED);
+        }
+    }
+
+    private static final class RecordingTransportLauncher implements TransportLauncher {
+        private final String name;
+        private final AtomicReference<SessionRuntimeState> state = new AtomicReference<>();
+        private final AtomicReference<AgentCorePort> core = new AtomicReference<>();
+        private final AtomicReference<EventBus> events = new AtomicReference<>();
+
+        private RecordingTransportLauncher(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public void launch(SessionRuntimeState state, AgentCorePort core, EventBus events) {
+            this.state.set(state);
+            this.core.set(core);
+            this.events.set(events);
+        }
+    }
+
+    private static final class RecordingAppEntry implements AppEntry {
+        private final AtomicReference<BootstrapRequest> request = new AtomicReference<>();
+
+        @Override
+        public void start(BootstrapRequest request) {
+            this.request.set(request);
+        }
+    }
+
+    private static final class ScriptedAiProvider implements AiProviderRuntimePort {
+        private final List<List<AssistantStreamEvent>> scripts;
+        private int nextScript;
+
+        private ScriptedAiProvider(List<List<AssistantStreamEvent>> scripts) {
+            this.scripts = List.copyOf(scripts);
+        }
+
+        @Override
+        public AssistantEventStream stream(ContextSnapshot context, cn.lypi.contracts.common.AbortSignal signal) {
+            if (nextScript >= scripts.size()) {
+                throw new AssertionError("没有可用的测试模型流");
+            }
+            return new ListAssistantEventStream(scripts.get(nextScript++));
+        }
+    }
+
+    private static final class ListAssistantEventStream implements AssistantEventStream {
+        private final List<AssistantStreamEvent> events;
+        private boolean closed;
+
+        private ListAssistantEventStream(List<AssistantStreamEvent> events) {
+            this.events = List.copyOf(events);
+        }
+
+        @Override
+        public Iterator<AssistantStreamEvent> iterator() {
+            return events.iterator();
+        }
+
+        @Override
+        public AssistantStreamResult result() {
+            return new AssistantStreamResult("", events, Optional.empty(), Optional.empty(), !closed, false, Optional.empty());
+        }
+
+        @Override
+        public void close() {
+            closed = true;
         }
     }
 
