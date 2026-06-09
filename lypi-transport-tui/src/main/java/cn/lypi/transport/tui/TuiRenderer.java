@@ -109,22 +109,10 @@ final class TuiRenderer {
         String scroll = screen.linesBelow() > 0 ? " scroll +" + screen.linesBelow() : "";
         String full = String.join(
             " ",
-            List.of(
-                nullToEmpty(status.sessionId()),
-                nullToEmpty(status.model()),
-                nullToEmpty(status.mode()),
-                nullToEmpty(status.permissionMode()),
-                label("cwd", status.cwd()),
-                label("leaf", status.branchLeafId()),
-                label("ctx", status.budget()),
-                status.hasInterruptibleTool() ? "tool:interruptible" : ""
-            )
+            List.of(nullToEmpty(status.sessionId()), nullToEmpty(status.model()), nullToEmpty(status.mode()), nullToEmpty(status.permissionMode()))
         ).trim() + scroll;
         if (AnsiWidth.displayWidth(full) <= width) {
             return full;
-        }
-        if (status.hasInterruptibleTool()) {
-            return AnsiWidth.truncate("tool interruptible" + scroll, width);
         }
         if (status.permissionMode() != null && status.permissionMode().contains("tool")) {
             return AnsiWidth.truncate("tool " + status.permissionMode() + scroll, width);
@@ -206,10 +194,5 @@ final class TuiRenderer {
 
     private String nullToEmpty(String value) {
         return value == null ? "" : value;
-    }
-
-    private String label(String name, String value) {
-        String safeValue = nullToEmpty(value);
-        return safeValue.isBlank() ? "" : name + ":" + safeValue;
     }
 }

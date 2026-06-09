@@ -71,7 +71,7 @@ class JLineTuiTransportRenderPipelineTest {
         ));
 
         assertEquals(
-            "ses_1 gpt-5.4:thinking=high execute default_execute cwd:ly-pi leaf:leaf_1 ctx:1234/200000tok",
+            "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE",
             frames.getLast().getLast()
         );
     }
@@ -104,7 +104,7 @@ class JLineTuiTransportRenderPipelineTest {
         transport.drainInputForTest();
 
         assertEquals(
-            "ses_1 gpt-5.4:thinking=high execute default_execute cwd:ly-pi leaf:leaf_1 ctx:1234/200000tok",
+            "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE",
             frames.getLast().getLast()
         );
         assertEquals("\033[48;5;236m> draft|CURSOR|\033[0m", frames.getLast().get(frames.getLast().size() - 2));

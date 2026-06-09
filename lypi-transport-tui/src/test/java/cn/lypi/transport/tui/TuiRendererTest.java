@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.tui.StatusBarState;
@@ -53,16 +54,16 @@ class TuiRendererTest {
     }
 
     @Test
-    void statusBarPreservesInterruptibleToolOnNarrowWidth() {
+    void statusBarDoesNotRenderInternalRuntimeFields() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState(
-                "session-long",
-                "very-long-model",
-                "running",
-                "default_execute",
+                "ses_1",
+                "gpt-5.4",
+                "EXECUTE",
+                "DEFAULT_EXECUTE",
                 "long-project-name",
                 "leaf_1234567890",
                 "1234/200000tok",
@@ -73,9 +74,13 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(12, 3), "");
+        List<String> lines = renderer.render(view, screen, new TuiLayout(120, 3), "");
 
-        assertTrue(lines.get(2).contains("tool"));
+        assertEquals("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE", lines.get(2));
+        assertFalse(lines.get(2).contains("cwd:"));
+        assertFalse(lines.get(2).contains("leaf:"));
+        assertFalse(lines.get(2).contains("ctx:"));
+        assertFalse(lines.get(2).contains("tool:interruptible"));
     }
 
     @Test
