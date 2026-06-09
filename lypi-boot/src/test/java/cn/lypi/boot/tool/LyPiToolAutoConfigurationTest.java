@@ -80,12 +80,28 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
+    void defaultToolRuntimeUsesConfiguredRuntimeCwd() {
+        Path runtimeCwd = Path.of("build/test-runtime-cwd").toAbsolutePath().normalize();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues("lypi.runtime.cwd=" + runtimeCwd)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(runtime.cwd()).isEqualTo(runtimeCwd);
+            });
+    }
+
+    @Test
     void bindsSandboxPropertiesIntoDefaultPolicyResolver() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withPropertyValues(
                 "lypi.tool.sandbox.network-mode=host",
-                "lypi.tool.sandbox.fail-if-unavailable=true"
+                "lypi.tool.sandbox.fail-if-unavailable=true",
+                "lypi.tool.sandbox.auto-allow-bash-if-sandboxed=true"
             )
             .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
             .run(context -> {
@@ -95,6 +111,25 @@ class LyPiToolAutoConfigurationTest {
 
                 assertThat(policy.networkMode()).isEqualTo(NetworkMode.HOST);
                 assertThat(policy.failIfUnavailable()).isTrue();
+                assertThat(policy.autoAllowBashIfSandboxed()).isTrue();
+            });
+    }
+
+    @Test
+    void disablesBashAutoAllowWhenSandboxIsDisabled() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.tool.sandbox.enabled=false",
+                "lypi.tool.sandbox.fail-if-unavailable=true",
+                "lypi.tool.sandbox.auto-allow-bash-if-sandboxed=true"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+
+                cn.lypi.contracts.runtime.SandboxRuntimePolicy policy = resolver.resolve(Path.of(".").toAbsolutePath(), Path.of(".").toAbsolutePath());
+
                 assertThat(policy.autoAllowBashIfSandboxed()).isFalse();
             });
     }
@@ -233,6 +268,7 @@ class LyPiToolAutoConfigurationTest {
 
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues("lypi.runtime.transport=tui")
             .withBean(EventBus.class, () -> eventBus)
             .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
             .run(context -> {

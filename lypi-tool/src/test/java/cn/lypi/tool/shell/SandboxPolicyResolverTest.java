@@ -36,13 +36,13 @@ class SandboxPolicyResolverTest {
     @Test
     void appliesExplicitOptions() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
-        SandboxPolicyOptions options = new SandboxPolicyOptions(NetworkMode.HOST, true);
+        SandboxPolicyOptions options = new SandboxPolicyOptions(NetworkMode.HOST, true, true);
         SandboxPolicyResolver resolver = new DefaultSandboxPolicyResolver(options);
 
         SandboxRuntimePolicy policy = resolver.resolve(workspace, workspace);
 
         assertEquals(NetworkMode.HOST, policy.networkMode());
         assertEquals(true, policy.failIfUnavailable());
-        assertEquals(false, policy.autoAllowBashIfSandboxed());
+        assertEquals(true, policy.autoAllowBashIfSandboxed());
     }
 }

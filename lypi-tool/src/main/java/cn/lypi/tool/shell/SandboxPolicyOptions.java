@@ -7,7 +7,8 @@ import cn.lypi.contracts.runtime.NetworkMode;
  */
 public record SandboxPolicyOptions(
     NetworkMode networkMode,
-    boolean failIfUnavailable
+    boolean failIfUnavailable,
+    boolean autoAllowBashIfSandboxed
 ) {
     public SandboxPolicyOptions {
         networkMode = networkMode == null ? NetworkMode.DISABLED : networkMode;
@@ -17,6 +18,6 @@ public record SandboxPolicyOptions(
      * 返回第一版沙盒默认策略选项。
      */
     public static SandboxPolicyOptions defaults() {
-        return new SandboxPolicyOptions(NetworkMode.DISABLED, false);
+        return new SandboxPolicyOptions(NetworkMode.DISABLED, false, false);
     }
 }

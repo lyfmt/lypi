@@ -1,0 +1,3 @@
+cn.lypi.boot.ai.LyPiAiAutoConfiguration
+cn.lypi.boot.tool.LyPiToolAutoConfiguration
+cn.lypi.boot.runtime.LyPiRuntimeAutoConfiguration
