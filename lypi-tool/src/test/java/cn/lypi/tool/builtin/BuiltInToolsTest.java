@@ -6,11 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.subagent.AgentRunStatus;
+import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxMessage;
@@ -91,6 +94,22 @@ class BuiltInToolsTest {
         assertTrue(runtime.resolve("accept_mailbox_message").isPresent());
     }
 
+    @Test
+    void createsSubagentToolSetWithAgentRegistryTools() {
+        List<Tool<?, ?>> subagentTools = BuiltInTools.createSubagentTools(agentCenter(), mailbox(), agentRegistry());
+
+        Set<String> subagentNames = subagentTools.stream().map(Tool::name).collect(Collectors.toSet());
+
+        assertEquals(Set.of(
+            "spawn_agent",
+            "interrupt_agent",
+            "read_agent_result",
+            "read_mailbox",
+            "accept_mailbox_message",
+            "list_agents"
+        ), subagentNames);
+    }
+
     private Executor executor() {
         return new Executor() {
             @Override
@@ -148,6 +167,15 @@ class BuiltInToolsTest {
             @Override
             public MailboxCommandResult discard(String sessionId, String mailId) {
                 throw new UnsupportedOperationException("not used");
+            }
+        };
+    }
+
+    private AgentRegistryPort agentRegistry() {
+        return new AgentRegistryPort() {
+            @Override
+            public List<AgentView> list(String parentSessionId, Set<AgentRunStatus> statuses) {
+                return List.of();
             }
         };
     }

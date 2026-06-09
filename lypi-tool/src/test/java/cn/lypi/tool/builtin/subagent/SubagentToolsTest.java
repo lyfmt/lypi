@@ -5,9 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.subagent.AgentRunStatus;
+import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxMessage;
@@ -179,6 +182,35 @@ class SubagentToolsTest {
     }
 
     @Test
+    void listAgentsReadsAgentViewsForCurrentSession() {
+        RecordingAgentRegistry registry = new RecordingAgentRegistry();
+        ListAgentsTool tool = new ListAgentsTool(registry);
+
+        ToolResult<String> result = tool.execute(Map.of("statuses", List.of("RUNNING")), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals("ses_parent", registry.parentSessionId);
+        assertEquals(Set.of(AgentRunStatus.RUNNING), registry.statuses);
+        assertTrue(result.output().contains("agent_1"));
+        assertTrue(result.output().contains("Scout [explorer]"));
+        assertTrue(result.output().contains("ses_child"));
+        assertTrue(result.output().contains("entry_final"));
+        assertTrue(tool.isReadOnly(Map.of()));
+    }
+
+    @Test
+    void listAgentsRejectsInvalidStatus() {
+        ListAgentsTool tool = new ListAgentsTool(new RecordingAgentRegistry());
+
+        ToolResult<String> result = tool.execute(Map.of("status", "UNKNOWN_STATUS"), context(), ignored -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("未知 agent status"));
+    }
+
+    @Test
     void invalidRequiredInputReturnsValidationFailure() {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
 
@@ -195,6 +227,7 @@ class SubagentToolsTest {
         assertEquals(PermissionBehavior.ALLOW, new SpawnAgentTool(agentCenter).checkPermissions(Map.of(), context()).behavior());
         assertEquals(PermissionBehavior.ALLOW, new ReadAgentResultTool(agentCenter).checkPermissions(Map.of(), context()).behavior());
         assertEquals(PermissionBehavior.ALLOW, new ReadMailboxTool(new RecordingMailbox()).checkPermissions(Map.of(), context()).behavior());
+        assertEquals(PermissionBehavior.ALLOW, new ListAgentsTool(new RecordingAgentRegistry()).checkPermissions(Map.of(), context()).behavior());
     }
 
     private ToolUseContext context() {
@@ -294,6 +327,30 @@ class SubagentToolsTest {
         @Override
         public MailboxCommandResult discard(String sessionId, String mailId) {
             return MailboxCommandResult.success(message(MailboxStatus.DISCARDED));
+        }
+    }
+
+    private static final class RecordingAgentRegistry implements AgentRegistryPort {
+        private String parentSessionId;
+        private Set<AgentRunStatus> statuses;
+
+        @Override
+        public List<AgentView> list(String parentSessionId, Set<AgentRunStatus> statuses) {
+            this.parentSessionId = parentSessionId;
+            this.statuses = statuses;
+            return List.of(new AgentView(
+                "agent_1",
+                "Scout [explorer]",
+                parentSessionId,
+                "ses_child",
+                "entry_spawn",
+                AgentRunStatus.RUNNING,
+                Optional.of(MailboxStatus.PENDING),
+                Optional.of("完成摘要"),
+                Optional.of("entry_final"),
+                Optional.of("Scout"),
+                Optional.of("explorer")
+            ));
         }
     }
 }
