@@ -139,7 +139,41 @@ class DefaultAgentRegistryTest {
             assertThat(view.mailboxStatus()).hasValue(MailboxStatus.PENDING);
             assertThat(view.summary()).hasValue("完成摘要");
             assertThat(view.finalEntryId()).hasValue("entry_final");
+            assertThat(view.parentSpawnEntryId()).isEqualTo("entry_spawn");
         });
+    }
+
+    @Test
+    void ignoresChildSnapshotsOutsideCurrentBranch() {
+        BranchingParentSession parentSession = new BranchingParentSession("ses_parent", "entry_visible");
+        DefaultMailboxService mailbox = mailbox(parentSession);
+        DefaultAgentRegistry registry = new DefaultAgentRegistry(
+            parentSession,
+            mailbox,
+            parentSessionId -> List.of(),
+            parentSessionId -> List.of(
+                new ChildAgentSnapshot(
+                    "ses_child_visible",
+                    "ses_parent",
+                    "entry_visible",
+                    Optional.of("Visible"),
+                    Optional.empty()
+                ),
+                new ChildAgentSnapshot(
+                    "ses_child_hidden",
+                    "ses_parent",
+                    "entry_hidden",
+                    Optional.of("Hidden"),
+                    Optional.empty()
+                )
+            )
+        );
+
+        List<AgentView> views = registry.list("ses_parent", Set.of());
+
+        assertThat(views)
+            .extracting(AgentView::childSessionId)
+            .containsExactly("ses_child_visible");
     }
 
     private DefaultMailboxService mailbox(SessionManagerPort parentSession) {
@@ -181,6 +215,75 @@ class DefaultAgentRegistryTest {
         @Override
         public List<SessionEntry> branch(String leafId) {
             return entries;
+        }
+
+        @Override
+        public SessionView currentView() {
+            return new SessionView(sessionId, leafId);
+        }
+
+        @Override
+        public SessionView view(String leafId) {
+            return new SessionView(sessionId, leafId);
+        }
+
+        @Override
+        public List<AgentMessage> transcript(String leafId) {
+            return List.of();
+        }
+
+        @Override
+        public SessionContext context(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle appendMessage(AgentMessage message) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle fork(ForkRequest request) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private static final class BranchingParentSession implements SessionManagerPort {
+        private final String sessionId;
+        private final String leafId;
+
+        private BranchingParentSession(String sessionId, String leafId) {
+            this.sessionId = sessionId;
+            this.leafId = leafId;
+        }
+
+        @Override
+        public SessionHandle openOrCreate(String sessionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle append(SessionEntry entry) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle switchLeaf(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<SessionEntry> branch(String leafId) {
+            return List.of(new AgentLifecycleEntry(
+                "entry_visible",
+                null,
+                "agent_visible",
+                "ses_child_visible",
+                sessionId,
+                "spawned",
+                Map.of(),
+                NOW
+            ));
         }
 
         @Override

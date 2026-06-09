@@ -9,6 +9,7 @@ import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -38,9 +39,11 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
         if (parentSessionId == null || parentSessionId.isBlank()) {
             return List.of();
         }
+        List<SessionEntry> branch = currentBranch();
+        Set<String> branchEntryIds = branchEntryIds(branch);
         Map<String, AgentRecord> records = new LinkedHashMap<>();
-        lifecycleRecords(parentSessionId, records);
-        childRecords(parentSessionId, records);
+        lifecycleRecords(parentSessionId, branch, records);
+        childRecords(parentSessionId, branchEntryIds, records);
         runningRecords(parentSessionId, records);
         Map<String, MailboxMessage> mailboxByChildSessionId = mailboxByChildSessionId(parentSessionId);
         return records.values().stream()
@@ -49,12 +52,24 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
             .toList();
     }
 
-    private void lifecycleRecords(String parentSessionId, Map<String, AgentRecord> records) {
+    private List<SessionEntry> currentBranch() {
         String leafId = parentSession.currentView().leafId();
         if (leafId == null || leafId.isBlank()) {
-            return;
+            return List.of();
         }
-        for (SessionEntry entry : parentSession.branch(leafId)) {
+        return parentSession.branch(leafId);
+    }
+
+    private Set<String> branchEntryIds(List<SessionEntry> branch) {
+        Set<String> ids = new HashSet<>();
+        for (SessionEntry entry : branch) {
+            ids.add(entry.id());
+        }
+        return Set.copyOf(ids);
+    }
+
+    private void lifecycleRecords(String parentSessionId, List<SessionEntry> branch, Map<String, AgentRecord> records) {
+        for (SessionEntry entry : branch) {
             if (entry instanceof AgentLifecycleEntry lifecycle && parentSessionId.equals(lifecycle.parentSessionId())) {
                 AgentRecord record = records.computeIfAbsent(
                     lifecycle.agentId(),
@@ -62,7 +77,7 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
                         lifecycle.agentId(),
                         lifecycle.childSessionId(),
                         lifecycle.parentSessionId(),
-                        lifecycle.parentId(),
+                        lifecycle.id(),
                         Optional.empty(),
                         Optional.empty(),
                         AgentRunStatus.UNKNOWN
@@ -75,9 +90,12 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
         }
     }
 
-    private void childRecords(String parentSessionId, Map<String, AgentRecord> records) {
+    private void childRecords(String parentSessionId, Set<String> branchEntryIds, Map<String, AgentRecord> records) {
         for (ChildAgentSnapshot child : childAgents.childAgents(parentSessionId)) {
             if (!parentSessionId.equals(child.parentSessionId())) {
+                continue;
+            }
+            if (!branchEntryIds.contains(child.parentSpawnEntryId())) {
                 continue;
             }
             Optional<AgentRecord> existing = records.values().stream()

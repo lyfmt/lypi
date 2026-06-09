@@ -105,6 +105,7 @@ public final class AgentSlashCommandHandler implements SlashCommandHandler {
             agentId: %s
             label: %s
             childSessionId: %s
+            parentSpawnEntryId: %s
             status: %s
             mailboxStatus: %s
             summary: %s
@@ -113,6 +114,7 @@ public final class AgentSlashCommandHandler implements SlashCommandHandler {
                 agent.agentId(),
                 agent.label(),
                 agent.childSessionId(),
+                agent.parentSpawnEntryId(),
                 agent.status(),
                 agent.mailboxStatus().map(Enum::name).orElse("-"),
                 agent.summary().orElse("-"),

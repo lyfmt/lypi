@@ -39,6 +39,7 @@ class AgentSlashCommandHandlerTest {
         assertEquals(Set.of(AgentRunStatus.RUNNING), registry.statuses);
         assertTrue(handler.lastOutput().contains("agent_1"));
         assertTrue(handler.lastOutput().contains("Scout [explorer]"));
+        assertTrue(handler.lastOutput().contains("entry_spawn"));
         assertTrue(handler.lastOutput().contains("entry_final"));
     }
 
