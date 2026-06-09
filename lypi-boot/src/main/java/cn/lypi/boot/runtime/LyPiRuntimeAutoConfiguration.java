@@ -517,10 +517,11 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnBean(AgentRegistryPort.class)
     public AgentSlashCommandHandler agentSlashCommandHandler(
         AgentRegistryPort registry,
+        ObjectProvider<AgentCenterPort> agentCenter,
         ObjectProvider<SessionRuntimeState> state,
         SessionManagerPort sessionManager
     ) {
-        return new AgentSlashCommandHandler(registry, () -> {
+        return new AgentSlashCommandHandler(registry, agentCenter.getIfAvailable(), () -> {
             SessionRuntimeState runtimeState = state.getIfAvailable();
             if (runtimeState != null) {
                 return runtimeState.sessionId();

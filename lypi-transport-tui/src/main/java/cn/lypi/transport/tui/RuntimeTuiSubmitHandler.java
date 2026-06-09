@@ -112,6 +112,9 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         if (applyMailboxShorthand(command.name(), tokens, arguments)) {
             return Map.copyOf(arguments);
         }
+        if (applyAgentShorthand(command.name(), tokens, arguments)) {
+            return Map.copyOf(arguments);
+        }
         List<PromptParameter> parameters = command.parameters();
         for (int index = 1; index < tokens.length; index++) {
             String token = tokens[index];
@@ -135,6 +138,18 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         if (isMailboxCommandAction(tokens[1])) {
             arguments.put("action", tokens[1]);
             arguments.put("mailId", tokens[2]);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean applyAgentShorthand(String commandName, String[] tokens, Map<String, String> arguments) {
+        if (!"agent".equals(commandName) || tokens.length < 3 || tokens[1].contains("=") || tokens[2].contains("=")) {
+            return false;
+        }
+        if ("interrupt".equals(tokens[1])) {
+            arguments.put("action", tokens[1]);
+            arguments.put("agentId", tokens[2]);
             return true;
         }
         return false;

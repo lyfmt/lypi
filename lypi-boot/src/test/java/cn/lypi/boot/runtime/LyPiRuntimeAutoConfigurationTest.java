@@ -836,19 +836,23 @@ class LyPiRuntimeAutoConfigurationTest {
     @Test
     void registersAgentSlashCommandHandlerWithRuntimeStateSession() {
         RecordingAgentRegistry registry = new RecordingAgentRegistry();
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
 
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
             .withBean(AgentRegistryPort.class, () -> registry)
+            .withBean(AgentCenterPort.class, () -> agentCenter)
             .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
             .run(context -> {
                 AgentSlashCommandHandler handler = context.getBean(AgentSlashCommandHandler.class);
 
                 handler.handle(Map.of("action", "list", "statuses", "RUNNING"));
+                handler.handle(Map.of("action", "interrupt", "agentId", "agent_1"));
 
                 assertThat(handler.command().name()).isEqualTo("agent");
                 assertThat(registry.parentSessionId).isEqualTo("ses_parent");
                 assertThat(registry.statuses).containsExactly(AgentRunStatus.RUNNING);
+                assertThat(agentCenter.interruptedAgentId).isEqualTo("agent_1");
             });
     }
 
@@ -1044,6 +1048,26 @@ class LyPiRuntimeAutoConfigurationTest {
             this.parentSessionId = parentSessionId;
             this.statuses = statuses;
             return List.of();
+        }
+    }
+
+    private static final class RecordingAgentCenter implements AgentCenterPort {
+        private String interruptedAgentId;
+
+        @Override
+        public SubagentSpawnResult spawn(SubagentSpawnRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public cn.lypi.contracts.subagent.MailboxCommandResult interrupt(String agentId) {
+            this.interruptedAgentId = agentId;
+            return cn.lypi.contracts.subagent.MailboxCommandResult.success(null);
+        }
+
+        @Override
+        public Optional<cn.lypi.contracts.subagent.HeadlessSubagentOutput> readResult(String childSessionId) {
+            return Optional.empty();
         }
     }
 

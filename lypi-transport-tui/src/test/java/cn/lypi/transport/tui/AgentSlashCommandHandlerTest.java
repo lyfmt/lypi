@@ -3,9 +3,12 @@ package cn.lypi.transport.tui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
+import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
+import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.util.List;
@@ -54,6 +57,35 @@ class AgentSlashCommandHandlerTest {
         assertEquals(null, registry.parentSessionId);
     }
 
+    @Test
+    void interruptSendsRequestToAgentCenter() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        AgentSlashCommandHandler handler = new AgentSlashCommandHandler(
+            new RecordingAgentRegistry(),
+            agentCenter,
+            () -> "ses_parent"
+        );
+
+        handler.handle(Map.of("action", "interrupt", "agentId", "agent_1"));
+
+        assertEquals("agent_1", agentCenter.interruptedAgentId);
+        assertTrue(handler.lastOutput().contains("中断请求已发送"));
+        assertTrue(handler.lastOutput().contains("agent_1"));
+    }
+
+    @Test
+    void interruptRequiresAgentId() {
+        AgentSlashCommandHandler handler = new AgentSlashCommandHandler(
+            new RecordingAgentRegistry(),
+            new RecordingAgentCenter(),
+            () -> "ses_parent"
+        );
+
+        handler.handle(Map.of("action", "interrupt"));
+
+        assertTrue(handler.lastOutput().contains("agentId 不能为空"));
+    }
+
     private static final class RecordingAgentRegistry implements AgentRegistryPort {
         private String parentSessionId;
         private Set<AgentRunStatus> statuses;
@@ -75,6 +107,26 @@ class AgentSlashCommandHandlerTest {
                 Optional.of("Scout"),
                 Optional.of("explorer")
             ));
+        }
+    }
+
+    private static final class RecordingAgentCenter implements AgentCenterPort {
+        private String interruptedAgentId;
+
+        @Override
+        public cn.lypi.contracts.subagent.SubagentSpawnResult spawn(cn.lypi.contracts.subagent.SubagentSpawnRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public MailboxCommandResult interrupt(String agentId) {
+            this.interruptedAgentId = agentId;
+            return MailboxCommandResult.success(null);
+        }
+
+        @Override
+        public Optional<HeadlessSubagentOutput> readResult(String childSessionId) {
+            return Optional.empty();
         }
     }
 }

@@ -122,6 +122,27 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
+    void agentInterruptSlashCommandShorthandMapsAgentIdArgument() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("中断请求已发送: agent_1");
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            List.of(new SlashCommand("agent", "管理 agent", List.of(), slash))
+        );
+
+        handler.submitUserInput("/agent interrupt agent_1");
+
+        assertTrue(core.requests.isEmpty());
+        assertEquals(Map.of("action", "interrupt", "agentId", "agent_1"), slash.arguments);
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
+        assertEquals("中断请求已发送: agent_1", delta.delta());
+    }
+
+    @Test
     void regularInputStillStartsTurnWhenSlashCommandsAreRegistered() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
