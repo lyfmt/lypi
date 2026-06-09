@@ -233,6 +233,7 @@ class LyPiToolAutoConfigurationTest {
 
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues("lypi.runtime.transport=tui")
             .withBean(EventBus.class, () -> eventBus)
             .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
             .run(context -> {

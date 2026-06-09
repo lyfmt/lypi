@@ -10,6 +10,7 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.agent.TurnRequest;
@@ -53,6 +54,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -263,6 +267,37 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void blankInitialPromptFallsBackToTuiWhenSelected() {
+        RecordingCore core = new RecordingCore();
+        RecordingTransportLauncher launcher = new RecordingTransportLauncher("tui");
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.transport=tui"
+            )
+            .withBean(AgentCorePort.class, () -> core)
+            .withBean(TransportLauncher.class, () -> launcher)
+            .run(context -> {
+                AppEntry appEntry = context.getBean(AppEntry.class);
+                appEntry.start(new BootstrapRequest(
+                    tempDir,
+                    List.of(),
+                    Optional.of("session-blank-prompt"),
+                    Optional.of("   ")
+                ));
+
+                assertThat(launcher.state.get()).isNotNull();
+                assertThat(launcher.state.get().sessionId()).isEqualTo("session-blank-prompt");
+                assertThat(core.request.get()).isNull();
+            });
+    }
+
+    @Test
     void createsApplicationRunnerThatStartsAppEntry() throws Exception {
         RecordingAppEntry appEntry = new RecordingAppEntry();
 
@@ -282,6 +317,80 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(appEntry.request.get().cwd()).isEqualTo(tempDir.toAbsolutePath().normalize());
                 assertThat(appEntry.request.get().sessionId()).contains("session-runner");
                 assertThat(appEntry.request.get().initialPrompt()).contains("from runner");
+            });
+    }
+
+    @Test
+    void tuiRuntimePermissionResponseUnlocksAskTool() {
+        CountDownLatch requestPublished = new CountDownLatch(1);
+        AtomicReference<PermissionRequestEvent> requestRef = new AtomicReference<>();
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.transport=tui"
+            )
+            .run(context -> {
+                EventBus eventBus = context.getBean(EventBus.class);
+                eventBus.subscribe(new EventFilter(Optional.empty(), Optional.empty()), envelope -> {
+                    if (envelope.event() instanceof PermissionRequestEvent request) {
+                        requestRef.set(request);
+                        requestPublished.countDown();
+                    }
+                });
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                runtime.register(new SuccessTool());
+
+                CompletableFuture<ToolResult<?>> resultFuture = CompletableFuture.supplyAsync(() -> runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "ask-probe", Map.of("path", "pom.xml"), "msg_1")),
+                    contextSnapshot()
+                ).getFirst());
+
+                assertThat(requestPublished.await(2, TimeUnit.SECONDS)).isTrue();
+                PermissionRequestEvent request = requestRef.get();
+                eventBus.publish(new PermissionResponseEvent(
+                    request.sessionId(),
+                    request.requestId(),
+                    request.defaultOptionId(),
+                    false,
+                    Instant.now()
+                ));
+
+                ToolResult<?> result = resultFuture.get(2, TimeUnit.SECONDS);
+
+                assertThat(result.isError()).isFalse();
+            });
+    }
+
+    @Test
+    void headlessRuntimeDeniesAskToolWithoutWaitingForPermissionResponse() throws Exception {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.transport=headless"
+            )
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                runtime.register(new SuccessTool());
+
+                CompletableFuture<ToolResult<?>> resultFuture = CompletableFuture.supplyAsync(() -> runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "ask-probe", Map.of("path", "pom.xml"), "msg_1")),
+                    contextSnapshot()
+                ).getFirst());
+
+                ToolResult<?> result = resultFuture.get(500, TimeUnit.MILLISECONDS);
+
+                assertThat(result.isError()).isTrue();
+                assertThat(((ToolResultContentBlock) result.newMessages().getFirst().content().getFirst()).text())
+                    .contains("权限请求未获允许");
             });
     }
 

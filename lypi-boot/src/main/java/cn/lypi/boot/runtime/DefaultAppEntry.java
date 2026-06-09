@@ -49,10 +49,10 @@ final class DefaultAppEntry implements AppEntry {
     @Override
     public void start(BootstrapRequest request) {
         BootstrapContext context = bootstrapService.bootstrap(request);
-        Optional<String> initialPrompt = request == null ? Optional.empty() : request.initialPrompt();
-        initialPrompt
-            .filter(prompt -> !prompt.isBlank())
-            .ifPresent(prompt -> agentCore.execute(new TurnRequest(
+        Optional<String> initialPrompt = request == null
+            ? Optional.empty()
+            : request.initialPrompt().filter(prompt -> !prompt.isBlank());
+        initialPrompt.ifPresent(prompt -> agentCore.execute(new TurnRequest(
                 context.session().sessionId(),
                 prompt,
                 Optional.empty(),

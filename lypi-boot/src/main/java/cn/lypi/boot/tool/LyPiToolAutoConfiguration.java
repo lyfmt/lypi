@@ -28,6 +28,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.core.env.Environment;
 
 @AutoConfiguration
 @EnableConfigurationProperties(LyPiToolProperties.class)
@@ -116,13 +117,13 @@ public class LyPiToolAutoConfiguration {
      * 创建事件总线权限响应 gate。
      */
     @Bean
-    @ConditionalOnBean(EventBus.class)
     @ConditionalOnMissingBean({PermissionResponseGate.class, PermissionPromptPort.class})
     public PermissionResponseGate permissionResponseGate(
-        EventBus eventBus,
-        ObjectProvider<HeadlessTransport> headlessTransports
+        ObjectProvider<EventBus> eventBus,
+        ObjectProvider<HeadlessTransport> headlessTransports,
+        Environment environment
     ) {
-        if (headlessTransports.stream().findAny().isPresent()) {
+        if (headlessTransports.stream().findAny().isPresent() || !"tui".equalsIgnoreCase(environment.getProperty("lypi.runtime.transport", "headless"))) {
             return requestEvent -> new PermissionResponse(
                 requestEvent.sessionId(),
                 requestEvent.requestId(),
@@ -131,7 +132,17 @@ public class LyPiToolAutoConfiguration {
                 Instant.now()
             );
         }
-        return new EventBusPermissionResponseGate(eventBus);
+        EventBus resolvedEventBus = eventBus.getIfAvailable();
+        if (resolvedEventBus == null) {
+            return requestEvent -> new PermissionResponse(
+                requestEvent.sessionId(),
+                requestEvent.requestId(),
+                requestEvent.cancelOptionId(),
+                true,
+                Instant.now()
+            );
+        }
+        return new EventBusPermissionResponseGate(resolvedEventBus);
     }
 
     private DefaultToolRuntime toolRuntime(
