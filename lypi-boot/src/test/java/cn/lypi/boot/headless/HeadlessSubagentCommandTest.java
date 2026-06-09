@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.logging.LoggingSystem;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -67,7 +68,7 @@ class HeadlessSubagentCommandTest {
     }
 
     @Test
-    void headlessApplicationDefaultsDisableRootLoggingOnlyForJsonProtocolMode() {
+    void headlessApplicationDefaultsDisableLoggingSystemForJsonProtocolMode() {
         SpringApplication headless = LyPiApplication.application(new String[] {"--lypi.headless.subagent=true"});
         SpringApplication regular = LyPiApplication.application();
 
@@ -79,6 +80,7 @@ class HeadlessSubagentCommandTest {
         Object regularDefaults = ReflectionTestUtils.getField(regular, "defaultProperties");
 
         assertThat(headlessDefaults).containsEntry("logging.level.root", "off");
+        assertThat(headlessDefaults).containsEntry(LoggingSystem.SYSTEM_PROPERTY, LoggingSystem.NONE);
         assertThat(regularDefaults).isNull();
     }
 

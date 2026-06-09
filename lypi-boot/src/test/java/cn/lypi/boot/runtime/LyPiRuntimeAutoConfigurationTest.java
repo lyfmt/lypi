@@ -473,6 +473,26 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void applicationRunnerSkipsHeadlessSubagentProtocolMode() throws Exception {
+        RecordingAppEntry appEntry = new RecordingAppEntry();
+
+        runtimeConfiguration()
+            .withPropertyValues(
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.session-id=session-subagent-protocol"
+            )
+            .withBean(AppEntry.class, () -> appEntry)
+            .run(context -> {
+                context.getBean("lyPiApplicationRunner", ApplicationRunner.class)
+                    .run(new DefaultApplicationArguments("headless-subagent"));
+                context.getBean("lyPiApplicationRunner", ApplicationRunner.class)
+                    .run(new DefaultApplicationArguments("--lypi.headless.subagent=true"));
+
+                assertThat(appEntry.request.get()).isNull();
+            });
+    }
+
+    @Test
     void applicationRunnerIgnoresOptionArgsWhenBuildingCliPrompt() throws Exception {
         RecordingCore core = new RecordingCore();
 

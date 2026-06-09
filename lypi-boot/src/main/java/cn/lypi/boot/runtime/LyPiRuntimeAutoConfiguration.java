@@ -325,12 +325,27 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnBean(AppEntry.class)
     @ConditionalOnMissingBean(name = "lyPiApplicationRunner")
     public ApplicationRunner lyPiApplicationRunner(AppEntry appEntry, LyPiRuntimeProperties properties) {
-        return args -> appEntry.start(new cn.lypi.contracts.bootstrap.BootstrapRequest(
-            properties.getCwd(),
-            args == null ? List.of() : args.getNonOptionArgs(),
-            Optional.of(properties.getSessionId()),
-            Optional.ofNullable(properties.getInitialPrompt())
-        ));
+        return args -> {
+            if (isHeadlessSubagent(args)) {
+                return;
+            }
+            appEntry.start(new cn.lypi.contracts.bootstrap.BootstrapRequest(
+                properties.getCwd(),
+                args == null ? List.of() : args.getNonOptionArgs(),
+                Optional.of(properties.getSessionId()),
+                Optional.ofNullable(properties.getInitialPrompt())
+            ));
+        };
+    }
+
+    private boolean isHeadlessSubagent(org.springframework.boot.ApplicationArguments args) {
+        if (args == null) {
+            return false;
+        }
+        if (args.containsOption("lypi.headless.subagent") || args.containsOption("lypi-headless-subagent")) {
+            return true;
+        }
+        return List.of(args.getSourceArgs()).contains("headless-subagent");
     }
 
     /**

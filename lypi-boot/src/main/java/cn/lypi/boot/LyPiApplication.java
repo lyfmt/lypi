@@ -5,6 +5,7 @@ import java.util.Map;
 import org.springframework.boot.Banner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.logging.LoggingSystem;
 import org.springframework.context.ConfigurableApplicationContext;
 
 @SpringBootApplication
@@ -29,7 +30,10 @@ public class LyPiApplication {
         application.setBannerMode(Banner.Mode.OFF);
         application.setLogStartupInfo(false);
         if (isHeadlessSubagent(args)) {
-            application.setDefaultProperties(Map.of("logging.level.root", "off"));
+            application.setDefaultProperties(Map.of(
+                "logging.level.root", "off",
+                LoggingSystem.SYSTEM_PROPERTY, LoggingSystem.NONE
+            ));
         }
         return application;
     }
