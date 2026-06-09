@@ -904,6 +904,7 @@ class ContractSerializationTest {
                     "bash",
                     TuiToolState.RUNNING,
                     "Bash",
+                    "stdout: hello",
                     true
                 ),
                 new TuiErrorBlock("block_error", "boom")
@@ -918,6 +919,7 @@ class ContractSerializationTest {
                 "1234/200000tok",
                 true
             ),
+            "retrying attempt 2",
             List.of(new SessionFileView(Path.of("src/App.java"), Set.of(), Instant.parse("2026-06-01T12:00:00Z"), Map.of())),
             Optional.of(new PermissionPromptView("perm_toolu_01", "toolu_01", "Need approval", "allow_once", "allow_once", "cancel")),
             Optional.of(new DiffView("src/App.java", "diff://ses_01/src/App.java"))
@@ -941,7 +943,9 @@ class ContractSerializationTest {
         assertTrue(restored.statusBar().hasInterruptibleTool());
         assertEquals("msg_01", tool.messageId());
         assertEquals(TuiToolState.RUNNING, tool.state());
+        assertEquals("stdout: hello", tool.details());
         assertTrue(tool.active());
+        assertEquals("retrying attempt 2", restored.runtimeLine());
         assertTrue(restored.files().getFirst().path().endsWith(Path.of("src/App.java")));
         assertEquals("perm_toolu_01", restored.permissionPrompt().orElseThrow().requestId());
         assertEquals("cancel", restored.permissionPrompt().orElseThrow().cancelOptionId());
@@ -970,6 +974,42 @@ class ContractSerializationTest {
         assertEquals("", restored.branchLeafId());
         assertEquals("", restored.budget());
         assertFalse(restored.hasInterruptibleTool());
+    }
+
+    @Test
+    void tuiViewModelReadsLegacyJsonWithoutRuntimeLineAndToolDetails() throws Exception {
+        TuiViewModel restored = mapper.readValue(
+            """
+                {
+                  "blocks": [
+                    {
+                      "type": "tool",
+                      "blockId": "block_tool",
+                      "messageId": "msg_01",
+                      "toolUseId": "toolu_01",
+                      "toolName": "bash",
+                      "state": "RUNNING",
+                      "label": "Bash",
+                      "active": true
+                    }
+                  ],
+                  "statusBar": {
+                    "sessionId": "ses_01",
+                    "model": "gpt-5.4",
+                    "mode": "running",
+                    "permissionMode": "main"
+                  },
+                  "files": [],
+                  "permissionPrompt": null,
+                  "diffView": null
+                }
+                """,
+            TuiViewModel.class
+        );
+
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, restored.blocks().getFirst());
+        assertEquals("", restored.runtimeLine());
+        assertEquals("", tool.details());
     }
 
     private <T extends ContentBlock> void assertContentBlockRoundTrip(

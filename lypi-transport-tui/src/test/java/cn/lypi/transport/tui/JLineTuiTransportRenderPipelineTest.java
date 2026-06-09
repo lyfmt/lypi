@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
@@ -12,6 +13,7 @@ import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.tui.SessionRuntimeState;
@@ -69,8 +71,8 @@ class JLineTuiTransportRenderPipelineTest {
         ));
 
         assertEquals(
-            "ses_1 gpt-5.4:thinking=high execute default_execute cwd:ly-pi leaf:leaf_1 ctx:1234/200000tok",
-            frames.getLast().get(2)
+            "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE",
+            frames.getLast().getLast()
         );
     }
 
@@ -102,10 +104,10 @@ class JLineTuiTransportRenderPipelineTest {
         transport.drainInputForTest();
 
         assertEquals(
-            "ses_1 gpt-5.4:thinking=high execute default_execute cwd:ly-pi leaf:leaf_1 ctx:1234/200000tok",
-            frames.getLast().get(2)
+            "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE",
+            frames.getLast().getLast()
         );
-        assertEquals("> draft|CURSOR|", frames.getLast().getLast());
+        assertEquals("\033[48;5;236m> draft|CURSOR|\033[0m", frames.getLast().get(frames.getLast().size() - 2));
     }
 
     @Test
@@ -164,7 +166,7 @@ class JLineTuiTransportRenderPipelineTest {
         transport.drainInputForTest();
 
         assertEquals("Done", frames.getLast().getFirst());
-        assertEquals("> draft|CURSOR|", frames.getLast().getLast());
+        assertEquals("\033[48;5;236m> draft|CURSOR|\033[0m", frames.getLast().get(frames.getLast().size() - 2));
     }
 
     @Test
@@ -195,7 +197,7 @@ class JLineTuiTransportRenderPipelineTest {
         ));
 
         assertEquals("Done", frames.getLast().getFirst());
-        assertEquals("> draft|CURSOR|", frames.getLast().getLast());
+        assertEquals("\033[48;5;236m> draft|CURSOR|\033[0m", frames.getLast().get(frames.getLast().size() - 2));
     }
 
     @Test
@@ -225,7 +227,36 @@ class JLineTuiTransportRenderPipelineTest {
             Instant.parse("2026-06-09T00:00:00Z")
         ));
 
-        assertEquals("> dra|CURSOR|ft", frames.getLast().getLast());
+        assertEquals("\033[48;5;236m> dra|CURSOR|ft\033[0m", frames.getLast().get(frames.getLast().size() - 2));
+    }
+
+    @Test
+    void retryStatusRendersAsTransientTranscriptLineWithoutMovingStatusBar() {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 80, 5);
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "hello",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        events.emit(new RetryStartEvent("ses_1", 2, "rate limit", Instant.parse("2026-06-09T00:00:01Z")));
+
+        List<String> latest = frames.getLast();
+        assertEquals("hello", latest.get(0));
+        assertEquals("· retrying attempt 2 rate limit", latest.get(1));
+        assertEquals("", latest.get(2));
+        assertEquals("\033[48;5;236m> \033[0m", latest.get(3));
+        assertTrue(latest.getLast().contains("ses_1"));
     }
 
     @Test
