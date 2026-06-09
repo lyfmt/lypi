@@ -23,6 +23,7 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
@@ -38,6 +39,8 @@ import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
+import cn.lypi.contracts.subagent.AgentRunStatus;
+import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
@@ -230,12 +233,14 @@ class LyPiToolAutoConfigurationTest {
             .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
             .withBean(AgentCenterPort.class, LyPiToolAutoConfigurationTest::agentCenter)
             .withBean(MailboxPort.class, LyPiToolAutoConfigurationTest::mailbox)
+            .withBean(AgentRegistryPort.class, LyPiToolAutoConfigurationTest::agentRegistry)
             .run(context -> {
                 ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
 
                 assertThat(runtime.resolve("spawn_agent")).isPresent();
                 assertThat(runtime.resolve("read_agent_result")).isPresent();
                 assertThat(runtime.resolve("read_mailbox")).isPresent();
+                assertThat(runtime.resolve("list_agents")).isPresent();
             });
     }
 
@@ -299,6 +304,15 @@ class LyPiToolAutoConfigurationTest {
 
             @Override
             public MailboxCommandResult discard(String sessionId, String mailId) {
+                throw new UnsupportedOperationException("not used");
+            }
+        };
+    }
+
+    private static AgentRegistryPort agentRegistry() {
+        return new AgentRegistryPort() {
+            @Override
+            public List<AgentView> list(String parentSessionId, java.util.Set<AgentRunStatus> statuses) {
                 throw new UnsupportedOperationException("not used");
             }
         };

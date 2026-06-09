@@ -23,6 +23,7 @@ import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.MailboxPort;
@@ -42,6 +43,8 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.subagent.AgentRunStatus;
+import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentResultRef;
@@ -57,9 +60,13 @@ import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.runtime.event.InMemoryEventBus;
+import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
+import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
+import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.session.SessionManagerImpl;
+import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
@@ -185,6 +192,8 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(context).hasSingleBean(MailboxPort.class);
                 assertThat(context).hasSingleBean(SubagentProcessRunner.class);
                 assertThat(context).hasSingleBean(AgentCenterPort.class);
+                assertThat(context).hasSingleBean(AgentRegistryPort.class);
+                assertThat(context.getBean(AgentRegistryPort.class)).isInstanceOf(DefaultAgentRegistry.class);
                 assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(null)).isFalse();
             });
     }
@@ -339,6 +348,45 @@ class LyPiRuntimeAutoConfigurationTest {
             });
     }
 
+    @Test
+    void registersAgentSlashCommandHandlerWithRuntimeStateSession() {
+        RecordingAgentRegistry registry = new RecordingAgentRegistry();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(AgentRegistryPort.class, () -> registry)
+            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
+            .run(context -> {
+                AgentSlashCommandHandler handler = context.getBean(AgentSlashCommandHandler.class);
+
+                handler.handle(Map.of("action", "list", "statuses", "RUNNING"));
+
+                assertThat(handler.command().name()).isEqualTo("agent");
+                assertThat(registry.parentSessionId).isEqualTo("ses_parent");
+                assertThat(registry.statuses).containsExactly(AgentRunStatus.RUNNING);
+            });
+    }
+
+    @Test
+    void keepsUserProvidedAgentRegistryAndSnapshotProviders() {
+        AgentRegistryPort registry = (sessionId, statuses) -> List.of();
+        RunningAgentSnapshotProvider runningAgents = parentSessionId -> List.of();
+        ChildAgentSnapshotProvider childAgents = parentSessionId -> List.of();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(AgentRegistryPort.class, () -> registry)
+            .withBean(RunningAgentSnapshotProvider.class, () -> runningAgents)
+            .withBean(ChildAgentSnapshotProvider.class, () -> childAgents)
+            .run(context -> {
+                assertThat(context).hasSingleBean(AgentRegistryPort.class);
+                assertThat(context.getBean(AgentRegistryPort.class)).isSameAs(registry);
+                assertThat(context.getBean("runningAgentSnapshotProvider", RunningAgentSnapshotProvider.class)).isSameAs(runningAgents);
+                assertThat(context).hasSingleBean(ChildAgentSnapshotProvider.class);
+                assertThat(context.getBean(ChildAgentSnapshotProvider.class)).isSameAs(childAgents);
+            });
+    }
+
     private static PermissionDecision allowAllSecurity(ToolUseRequest request, ToolUseContext context) {
         return new PermissionDecision(
             PermissionBehavior.ALLOW,
@@ -473,6 +521,18 @@ class LyPiRuntimeAutoConfigurationTest {
         @Override
         public cn.lypi.contracts.subagent.MailboxCommandResult discard(String sessionId, String mailId) {
             return cn.lypi.contracts.subagent.MailboxCommandResult.failure("not used");
+        }
+    }
+
+    private static final class RecordingAgentRegistry implements AgentRegistryPort {
+        private String parentSessionId;
+        private java.util.Set<AgentRunStatus> statuses;
+
+        @Override
+        public List<AgentView> list(String parentSessionId, java.util.Set<AgentRunStatus> statuses) {
+            this.parentSessionId = parentSessionId;
+            this.statuses = statuses;
+            return List.of();
         }
     }
 

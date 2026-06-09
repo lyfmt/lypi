@@ -11,6 +11,7 @@ import cn.lypi.agent.compact.DefaultCompactionCoordinator;
 import cn.lypi.agent.compact.DefaultCompactionPlanner;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.MailboxPort;
@@ -24,18 +25,25 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.runtime.event.InMemoryEventBus;
+import cn.lypi.runtime.subagent.ChildAgentSnapshot;
+import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.DefaultAgentCenter;
+import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.DefaultMailboxService;
 import cn.lypi.runtime.subagent.JsonSubagentProcessRunner;
 import cn.lypi.runtime.subagent.JsonlMailboxStore;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.MailboxDeliveryService;
+import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.resource.DefaultResourceRuntime;
 import cn.lypi.security.DefaultPolicyEngine;
 import cn.lypi.session.ChildSessionService;
+import cn.lypi.session.ChildSessionView;
 import cn.lypi.session.DefaultSessionManagerFactory;
 import cn.lypi.session.SessionManagerImpl;
+import cn.lypi.session.SessionTreeQuery;
+import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -133,6 +141,28 @@ public class LyPiRuntimeAutoConfiguration {
     }
 
     /**
+     * 创建 child agent 持久化快照查询器。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ChildAgentSnapshotProvider.class)
+    public ChildAgentSnapshotProvider childAgentSnapshotProvider() {
+        SessionTreeQuery query = new SessionTreeQuery(DEFAULT_CWD);
+        return parentSessionId -> query.children(parentSessionId).stream()
+            .map(this::childAgentSnapshot)
+            .toList();
+    }
+
+    private ChildAgentSnapshot childAgentSnapshot(ChildSessionView child) {
+        return new ChildAgentSnapshot(
+            child.sessionId(),
+            child.parentSessionId().orElse(""),
+            child.parentSpawnEntryId().orElse(""),
+            child.agentName(),
+            child.agentRole()
+        );
+    }
+
+    /**
      * 创建 mailbox JSONL store。
      */
     @Bean
@@ -220,6 +250,64 @@ public class LyPiRuntimeAutoConfiguration {
             }
             return sessionManager.currentView().sessionId();
         });
+    }
+
+    /**
+     * 创建默认 agent registry。
+     */
+    @Bean
+    @ConditionalOnMissingBean(AgentRegistryPort.class)
+    @ConditionalOnBean(DefaultMailboxService.class)
+    public AgentRegistryPort agentRegistry(
+        SessionManagerPort parentSession,
+        DefaultMailboxService mailbox,
+        ObjectProvider<RunningAgentSnapshotProvider> runningAgents,
+        ObjectProvider<AgentCenterPort> agentCenter,
+        ChildAgentSnapshotProvider childAgents
+    ) {
+        return new DefaultAgentRegistry(
+            parentSession,
+            mailbox,
+            runningAgentSnapshotProvider(runningAgents, agentCenter),
+            childAgents
+        );
+    }
+
+    /**
+     * 创建 /agent slash command handler。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(AgentRegistryPort.class)
+    public AgentSlashCommandHandler agentSlashCommandHandler(
+        AgentRegistryPort registry,
+        ObjectProvider<SessionRuntimeState> state,
+        SessionManagerPort sessionManager
+    ) {
+        return new AgentSlashCommandHandler(registry, () -> {
+            SessionRuntimeState runtimeState = state.getIfAvailable();
+            if (runtimeState != null) {
+                return runtimeState.sessionId();
+            }
+            return sessionManager.currentView().sessionId();
+        });
+    }
+
+    private RunningAgentSnapshotProvider runningAgentSnapshotProvider(
+        ObjectProvider<RunningAgentSnapshotProvider> runningAgents,
+        ObjectProvider<AgentCenterPort> agentCenter
+    ) {
+        List<RunningAgentSnapshotProvider> explicitProviders = runningAgents.orderedStream()
+            .filter(provider -> !(provider instanceof AgentCenterPort))
+            .toList();
+        if (!explicitProviders.isEmpty()) {
+            return explicitProviders.getFirst();
+        }
+        AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
+        if (resolvedAgentCenter instanceof RunningAgentSnapshotProvider provider) {
+            return provider;
+        }
+        return ignored -> List.of();
     }
 
     /**

@@ -1,6 +1,7 @@
 package cn.lypi.boot.tool;
 
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.MailboxPort;
@@ -90,6 +91,7 @@ public class LyPiToolAutoConfiguration {
         Executor executor,
         ObjectProvider<AgentCenterPort> agentCenter,
         ObjectProvider<MailboxPort> mailbox,
+        ObjectProvider<AgentRegistryPort> agentRegistry,
         SandboxPolicyResolver sandboxPolicyResolver,
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionPromptPort> promptPort
@@ -110,7 +112,12 @@ public class LyPiToolAutoConfiguration {
         AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
         MailboxPort resolvedMailbox = mailbox.getIfAvailable();
         if (resolvedAgentCenter != null && resolvedMailbox != null) {
-            BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox);
+            AgentRegistryPort resolvedAgentRegistry = agentRegistry.getIfAvailable();
+            if (resolvedAgentRegistry == null) {
+                BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox);
+            } else {
+                BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox, resolvedAgentRegistry);
+            }
         }
         return runtime;
     }
