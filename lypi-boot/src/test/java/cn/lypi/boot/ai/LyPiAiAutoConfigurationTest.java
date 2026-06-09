@@ -17,6 +17,7 @@ import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
@@ -29,7 +30,6 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -79,15 +79,17 @@ class LyPiAiAutoConfigurationTest {
             assertThat(context).hasSingleBean(ApiProviderRegistry.class);
             ModelRegistry registry = context.getBean(ModelRegistry.class);
             List<?> adapters = context.getBean("openAiCompatibleProviderAdapters", List.class);
+            ModelDescriptor descriptor = openAiModel(registry, "gpt-5-mini");
 
-            assertThat(registry.list()).hasSize(1);
-            assertThat(registry.list().getFirst().provider()).isEqualTo("openai");
-            assertThat(registry.list().getFirst().modelId()).isEqualTo("gpt-5-mini");
-            assertThat(registry.list().getFirst().contextWindow()).isEqualTo(256000);
-            assertThat(registry.list().getFirst().compat().toString()).doesNotContain("LYPI_TEST_TOKEN");
-            assertThat(registry.list().getFirst().compat()).containsEntry("safe-flag", "true");
-            assertThat(registry.list().getFirst().compat()).containsEntry("vendor", "fixture");
-            assertThat(registry.list().getFirst().compat().toString())
+            assertThat(registry.list())
+                .extracting(ModelDescriptor::modelId)
+                .contains("gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5-mini");
+            assertThat(descriptor.provider()).isEqualTo("openai");
+            assertThat(descriptor.contextWindow()).isEqualTo(256000);
+            assertThat(descriptor.compat().toString()).doesNotContain("LYPI_TEST_TOKEN");
+            assertThat(descriptor.compat()).containsEntry("safe-flag", "true");
+            assertThat(descriptor.compat()).containsEntry("vendor", "fixture");
+            assertThat(descriptor.compat().toString())
                 .doesNotContain(
                     "LYPI_COMPAT_TOKEN",
                     "LYPI_AUTH_TOKEN",
@@ -131,8 +133,10 @@ class LyPiAiAutoConfigurationTest {
                 assertThat(config(adapter).baseUrl()).hasToString("https://api.openai.test/v1");
                 assertThat(config(adapter).apiKey()).isEqualTo("fixture-token");
                 assertThat(config(adapter).fallbackRequestStyle()).isEqualTo(RequestStyle.CHAT_COMPLETIONS);
-                assertThat(context.getBean(ModelRegistry.class).list()).singleElement()
-                    .satisfies(descriptor -> assertThat(descriptor.baseUrl()).hasToString("https://api.openai.test/v1"));
+                assertThat(context.getBean(ModelRegistry.class).list())
+                    .filteredOn(descriptor -> descriptor.provider().equals("openai"))
+                    .allSatisfy(descriptor ->
+                        assertThat(descriptor.baseUrl()).hasToString("https://api.openai.test/v1"));
             });
     }
 
@@ -147,13 +151,12 @@ class LyPiAiAutoConfigurationTest {
                 "lypi.ai.providers.openai.models[0].max-output-tokens=32768"
             )
             .run(context -> {
-                assertThat(context.getBean(ModelRegistry.class).list()).singleElement().satisfies(descriptor -> {
-                    assertThat(descriptor.provider()).isEqualTo("openai");
-                    assertThat(descriptor.modelId()).isEqualTo("gpt-5-mini");
-                    assertThat(descriptor.baseUrl()).hasToString("https://api.openai.com/v1");
-                    assertThat(descriptor.contextWindow()).isEqualTo(256000);
-                    assertThat(descriptor.maxOutputTokens()).isEqualTo(32768);
-                });
+                ModelDescriptor descriptor = openAiModel(context.getBean(ModelRegistry.class), "gpt-5-mini");
+
+                assertThat(descriptor.provider()).isEqualTo("openai");
+                assertThat(descriptor.baseUrl()).hasToString("https://api.openai.com/v1");
+                assertThat(descriptor.contextWindow()).isEqualTo(256000);
+                assertThat(descriptor.maxOutputTokens()).isEqualTo(32768);
             });
     }
 
@@ -284,11 +287,14 @@ class LyPiAiAutoConfigurationTest {
             .withPropertyValues("spring.config.name=application-test")
             .run(context -> {
                 ModelRegistry registry = context.getBean(ModelRegistry.class);
+                ModelDescriptor descriptor = openAiModel(registry, "gpt-5-mini");
 
-                assertThat(registry.list()).hasSize(1);
-                assertThat(registry.list().getFirst().provider()).isEqualTo("openai");
-                assertThat(registry.list().getFirst().baseUrl().toString()).isEqualTo("https://api.openai.test/v1");
-                assertThat(registry.list().getFirst().supportsThinking()).isTrue();
+                assertThat(registry.list())
+                    .extracting(ModelDescriptor::modelId)
+                    .contains("gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5-mini");
+                assertThat(descriptor.provider()).isEqualTo("openai");
+                assertThat(descriptor.baseUrl().toString()).isEqualTo("https://api.openai.test/v1");
+                assertThat(descriptor.supportsThinking()).isTrue();
             });
     }
 
@@ -307,6 +313,14 @@ class LyPiAiAutoConfigurationTest {
         } catch (ReflectiveOperationException e) {
             throw new AssertionError("Unable to read OpenAI adapter config", e);
         }
+    }
+
+    private static ModelDescriptor openAiModel(ModelRegistry registry, String modelId) {
+        return registry.list().stream()
+            .filter(descriptor -> descriptor.provider().equals("openai"))
+            .filter(descriptor -> descriptor.modelId().equals(modelId))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("Missing openai model: " + modelId));
     }
 
     private static CompactSummaryRequest disabledSummaryRequest() {
