@@ -45,7 +45,7 @@ class SubagentToolsTest {
         assertTrue(result.output().contains("STARTED"));
         assertFalse(result.output().contains("最终结果"));
         assertEquals("ses_parent", agentCenter.spawnRequest.parentSessionId());
-        assertEquals("msg_parent", agentCenter.spawnRequest.parentEntryId());
+        assertEquals("entry_tool_call", agentCenter.spawnRequest.parentEntryId());
         assertEquals(Path.of("/workspace"), agentCenter.spawnRequest.cwd());
         assertEquals(List.of(), agentCenter.spawnRequest.allowedTools());
         assertEquals(PermissionMode.DEFAULT_EXECUTE, agentCenter.spawnRequest.permissionMode());
@@ -202,7 +202,11 @@ class SubagentToolsTest {
             "ses_parent",
             "msg_parent",
             Path.of("/workspace"),
-            Map.of("toolUseId", "toolu_subagent", "permissionMode", PermissionMode.DEFAULT_EXECUTE)
+            Map.of(
+                "toolUseId", "toolu_subagent",
+                "permissionMode", PermissionMode.DEFAULT_EXECUTE,
+                "parentEntryId", "entry_tool_call"
+            )
         );
     }
 

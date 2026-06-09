@@ -64,7 +64,7 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
             progress.progress(ToolProgress.phase("spawning", "启动 subagent"));
             SubagentSpawnResult result = agentCenter.spawn(new SubagentSpawnRequest(
                 context.sessionId(),
-                context.messageId(),
+                parentEntryId(context),
                 stringInput(input, "prompt"),
                 cwd(input, context),
                 List.of(),
@@ -104,6 +104,14 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
         Object permissionMode = input.getOrDefault("permissionMode", input.get("permission_mode"));
         if (permissionMode != null) {
             return error(context, "暂不支持为 subagent 单独设置 permissionMode；未启动 subagent。");
+        }
+        return null;
+    }
+
+    private String parentEntryId(ToolUseContext context) {
+        Object parentEntryId = context.metadata().get("parentEntryId");
+        if (parentEntryId instanceof String value && !value.isBlank()) {
+            return value;
         }
         return null;
     }

@@ -55,11 +55,12 @@ class ToolRuntimeContextFactoryTest {
         ToolUseContext context = new ToolRuntimeContextFactory(options).create(
             new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
             TestTools.context(PermissionMode.DEFAULT_EXECUTE),
-            new ToolRuntimeInvocation("session_runtime", "turn_runtime")
+            new ToolRuntimeInvocation("session_runtime", "turn_runtime", "entry_tool_call")
         );
 
         assertEquals("session_runtime", context.sessionId());
         assertEquals("turn_runtime", context.metadata().get("turnId"));
+        assertEquals("entry_tool_call", context.metadata().get("parentEntryId"));
         assertEquals("tr_1", context.metadata().get("traceId"));
     }
 }

@@ -337,6 +337,7 @@ class DefaultAgentCenterTest {
 
     @Test
     void completionLifecycleUsesParentCwdWhenChildCwdIsOverridden() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
         CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
         CompletingProcessRunner processRunner = new CompletingProcessRunner();
         CapturingSessionFactory sessionFactory = new CapturingSessionFactory(parentSession);
@@ -347,7 +348,7 @@ class DefaultAgentCenterTest {
         );
         DefaultAgentCenter center = new DefaultAgentCenter(
             List.of("lypi", "headless-subagent"),
-            request -> null,
+            childSessions,
             parentSession,
             tempDir,
             sessionFactory,
@@ -378,6 +379,9 @@ class DefaultAgentCenterTest {
         ));
 
         assertThat(processRunner.input.cwd()).isEqualTo(childCwd);
+        assertThat(processRunner.input.sessionCwd()).isEqualTo(tempDir);
+        assertThat(childSessions.request.sessionCwd()).isEqualTo(tempDir);
+        assertThat(childSessions.request.cwd()).isEqualTo(childCwd);
         assertThat(sessionFactory.openedCwd).isEqualTo(tempDir);
     }
 

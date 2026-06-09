@@ -50,4 +50,31 @@ class SessionTreeQueryTest {
 
         assertThat(query.children("missing")).isEmpty();
     }
+
+    @Test
+    void childrenReturnsChildStoredInParentSessionCwdWhenExecutionCwdDiffers() {
+        SessionManager parent = new SessionManagerImpl(tempDir);
+        parent.openOrCreate("ses_parent");
+        parent.append(new CustomMessageEntry("entry_root", null, "root", NOW));
+        Path executionCwd = tempDir.resolve("child-workdir");
+
+        ChildSessionService service = new ChildSessionService(Clock.fixed(NOW, ZoneOffset.UTC));
+        service.create(new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            tempDir,
+            executionCwd,
+            1,
+            Optional.empty(),
+            Optional.empty()
+        ));
+
+        assertThat(new SessionTreeQuery(tempDir).children("ses_parent"))
+            .singleElement()
+            .satisfies(child -> {
+                assertThat(child.sessionId()).isEqualTo("ses_child");
+                assertThat(child.cwd()).isEqualTo(executionCwd);
+            });
+    }
 }

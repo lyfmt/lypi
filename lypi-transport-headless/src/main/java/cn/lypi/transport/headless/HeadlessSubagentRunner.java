@@ -57,7 +57,7 @@ public final class HeadlessSubagentRunner {
     public HeadlessSubagentOutput execute(HeadlessSubagentInput input) {
         validate(input);
         try {
-            SessionManagerPort childSessionManager = sessionManagerFactory.open(input.cwd(), input.childSessionId());
+            SessionManagerPort childSessionManager = sessionManagerFactory.open(input.sessionCwd(), input.childSessionId());
             AgentCorePort agentCore = agentCoreFactory.create(input.cwd(), childSessionManager);
             TurnState state = agentCore.execute(new TurnRequest(
                 input.childSessionId(),
@@ -70,7 +70,7 @@ public final class HeadlessSubagentRunner {
                 input.childSessionId(),
                 status,
                 summary(state),
-                finalEntryId(state),
+                finalEntryId(childSessionManager),
                 status == SubagentRunStatus.SUCCEEDED ? Optional.empty() : Optional.of("Child turn ended with " + state.status())
             );
         } catch (RuntimeException e) {
@@ -96,6 +96,9 @@ public final class HeadlessSubagentRunner {
         }
         if (input.cwd() == null) {
             throw new IllegalArgumentException("cwd is required");
+        }
+        if (input.sessionCwd() == null) {
+            throw new IllegalArgumentException("sessionCwd is required");
         }
         if (!input.allowedTools().isEmpty()) {
             throw new IllegalArgumentException("allowedTools is not supported yet");
@@ -149,12 +152,12 @@ public final class HeadlessSubagentRunner {
             .orElse("");
     }
 
-    private Optional<String> finalEntryId(TurnState state) {
-        List<AgentMessage> messages = state.newMessages();
-        if (messages == null || messages.isEmpty()) {
+    private Optional<String> finalEntryId(SessionManagerPort childSessionManager) {
+        String leafId = childSessionManager.currentView().leafId();
+        if (leafId == null || leafId.isBlank()) {
             return Optional.empty();
         }
-        return Optional.ofNullable(messages.getLast().id());
+        return Optional.of(leafId);
     }
 
     private String text(ContentBlock block) {

@@ -7,5 +7,10 @@ package cn.lypi.contracts.runtime;
  */
 public record ToolRuntimeInvocation(
     String sessionId,
-    String turnId
-) {}
+    String turnId,
+    String parentEntryId
+) {
+    public ToolRuntimeInvocation(String sessionId, String turnId) {
+        this(sessionId, turnId, null);
+    }
+}

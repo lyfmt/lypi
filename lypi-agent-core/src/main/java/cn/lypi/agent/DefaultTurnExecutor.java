@@ -111,6 +111,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 List<ToolResult<?>> toolResults = executeTools(
                     request.sessionId(),
                     turnId,
+                    contextLeafId,
                     toolRequests,
                     context
                 );
@@ -354,6 +355,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private List<ToolResult<?>> executeTools(
         String sessionId,
         String turnId,
+        String parentEntryId,
         List<ToolUseRequest> toolRequests,
         ContextSnapshot context
     ) {
@@ -363,7 +365,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             results = ports.toolRuntime().execute(
                 toolRequests,
                 context,
-                new ToolRuntimeInvocation(sessionId, turnId)
+                new ToolRuntimeInvocation(sessionId, turnId, parentEntryId)
             );
             if (results.size() != toolRequests.size()) {
                 throw new IllegalStateException(

@@ -45,7 +45,8 @@ class HeadlessSubagentRunnerTest {
               "parentSessionId": "ses_parent",
               "parentSpawnEntryId": "entry_spawn",
               "prompt": "请审查代码",
-              "cwd": "/tmp/project",
+              "sessionCwd": "/tmp/project/.lypi-store",
+              "cwd": "/tmp/project/work",
               "allowedTools": [],
               "permissionMode": "DEFAULT_EXECUTE",
               "timeoutSeconds": 30
@@ -56,16 +57,17 @@ class HeadlessSubagentRunnerTest {
         runner.run(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), out);
         HeadlessSubagentOutput output = codec.readOutput(new ByteArrayInputStream(out.toByteArray()));
 
-        assertThat(sessionFactory.openedCwd).isEqualTo(Path.of("/tmp/project"));
+        assertThat(sessionFactory.openedCwd).isEqualTo(Path.of("/tmp/project/.lypi-store"));
         assertThat(sessionFactory.openedSessionId).isEqualTo("ses_child");
-        assertThat(agentCoreFactory.createdCwd).isEqualTo(Path.of("/tmp/project"));
+        assertThat(agentCoreFactory.createdCwd).isEqualTo(Path.of("/tmp/project/work"));
         assertThat(agentCoreFactory.createdSessionManager).isSameAs(sessionFactory.openedSessionManager);
         assertThat(agentCoreFactory.agentCore.request.sessionId()).isEqualTo("ses_child");
         assertThat(agentCoreFactory.agentCore.request.userInput()).isEqualTo("请审查代码");
         assertThat(output.childSessionId()).isEqualTo("ses_child");
         assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
         assertThat(output.summary()).isEqualTo("child final answer");
-        assertThat(output.finalEntryId()).contains("msg_final");
+        assertThat(output.finalEntryId()).contains("entry_final");
+        assertThat(output.finalEntryId()).hasValueSatisfying(id -> assertThat(id).doesNotContain("msg_final"));
     }
 
     @Test

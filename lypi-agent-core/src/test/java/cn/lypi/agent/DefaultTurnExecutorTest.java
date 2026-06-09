@@ -657,6 +657,7 @@ class DefaultTurnExecutorTest {
         ToolRuntimeInvocation invocation = tools.invocations.getFirst();
         assertThat(invocation.sessionId()).isEqualTo("session-1");
         assertThat(invocation.turnId()).isEqualTo("turn-1");
+        assertThat(invocation.parentEntryId()).isEqualTo("entry-msg-tool-call");
     }
 
     @Test

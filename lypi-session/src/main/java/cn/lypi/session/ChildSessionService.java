@@ -33,7 +33,7 @@ public final class ChildSessionService implements ChildSessionPort {
     @Override
     public SessionHandle create(ChildSessionRequest request) {
         validate(request);
-        JsonlSessionStore store = new JsonlSessionStore(request.cwd());
+        JsonlSessionStore store = new JsonlSessionStore(request.sessionCwd());
         Instant now = Instant.now(clock);
         int depth = depth(request, store);
         SessionHeader header = new SessionHeader(
@@ -100,6 +100,9 @@ public final class ChildSessionService implements ChildSessionPort {
         }
         if (request.cwd() == null) {
             throw new SessionEngineException("Child session cwd is required");
+        }
+        if (request.sessionCwd() == null) {
+            throw new SessionEngineException("Child session storage cwd is required");
         }
         if (request.depth() < 0) {
             throw new SessionEngineException("Child session depth must not be negative");
