@@ -126,6 +126,56 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void publishesTextDeltaBeforeProviderStreamCompletes() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        AtomicBoolean deltaWasVisibleBeforeDone = new AtomicBoolean(false);
+        provider.enqueueProbe(
+            List.of(
+                new AssistantStart("msg-assistant"),
+                new TextDelta("streaming"),
+                new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+            ),
+            event -> {
+                if (event instanceof AssistantDone) {
+                    deltaWasVisibleBeforeDone.set(messageDeltas(eventBus, "msg-assistant").stream()
+                        .anyMatch(delta -> delta.delta().equals("streaming")));
+                }
+            }
+        );
+
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(deltaWasVisibleBeforeDone).isTrue();
+    }
+
+    @Test
     void mapsProviderRetryNoticeToRetryEventsWithoutAppendingTranscriptNoise() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
@@ -227,7 +277,7 @@ class DefaultTurnExecutorTest {
                 new NoopCompactionCoordinator(),
                 new NoopMemoryExtractionWorker()
             ),
-            TurnIds.fixed("turn-1", "msg-user", "msg-error"),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
             clock
         );
 
@@ -1627,6 +1677,70 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void publishesToolCallDeltaMetadataWhileAssistantStreamIsGeneratingArguments() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), false),
+            new ToolCallDelta("toolu-1", "read", Map.of("limit", 10), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "ok",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "ok", false)),
+            Optional.empty()
+        )));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("done"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            countingIds(),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        List<MessageDeltaEvent> toolCallDeltas = messageDeltas(eventBus, "msg-tool-call").stream()
+            .filter(delta -> delta.blockKind() == ContentBlockKind.TOOL_CALL)
+            .toList();
+        assertThat(toolCallDeltas).hasSize(2);
+        assertThat(toolCallDeltas.getFirst().metadata())
+            .containsEntry("toolUseId", "toolu-1")
+            .containsEntry("toolName", "read")
+            .containsEntry("complete", false)
+            .containsEntry("partialInput", Map.of("path", "pom.xml"));
+        assertThat(toolCallDeltas.getFirst().metadata().get("inputSummary").toString()).contains("pom.xml");
+        assertThat(toolCallDeltas.getLast().metadata())
+            .containsEntry("complete", true)
+            .containsEntry("partialInput", Map.of("limit", 10));
+    }
+
+    @Test
     void failsTurnWhenProviderStreamEmitsAssistantError() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
@@ -1725,7 +1839,7 @@ class DefaultTurnExecutorTest {
             .map(MessageEndEvent::messageId)
             .toList())
             .containsExactly("msg-user", "msg-error");
-        assertThat(messageStartKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
+        assertThat(messageStartKind(eventBus, "msg-error")).isEqualTo(MessageKind.TOOL_CALL);
         assertThat(messageEndKind(eventBus, "msg-error")).isEqualTo(MessageKind.ERROR);
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
         assertThat(memory.calls).isZero();

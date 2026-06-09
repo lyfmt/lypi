@@ -63,6 +63,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 final class AgentCoreTestFixtures {
     static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
@@ -580,6 +581,10 @@ final class AgentCoreTestFixtures {
             streams.add(new FailingAssistantEventStream(events, failure));
         }
 
+        void enqueueProbe(List<AssistantStreamEvent> events, Consumer<AssistantStreamEvent> afterEvent) {
+            streams.add(new ProbeAssistantEventStream(events, afterEvent));
+        }
+
         void failWith(RuntimeException failure) {
             failures.add(failure);
         }
@@ -731,6 +736,45 @@ final class AgentCoreTestFixtures {
                 @Override
                 public AssistantStreamEvent next() {
                     return delegate.next();
+                }
+            };
+        }
+
+        @Override
+        public AssistantStreamResult result() {
+            return new AssistantStreamResult("", events, Optional.empty(), Optional.empty(), !closed, false, Optional.empty());
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+    }
+
+    static final class ProbeAssistantEventStream implements AssistantEventStream {
+        private final List<AssistantStreamEvent> events;
+        private final Consumer<AssistantStreamEvent> afterEvent;
+        private boolean closed;
+
+        ProbeAssistantEventStream(List<AssistantStreamEvent> events, Consumer<AssistantStreamEvent> afterEvent) {
+            this.events = List.copyOf(events);
+            this.afterEvent = afterEvent;
+        }
+
+        @Override
+        public Iterator<AssistantStreamEvent> iterator() {
+            Iterator<AssistantStreamEvent> delegate = events.iterator();
+            return new Iterator<>() {
+                @Override
+                public boolean hasNext() {
+                    return delegate.hasNext();
+                }
+
+                @Override
+                public AssistantStreamEvent next() {
+                    AssistantStreamEvent event = delegate.next();
+                    afterEvent.accept(event);
+                    return event;
                 }
             };
         }

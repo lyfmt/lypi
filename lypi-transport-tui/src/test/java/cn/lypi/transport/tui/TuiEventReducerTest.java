@@ -215,6 +215,59 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void toolCallDeltaCreatesPendingToolBlockThenToolStartUpdatesItInPlace() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_tool_call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            "msg_tool_call:tool_call:toolu_1",
+            ContentBlockKind.TOOL_CALL,
+            "",
+            false,
+            Map.of(
+                "toolUseId", "toolu_1",
+                "toolName", "read",
+                "partialInput", Map.of("path", "pom.xml"),
+                "complete", false,
+                "inputSummary", "read {path=pom.xml}"
+            ),
+            NOW
+        ));
+
+        List<TuiBlock> pendingBlocks = reducer.view().blocks();
+        assertEquals(1, pendingBlocks.size());
+        TuiToolBlock pending = assertInstanceOf(TuiToolBlock.class, pendingBlocks.getFirst());
+        assertEquals("toolu_1", pending.toolUseId());
+        assertEquals("read", pending.toolName());
+        assertEquals(TuiToolState.PENDING, pending.state());
+        assertEquals("read {path=pom.xml}", pending.label());
+        assertTrue(pending.active());
+
+        reducer.reduce(new ToolStartEvent(
+            "ses_1",
+            "toolu_1",
+            "msg_tool_call",
+            "turn_1",
+            "read",
+            "Read",
+            "pom.xml",
+            Map.of("path", "pom.xml"),
+            NOW,
+            NOW
+        ));
+
+        List<TuiBlock> runningBlocks = reducer.view().blocks();
+        assertEquals(1, runningBlocks.size());
+        TuiToolBlock running = assertInstanceOf(TuiToolBlock.class, runningBlocks.getFirst());
+        assertEquals(TuiToolState.RUNNING, running.state());
+        assertEquals("Read", running.label());
+        assertTrue(running.active());
+    }
+
+    @Test
     void replayInitializationCreatesEmptyFirstScreenWhenOnlySessionPointerExists() {
         TuiEventReducer reducer = TuiEventReducer.fromSessionView(new SessionView("ses_1", "leaf_1"));
 

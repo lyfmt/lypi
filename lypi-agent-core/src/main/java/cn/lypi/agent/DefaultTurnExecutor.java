@@ -29,6 +29,7 @@ import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
+import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
@@ -254,8 +255,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private AgentMessage runModel(TurnRequest request, ContextSnapshot context) {
         AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
         String sessionId = request.sessionId();
-        List<MessageDeltaEvent> pendingDeltas = new ArrayList<>();
-        Optional<String> startedAssistantMessageId = Optional.empty();
+        final boolean[] assistantStarted = {false};
+        final MessageKind[] startedKind = {MessageKind.TEXT};
         Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
         try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
@@ -276,12 +277,10 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     pendingRetry = Optional.empty();
                 }
                 accumulator.accept(event);
-                if (event instanceof AssistantStart start) {
-                    startedAssistantMessageId = Optional.of(start.messageId());
-                }
                 if (event instanceof TextDelta delta) {
                     String messageId = currentAssistantId(accumulator);
-                    pendingDeltas.add(assistantDelta(
+                    ensureAssistantMessageStart(sessionId, messageId, MessageKind.TEXT, assistantStarted, startedKind);
+                    publishAssistantDelta(assistantDelta(
                         sessionId,
                         messageId,
                         MessageKind.TEXT,
@@ -294,7 +293,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 }
                 if (event instanceof ThinkingDelta delta) {
                     String messageId = currentAssistantId(accumulator);
-                    pendingDeltas.add(assistantDelta(
+                    ensureAssistantMessageStart(sessionId, messageId, MessageKind.TEXT, assistantStarted, startedKind);
+                    publishAssistantDelta(assistantDelta(
                         sessionId,
                         messageId,
                         MessageKind.THINKING,
@@ -305,9 +305,24 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         Map.of()
                     ));
                 }
+                if (event instanceof ToolCallDelta delta) {
+                    String messageId = currentAssistantId(accumulator);
+                    ensureAssistantMessageStart(sessionId, messageId, MessageKind.TOOL_CALL, assistantStarted, startedKind);
+                    publishAssistantDelta(assistantDelta(
+                        sessionId,
+                        messageId,
+                        MessageKind.TOOL_CALL,
+                        toolCallBlockId(messageId, delta.toolUseId()),
+                        ContentBlockKind.TOOL_CALL,
+                        "",
+                        delta.complete(),
+                        toolCallDeltaMetadata(delta)
+                    ));
+                }
                 if (event instanceof AssistantError error) {
                     String messageId = currentAssistantId(accumulator);
-                    pendingDeltas.add(assistantDelta(
+                    ensureAssistantMessageStart(sessionId, messageId, MessageKind.ERROR, assistantStarted, startedKind);
+                    publishAssistantDelta(assistantDelta(
                         sessionId,
                         messageId,
                         MessageKind.ERROR,
@@ -326,19 +341,17 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             }
         } catch (RuntimeException failure) {
             pendingRetry.ifPresent(notice -> publishRetryEnd(sessionId, notice, false));
-            startedAssistantMessageId.ifPresent(messageId -> {
-                MessageKind kind = streamFailureKind(pendingDeltas);
-                publishAssistantMessageStart(sessionId, messageId, kind);
-                publishPendingDeltas(pendingDeltas);
-                publishAssistantMessageEnd(sessionId, messageId, kind);
-            });
+            accumulator.messageId()
+                .ifPresent(messageId -> {
+                    ensureAssistantMessageStart(sessionId, messageId, MessageKind.TEXT, assistantStarted, startedKind);
+                    publishAssistantMessageEnd(sessionId, messageId, startedKind[0]);
+                });
             throw failure;
         }
         pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
 
         AgentMessage message = accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
-        publishAssistantMessageStart(sessionId, message.id(), message.kind());
-        publishPendingDeltas(pendingDeltas);
+        ensureAssistantMessageStart(sessionId, message.id(), message.kind(), assistantStarted, startedKind);
         return message;
     }
 
@@ -408,6 +421,21 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             Map.of("streaming", true),
             clock.instant()
         ));
+    }
+
+    private void ensureAssistantMessageStart(
+        String sessionId,
+        String messageId,
+        MessageKind kind,
+        boolean[] assistantStarted,
+        MessageKind[] startedKind
+    ) {
+        if (assistantStarted[0]) {
+            return;
+        }
+        publishAssistantMessageStart(sessionId, messageId, kind);
+        startedKind[0] = kind;
+        assistantStarted[0] = true;
     }
 
     private void publishMessageStart(String sessionId, AgentMessage message) {
@@ -482,21 +510,34 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return messageId + ":error:0";
     }
 
+    private String toolCallBlockId(String messageId, String toolUseId) {
+        return messageId + ":tool_call:" + toolUseId;
+    }
+
     private String blockId(String messageId, ContentBlockKind kind, int index) {
         return messageId + ":" + kind.name().toLowerCase() + ":" + index;
     }
 
-    private void publishPendingDeltas(List<MessageDeltaEvent> pendingDeltas) {
-        for (MessageDeltaEvent pendingDelta : pendingDeltas) {
-            ports.eventBus().publish(pendingDelta);
-        }
+    private void publishAssistantDelta(MessageDeltaEvent delta) {
+        ports.eventBus().publish(delta);
     }
 
-    private MessageKind streamFailureKind(List<MessageDeltaEvent> pendingDeltas) {
-        if (pendingDeltas.stream().anyMatch(delta -> delta.blockKind() == ContentBlockKind.ERROR)) {
-            return MessageKind.ERROR;
+    private Map<String, Object> toolCallDeltaMetadata(ToolCallDelta delta) {
+        Map<String, Object> partialInput = delta.partialInput() == null ? Map.of() : Map.copyOf(delta.partialInput());
+        return Map.of(
+            "toolUseId", delta.toolUseId(),
+            "toolName", delta.toolName(),
+            "partialInput", partialInput,
+            "complete", delta.complete(),
+            "inputSummary", toolCallInputSummary(delta.toolName(), partialInput)
+        );
+    }
+
+    private String toolCallInputSummary(String toolName, Map<String, Object> partialInput) {
+        if (partialInput.isEmpty()) {
+            return toolName;
         }
-        return pendingDeltas.isEmpty() ? MessageKind.ERROR : MessageKind.TEXT;
+        return toolName + " " + partialInput;
     }
 
     private MessageDeltaEvent assistantDelta(
