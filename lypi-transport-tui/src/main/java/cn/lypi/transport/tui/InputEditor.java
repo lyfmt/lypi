@@ -133,6 +133,16 @@ final class InputEditor {
         history.resetNavigation("");
     }
 
+    void replaceFirstToken(String value) {
+        String replacement = value == null ? "" : value;
+        int end = firstTokenEnd();
+        saveUndo();
+        text.replace(0, end, replacement);
+        cursor = replacement.length();
+        clearYankState();
+        history.resetNavigation(text());
+    }
+
     void acceptHistoryEntry() {
         history.add(text());
     }
@@ -204,6 +214,14 @@ final class InputEditor {
         text.append(value);
         cursor = text.length();
         clearYankState();
+    }
+
+    private int firstTokenEnd() {
+        int index = 0;
+        while (index < text.length() && !Character.isWhitespace(text.charAt(index))) {
+            index++;
+        }
+        return index;
     }
 
     private void clearYankState() {

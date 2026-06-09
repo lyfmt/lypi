@@ -4,12 +4,16 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.CompactionRuntimePort;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Optional;
+import java.util.function.Supplier;
 import org.jline.terminal.Terminal;
 
 public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
@@ -67,7 +71,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int height,
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler,
-        TerminalSession terminalSession
+        TerminalSession terminalSession,
+        Supplier<SlashCommandPicker> slashPickerSupplier
     ) {
         this.renderer = null;
         this.reducer = new TuiEventReducer();
@@ -77,7 +82,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.screen = new TuiScreen(Math.max(1, safeHeight - 2));
         this.layout = new TuiLayout(safeWidth, safeHeight);
         this.frameSink = frameSink;
-        this.inputLoop = new TuiInputLoop(submitHandler, frameSink, tuiRenderer, screen, layout, reducer::view);
+        this.inputLoop = new TuiInputLoop(submitHandler, frameSink, tuiRenderer, screen, layout, reducer::view, slashPickerSupplier);
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
         this.terminalSession = terminalSession;
     }
@@ -103,6 +108,91 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         );
     }
 
+    /**
+     * 打开真实 JLine TUI transport，并在提交前启用 slash command 路由。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime
+    ) throws IOException {
+        JLineTerminalIo io = new JLineTerminalIo(terminal);
+        return open(
+            state,
+            core,
+            events,
+            io,
+            new JLineTerminalInputSource(terminal),
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            terminal.getWidth(),
+            terminal.getHeight()
+        );
+    }
+
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime
+    ) throws IOException {
+        return open(state, core, events, terminal, sessionManager, resourceRuntime, null);
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        int width,
+        int height
+    ) throws IOException {
+        SlashCommandRouter router = new SlashCommandRouter(
+            state.sessionId(),
+            state.cwd(),
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime
+        );
+        return open(
+            state,
+            events,
+            io,
+            inputSource,
+            new RuntimeTuiSubmitHandler(state.sessionId(), core, events, command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command), router),
+            () -> SlashCommandPicker.withTemplates(resourceRuntime.load(state.cwd()).promptTemplates().stream()
+                .map(template -> template.name())
+                .toList()),
+            width,
+            height
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        int width,
+        int height
+    ) throws IOException {
+        return open(state, core, events, io, inputSource, sessionManager, resourceRuntime, null, width, height);
+    }
+
     static JLineTuiTransport withRenderer(FrameSink frameSink, int width, int height) {
         return new JLineTuiTransport(frameSink, width, height);
     }
@@ -114,7 +204,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler
     ) {
-        return new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, null);
+        return new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, null, null);
     }
 
     static JLineTuiTransport open(
@@ -123,6 +213,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalIo io,
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
         int width,
         int height
     ) throws IOException {
@@ -140,10 +231,22 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 throw new UncheckedIOException(exception);
             }
         };
-        JLineTuiTransport transport = new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, session);
+        JLineTuiTransport transport = new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, session, slashPickerSupplier);
         holder[0] = transport;
         transport.attach(events, state);
         return transport;
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        int width,
+        int height
+    ) throws IOException {
+        return open(state, events, io, inputSource, submitHandler, null, width, height);
     }
 
     @Override

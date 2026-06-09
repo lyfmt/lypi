@@ -2,9 +2,13 @@ package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.agent.TurnRequest;
+import cn.lypi.contracts.agent.TurnState;
+import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
@@ -15,13 +19,26 @@ import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.resource.ResourceSnapshot;
+import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.SessionContext;
+import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -126,6 +143,34 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void openWithRuntimePortsRoutesSlashCommandsBeforeCoreSubmission() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingCore core = new RecordingCore();
+        RecordingSessionManager session = new RecordingSessionManager();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            core,
+            events,
+            io,
+            new QueueInputSource("/thinking high", "\n"),
+            session,
+            emptyResources(),
+            40,
+            4
+        );
+
+        transport.drainInputForTest();
+
+        assertEquals(0, core.requests.size());
+        ThinkingChangeEntry entry = assertInstanceOf(ThinkingChangeEntry.class, session.entries.getFirst());
+        assertEquals(ThinkingLevel.HIGH, entry.thinkingLevel());
+
+        transport.close();
+    }
+
+    @Test
     void resizeFallsBackWhenTerminalSizeUnavailable() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         RecordingEventBus events = new RecordingEventBus();
@@ -218,6 +263,109 @@ class JLineTuiTransportTest {
         }
 
         private EventFilter filter;
+    }
+
+    private static final class RecordingCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            return null;
+        }
+    }
+
+    private static final class QueueInputSource implements TerminalInputSource {
+        private final java.util.Queue<String> chunks = new java.util.ArrayDeque<>();
+
+        private QueueInputSource(String... chunks) {
+            this.chunks.addAll(List.of(chunks));
+        }
+
+        @Override
+        public Optional<String> read() {
+            return Optional.ofNullable(chunks.poll());
+        }
+    }
+
+    private static ResourceRuntimePort emptyResources() {
+        return new ResourceRuntimePort() {
+            @Override
+            public ResourceSnapshot load(Path cwd) {
+                return new ResourceSnapshot(List.of(), List.of(), new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()), List.of(), List.of(), List.of());
+            }
+
+            @Override
+            public cn.lypi.contracts.prompt.SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
+                return null;
+            }
+        };
+    }
+
+    private static final class RecordingSessionManager implements SessionManagerPort {
+        private final List<SessionEntry> entries = new ArrayList<>();
+        private String leafId = "root";
+
+        @Override
+        public SessionHandle openOrCreate(String sessionId) {
+            return new SessionHandle(sessionId, Path.of("session.jsonl"), leafId, Map.of());
+        }
+
+        @Override
+        public SessionHandle append(SessionEntry entry) {
+            entries.add(entry);
+            leafId = entry.id();
+            return openOrCreate("ses_1");
+        }
+
+        @Override
+        public SessionHandle switchLeaf(String leafId) {
+            this.leafId = leafId;
+            return openOrCreate("ses_1");
+        }
+
+        @Override
+        public List<SessionEntry> branch(String leafId) {
+            return List.copyOf(entries);
+        }
+
+        @Override
+        public SessionView currentView() {
+            return new SessionView("ses_1", leafId);
+        }
+
+        @Override
+        public SessionView view(String leafId) {
+            return new SessionView("ses_1", leafId);
+        }
+
+        @Override
+        public List<AgentMessage> transcript(String leafId) {
+            return List.of();
+        }
+
+        @Override
+        public SessionContext context(String leafId) {
+            return new SessionContext(
+                List.of(),
+                List.of(this.leafId),
+                List.of(),
+                new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+                ThinkingLevel.MEDIUM,
+                AgentMode.EXECUTE,
+                PermissionMode.DEFAULT_EXECUTE
+            );
+        }
+
+        @Override
+        public SessionHandle appendMessage(AgentMessage message) {
+            return openOrCreate("ses_1");
+        }
+
+        @Override
+        public SessionHandle fork(ForkRequest request) {
+            return openOrCreate("ses_1");
+        }
     }
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {

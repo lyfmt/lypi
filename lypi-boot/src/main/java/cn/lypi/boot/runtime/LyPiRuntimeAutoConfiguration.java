@@ -1,12 +1,17 @@
 package cn.lypi.boot.runtime;
 
 import cn.lypi.agent.AgentCoreRuntimePorts;
+import cn.lypi.agent.ContextAssembler;
 import cn.lypi.agent.ContextBudgetEstimator;
 import cn.lypi.agent.DefaultContextAssembler;
+import cn.lypi.agent.DefaultCompactionRuntime;
 import cn.lypi.agent.DefaultTurnExecutor;
 import cn.lypi.agent.NoopMemoryExtractionWorker;
 import cn.lypi.agent.TurnIds;
-import cn.lypi.agent.compact.NoopCompactionCoordinator;
+import cn.lypi.agent.compact.CompactionCoordinator;
+import cn.lypi.agent.compact.CompactionSummarizer;
+import cn.lypi.agent.compact.DefaultCompactionCoordinator;
+import cn.lypi.agent.compact.DefaultCompactionPlanner;
 import cn.lypi.boot.BootstrapService;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.EventBus;
@@ -14,6 +19,7 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AppEntry;
+import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
@@ -86,6 +92,74 @@ public class LyPiRuntimeAutoConfiguration {
     }
 
     /**
+     * 创建默认 context assembler。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ContextAssembler.class)
+    public ContextAssembler contextAssembler(
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime
+    ) {
+        return new DefaultContextAssembler(sessionManager, resourceRuntime, new ContextBudgetEstimator());
+    }
+
+    /**
+     * 创建默认 compaction summarizer。
+     */
+    @Bean
+    @ConditionalOnMissingBean(CompactionSummarizer.class)
+    public CompactionSummarizer compactionSummarizer() {
+        return request -> {
+            throw new IllegalStateException("AI compaction summary is disabled");
+        };
+    }
+
+    /**
+     * 创建默认 compaction coordinator。
+     */
+    @Bean
+    @ConditionalOnMissingBean(CompactionCoordinator.class)
+    public CompactionCoordinator compactionCoordinator(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionSummarizer summarizer
+    ) {
+        return new DefaultCompactionCoordinator(
+            sessionManager,
+            contextAssembler,
+            eventBus,
+            new DefaultCompactionPlanner(),
+            summarizer,
+            Clock.systemUTC()
+        );
+    }
+
+    /**
+     * 创建默认手动压缩运行时。
+     */
+    @Bean
+    @ConditionalOnMissingBean(CompactionRuntimePort.class)
+    public CompactionRuntimePort compactionRuntime(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionSummarizer summarizer
+    ) {
+        return new DefaultCompactionRuntime(
+            contextAssembler,
+            new DefaultCompactionCoordinator(
+                sessionManager,
+                contextAssembler,
+                eventBus,
+                DefaultCompactionRuntime.manualPlanner(),
+                summarizer,
+                Clock.systemUTC()
+            )
+        );
+    }
+
+    /**
      * 创建默认 AgentCore。
      */
     @Bean
@@ -98,7 +172,9 @@ public class LyPiRuntimeAutoConfiguration {
         ToolRuntimePort toolRuntime,
         SecurityRuntimePort securityRuntime,
         ResourceRuntimePort resourceRuntime,
-        EventBus eventBus
+        EventBus eventBus,
+        ContextAssembler contextAssembler,
+        CompactionCoordinator compactionCoordinator
     ) {
         AgentCoreRuntimePorts ports = new AgentCoreRuntimePorts(
             properties.getCwd(),
@@ -108,9 +184,9 @@ public class LyPiRuntimeAutoConfiguration {
             securityRuntime,
             resourceRuntime,
             eventBus,
-            new DefaultContextAssembler(sessionManager, resourceRuntime, new ContextBudgetEstimator()),
+            contextAssembler,
             null,
-            new NoopCompactionCoordinator(),
+            compactionCoordinator,
             new NoopMemoryExtractionWorker()
         );
         return new DefaultTurnExecutor(ports, TurnIds.random(), Clock.systemUTC());
@@ -178,8 +254,12 @@ public class LyPiRuntimeAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(name = "jLineTuiTransportLauncher")
-    public TransportLauncher jLineTuiTransportLauncher() {
-        return new JLineTuiTransportLauncher();
+    public TransportLauncher jLineTuiTransportLauncher(
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime
+    ) {
+        return new JLineTuiTransportLauncher(sessionManager, resourceRuntime, compactionRuntime);
     }
 
     /**
@@ -196,6 +276,7 @@ public class LyPiRuntimeAutoConfiguration {
         ToolRuntimePort toolRuntime,
         SecurityRuntimePort securityRuntime,
         ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
         ObjectProvider<TransportAdapter> transports
     ) {
         return new LyPiRuntime(
@@ -206,6 +287,7 @@ public class LyPiRuntimeAutoConfiguration {
             toolRuntime,
             securityRuntime,
             resourceRuntime,
+            compactionRuntime,
             List.copyOf(transports.orderedStream().toList())
         );
     }

@@ -11,5 +11,6 @@ public record LyPiRuntime(
     ToolRuntimePort toolRuntime,
     SecurityRuntimePort securityRuntime,
     ResourceRuntimePort resourceRuntime,
+    CompactionRuntimePort compactionRuntime,
     List<TransportAdapter> transports
 ) {}

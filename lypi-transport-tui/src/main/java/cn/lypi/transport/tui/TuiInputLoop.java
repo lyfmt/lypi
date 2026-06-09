@@ -17,6 +17,9 @@ final class TuiInputLoop {
     private final InputEditor editor = new InputEditor();
     private final KeyBindingRegistry bindings = KeyBindingRegistry.defaults();
     private final TerminalInputPolicy inputPolicy = new TerminalInputPolicy();
+    private final Supplier<SlashCommandPicker> slashPickerSupplier;
+    private SlashCommandPicker slashPicker;
+    private boolean slashOverlayClosed;
     private boolean toolRunning;
     private boolean exitRequested;
 
@@ -38,21 +41,38 @@ final class TuiInputLoop {
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier
     ) {
+        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, null);
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        FrameSink frameSink,
+        TuiRenderer renderer,
+        TuiScreen screen,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier
+    ) {
         this.submitHandler = submitHandler;
         this.frameSink = frameSink;
         this.renderer = renderer;
         this.screen = screen;
         this.layout = layout;
         this.viewSupplier = viewSupplier == null ? this::emptyView : viewSupplier;
+        this.slashPickerSupplier = slashPickerSupplier == null
+            ? () -> SlashCommandPicker.withTemplates(List.of())
+            : slashPickerSupplier;
     }
 
     void acceptText(String text) {
         editor.insert(text);
+        slashOverlayClosed = false;
         render();
     }
 
     void acceptPaste(String text) {
         editor.insertPaste(text);
+        slashOverlayClosed = false;
         render();
     }
 
@@ -70,6 +90,27 @@ final class TuiInputLoop {
                 render();
             }
             return;
+        }
+        if (slashOverlayOpen() && !slashPicker().visibleCommands().isEmpty()) {
+            if (key == TerminalKey.ENTER || key == TerminalKey.TAB) {
+                acceptSlashSelection();
+                return;
+            }
+            if (key == TerminalKey.ESC) {
+                slashOverlayClosed = true;
+                render();
+                return;
+            }
+            if (key == TerminalKey.UP) {
+                slashPicker().moveUp();
+                render();
+                return;
+            }
+            if (key == TerminalKey.DOWN) {
+                slashPicker().moveDown();
+                render();
+                return;
+            }
         }
         if (key == TerminalKey.ENTER) {
             submitDraft();
@@ -128,6 +169,7 @@ final class TuiInputLoop {
             return;
         }
         editor.acceptHistoryEntry();
+        slashOverlayClosed = true;
         submitHandler.submitUserInput(draft);
         editor.clear();
         render();
@@ -136,6 +178,7 @@ final class TuiInputLoop {
     private void handleCtrlC() {
         if (!editor.text().isBlank()) {
             editor.clear();
+            slashOverlayClosed = true;
             render();
             return;
         }
@@ -165,7 +208,69 @@ final class TuiInputLoop {
     }
 
     private void render() {
-        frameSink.render(renderer.render(viewSupplier.get(), screen, layout, editor.text(), editor.cursor()));
+        frameSink.render(renderer.render(
+            viewSupplier.get(),
+            screen,
+            layout,
+            editor.text(),
+            editor.cursor(),
+            slashOverlayLines()
+        ));
+    }
+
+    private boolean slashOverlayOpen() {
+        return viewSupplier.get().permissionPrompt().isEmpty() && !slashOverlayClosed && slashFilter().isPresent();
+    }
+
+    private Optional<String> slashFilter() {
+        String draft = editor.text();
+        int cursor = editor.cursor();
+        if (cursor < 1 || draft.isEmpty() || draft.charAt(0) != '/') {
+            return Optional.empty();
+        }
+        int firstTokenEnd = firstTokenEnd(draft);
+        if (cursor > firstTokenEnd) {
+            return Optional.empty();
+        }
+        return Optional.of(draft.substring(0, cursor));
+    }
+
+    private int firstTokenEnd(String draft) {
+        int index = 0;
+        while (index < draft.length() && !Character.isWhitespace(draft.charAt(index))) {
+            index++;
+        }
+        return index;
+    }
+
+    private SlashCommandPicker slashPicker() {
+        if (slashPicker == null) {
+            slashPicker = slashPickerSupplier.get();
+        }
+        slashFilter().ifPresent(slashPicker::updateFilter);
+        return slashPicker;
+    }
+
+    private List<String> slashOverlayLines() {
+        if (!slashOverlayOpen()) {
+            return List.of();
+        }
+        SlashCommandPicker picker = slashPicker();
+        List<String> visible = picker.visibleCommands();
+        int selected = Math.max(0, Math.min(picker.selectedIndex(), Math.max(0, visible.size() - 1)));
+        int limit = Math.min(5, visible.size());
+        int start = Math.max(0, selected - limit + 1);
+        List<String> lines = new java.util.ArrayList<>();
+        for (int index = start; index < start + limit; index++) {
+            lines.add((index == selected ? "> " : "  ") + visible.get(index));
+        }
+        return lines;
+    }
+
+    private void acceptSlashSelection() {
+        slashPicker().accept().ifPresent(command -> editor.replaceFirstToken(command + " "));
+        slashOverlayClosed = true;
+        render();
     }
 
     private TuiViewModel emptyView() {
