@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -132,23 +131,18 @@ final class TuiRenderState {
     }
 
     private String currentMode() {
-        return runtimeInterruptibleTool || !runningToolUseIds.isEmpty() ? "running" : agentMode;
+        return agentMode;
     }
 
     private String modelLabel(SessionRuntimeState runtimeState) {
         if (runtimeState.model() == null) {
             return "";
         }
-        String modelId = valueOrEmpty(runtimeState.model().modelId());
-        String thinking = enumLabel(runtimeState.thinkingLevel());
-        if (modelId.isBlank() || thinking.isBlank()) {
-            return modelId;
-        }
-        return modelId + ":thinking=" + thinking;
+        return valueOrEmpty(runtimeState.model().modelId());
     }
 
     private String enumLabel(Enum<?> value) {
-        return value == null ? "" : value.name().toLowerCase(Locale.ROOT);
+        return value == null ? "" : value.name();
     }
 
     private String pathLabel(Path path) {

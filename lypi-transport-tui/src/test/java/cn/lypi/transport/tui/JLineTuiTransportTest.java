@@ -108,7 +108,7 @@ class JLineTuiTransportTest {
 
         String frame = io.output.toString();
         assertTrue(frame.contains("\033[?2026h\033[H\033[J"));
-        assertTrue(frame.contains("ses_1 gpt-5.4:thinking=high execute default_execute cwd:. leaf:leaf_1 ctx:0/200000tok"));
+        assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
         assertTrue(frame.contains("> "));
 
         transport.close();
