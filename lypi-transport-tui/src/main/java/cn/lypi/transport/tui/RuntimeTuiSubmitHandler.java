@@ -100,7 +100,8 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             .filter(candidate -> candidate.name().equals(tokens[0]))
             .findFirst();
         if (command.isEmpty()) {
-            return false;
+            publishSlashOutput(tokens[0], "未知 slash command: /" + tokens[0]);
+            return true;
         }
         command.get().handler().handle(arguments(command.get(), tokens));
         publishSlashOutput(command.get().name(), output(command.get()));

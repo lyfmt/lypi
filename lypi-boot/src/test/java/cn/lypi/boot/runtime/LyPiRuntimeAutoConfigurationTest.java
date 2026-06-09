@@ -721,6 +721,56 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void agentCoreFactoryBindsChildToolRuntimeToChildCwd() throws Exception {
+        Path childCwd = tempDir.resolve("child-work").toAbsolutePath().normalize();
+        java.nio.file.Files.createDirectories(childCwd);
+        java.nio.file.Files.writeString(childCwd.resolve("child-file.txt"), "from child cwd");
+
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(
+                LyPiToolAutoConfiguration.class,
+                LyPiRuntimeAutoConfiguration.class
+            ))
+            .withPropertyValues(
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir
+            )
+            .withBean(AiProviderRuntimePort.class, () -> new ScriptedAiProvider(List.of(
+                List.of(
+                    new AssistantStart("msg-tool-call"),
+                    new ToolCallDelta("toolu-1", "read", Map.of("path", "child-file.txt"), true),
+                    new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+                ),
+                List.of(
+                    new AssistantStart("msg-final"),
+                    new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+                )
+            )))
+            .withBean(CompactionSummarizer.class, () -> request -> new CompactSummaryResult(
+                "summary",
+                new TokenUsage(0, 0, 0, 0)
+            ))
+            .run(context -> {
+                AgentCoreFactoryPort factory = context.getBean(AgentCoreFactoryPort.class);
+                AgentCorePort childCore = factory.create(childCwd, context.getBean(SessionManagerPort.class));
+
+                TurnState state = childCore.execute(new TurnRequest("ses_child", "read child file", Optional.empty(), () -> false));
+
+                List<String> toolTexts = state.newMessages().stream()
+                    .flatMap(message -> message.content().stream())
+                    .filter(ToolResultContentBlock.class::isInstance)
+                    .map(ToolResultContentBlock.class::cast)
+                    .map(ToolResultContentBlock::text)
+                    .toList();
+                assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+                assertThat(toolTexts).anySatisfy(text -> assertThat(text).contains("from child cwd"));
+                ToolRuntimePort parentToolRuntime = context.getBean(ToolRuntimePort.class);
+                assertThat(parentToolRuntime.cwd()).isEqualTo(tempDir.toAbsolutePath().normalize());
+            });
+    }
+
+    @Test
     void defaultDeliveryGuardAllowsSameIdleSessionWhenRuntimeStateExists() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)

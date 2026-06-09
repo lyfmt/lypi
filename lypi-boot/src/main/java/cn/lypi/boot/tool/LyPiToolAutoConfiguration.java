@@ -92,8 +92,8 @@ public class LyPiToolAutoConfiguration {
      * 使用事件装饰 gate 发布权限请求和决策事件。
      */
     @Bean
-    @ConditionalOnMissingBean(ToolRuntimePort.class)
-    public ToolRuntimePort toolRuntime(
+    @ConditionalOnMissingBean({ToolRuntimeFactoryPort.class, ToolRuntimePort.class})
+    public ToolRuntimeFactoryPort toolRuntimeFactory(
         SecurityRuntimePort securityRuntime,
         Executor executor,
         ObjectProvider<AgentCenterPort> agentCenter,
@@ -107,33 +107,46 @@ public class LyPiToolAutoConfiguration {
     ) {
         EventBus resolvedEventBus = eventBus.getIfAvailable();
         String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
-        ToolRuntimeOptions options = ToolRuntimeOptions.builder()
-            .cwd(Path.of(configuredCwd))
-            .build();
-        DefaultToolRuntime runtime = toolRuntime(
-            resolvedEventBus,
-            new cn.lypi.tool.DefaultToolRegistry(),
-            new cn.lypi.tool.ToolSchemaValidator(),
-            new cn.lypi.tool.ToolExecutionPlanner(),
-            new cn.lypi.tool.ToolResultBudgeter(),
-            new cn.lypi.tool.ToolRuntimeContextFactory(options),
-            cn.lypi.tool.ToolExecutionInterceptors.noop(),
-            securityRuntime,
-            responseGate.getIfAvailable(),
-            promptPort.getIfAvailable()
-        );
-        BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
-        AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
-        MailboxPort resolvedMailbox = mailbox.getIfAvailable();
-        if (resolvedAgentCenter != null && resolvedMailbox != null) {
-            AgentRegistryPort resolvedAgentRegistry = agentRegistry.getIfAvailable();
-            if (resolvedAgentRegistry == null) {
-                BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox);
-            } else {
-                BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox, resolvedAgentRegistry);
+        return cwd -> {
+            Path runtimeCwd = cwd == null ? Path.of(configuredCwd) : cwd;
+            ToolRuntimeOptions options = ToolRuntimeOptions.builder()
+                .cwd(runtimeCwd)
+                .build();
+            DefaultToolRuntime runtime = toolRuntime(
+                resolvedEventBus,
+                new cn.lypi.tool.DefaultToolRegistry(),
+                new cn.lypi.tool.ToolSchemaValidator(),
+                new cn.lypi.tool.ToolExecutionPlanner(),
+                new cn.lypi.tool.ToolResultBudgeter(),
+                new cn.lypi.tool.ToolRuntimeContextFactory(options),
+                cn.lypi.tool.ToolExecutionInterceptors.noop(),
+                securityRuntime,
+                responseGate.getIfAvailable(),
+                promptPort.getIfAvailable()
+            );
+            BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
+            AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
+            MailboxPort resolvedMailbox = mailbox.getIfAvailable();
+            if (resolvedAgentCenter != null && resolvedMailbox != null) {
+                AgentRegistryPort resolvedAgentRegistry = agentRegistry.getIfAvailable();
+                if (resolvedAgentRegistry == null) {
+                    BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox);
+                } else {
+                    BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox, resolvedAgentRegistry);
+                }
             }
-        }
-        return runtime;
+            return runtime;
+        };
+    }
+
+    /**
+     * 创建工具运行时。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ToolRuntimePort.class)
+    public ToolRuntimePort toolRuntime(ToolRuntimeFactoryPort factory, Environment environment) {
+        String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
+        return factory.create(Path.of(configuredCwd));
     }
 
     /**

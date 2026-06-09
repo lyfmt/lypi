@@ -364,6 +364,45 @@ class LyPiToolAutoConfigurationTest {
             });
     }
 
+    @Test
+    void defaultToolRuntimeFactoryBacksOffWhenCustomToolRuntimeExists() {
+        ToolRuntimePort customRuntime = new ToolRuntimePort() {
+            @Override
+            public void register(Tool<?, ?> tool) {
+            }
+
+            @Override
+            public Optional<Tool<?, ?>> resolve(String nameOrAlias) {
+                return Optional.empty();
+            }
+
+            @Override
+            public cn.lypi.contracts.tool.ToolRegistrySnapshot snapshot() {
+                return new cn.lypi.contracts.tool.ToolRegistrySnapshot(List.of());
+            }
+
+            @Override
+            public Path cwd() {
+                return Path.of("/custom").toAbsolutePath().normalize();
+            }
+
+            @Override
+            public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
+                return List.of();
+            }
+        };
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(ToolRuntimePort.class, () -> customRuntime)
+            .run(context -> {
+                assertThat(context).hasSingleBean(ToolRuntimePort.class);
+                assertThat(context.getBean(ToolRuntimePort.class)).isSameAs(customRuntime);
+                assertThat(context).doesNotHaveBean(ToolRuntimeFactoryPort.class);
+            });
+    }
+
     private static PermissionDecision allowAllSecurity(ToolUseRequest request, ToolUseContext context) {
         return new PermissionDecision(
             PermissionBehavior.ALLOW,

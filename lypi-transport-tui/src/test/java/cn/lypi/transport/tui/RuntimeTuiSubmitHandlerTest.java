@@ -159,6 +159,25 @@ class RuntimeTuiSubmitHandlerTest {
         assertEquals("hello", core.requests.getFirst().userInput());
     }
 
+    @Test
+    void unknownSlashCommandPublishesLocalOutputWithoutStartingTurn() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+        );
+
+        handler.submitUserInput("/unknown do-not-send-to-model");
+
+        assertTrue(core.requests.isEmpty());
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
+        assertEquals("未知 slash command: /unknown", delta.delta());
+    }
+
     private static final class RecordingCore implements AgentCorePort {
         private final List<TurnRequest> requests = new ArrayList<>();
 

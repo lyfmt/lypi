@@ -11,6 +11,7 @@ import cn.lypi.agent.compact.DefaultCompactionCoordinator;
 import cn.lypi.agent.compact.DefaultCompactionPlanner;
 import cn.lypi.agent.compact.NoopCompactionCoordinator;
 import cn.lypi.boot.BootstrapService;
+import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.model.ModelSelection;
@@ -170,6 +171,7 @@ public class LyPiRuntimeAutoConfiguration {
     public AgentCoreFactoryPort agentCoreFactory(
         ObjectProvider<AiProviderRuntimePort> aiProvider,
         ObjectProvider<ToolRuntimePort> toolRuntime,
+        ObjectProvider<ToolRuntimeFactoryPort> toolRuntimeFactory,
         ObjectProvider<SecurityRuntimePort> securityRuntime,
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         EventBus eventBus,
@@ -178,7 +180,10 @@ public class LyPiRuntimeAutoConfiguration {
     ) {
         return (cwd, sessionManager) -> {
             AiProviderRuntimePort resolvedAiProvider = aiProvider.getObject();
-            ToolRuntimePort resolvedToolRuntime = toolRuntime.getObject();
+            ToolRuntimeFactoryPort resolvedToolRuntimeFactory = toolRuntimeFactory.getIfAvailable();
+            ToolRuntimePort resolvedToolRuntime = resolvedToolRuntimeFactory == null
+                ? toolRuntime.getObject()
+                : resolvedToolRuntimeFactory.create(cwd);
             SecurityRuntimePort resolvedSecurityRuntime = securityRuntime.getObject();
             ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getObject();
             CompactionSummarizer resolvedCompactionSummarizer = compactionSummarizer.getObject();
