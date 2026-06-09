@@ -85,7 +85,8 @@ class LyPiToolAutoConfigurationTest {
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withPropertyValues(
                 "lypi.tool.sandbox.network-mode=host",
-                "lypi.tool.sandbox.fail-if-unavailable=true"
+                "lypi.tool.sandbox.fail-if-unavailable=true",
+                "lypi.tool.sandbox.auto-allow-bash-if-sandboxed=true"
             )
             .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
             .run(context -> {
@@ -95,6 +96,25 @@ class LyPiToolAutoConfigurationTest {
 
                 assertThat(policy.networkMode()).isEqualTo(NetworkMode.HOST);
                 assertThat(policy.failIfUnavailable()).isTrue();
+                assertThat(policy.autoAllowBashIfSandboxed()).isTrue();
+            });
+    }
+
+    @Test
+    void disablesBashAutoAllowWhenSandboxIsDisabled() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.tool.sandbox.enabled=false",
+                "lypi.tool.sandbox.fail-if-unavailable=true",
+                "lypi.tool.sandbox.auto-allow-bash-if-sandboxed=true"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+
+                cn.lypi.contracts.runtime.SandboxRuntimePolicy policy = resolver.resolve(Path.of(".").toAbsolutePath(), Path.of(".").toAbsolutePath());
+
                 assertThat(policy.autoAllowBashIfSandboxed()).isFalse();
             });
     }
