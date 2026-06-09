@@ -188,6 +188,17 @@ public final class TuiEventReducer {
                         block.collapsed()
                     )
                 );
+                case TuiToolBlock block when block.state() == TuiToolState.PENDING && block.active() -> state.putBlock(
+                    i,
+                    new TuiToolBlock(
+                        block.blockId(),
+                        block.toolUseId(),
+                        block.toolName(),
+                        block.state(),
+                        block.label(),
+                        false
+                    )
+                );
                 default -> {
                 }
             }

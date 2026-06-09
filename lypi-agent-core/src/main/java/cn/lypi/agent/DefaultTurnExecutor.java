@@ -37,6 +37,8 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -523,7 +525,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private Map<String, Object> toolCallDeltaMetadata(ToolCallDelta delta) {
-        Map<String, Object> partialInput = delta.partialInput() == null ? Map.of() : Map.copyOf(delta.partialInput());
+        Map<String, Object> partialInput = immutableNullableMap(delta.partialInput());
         return Map.of(
             "toolUseId", delta.toolUseId(),
             "toolName", delta.toolName(),
@@ -538,6 +540,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             return toolName;
         }
         return toolName + " " + partialInput;
+    }
+
+    private Map<String, Object> immutableNullableMap(Map<String, Object> value) {
+        if (value == null || value.isEmpty()) {
+            return Map.of();
+        }
+        return Collections.unmodifiableMap(new LinkedHashMap<>(value));
     }
 
     private MessageDeltaEvent assistantDelta(

@@ -268,6 +268,43 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void messageEndDeactivatesPendingToolBlockWhenToolExecutionNeverStarts() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_tool_call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            "msg_tool_call:tool_call:toolu_1",
+            ContentBlockKind.TOOL_CALL,
+            "",
+            false,
+            Map.of(
+                "toolUseId", "toolu_1",
+                "toolName", "read",
+                "inputSummary", "read {path=pom.xml}"
+            ),
+            NOW
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_tool_call",
+            MessageRole.ASSISTANT,
+            MessageKind.ERROR,
+            List.of(),
+            Optional.empty(),
+            Optional.of("error"),
+            Map.of(),
+            NOW
+        ));
+
+        TuiToolBlock block = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().getFirst());
+        assertEquals(TuiToolState.PENDING, block.state());
+        assertFalse(block.active());
+    }
+
+    @Test
     void replayInitializationCreatesEmptyFirstScreenWhenOnlySessionPointerExists() {
         TuiEventReducer reducer = TuiEventReducer.fromSessionView(new SessionView("ses_1", "leaf_1"));
 
