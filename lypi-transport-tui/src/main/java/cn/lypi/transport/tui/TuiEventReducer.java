@@ -223,6 +223,7 @@ public final class TuiEventReducer {
             rule = event.defaultOptionId();
         }
         state.permissionPrompt(new PermissionPromptView(
+            event.requestId(),
             event.toolUseId(),
             event.message(),
             rule,

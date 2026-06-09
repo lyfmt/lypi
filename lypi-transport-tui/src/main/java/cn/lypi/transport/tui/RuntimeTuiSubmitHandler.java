@@ -3,10 +3,9 @@ package cn.lypi.transport.tui;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.InterruptEvent;
-import cn.lypi.contracts.event.PermissionDecisionEvent;
+import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import java.time.Instant;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 
@@ -54,17 +53,12 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     }
 
     @Override
-    public void submitPermissionOption(String toolUseId, String optionId) {
-        events.publish(new PermissionDecisionEvent(
+    public void submitPermissionOption(String requestId, String toolUseId, String optionId) {
+        events.publish(new PermissionResponseEvent(
             sessionId,
-            toolUseId,
-            toolUseId,
-            "unknown",
-            "",
+            requestId,
             optionId,
-            null,
-            Optional.empty(),
-            Map.of("source", "tui"),
+            false,
             Instant.now()
         ));
     }

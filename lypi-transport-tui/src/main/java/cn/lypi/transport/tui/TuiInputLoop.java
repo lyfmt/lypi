@@ -160,7 +160,7 @@ final class TuiInputLoop {
     }
 
     private void submitPermissionOption(PermissionPromptView prompt, String optionId) {
-        submitHandler.submitPermissionOption(prompt.toolUseId(), optionId);
+        submitHandler.submitPermissionOption(prompt.requestId(), prompt.toolUseId(), optionId);
         render();
     }
 

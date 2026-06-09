@@ -14,7 +14,7 @@ interface TuiSubmitHandler {
     /**
      * 提交权限请求的用户选项。
      */
-    default void submitPermissionOption(String toolUseId, String optionId) {
+    default void submitPermissionOption(String requestId, String toolUseId, String optionId) {
     }
 
     /**

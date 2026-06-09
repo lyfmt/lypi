@@ -106,7 +106,7 @@ class TuiInputLoopTest {
 
         loop.acceptKey(TerminalKey.ENTER);
 
-        assertEquals(List.of("toolu_1:allow_once"), submit.permissionOptions);
+        assertEquals(List.of("perm_toolu_1:toolu_1:allow_once"), submit.permissionOptions);
         assertEquals(List.of(), submit.submitted);
     }
 
@@ -126,7 +126,7 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.ESC);
         loop.acceptKey(TerminalKey.CTRL_C);
 
-        assertEquals(List.of("toolu_1:cancel", "toolu_1:cancel"), submit.permissionOptions);
+        assertEquals(List.of("perm_toolu_1:toolu_1:cancel", "perm_toolu_1:toolu_1:cancel"), submit.permissionOptions);
         assertEquals(0, submit.exits);
         assertEquals(0, submit.interrupts);
     }
@@ -212,8 +212,8 @@ class TuiInputLoopTest {
         }
 
         @Override
-        public void submitPermissionOption(String toolUseId, String optionId) {
-            permissionOptions.add(toolUseId + ":" + optionId);
+        public void submitPermissionOption(String requestId, String toolUseId, String optionId) {
+            permissionOptions.add(requestId + ":" + toolUseId + ":" + optionId);
         }
     }
 
@@ -222,7 +222,7 @@ class TuiInputLoopTest {
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
-            Optional.of(new PermissionPromptView("toolu_1", "Need approval", "bash:npm test", defaultOptionId, cancelOptionId)),
+            Optional.of(new PermissionPromptView("perm_toolu_1", "toolu_1", "Need approval", "bash:npm test", defaultOptionId, cancelOptionId)),
             Optional.empty()
         );
     }
