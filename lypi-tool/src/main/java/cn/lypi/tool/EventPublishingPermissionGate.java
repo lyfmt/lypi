@@ -64,10 +64,10 @@ public final class EventPublishingPermissionGate implements PermissionGate {
             Map.of("toolName", tool.name()),
             Instant.now()
         );
-        eventBus.publish(requestEvent);
+        safePublish(requestEvent);
 
         PermissionSelection selection = selection(requestEvent, request, tool, context, decision, message);
-        eventBus.publish(new PermissionDecisionEvent(
+        safePublish(new PermissionDecisionEvent(
             context.sessionId(),
             requestEvent.requestId(),
             request.toolUseId(),
@@ -80,6 +80,14 @@ public final class EventPublishingPermissionGate implements PermissionGate {
             Instant.now()
         ));
         return selection.result();
+    }
+
+    private void safePublish(cn.lypi.contracts.event.AgentEvent event) {
+        try {
+            eventBus.publish(event);
+        } catch (RuntimeException exception) {
+            // NOTE: 权限事件发布失败不能改变工具执行结果。
+        }
     }
 
     private PermissionSelection selection(

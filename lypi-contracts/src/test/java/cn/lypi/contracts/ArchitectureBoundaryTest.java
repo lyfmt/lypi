@@ -31,6 +31,7 @@ class ArchitectureBoundaryTest {
         "lypi-tool",
         "lypi-security",
         "lypi-resource",
+        "lypi-runtime",
         "lypi-transport-headless",
         "lypi-transport-tui",
         "lypi-boot"
@@ -61,6 +62,22 @@ class ArchitectureBoundaryTest {
                 .contains("lypi-transport-tui");
 
             assertEquals(allowed, declaresTui, module + " TUI dependency declaration mismatch");
+        }
+    }
+
+    @Test
+    void runtimeOnlyDependsOnContractsAndBootMayDeclareRuntime() throws Exception {
+        Map<String, Set<String>> dependencyGraph = reactorDependencyGraph();
+
+        assertEquals(Set.of("lypi-contracts"), dependencyGraph.get("lypi-runtime"));
+        for (String module : REACTOR_MODULES) {
+            if (module.equals("lypi-runtime")) {
+                continue;
+            }
+            boolean allowed = module.equals("lypi-boot");
+            boolean declaresRuntime = dependencyGraph.get(module).contains("lypi-runtime");
+
+            assertEquals(allowed, declaresRuntime, module + " runtime dependency declaration mismatch");
         }
     }
 

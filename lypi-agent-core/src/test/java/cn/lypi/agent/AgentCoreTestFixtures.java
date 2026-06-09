@@ -4,6 +4,9 @@ import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.agent.compact.NoopToolMicroCompactor;
 import cn.lypi.agent.compact.ToolMicroCompactor;
 import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.common.JsonSchema;
+import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
@@ -27,6 +30,7 @@ import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -45,8 +49,10 @@ import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -93,20 +99,117 @@ final class AgentCoreTestFixtures {
         return textMessage(id, MessageRole.USER, MessageKind.SUMMARY, text);
     }
 
+    static AgentMessage summaryMessage(String id, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.USER,
+            MessageKind.SUMMARY,
+            List.of(new TextContentBlock(text)),
+            timestamp,
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
     static AgentMessage toolResultMessage(String id, String toolUseId, String text, boolean error) {
+        return toolResultMessage(id, toolUseId, text, error, Map.of());
+    }
+
+    static AgentMessage toolResultMessage(
+        String id,
+        String toolUseId,
+        String text,
+        boolean error,
+        Map<String, Object> metadata
+    ) {
         return new AgentMessage(
             id,
             MessageRole.TOOL_RESULT,
             MessageKind.TOOL_RESULT,
-            List.of(new ToolResultContentBlock(toolUseId, text, error)),
+            List.of(new ToolResultContentBlock(toolUseId, text, error, metadata)),
             NOW,
             Optional.empty(),
             Optional.empty()
         );
     }
 
+    static Tool<Map<String, Object>, String> tool(String name, List<String> aliases) {
+        return new Tool<>() {
+            @Override
+            public String name() {
+                return name;
+            }
+
+            @Override
+            public List<String> aliases() {
+                return aliases;
+            }
+
+            @Override
+            public JsonSchema inputSchema() {
+                return new JsonSchema(Map.of());
+            }
+
+            @Override
+            public ValidationResult validateInput(Map<String, Object> input, ToolUseContext context) {
+                return new ValidationResult(true, List.of());
+            }
+
+            @Override
+            public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
+                return new PermissionDecision(
+                    PermissionBehavior.ALLOW,
+                    PermissionDecisionReason.MODE_DEFAULT,
+                    "allowed",
+                    Optional.empty(),
+                    Map.of()
+                );
+            }
+
+            @Override
+            public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+                return new ToolResult<>("", false, List.of(), Optional.empty());
+            }
+
+            @Override
+            public InterruptBehavior interruptBehavior() {
+                return InterruptBehavior.CANCEL;
+            }
+
+            @Override
+            public boolean isReadOnly(Map<String, Object> input) {
+                return true;
+            }
+
+            @Override
+            public boolean isConcurrencySafe(Map<String, Object> input) {
+                return true;
+            }
+
+            @Override
+            public boolean isDestructive(Map<String, Object> input) {
+                return false;
+            }
+
+            @Override
+            public int maxResultSize() {
+                return 4096;
+            }
+
+            @Override
+            public String renderForUser(Map<String, Object> input) {
+                return name + " " + input;
+            }
+
+            @Override
+            public AgentMessage serializeForContext(String output) {
+                return toolResultMessage("msg_tool_result", "toolu_1", output, false);
+            }
+        };
+    }
+
     static ResourceRuntimePort fixedResourceRuntime(String systemPrompt) {
-        ResourceSnapshot snapshot = new ResourceSnapshot(List.of(), List.of(), null, List.of(), List.of(), List.of());
+        ResourceSnapshot snapshot = emptyResources();
         SystemPrompt prompt = new SystemPrompt(systemPrompt, List.of("test"), "hash");
         return new ResourceRuntimePort() {
             @Override
@@ -119,6 +222,17 @@ final class AgentCoreTestFixtures {
                 return prompt;
             }
         };
+    }
+
+    static ResourceSnapshot emptyResources() {
+        return new ResourceSnapshot(
+            List.of(),
+            List.of(),
+            new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()),
+            List.of(),
+            List.of(),
+            List.of()
+        );
     }
 
     static ContextSnapshot minimalContext(List<AgentMessage> messages) {
@@ -400,7 +514,7 @@ final class AgentCoreTestFixtures {
                 }
             }
             List<AgentMessage> replay = new ArrayList<>();
-            replay.add(summaryMessage("summary-" + compaction.id(), compaction.summary()));
+            replay.add(summaryMessage("summary-" + compaction.id(), compaction.summary(), compaction.timestamp()));
             replay.addAll(kept.isEmpty() ? originalMessages : kept);
             return replay;
         }
@@ -486,8 +600,10 @@ final class AgentCoreTestFixtures {
 
     static final class StubToolRuntime implements ToolRuntimePort {
         final List<List<ToolUseRequest>> requests = new ArrayList<>();
+        final List<ToolRuntimeInvocation> invocations = new ArrayList<>();
         private final List<List<ToolResult<?>>> results = new ArrayList<>();
         private final List<RuntimeException> failures = new ArrayList<>();
+        private final Map<String, Tool<?, ?>> toolsByNameOrAlias = new LinkedHashMap<>();
         private Path cwd = Path.of(".").toAbsolutePath().normalize();
 
         void enqueue(List<ToolResult<?>> result) {
@@ -504,11 +620,15 @@ final class AgentCoreTestFixtures {
 
         @Override
         public void register(Tool<?, ?> tool) {
+            toolsByNameOrAlias.put(tool.name(), tool);
+            for (String alias : tool.aliases()) {
+                toolsByNameOrAlias.put(alias, tool);
+            }
         }
 
         @Override
         public Optional<Tool<?, ?>> resolve(String nameOrAlias) {
-            return Optional.empty();
+            return Optional.ofNullable(toolsByNameOrAlias.get(nameOrAlias));
         }
 
         @Override
@@ -523,6 +643,20 @@ final class AgentCoreTestFixtures {
 
         @Override
         public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
+            return executeQueued(requests);
+        }
+
+        @Override
+        public List<ToolResult<?>> execute(
+            List<ToolUseRequest> requests,
+            ContextSnapshot context,
+            ToolRuntimeInvocation invocation
+        ) {
+            invocations.add(invocation);
+            return executeQueued(requests);
+        }
+
+        private List<ToolResult<?>> executeQueued(List<ToolUseRequest> requests) {
             this.requests.add(List.copyOf(requests));
             if (!failures.isEmpty()) {
                 throw failures.removeFirst();

@@ -25,9 +25,15 @@ final class ToolExecutionEventPublisher {
     private static final ToolExecutionEventPublisher NOOP = new ToolExecutionEventPublisher(null);
 
     private final EventBus eventBus;
+    private final boolean lifecycleEnabled;
 
     private ToolExecutionEventPublisher(EventBus eventBus) {
+        this(eventBus, eventBus != null);
+    }
+
+    private ToolExecutionEventPublisher(EventBus eventBus, boolean lifecycleEnabled) {
         this.eventBus = eventBus;
+        this.lifecycleEnabled = lifecycleEnabled;
     }
 
     /**
@@ -45,6 +51,15 @@ final class ToolExecutionEventPublisher {
     }
 
     /**
+     * 返回只发布工具进度事件的发布器。
+     */
+    static ToolExecutionEventPublisher progressOnly(EventBus eventBus) {
+        return eventBus == null
+            ? noop()
+            : new ToolExecutionEventPublisher(Objects.requireNonNull(eventBus, "eventBus must not be null"), false);
+    }
+
+    /**
      * 发布工具开始事件并返回进度 sink。
      */
     StartedToolExecution start(
@@ -59,7 +74,7 @@ final class ToolExecutionEventPublisher {
     ) {
         Instant startedAt = Instant.now();
         ProgressSink progress = progressSink(sessionId, toolUseId);
-        if (eventBus == null) {
+        if (eventBus == null || !lifecycleEnabled) {
             return new StartedToolExecution(startedAt, progress);
         }
         safePublish(new ToolStartEvent(
@@ -91,7 +106,7 @@ final class ToolExecutionEventPublisher {
         Instant endedAt,
         Map<String, Object> metadata
     ) {
-        if (eventBus == null) {
+        if (eventBus == null || !lifecycleEnabled) {
             return;
         }
         Instant safeEndedAt = endedAt == null ? Instant.now() : endedAt;

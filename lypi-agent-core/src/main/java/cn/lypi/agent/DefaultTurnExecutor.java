@@ -31,8 +31,10 @@ import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -106,7 +108,12 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
                 }
                 toolRound++;
-                List<ToolResult<?>> toolResults = executeTools(request.sessionId(), toolRequests, context);
+                List<ToolResult<?>> toolResults = executeTools(
+                    request.sessionId(),
+                    turnId,
+                    toolRequests,
+                    context
+                );
                 for (ToolResult<?> toolResult : toolResults) {
                     for (AgentMessage toolMessage : toolResult.newMessages()) {
                         contextLeafId = appendNewMessage(request.sessionId(), toolMessage);
@@ -201,6 +208,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             : reestimateBudget(microCompact.context(), assembly.snapshot().budget());
         ContextAssembly microCompactedAssembly = new ContextAssembly(
             microCompactedContext,
+            assembly.resources(),
             assembly.branchEntryIds(),
             assembly.appliedCompactionEntryIds(),
             assembly.replacements(),
@@ -343,54 +351,29 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ));
     }
 
-    private List<ToolResult<?>> executeTools(String sessionId, List<ToolUseRequest> toolRequests, ContextSnapshot context) {
+    private List<ToolResult<?>> executeTools(
+        String sessionId,
+        String turnId,
+        List<ToolUseRequest> toolRequests,
+        ContextSnapshot context
+    ) {
         ensureToolRuntimeCwdMatches();
-        for (ToolUseRequest toolRequest : toolRequests) {
-            ports.eventBus().publish(new cn.lypi.contracts.event.ToolStartEvent(
-                sessionId,
-                toolRequest.toolUseId(),
-                toolRequest.toolName(),
-                clock.instant()
-            ));
-        }
         List<ToolResult<?>> results;
-        boolean toolEndErrorsPublished = false;
         try {
-            results = ports.toolRuntime().execute(toolRequests, context);
+            results = ports.toolRuntime().execute(
+                toolRequests,
+                context,
+                new ToolRuntimeInvocation(sessionId, turnId)
+            );
             if (results.size() != toolRequests.size()) {
-                publishToolEndErrors(sessionId, toolRequests);
-                toolEndErrorsPublished = true;
                 throw new IllegalStateException(
                     "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
                 );
             }
         } catch (RuntimeException failure) {
-            if (!toolEndErrorsPublished) {
-                publishToolEndErrors(sessionId, toolRequests);
-            }
             throw failure;
         }
-        for (int index = 0; index < toolRequests.size(); index++) {
-            ToolUseRequest request = toolRequests.get(index);
-            ports.eventBus().publish(new cn.lypi.contracts.event.ToolEndEvent(
-                sessionId,
-                request.toolUseId(),
-                results.get(index).isError(),
-                clock.instant()
-            ));
-        }
         return results;
-    }
-
-    private void publishToolEndErrors(String sessionId, List<ToolUseRequest> toolRequests) {
-        for (ToolUseRequest request : toolRequests) {
-            ports.eventBus().publish(new cn.lypi.contracts.event.ToolEndEvent(
-                sessionId,
-                request.toolUseId(),
-                true,
-                clock.instant()
-            ));
-        }
     }
 
     private void ensureToolRuntimeCwdMatches() {

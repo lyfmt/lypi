@@ -1,6 +1,8 @@
 package cn.lypi.contracts.event;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public record ToolStartEvent(
@@ -16,7 +18,9 @@ public record ToolStartEvent(
     Instant timestamp
 ) implements AgentEvent {
     public ToolStartEvent {
-        inputMetadata = inputMetadata == null ? Map.of() : Map.copyOf(inputMetadata);
+        inputMetadata = inputMetadata == null
+            ? Map.of()
+            : Collections.unmodifiableMap(new LinkedHashMap<>(inputMetadata));
     }
 
     /**
