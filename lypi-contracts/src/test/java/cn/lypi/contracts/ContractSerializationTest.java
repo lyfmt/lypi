@@ -27,6 +27,7 @@ import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
@@ -597,6 +598,27 @@ class ContractSerializationTest {
     }
 
     @Test
+    void permissionResponseEventRoundTripContainsRequestAndOption() throws Exception {
+        AgentEvent event = new PermissionResponseEvent(
+            "ses_01",
+            "perm_toolu_01",
+            "allow_once",
+            false,
+            Instant.parse("2026-06-01T12:00:01Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"permission_response\""));
+        PermissionResponseEvent response = assertInstanceOf(PermissionResponseEvent.class, restored);
+        assertEquals("ses_01", response.sessionId());
+        assertEquals("perm_toolu_01", response.requestId());
+        assertEquals("allow_once", response.selectedOptionId());
+        assertEquals(false, response.fromKeyboardCancel());
+    }
+
+    @Test
     void structuredPermissionRequestEventRoundTripContainsOptionsAndDefaults() throws Exception {
         PermissionDecision policyDecision = new PermissionDecision(
             PermissionBehavior.ASK,
@@ -886,7 +908,7 @@ class ContractSerializationTest {
             ),
             new StatusBarState("ses_01", "gpt-5.4", "running", "main"),
             List.of(new SessionFileView(Path.of("src/App.java"), Set.of(), Instant.parse("2026-06-01T12:00:00Z"), Map.of())),
-            Optional.of(new PermissionPromptView("toolu_01", "Need approval", "allow_once", "allow_once", "cancel")),
+            Optional.of(new PermissionPromptView("perm_toolu_01", "toolu_01", "Need approval", "allow_once", "allow_once", "cancel")),
             Optional.of(new DiffView("src/App.java", "diff://ses_01/src/App.java"))
         );
 
@@ -905,6 +927,7 @@ class ContractSerializationTest {
         assertEquals(TuiToolState.RUNNING, tool.state());
         assertTrue(tool.active());
         assertTrue(restored.files().getFirst().path().endsWith(Path.of("src/App.java")));
+        assertEquals("perm_toolu_01", restored.permissionPrompt().orElseThrow().requestId());
         assertEquals("cancel", restored.permissionPrompt().orElseThrow().cancelOptionId());
         assertEquals("diff://ses_01/src/App.java", restored.diffView().orElseThrow().diffRef());
     }

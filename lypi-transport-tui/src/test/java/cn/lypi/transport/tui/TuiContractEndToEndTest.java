@@ -183,9 +183,10 @@ class TuiContractEndToEndTest {
         ));
 
         PermissionPromptView prompt = reducer.view().permissionPrompt().orElseThrow();
+        assertEquals("perm_1", prompt.requestId());
         assertEquals("toolu_bash", prompt.toolUseId());
         assertEquals("需要允许执行 npm test", prompt.reason());
-        assertEquals("remember", prompt.rule());
+        assertEquals("bash:npm test", prompt.rule());
         assertEquals("remember", prompt.defaultOptionId());
         assertEquals("escape_cancel", prompt.cancelOptionId());
 

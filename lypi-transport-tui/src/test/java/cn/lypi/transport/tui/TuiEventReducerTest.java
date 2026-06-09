@@ -158,6 +158,7 @@ class TuiEventReducerTest {
         reducer.reduce(new PermissionRequestEvent("ses_1", "toolu_1", "Need approval", NOW));
 
         assertTrue(reducer.view().permissionPrompt().isPresent());
+        assertEquals("toolu_1", reducer.view().permissionPrompt().orElseThrow().requestId());
         assertEquals("toolu_1", reducer.view().permissionPrompt().orElseThrow().toolUseId());
         assertEquals("allow_once", reducer.view().permissionPrompt().orElseThrow().defaultOptionId());
 
