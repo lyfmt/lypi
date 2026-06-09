@@ -71,7 +71,9 @@ class BuiltInToolsTest {
             "interrupt_agent",
             "read_agent_result",
             "read_mailbox",
-            "accept_mailbox_message"
+            "accept_mailbox_message",
+            "stash_mailbox_message",
+            "discard_mailbox_message"
         ), subagentNames);
     }
 
@@ -92,6 +94,8 @@ class BuiltInToolsTest {
         assertTrue(runtime.resolve("spawn_agent").isPresent());
         assertTrue(runtime.resolve("read_mailbox").isPresent());
         assertTrue(runtime.resolve("accept_mailbox_message").isPresent());
+        assertTrue(runtime.resolve("stash_mailbox_message").isPresent());
+        assertTrue(runtime.resolve("discard_mailbox_message").isPresent());
     }
 
     @Test
@@ -106,6 +110,8 @@ class BuiltInToolsTest {
             "read_agent_result",
             "read_mailbox",
             "accept_mailbox_message",
+            "stash_mailbox_message",
+            "discard_mailbox_message",
             "list_agents"
         ), subagentNames);
     }

@@ -182,6 +182,51 @@ class SubagentToolsTest {
     }
 
     @Test
+    void stashMailboxMessageUpdatesMessageStatusForCurrentSession() {
+        RecordingMailbox mailbox = new RecordingMailbox();
+        StashMailboxMessageTool tool = new StashMailboxMessageTool(mailbox);
+
+        ToolResult<String> result = tool.execute(Map.of("mailId", "mail_1"), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals("ses_parent", mailbox.stashSessionId);
+        assertEquals("mail_1", mailbox.stashMailId);
+        assertTrue(result.output().contains("已暂存 mailbox 消息"));
+        assertTrue(result.output().contains("STASHED"));
+        assertFalse(tool.isReadOnly(Map.of()));
+    }
+
+    @Test
+    void mailboxCommandSimpleSuccessMessageDoesNotKeepTrailingPunctuationBeforeMailId() {
+        RecordingMailbox mailbox = new RecordingMailbox();
+        mailbox.stashResult = MailboxCommandResult.success(null);
+        StashMailboxMessageTool tool = new StashMailboxMessageTool(mailbox);
+
+        ToolResult<String> result = tool.execute(Map.of("mailId", "mail_1"), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals("已暂存 mailbox 消息: mail_1", result.output());
+    }
+
+    @Test
+    void discardMailboxMessageUpdatesMessageStatusForCurrentSession() {
+        RecordingMailbox mailbox = new RecordingMailbox();
+        DiscardMailboxMessageTool tool = new DiscardMailboxMessageTool(mailbox);
+
+        ToolResult<String> result = tool.execute(Map.of("mailId", "mail_1"), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals("ses_parent", mailbox.discardSessionId);
+        assertEquals("mail_1", mailbox.discardMailId);
+        assertTrue(result.output().contains("已丢弃 mailbox 消息"));
+        assertTrue(result.output().contains("DISCARDED"));
+        assertFalse(tool.isReadOnly(Map.of()));
+    }
+
+    @Test
     void listAgentsReadsAgentViewsForCurrentSession() {
         RecordingAgentRegistry registry = new RecordingAgentRegistry();
         ListAgentsTool tool = new ListAgentsTool(registry);
@@ -218,6 +263,8 @@ class SubagentToolsTest {
         assertFalse(new InterruptAgentTool(agentCenter).validateInput(Map.of(), context()).valid());
         assertFalse(new ReadAgentResultTool(agentCenter).validateInput(Map.of(), context()).valid());
         assertFalse(new AcceptMailboxMessageTool(new RecordingMailbox()).validateInput(Map.of(), context()).valid());
+        assertFalse(new StashMailboxMessageTool(new RecordingMailbox()).validateInput(Map.of(), context()).valid());
+        assertFalse(new DiscardMailboxMessageTool(new RecordingMailbox()).validateInput(Map.of(), context()).valid());
     }
 
     @Test
@@ -304,6 +351,13 @@ class SubagentToolsTest {
         private Set<MailboxStatus> readStatuses;
         private String acceptSessionId;
         private String acceptMailId;
+        private String stashSessionId;
+        private String stashMailId;
+        private String discardSessionId;
+        private String discardMailId;
+        private MailboxCommandResult acceptResult = MailboxCommandResult.success(message(MailboxStatus.DELIVERED));
+        private MailboxCommandResult stashResult = MailboxCommandResult.success(message(MailboxStatus.STASHED));
+        private MailboxCommandResult discardResult = MailboxCommandResult.success(message(MailboxStatus.DISCARDED));
 
         @Override
         public List<MailboxMessage> read(String sessionId, Set<MailboxStatus> statuses) {
@@ -316,17 +370,21 @@ class SubagentToolsTest {
         public MailboxCommandResult accept(String sessionId, String mailId) {
             this.acceptSessionId = sessionId;
             this.acceptMailId = mailId;
-            return MailboxCommandResult.success(message(MailboxStatus.DELIVERED));
+            return acceptResult;
         }
 
         @Override
         public MailboxCommandResult stash(String sessionId, String mailId) {
-            return MailboxCommandResult.success(message(MailboxStatus.STASHED));
+            this.stashSessionId = sessionId;
+            this.stashMailId = mailId;
+            return stashResult;
         }
 
         @Override
         public MailboxCommandResult discard(String sessionId, String mailId) {
-            return MailboxCommandResult.success(message(MailboxStatus.DISCARDED));
+            this.discardSessionId = sessionId;
+            this.discardMailId = mailId;
+            return discardResult;
         }
     }
 

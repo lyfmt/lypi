@@ -7,11 +7,13 @@ import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.tool.builtin.subagent.AcceptMailboxMessageTool;
+import cn.lypi.tool.builtin.subagent.DiscardMailboxMessageTool;
 import cn.lypi.tool.builtin.subagent.InterruptAgentTool;
 import cn.lypi.tool.builtin.subagent.ListAgentsTool;
 import cn.lypi.tool.builtin.subagent.ReadAgentResultTool;
 import cn.lypi.tool.builtin.subagent.ReadMailboxTool;
 import cn.lypi.tool.builtin.subagent.SpawnAgentTool;
+import cn.lypi.tool.builtin.subagent.StashMailboxMessageTool;
 import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
@@ -73,7 +75,9 @@ public final class BuiltInTools {
             new InterruptAgentTool(agentCenter),
             new ReadAgentResultTool(agentCenter),
             new ReadMailboxTool(mailbox),
-            new AcceptMailboxMessageTool(mailbox)
+            new AcceptMailboxMessageTool(mailbox),
+            new StashMailboxMessageTool(mailbox),
+            new DiscardMailboxMessageTool(mailbox)
         );
     }
 
