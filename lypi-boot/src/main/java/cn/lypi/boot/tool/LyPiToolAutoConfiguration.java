@@ -9,10 +9,12 @@ import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.EventPublishingPermissionGate;
 import cn.lypi.tool.PermissionGate;
 import cn.lypi.tool.PermissionPromptPort;
+import cn.lypi.tool.PermissionResponseGate;
 import cn.lypi.tool.ToolRuntimeOptions;
 import cn.lypi.tool.builtin.BuiltInTools;
 import cn.lypi.tool.shell.HostExecutor;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -40,10 +42,12 @@ public class LyPiToolAutoConfiguration {
         SecurityRuntimePort securityRuntime,
         Executor executor,
         ObjectProvider<EventBus> eventBus,
+        ObjectProvider<PermissionResponseGate> responseGate,
         ObjectProvider<PermissionPromptPort> promptPort
     ) {
         EventBus resolvedEventBus = eventBus.getIfAvailable();
-        DefaultToolRuntime runtime = new DefaultToolRuntime(
+        DefaultToolRuntime runtime = toolRuntime(
+            resolvedEventBus,
             new cn.lypi.tool.DefaultToolRegistry(),
             new cn.lypi.tool.ToolSchemaValidator(),
             new cn.lypi.tool.ToolExecutionPlanner(),
@@ -51,11 +55,59 @@ public class LyPiToolAutoConfiguration {
             new cn.lypi.tool.ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()),
             cn.lypi.tool.ToolExecutionInterceptors.noop(),
             securityRuntime,
-            permissionGate(resolvedEventBus, promptPort.getIfAvailable()),
-            resolvedEventBus
+            responseGate.getIfAvailable(),
+            promptPort.getIfAvailable()
         );
         BuiltInTools.registerDefaults(runtime, executor);
         return runtime;
+    }
+
+    /**
+     * 创建事件总线权限响应 gate。
+     */
+    @Bean
+    @ConditionalOnBean(EventBus.class)
+    @ConditionalOnMissingBean({PermissionResponseGate.class, PermissionPromptPort.class})
+    public PermissionResponseGate permissionResponseGate(EventBus eventBus) {
+        return new EventBusPermissionResponseGate(eventBus);
+    }
+
+    private DefaultToolRuntime toolRuntime(
+        EventBus eventBus,
+        cn.lypi.tool.DefaultToolRegistry registry,
+        cn.lypi.tool.ToolSchemaValidator schemaValidator,
+        cn.lypi.tool.ToolExecutionPlanner executionPlanner,
+        cn.lypi.tool.ToolResultBudgeter resultBudgeter,
+        cn.lypi.tool.ToolRuntimeContextFactory contextFactory,
+        cn.lypi.tool.ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionResponseGate responseGate,
+        PermissionPromptPort promptPort
+    ) {
+        if (eventBus != null && responseGate != null) {
+            return new DefaultToolRuntime(
+                registry,
+                schemaValidator,
+                executionPlanner,
+                resultBudgeter,
+                contextFactory,
+                interceptor,
+                securityRuntime,
+                responseGate,
+                eventBus
+            );
+        }
+        return new DefaultToolRuntime(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            permissionGate(eventBus, promptPort),
+            eventBus
+        );
     }
 
     private PermissionGate permissionGate(EventBus eventBus, PermissionPromptPort promptPort) {
