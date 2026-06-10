@@ -72,6 +72,39 @@ class OpenAiResponsesStreamNormalizerTest {
     }
 
     @Test
+    void doesNotExposeConversationStateBeforeSuccessfulCompletion() {
+        OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+
+        normalizer.normalize("""
+            {"type":"response.created","response":{"id":"resp-created"}}
+            """);
+
+        assertThat(normalizer.providerConversationState()).isEmpty();
+    }
+
+    @Test
+    void doesNotExposeConversationStateForFailedOrIncompleteResponse() {
+        OpenAiResponsesStreamNormalizer failed = new OpenAiResponsesStreamNormalizer();
+        failed.normalize("""
+            {"type":"response.created","response":{"id":"resp-failed"}}
+            """);
+        failed.normalize("""
+            {"type":"response.failed","response":{"id":"resp-failed"},"error":{"code":"server_error","message":"failed"}}
+            """);
+
+        OpenAiResponsesStreamNormalizer incomplete = new OpenAiResponsesStreamNormalizer();
+        incomplete.normalize("""
+            {"type":"response.created","response":{"id":"resp-incomplete"}}
+            """);
+        incomplete.normalize("""
+            {"type":"response.incomplete","response":{"id":"resp-incomplete"},"error":{"code":"incomplete","message":"incomplete"}}
+            """);
+
+        assertThat(failed.providerConversationState()).isEmpty();
+        assertThat(incomplete.providerConversationState()).isEmpty();
+    }
+
+    @Test
     void generatesStableToolCallIdWhenProviderOmitsOne() {
         OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
 

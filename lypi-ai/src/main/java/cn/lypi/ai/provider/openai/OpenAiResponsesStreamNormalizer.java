@@ -22,6 +22,7 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
     private final ObjectMapper objectMapper;
     private final Map<String, ToolCallAccumulator> toolCalls = new LinkedHashMap<>();
     private String responseId = "";
+    private boolean responseCompleted;
 
     public OpenAiResponsesStreamNormalizer() {
         this(new ObjectMapper());
@@ -63,7 +64,7 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
 
     @Override
     public Optional<ProviderConversationState> providerConversationState() {
-        if (responseId.isBlank()) {
+        if (!responseCompleted || responseId.isBlank()) {
             return Optional.empty();
         }
         return Optional.of(new ProviderConversationState(
@@ -76,9 +77,6 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
 
     private List<AssistantStreamEvent> start(JsonNode event) {
         String id = event.path("response").path("id").asText("assistant");
-        if (!id.isBlank() && !"assistant".equals(id)) {
-            responseId = id;
-        }
         return List.of(new AssistantStart(id));
     }
 
@@ -167,6 +165,7 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
         String completedResponseId = event.path("response").path("id").asText();
         if (!completedResponseId.isBlank()) {
             responseId = completedResponseId;
+            responseCompleted = true;
         }
         JsonNode usage = event.path("response").path("usage");
         if (usage.isMissingNode()) {
