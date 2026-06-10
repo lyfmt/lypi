@@ -68,6 +68,8 @@ import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tui.DiffView;
+import cn.lypi.contracts.tui.GitDiffFileView;
+import cn.lypi.contracts.tui.GitDiffStatus;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.SessionFileView;
 import cn.lypi.contracts.tui.StatusBarState;
@@ -922,7 +924,18 @@ class ContractSerializationTest {
             "retrying attempt 2",
             List.of(new SessionFileView(Path.of("src/App.java"), Set.of(), Instant.parse("2026-06-01T12:00:00Z"), Map.of())),
             Optional.of(new PermissionPromptView("perm_toolu_01", "toolu_01", "Need approval", "allow_once", "allow_once", "cancel")),
-            Optional.of(new DiffView("src/App.java", "diff://ses_01/src/App.java"))
+            Optional.of(new DiffView(
+                "1 file changed",
+                List.of(new GitDiffFileView(
+                    Path.of("src/App.java"),
+                    GitDiffStatus.MODIFIED,
+                    "Modified",
+                    Map.of("porcelain", " M src/App.java")
+                )),
+                "diff --git a/src/App.java b/src/App.java\n+hello\n",
+                true,
+                Map.of("snapshotHash", "sha256:diff")
+            ))
         );
 
         String json = mapper.writeValueAsString(viewModel);
@@ -949,7 +962,13 @@ class ContractSerializationTest {
         assertTrue(restored.files().getFirst().path().endsWith(Path.of("src/App.java")));
         assertEquals("perm_toolu_01", restored.permissionPrompt().orElseThrow().requestId());
         assertEquals("cancel", restored.permissionPrompt().orElseThrow().cancelOptionId());
-        assertEquals("diff://ses_01/src/App.java", restored.diffView().orElseThrow().diffRef());
+        DiffView diffView = restored.diffView().orElseThrow();
+        assertEquals("1 file changed", diffView.summary());
+        assertTrue(diffView.files().getFirst().path().endsWith(Path.of("src/App.java")));
+        assertEquals(GitDiffStatus.MODIFIED, diffView.files().getFirst().status());
+        assertTrue(diffView.patch().contains("+hello"));
+        assertTrue(diffView.truncated());
+        assertEquals("sha256:diff", diffView.metadata().get("snapshotHash"));
     }
 
     @Test

@@ -100,6 +100,14 @@ final class TuiRenderState {
         this.permissionPrompt = null;
     }
 
+    void diffView(DiffView diffView) {
+        this.diffView = diffView;
+    }
+
+    void clearDiffView() {
+        this.diffView = null;
+    }
+
     void configure(SessionRuntimeState runtimeState) {
         if (runtimeState == null) {
             statusBar = new StatusBarState("", "", "ready", "");

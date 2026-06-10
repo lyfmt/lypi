@@ -2,6 +2,7 @@ package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.io.IOException;
@@ -18,6 +19,7 @@ public interface JLineTuiTransportFactory {
         AgentCorePort core,
         EventBus events,
         Terminal terminal,
+        DiffViewProvider diffViewProvider,
         List<SlashCommand> slashCommands
     ) throws IOException;
 }

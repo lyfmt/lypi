@@ -1,12 +1,16 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.tui.DiffView;
+import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.TuiToolBlock;
@@ -22,6 +26,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private static final int DEFAULT_TERMINAL_WIDTH = 80;
     private static final int DEFAULT_TERMINAL_HEIGHT = 24;
     private static final int MAX_INPUT_CHUNKS_PER_DRAIN = 32;
+    private static final int MAX_DIFF_PATCH_BYTES = 64 * 1024;
+    private static final DiffViewProvider NOOP_DIFF_VIEW_PROVIDER = (cwd, maxPatchBytes) -> Optional.empty();
 
     private final Object uiMonitor = new Object();
     private final Runnable renderer;
@@ -33,6 +39,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final TerminalInputPump inputPump;
     private final TuiInputLoop inputLoop;
     private final TerminalSession terminalSession;
+    private final DiffViewProvider diffViewProvider;
+    private SessionRuntimeState runtimeState;
+    private String lastDiffSnapshotHash;
     private EventSubscription subscription;
     private boolean lastRenderHeldUiLock;
     private int uiLockEntries;
@@ -47,6 +56,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputPump = null;
         this.inputLoop = null;
         this.terminalSession = null;
+        this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
+        this.runtimeState = null;
     }
 
     private JLineTuiTransport(FrameSink frameSink, int width, int height) {
@@ -65,6 +76,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputPump = null;
         this.inputLoop = null;
         this.terminalSession = terminalSession;
+        this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
+        this.runtimeState = null;
     }
 
     private JLineTuiTransport(
@@ -75,7 +88,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler,
         TerminalSession terminalSession,
-        Supplier<SlashCommandPicker> slashPickerSupplier
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        DiffViewProvider diffViewProvider
     ) {
         this.renderer = null;
         this.reducer = TuiEventReducer.fromRuntimeState(state);
@@ -88,6 +102,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputLoop = new TuiInputLoop(submitHandler, frameSink, tuiRenderer, screen, layout, reducer::view, slashPickerSupplier);
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
         this.terminalSession = terminalSession;
+        this.diffViewProvider = diffViewProvider == null ? NOOP_DIFF_VIEW_PROVIDER : diffViewProvider;
+        this.runtimeState = state;
     }
 
     /**
@@ -112,6 +128,20 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         Terminal terminal,
         List<SlashCommand> slashCommands
     ) throws IOException {
+        return open(state, core, events, terminal, NOOP_DIFF_VIEW_PROVIDER, slashCommands);
+    }
+
+    /**
+     * 打开带 slash command 和 diff provider 支持的真实 JLine TUI transport。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        DiffViewProvider diffViewProvider,
+        List<SlashCommand> slashCommands
+    ) throws IOException {
         JLineTerminalIo io = new JLineTerminalIo(terminal);
         return open(
             state,
@@ -121,6 +151,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             new JLineTerminalInputSource(terminal),
             command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command),
             slashCommands,
+            diffViewProvider,
             terminal.getWidth(),
             terminal.getHeight()
         );
@@ -137,12 +168,28 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int width,
         int height
     ) throws IOException {
+        return open(state, core, events, io, inputSource, executor, slashCommands, NOOP_DIFF_VIEW_PROVIDER, width, height);
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        java.util.concurrent.Executor executor,
+        List<SlashCommand> slashCommands,
+        DiffViewProvider diffViewProvider,
+        int width,
+        int height
+    ) throws IOException {
         return open(
             state,
             events,
             io,
             inputSource,
             new RuntimeTuiSubmitHandler(state.sessionId(), core, events, executor, slashCommands),
+            diffViewProvider,
             width,
             height
         );
@@ -176,6 +223,33 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            terminal,
+            NOOP_DIFF_VIEW_PROVIDER,
+            slashCommands,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime
+        );
+    }
+
+    /**
+     * 打开真实 JLine TUI transport，并启用 slash command 路由和 diff provider。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        DiffViewProvider diffViewProvider,
+        List<SlashCommand> slashCommands,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime
+    ) throws IOException {
         JLineTerminalIo io = new JLineTerminalIo(terminal);
         return open(
             state,
@@ -187,6 +261,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             sessionManager,
             resourceRuntime,
             compactionRuntime,
+            diffViewProvider,
             terminal.getWidth(),
             terminal.getHeight()
         );
@@ -216,6 +291,36 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int width,
         int height
     ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            io,
+            inputSource,
+            slashCommands,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            NOOP_DIFF_VIEW_PROVIDER,
+            width,
+            height
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        List<SlashCommand> slashCommands,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        DiffViewProvider diffViewProvider,
+        int width,
+        int height
+    ) throws IOException {
         SlashCommandRouter router = new SlashCommandRouter(
             state.sessionId(),
             state.cwd(),
@@ -231,6 +336,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             inputSource,
             new RuntimeTuiSubmitHandler(state.sessionId(), core, events, command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command), router),
             () -> new SlashCommandPicker(router.commandNames()),
+            diffViewProvider,
             width,
             height
         );
@@ -261,7 +367,17 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler
     ) {
-        return new JLineTuiTransport(frameSink, width, height, null, inputSource, submitHandler, null, null);
+        return new JLineTuiTransport(
+            frameSink,
+            width,
+            height,
+            null,
+            inputSource,
+            submitHandler,
+            null,
+            null,
+            NOOP_DIFF_VIEW_PROVIDER
+        );
     }
 
     static JLineTuiTransport open(
@@ -271,6 +387,43 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler,
         Supplier<SlashCommandPicker> slashPickerSupplier,
+        int width,
+        int height
+    ) throws IOException {
+        return open(
+            state,
+            events,
+            io,
+            inputSource,
+            submitHandler,
+            slashPickerSupplier,
+            NOOP_DIFF_VIEW_PROVIDER,
+            width,
+            height
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        DiffViewProvider diffViewProvider,
+        int width,
+        int height
+    ) throws IOException {
+        return open(state, events, io, inputSource, submitHandler, null, diffViewProvider, width, height);
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        DiffViewProvider diffViewProvider,
         int width,
         int height
     ) throws IOException {
@@ -288,7 +441,17 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 throw new UncheckedIOException(exception);
             }
         };
-        JLineTuiTransport transport = new JLineTuiTransport(frameSink, width, height, state, inputSource, submitHandler, session, slashPickerSupplier);
+        JLineTuiTransport transport = new JLineTuiTransport(
+            frameSink,
+            width,
+            height,
+            state,
+            inputSource,
+            submitHandler,
+            session,
+            slashPickerSupplier,
+            diffViewProvider
+        );
         holder[0] = transport;
         try {
             transport.attach(events, state);
@@ -309,7 +472,17 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int width,
         int height
     ) throws IOException {
-        return open(state, events, io, inputSource, submitHandler, null, width, height);
+        return open(
+            state,
+            events,
+            io,
+            inputSource,
+            submitHandler,
+            null,
+            NOOP_DIFF_VIEW_PROVIDER,
+            width,
+            height
+        );
     }
 
     @Override
@@ -333,6 +506,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     public void attach(EventBus events, SessionRuntimeState state) {
         synchronized (uiMonitor) {
             closeSubscription();
+            runtimeState = state;
             if (reducer != null) {
                 reducer.configureRuntimeState(state);
                 syncInputLoopToolState(reducer.view());
@@ -350,10 +524,11 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         }
     }
 
-    void reduceAndRenderUnderUiLock(cn.lypi.contracts.event.AgentEvent event) {
+    void reduceAndRenderUnderUiLock(AgentEvent event) {
         synchronized (uiMonitor) {
             uiLockEntries++;
             reducer.reduce(event);
+            refreshDiffAfterToolEnd(event);
             renderCurrentFrame();
         }
     }
@@ -482,6 +657,36 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TuiViewModel view = reducer.view();
         syncInputLoopToolState(view);
         frameSink.render(tuiRenderer.render(view, screen, layout, currentDraft(), currentCursor()));
+    }
+
+    private void refreshDiffAfterToolEnd(AgentEvent event) {
+        if (!(event instanceof ToolEndEvent) || reducer == null) {
+            return;
+        }
+        if (runtimeState == null || runtimeState.cwd() == null) {
+            clearDiff();
+            return;
+        }
+        diffViewProvider.currentDiff(runtimeState.cwd(), MAX_DIFF_PATCH_BYTES)
+            .ifPresentOrElse(this::showDiffIfChanged, this::clearDiff);
+    }
+
+    private void showDiffIfChanged(DiffView diffView) {
+        String snapshotHash = snapshotHash(diffView);
+        if (snapshotHash.isBlank() || !snapshotHash.equals(lastDiffSnapshotHash)) {
+            reducer.showDiff(diffView);
+            lastDiffSnapshotHash = snapshotHash;
+        }
+    }
+
+    private void clearDiff() {
+        reducer.clearDiff();
+        lastDiffSnapshotHash = "";
+    }
+
+    private String snapshotHash(DiffView diffView) {
+        Object value = diffView.metadata().get("snapshotHash");
+        return value == null ? "" : value.toString();
     }
 
     private String currentDraft() {
