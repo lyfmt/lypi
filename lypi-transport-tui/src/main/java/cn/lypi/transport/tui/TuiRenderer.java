@@ -1,5 +1,6 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiErrorBlock;
@@ -63,11 +64,20 @@ final class TuiRenderer {
             if (!prompt.rule().isBlank()) {
                 lines.addAll(wrap("rule: " + prompt.rule(), width));
             }
+            for (PermissionOption option : prompt.options()) {
+                String prefix = option.optionId().equals(prompt.selectedOptionId()) ? "> " : "  ";
+                lines.addAll(wrap(prefix + optionLabel(option), width));
+            }
         });
         if (view.runtimeLine() != null && !view.runtimeLine().isBlank()) {
             lines.addAll(wrap("· " + view.runtimeLine(), width));
         }
         return lines;
+    }
+
+    private String optionLabel(PermissionOption option) {
+        String label = option.label().isBlank() ? option.optionId() : option.label();
+        return option.description().isBlank() ? label : label + " - " + option.description();
     }
 
     private List<String> toolLines(TuiToolBlock tool, int width) {

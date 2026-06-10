@@ -5,12 +5,20 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.security.PermissionOption;
+import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -138,19 +146,50 @@ class TuiRendererTest {
     @Test
     void permissionPromptIsRenderedInTranscriptArea() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(2);
+        TuiScreen screen = new TuiScreen(5);
+        PermissionUpdate rememberUpdate = new PermissionUpdate(
+            PermissionRuleSource.SESSION,
+            new PermissionRule(
+                PermissionRuleSource.SESSION,
+                PermissionBehavior.ALLOW,
+                new PermissionRuleValue("bash", "npm test"),
+                "remember npm test"
+            )
+        );
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
-            Optional.of(new PermissionPromptView("toolu_1", "Need approval", "bash:npm test", "allow_once", "cancel")),
+            Optional.of(new PermissionPromptView(
+                "perm_toolu_1",
+                "toolu_1",
+                "Need approval",
+                "bash:npm test",
+                "allow_once",
+                "escape_cancel",
+                List.of(
+                    new PermissionOption("allow_once", PermissionOptionKind.ALLOW_ONCE, "允许一次", "", Optional.empty(), Map.of()),
+                    new PermissionOption(
+                        "remember",
+                        PermissionOptionKind.ALLOW_AND_REMEMBER,
+                        "允许并记住",
+                        "",
+                        Optional.of(rememberUpdate),
+                        Map.of()
+                    ),
+                    new PermissionOption("escape_cancel", PermissionOptionKind.CANCEL, "取消", "", Optional.empty(), Map.of())
+                ),
+                "allow_once"
+            )),
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 4), "");
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 7), "");
 
         assertEquals("permission toolu_1: Need approval", lines.get(0));
         assertEquals("rule: bash:npm test", lines.get(1));
+        assertEquals("> 允许一次", lines.get(2));
+        assertEquals("  允许并记住", lines.get(3));
     }
 
     @Test
