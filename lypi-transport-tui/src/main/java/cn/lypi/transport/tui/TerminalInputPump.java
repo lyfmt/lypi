@@ -41,6 +41,14 @@ final class TerminalInputPump {
         }
     }
 
+    Optional<String> readChunk() throws IOException {
+        return inputSource.read();
+    }
+
+    void dispatchChunk(String chunk) {
+        dispatch(chunk);
+    }
+
     private void dispatch(String chunk) {
         if (chunk == null || chunk.isEmpty()) {
             return;
