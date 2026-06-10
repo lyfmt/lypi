@@ -25,11 +25,15 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportRenderPipelineTest {
+    private static final String INPUT_BACKGROUND = "\033[48;5;236m";
+    private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
+    private static final String ANSI_RESET = "\033[0m";
+
     @Test
     void eventCallbackReducesAndRendersViewModelUnderUiLock() {
         RecordingEventBus events = new RecordingEventBus();
         List<String> frames = new ArrayList<>();
-        JLineTuiTransport transport = JLineTuiTransport.withRenderer(lines -> frames.add(String.join("\n", lines)), 40, 4);
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(lines -> frames.add(String.join("\n", lines)), 40, 5);
 
         transport.attach(events, TestRuntimeStates.basic("ses_1"));
         events.emit(new MessageDeltaEvent(
@@ -51,10 +55,10 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void rendererFrameContainsFullTranscriptBeyondTerminalHeightForScrollback() {
+    void rendererFrameKeepsInputBlockAnchoredAndShowsVisibleTranscript() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
-        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 40, 4);
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 40, 7);
 
         transport.attach(events, TestRuntimeStates.basic("ses_1"));
         for (int i = 0; i < 6; i++) {
@@ -73,10 +77,12 @@ class JLineTuiTransportRenderPipelineTest {
         }
 
         List<String> latest = frames.getLast();
-        assertTrue(latest.contains("line 0"));
+        assertEquals(7, latest.size());
+        assertTrue(!latest.contains("line 0"));
+        assertTrue(latest.contains("line 3"));
         assertTrue(latest.contains("line 5"));
-        assertEquals("\033[48;5;236m> \033[0m", latest.get(latest.size() - 2));
-        assertTrue(latest.size() > 4);
+        assertEquals(inputContent("> "), inputLine(latest));
+        assertTrue(latest.getLast().contains("ses_1"));
     }
 
     @Test
@@ -136,7 +142,7 @@ class JLineTuiTransportRenderPipelineTest {
             "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE",
             frames.getLast().getLast()
         );
-        assertEquals("\033[48;5;236m> draft|CURSOR|\033[0m", frames.getLast().get(frames.getLast().size() - 2));
+        assertEquals(inputContent("> draft|CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));
     }
 
     @Test
@@ -194,7 +200,7 @@ class JLineTuiTransportRenderPipelineTest {
         transport.drainInputForTest();
 
         assertEquals("Done", frames.getLast().getFirst());
-        assertEquals("\033[48;5;236m> draft|CURSOR|\033[0m", frames.getLast().get(frames.getLast().size() - 2));
+        assertEquals(inputContent("> draft|CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));
     }
 
     @Test
@@ -225,7 +231,7 @@ class JLineTuiTransportRenderPipelineTest {
         ));
 
         assertEquals("Done", frames.getLast().getFirst());
-        assertEquals("\033[48;5;236m> draft|CURSOR|\033[0m", frames.getLast().get(frames.getLast().size() - 2));
+        assertEquals(inputContent("> draft|CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));
     }
 
     @Test
@@ -255,14 +261,14 @@ class JLineTuiTransportRenderPipelineTest {
             Instant.parse("2026-06-09T00:00:00Z")
         ));
 
-        assertEquals("\033[48;5;236m> dra|CURSOR|ft\033[0m", frames.getLast().get(frames.getLast().size() - 2));
+        assertEquals(inputContent("> dra|CURSOR|" + INPUT_CURSOR + "ft"), inputLine(frames.getLast()));
     }
 
     @Test
     void retryStatusRendersAsTransientTranscriptLineWithoutMovingStatusBar() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
-        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 80, 5);
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 80, 6);
 
         transport.attach(events, TestRuntimeStates.basic("ses_1"));
         events.emit(new MessageDeltaEvent(
@@ -282,7 +288,7 @@ class JLineTuiTransportRenderPipelineTest {
         List<String> latest = frames.getLast();
         assertEquals("hello", latest.get(0));
         assertEquals("· retrying attempt 2 rate limit", latest.get(1));
-        assertEquals("\033[48;5;236m> \033[0m", latest.get(latest.size() - 2));
+        assertEquals(inputContent("> "), inputLine(latest));
         assertTrue(latest.getLast().contains("ses_1"));
     }
 
@@ -408,6 +414,79 @@ class JLineTuiTransportRenderPipelineTest {
         assertEquals(true, transport.exitRequestedForTest());
     }
 
+    @Test
+    void interruptSignalClearsNonEmptyDraftUnderUiLock() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            TestRuntimeStates.basic("ses_1"),
+            events,
+            io,
+            new QueueInputSource("draft"),
+            submit,
+            40,
+            5
+        );
+        transport.drainInputForTest();
+        int lockEntries = transport.uiLockEntryCountForTest();
+
+        io.triggerInterrupt();
+
+        assertEquals(0, transport.currentDraftLengthForTest());
+        assertEquals(0, submit.exits);
+        assertEquals(0, submit.interrupts);
+        assertTrue(transport.uiLockEntryCountForTest() > lockEntries);
+        transport.close();
+    }
+
+    @Test
+    void interruptSignalRequestsExitWhenDraftIsEmptyAndNoToolIsRunning() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            TestRuntimeStates.basic("ses_1"),
+            events,
+            io,
+            new QueueInputSource(),
+            submit,
+            40,
+            5
+        );
+
+        io.triggerInterrupt();
+
+        assertEquals(1, submit.exits);
+        assertEquals(0, submit.interrupts);
+        assertEquals(true, transport.exitRequestedForTest());
+        transport.close();
+    }
+
+    @Test
+    void interruptSignalInterruptsRunningToolWhenDraftIsEmpty() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            TestRuntimeStates.basic("ses_1"),
+            events,
+            io,
+            new QueueInputSource(),
+            submit,
+            40,
+            5
+        );
+        events.emit(new ToolStartEvent("ses_1", "tool_1", "bash", Instant.parse("2026-06-09T00:00:00Z")));
+
+        io.triggerInterrupt();
+
+        assertEquals(0, submit.exits);
+        assertEquals(1, submit.interrupts);
+        assertEquals(false, transport.exitRequestedForTest());
+        transport.close();
+    }
+
     private static final class RecordingEventBus implements EventBus {
         private EventConsumer consumer;
 
@@ -440,8 +519,20 @@ class JLineTuiTransportRenderPipelineTest {
         }
     }
 
+    private static String inputLine(List<String> frame) {
+        return frame.stream()
+            .filter(line -> line.startsWith(INPUT_BACKGROUND))
+            .reduce((first, second) -> second)
+            .orElseThrow();
+    }
+
+    private static String inputContent(String content) {
+        return INPUT_BACKGROUND + content + ANSI_RESET;
+    }
+
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private int interrupts;
+        private int exits;
 
         @Override
         public void submitUserInput(String input) {
@@ -450,6 +541,59 @@ class JLineTuiTransportRenderPipelineTest {
         @Override
         public void requestInterrupt(String reason) {
             interrupts++;
+        }
+
+        @Override
+        public void requestExit(String reason) {
+            exits++;
+        }
+    }
+
+    private static final class RecordingTerminalIo implements TerminalIo {
+        private final StringBuilder output = new StringBuilder();
+        private Runnable interruptCallback = () -> {
+        };
+
+        @Override
+        public AutoCloseable enterRawMode() {
+            return () -> {
+            };
+        }
+
+        @Override
+        public void write(String value) {
+            output.append(value);
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public int width() {
+            return 40;
+        }
+
+        @Override
+        public int height() {
+            return 5;
+        }
+
+        @Override
+        public AutoCloseable onResize(Runnable callback) {
+            return () -> {
+            };
+        }
+
+        @Override
+        public AutoCloseable onInterrupt(Runnable callback) {
+            interruptCallback = callback;
+            return () -> {
+            };
+        }
+
+        void triggerInterrupt() {
+            interruptCallback.run();
         }
     }
 }

@@ -82,6 +82,7 @@ class JLineTuiTransportTest {
     @Test
     void openAssemblesTerminalSessionRendererInputAndEventSubscription() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 5;
         RecordingEventBus events = new RecordingEventBus();
 
         JLineTuiTransport transport = JLineTuiTransport.open(
@@ -91,7 +92,7 @@ class JLineTuiTransportTest {
             () -> Optional.empty(),
             new RecordingSubmitHandler(),
             40,
-            4
+            5
         );
 
         events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
@@ -132,7 +133,7 @@ class JLineTuiTransportTest {
     @Test
     void openPipelineKeepsLongTranscriptInOutputStreamWithoutAlternateScreenOrRepeatedHomeClear() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
-        io.height = 3;
+        io.height = 5;
         RecordingEventBus events = new RecordingEventBus();
 
         JLineTuiTransport transport = JLineTuiTransport.open(
@@ -142,7 +143,7 @@ class JLineTuiTransportTest {
             () -> Optional.empty(),
             new RecordingSubmitHandler(),
             80,
-            3
+            5
         );
 
         for (int i = 0; i < 8; i++) {
@@ -289,7 +290,7 @@ class JLineTuiTransportTest {
         String frame = io.output.toString();
         String fullClear = "\033[2J\033[H\033[3J";
         String rendered = frame.substring(frame.indexOf(fullClear) + fullClear.length(), frame.indexOf("\033[?2026l"));
-        assertEquals(2, rendered.split("\n", -1).length);
+        assertEquals(4, rendered.split("\n", -1).length);
         assertTrue(rendered.contains("> "));
 
         transport.close();
@@ -652,6 +653,12 @@ class JLineTuiTransportTest {
         }
 
         @Override
+        public AutoCloseable onInterrupt(Runnable callback) {
+            return () -> {
+            };
+        }
+
+        @Override
         public int width() {
             return width;
         }
@@ -688,6 +695,12 @@ class JLineTuiTransportTest {
 
         @Override
         public AutoCloseable onResize(Runnable callback) {
+            return () -> {
+            };
+        }
+
+        @Override
+        public AutoCloseable onInterrupt(Runnable callback) {
             return () -> {
             };
         }

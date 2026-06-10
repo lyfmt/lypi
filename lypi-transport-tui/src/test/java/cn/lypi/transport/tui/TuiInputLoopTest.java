@@ -15,6 +15,10 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class TuiInputLoopTest {
+    private static final String INPUT_BACKGROUND = "\033[48;5;236m";
+    private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
+    private static final String ANSI_RESET = "\033[0m";
+
     @Test
     void enterSubmitsDraftAndRerendersClearedInput() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
@@ -32,7 +36,7 @@ class TuiInputLoopTest {
 
         assertEquals(List.of("hello"), submit.submitted);
         assertEquals("", loop.draft());
-        assertEquals("\033[48;5;236m> |CURSOR|\033[0m", inputLine(frames.getLast()));
+        assertEquals(inputContent("> |CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));
     }
 
     @Test
@@ -51,7 +55,7 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.LEFT);
         loop.acceptKey(TerminalKey.LEFT);
 
-        assertEquals("\033[48;5;236m> alpha be|CURSOR|ta\033[0m", inputLine(frames.getLast()));
+        assertEquals(inputContent("> alpha be|CURSOR|" + INPUT_CURSOR + "ta"), inputLine(frames.getLast()));
     }
 
     @Test
@@ -72,7 +76,30 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.BACKSPACE);
 
         assertEquals("acd", loop.draft());
-        assertEquals("\033[48;5;236m> a|CURSOR|cd\033[0m", inputLine(frames.getLast()));
+        assertEquals(inputContent("> a|CURSOR|" + INPUT_CURSOR + "cd"), inputLine(frames.getLast()));
+    }
+
+    @Test
+    void pasteWithNewlineKeepsDraftRendersRowsAndSubmitsOriginalText() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(20, 6)
+        );
+
+        loop.acceptPaste("alpha\nbeta");
+
+        assertEquals("alpha\nbeta", loop.draft());
+        assertEquals(List.of(inputContent("> alpha"), inputContent("beta|CURSOR|" + INPUT_CURSOR)), inputLines(frames.getLast()));
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("alpha\nbeta"), submit.submitted);
+        assertEquals("", loop.draft());
     }
 
     @Test
@@ -167,7 +194,7 @@ class TuiInputLoopTest {
             lines -> frames.add(String.join("\n", lines)),
             new TuiRenderer(),
             new TuiScreen(5),
-            new TuiLayout(40, 7),
+            new TuiLayout(40, 9),
             () -> permissionViewWithOptions("allow_once", "escape_cancel"),
             () -> new SlashCommandPicker(List.of("/model", "/mode"))
         );
@@ -238,7 +265,7 @@ class TuiInputLoopTest {
             lines -> frames.add(String.join("\n", lines)),
             new TuiRenderer(),
             new TuiScreen(6),
-            new TuiLayout(40, 8),
+            new TuiLayout(40, 9),
             null,
             () -> SlashCommandPicker.withTemplates(List.of("review"))
         );
@@ -296,7 +323,7 @@ class TuiInputLoopTest {
             lines -> frames.add(String.join("\n", lines)),
             new TuiRenderer(),
             new TuiScreen(6),
-            new TuiLayout(40, 8),
+            new TuiLayout(40, 9),
             null,
             () -> new SlashCommandPicker(List.of(
                 "/model",
@@ -380,8 +407,17 @@ class TuiInputLoopTest {
     }
 
     private static String inputLine(String frame) {
-        List<String> lines = frame.lines().toList();
-        return lines.get(lines.size() - 2);
+        return inputLines(frame).getLast();
+    }
+
+    private static List<String> inputLines(String frame) {
+        return frame.lines()
+            .filter(line -> line.startsWith(INPUT_BACKGROUND))
+            .toList();
+    }
+
+    private static String inputContent(String content) {
+        return INPUT_BACKGROUND + content + ANSI_RESET;
     }
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {

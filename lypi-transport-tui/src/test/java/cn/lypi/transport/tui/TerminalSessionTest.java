@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class TerminalSessionTest {
@@ -53,6 +54,22 @@ class TerminalSessionTest {
     }
 
     @Test
+    void openRegistersInterruptHandlerAndCloseRestoresIt() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        AtomicInteger interrupts = new AtomicInteger();
+
+        TerminalSession session = TerminalSession.open(io, () -> {
+        }, interrupts::incrementAndGet);
+
+        io.interruptCallback.run();
+        assertEquals(1, interrupts.get());
+
+        session.close();
+
+        assertTrue(io.interruptHandlerRestored);
+    }
+
+    @Test
     void openFailureRestoresRawModeAndResizeHandler() {
         FailingTerminalIo io = new FailingTerminalIo();
 
@@ -60,12 +77,16 @@ class TerminalSessionTest {
 
         assertTrue(io.rawModeRestored);
         assertTrue(io.resizeHandlerRestored);
+        assertTrue(io.interruptHandlerRestored);
     }
 
     private static final class RecordingTerminalIo implements TerminalIo {
         private final StringBuilder output = new StringBuilder();
         private boolean rawModeEntered;
         private boolean rawModeRestored;
+        private boolean interruptHandlerRestored;
+        private Runnable interruptCallback = () -> {
+        };
         private int restoreCount;
 
         @Override
@@ -101,11 +122,18 @@ class TerminalSessionTest {
             return () -> {
             };
         }
+
+        @Override
+        public AutoCloseable onInterrupt(Runnable callback) {
+            interruptCallback = callback;
+            return () -> interruptHandlerRestored = true;
+        }
     }
 
     private static final class FailingTerminalIo implements TerminalIo {
         private boolean rawModeRestored;
         private boolean resizeHandlerRestored;
+        private boolean interruptHandlerRestored;
 
         @Override
         public AutoCloseable enterRawMode() {
@@ -134,6 +162,11 @@ class TerminalSessionTest {
         @Override
         public AutoCloseable onResize(Runnable callback) {
             return () -> resizeHandlerRestored = true;
+        }
+
+        @Override
+        public AutoCloseable onInterrupt(Runnable callback) {
+            return () -> interruptHandlerRestored = true;
         }
     }
 }

@@ -180,5 +180,11 @@ class TerminalFrameRendererTest {
             return () -> {
             };
         }
+
+        @Override
+        public AutoCloseable onInterrupt(Runnable callback) {
+            return () -> {
+            };
+        }
     }
 }

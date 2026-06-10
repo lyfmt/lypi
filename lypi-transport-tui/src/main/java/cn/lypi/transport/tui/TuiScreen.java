@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class TuiScreen {
-    private final int viewportHeight;
+    private int viewportHeight;
     private List<String> transcript = List.of();
     private int viewportStart;
 
@@ -13,6 +13,14 @@ final class TuiScreen {
             throw new IllegalArgumentException("viewportHeight must be positive");
         }
         this.viewportHeight = viewportHeight;
+    }
+
+    void updateViewportHeight(int viewportHeight) {
+        if (viewportHeight < 0) {
+            throw new IllegalArgumentException("viewportHeight must be non-negative");
+        }
+        this.viewportHeight = viewportHeight;
+        viewportStart = Math.min(viewportStart, maxViewportStart());
     }
 
     void setTranscript(List<String> transcript) {
@@ -35,6 +43,9 @@ final class TuiScreen {
     }
 
     List<String> visibleTranscript() {
+        if (viewportHeight == 0) {
+            return List.of();
+        }
         int end = Math.min(transcript.size(), viewportStart + viewportHeight);
         return new ArrayList<>(transcript.subList(viewportStart, end));
     }
