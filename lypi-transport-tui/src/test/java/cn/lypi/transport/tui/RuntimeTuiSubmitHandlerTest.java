@@ -17,6 +17,8 @@ import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.InterruptEvent;
 import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.MessageEndEvent;
+import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
@@ -36,6 +38,8 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.tui.SlashCommand;
+import cn.lypi.contracts.tui.SlashCommandHandler;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -153,6 +157,69 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
+    void externalSlashCommandRunsHandlerAndPublishesLocalOutputWithoutStartingTurn() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("mailId: mail_1");
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), slash))
+        );
+
+        handler.submitUserInput("/mailbox accept mail_1");
+
+        assertTrue(core.requests.isEmpty());
+        assertEquals(Map.of("action", "accept", "mailId", "mail_1"), slash.arguments);
+        MessageStartEvent start = assertInstanceOf(MessageStartEvent.class, events.published.getFirst());
+        assertEquals("ses_1", start.sessionId());
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
+        assertEquals("ses_1", delta.sessionId());
+        assertEquals("mailId: mail_1", delta.delta());
+        assertInstanceOf(MessageEndEvent.class, events.published.get(2));
+    }
+
+    @Test
+    void agentInterruptSlashCommandShorthandMapsAgentIdArgument() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("中断请求已发送: agent_1");
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            List.of(new SlashCommand("agent", "管理 agent", List.of(), slash))
+        );
+
+        handler.submitUserInput("/agent interrupt agent_1");
+
+        assertTrue(core.requests.isEmpty());
+        assertEquals(Map.of("action", "interrupt", "agentId", "agent_1"), slash.arguments);
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
+        assertEquals("中断请求已发送: agent_1", delta.delta());
+    }
+
+    @Test
+    void regularInputStillStartsTurnWhenSlashCommandsAreRegistered() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+        );
+
+        handler.submitUserInput("hello");
+
+        assertEquals("hello", core.requests.getFirst().userInput());
+    }
+
+    @Test
     void unknownSlashCommandStillSubmitsAsUserInput() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
@@ -162,13 +229,21 @@ class RuntimeTuiSubmitHandlerTest {
             core,
             events,
             Runnable::run,
-            new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources())
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("."),
+                session,
+                emptyResources(),
+                null,
+                List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+            )
         );
 
         handler.submitUserInput("/unknown text");
 
         assertEquals("/unknown text", core.requests.getFirst().userInput());
         assertEquals(List.of(), session.entries);
+        assertTrue(events.published.isEmpty());
     }
 
     @Test
@@ -214,9 +289,12 @@ class RuntimeTuiSubmitHandlerTest {
         handler.submitUserInput("/compact");
 
         assertEquals(List.of(), core.requests);
-        MessageDeltaEvent event = assertInstanceOf(MessageDeltaEvent.class, events.published.getFirst());
-        assertEquals("ses_1", event.sessionId());
-        assertEquals("compact: compacted", event.delta());
+        MessageStartEvent start = assertInstanceOf(MessageStartEvent.class, events.published.getFirst());
+        assertEquals("ses_1", start.sessionId());
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
+        assertEquals("ses_1", delta.sessionId());
+        assertEquals("compact: compacted", delta.delta());
+        assertInstanceOf(MessageEndEvent.class, events.published.get(2));
     }
 
     private static final class RecordingCore implements AgentCorePort {
@@ -244,6 +322,25 @@ class RuntimeTuiSubmitHandlerTest {
                 Thread.currentThread().interrupt();
             }
             return null;
+        }
+    }
+
+    private static final class RecordingSlashCommandHandler implements SlashCommandHandler {
+        private final String output;
+        private Map<String, String> arguments;
+
+        private RecordingSlashCommandHandler(String output) {
+            this.output = output;
+        }
+
+        @Override
+        public void handle(Map<String, String> arguments) {
+            this.arguments = arguments;
+        }
+
+        @Override
+        public String lastOutput() {
+            return output;
         }
     }
 

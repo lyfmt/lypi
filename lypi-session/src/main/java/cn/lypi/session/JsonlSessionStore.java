@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * 读写 append-only session JSONL 文件。
@@ -93,6 +94,24 @@ final class JsonlSessionStore {
     }
 
     /**
+     * 读取 sessions 目录下所有 session header。
+     */
+    List<SessionHeader> headers() {
+        if (!Files.isDirectory(sessionsDir)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.list(sessionsDir)) {
+            return files
+                .filter(file -> file.getFileName().toString().endsWith(".jsonl"))
+                .sorted()
+                .map(this::readHeaderFile)
+                .toList();
+        } catch (IOException e) {
+            throw new SessionEngineException("Failed to list session headers: " + sessionsDir, e);
+        }
+    }
+
+    /**
      * 追加一条 entry JSONL 行。
      */
     void append(String sessionId, SessionEntry entry) {
@@ -114,6 +133,20 @@ final class JsonlSessionStore {
             return mapper.readHeader(mapper.readEnvelope(line));
         } catch (SessionEngineException e) {
             throw new SessionEngineException("Failed to read session JSONL line 1 from " + file + ": " + e.getMessage(), e);
+        }
+    }
+
+    private SessionHeader readHeaderFile(Path file) {
+        try {
+            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            if (lines.isEmpty()) {
+                throw new SessionEngineException("Session file is empty: " + file);
+            }
+            SessionHeader header = readHeaderLine(file, lines.getFirst());
+            validateHeader(header);
+            return header;
+        } catch (IOException e) {
+            throw new SessionEngineException("Failed to read session header: " + file, e);
         }
     }
 

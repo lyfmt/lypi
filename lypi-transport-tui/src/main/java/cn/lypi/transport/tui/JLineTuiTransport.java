@@ -8,10 +8,12 @@ import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 import org.jline.terminal.Terminal;
@@ -69,13 +71,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         FrameSink frameSink,
         int width,
         int height,
+        SessionRuntimeState state,
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler,
         TerminalSession terminalSession,
         Supplier<SlashCommandPicker> slashPickerSupplier
     ) {
         this.renderer = null;
-        this.reducer = new TuiEventReducer();
+        this.reducer = TuiEventReducer.fromRuntimeState(state);
         this.tuiRenderer = new TuiRenderer();
         int safeWidth = safeWidth(width);
         int safeHeight = safeHeight(height);
@@ -96,15 +99,52 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         EventBus events,
         Terminal terminal
     ) throws IOException {
+        return open(state, core, events, terminal, List.of());
+    }
+
+    /**
+     * 打开带 slash command 支持的真实 JLine TUI transport。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        List<SlashCommand> slashCommands
+    ) throws IOException {
         JLineTerminalIo io = new JLineTerminalIo(terminal);
+        return open(
+            state,
+            core,
+            events,
+            io,
+            new JLineTerminalInputSource(terminal),
+            command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command),
+            slashCommands,
+            terminal.getWidth(),
+            terminal.getHeight()
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        java.util.concurrent.Executor executor,
+        List<SlashCommand> slashCommands,
+        int width,
+        int height
+    ) throws IOException {
         return open(
             state,
             events,
             io,
-            new JLineTerminalInputSource(terminal),
-            new RuntimeTuiSubmitHandler(state.sessionId(), core, events),
-            terminal.getWidth(),
-            terminal.getHeight()
+            inputSource,
+            new RuntimeTuiSubmitHandler(state.sessionId(), core, events, executor, slashCommands),
+            width,
+            height
         );
     }
 
@@ -120,6 +160,22 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) throws IOException {
+        return open(state, core, events, terminal, List.of(), sessionManager, resourceRuntime, compactionRuntime);
+    }
+
+    /**
+     * 打开真实 JLine TUI transport，并在提交前启用内建和外部 slash command 路由。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        List<SlashCommand> slashCommands,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime
+    ) throws IOException {
         JLineTerminalIo io = new JLineTerminalIo(terminal);
         return open(
             state,
@@ -127,6 +183,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             events,
             io,
             new JLineTerminalInputSource(terminal),
+            slashCommands,
             sessionManager,
             resourceRuntime,
             compactionRuntime,
@@ -152,6 +209,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         EventBus events,
         TerminalIo io,
         TerminalInputSource inputSource,
+        List<SlashCommand> slashCommands,
         SessionManagerPort sessionManager,
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime,
@@ -163,7 +221,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             state.cwd(),
             sessionManager,
             resourceRuntime,
-            compactionRuntime
+            compactionRuntime,
+            slashCommands
         );
         return open(
             state,
@@ -171,9 +230,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             io,
             inputSource,
             new RuntimeTuiSubmitHandler(state.sessionId(), core, events, command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command), router),
-            () -> SlashCommandPicker.withTemplates(resourceRuntime.load(state.cwd()).promptTemplates().stream()
-                .map(template -> template.name())
-                .toList()),
+            () -> new SlashCommandPicker(router.commandNames()),
             width,
             height
         );
@@ -190,7 +247,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int width,
         int height
     ) throws IOException {
-        return open(state, core, events, io, inputSource, sessionManager, resourceRuntime, null, width, height);
+        return open(state, core, events, io, inputSource, List.of(), sessionManager, resourceRuntime, null, width, height);
     }
 
     static JLineTuiTransport withRenderer(FrameSink frameSink, int width, int height) {
@@ -204,7 +261,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler
     ) {
-        return new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, null, null);
+        return new JLineTuiTransport(frameSink, width, height, null, inputSource, submitHandler, null, null);
     }
 
     static JLineTuiTransport open(
@@ -231,10 +288,16 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 throw new UncheckedIOException(exception);
             }
         };
-        JLineTuiTransport transport = new JLineTuiTransport(frameSink, width, height, inputSource, submitHandler, session, slashPickerSupplier);
+        JLineTuiTransport transport = new JLineTuiTransport(frameSink, width, height, state, inputSource, submitHandler, session, slashPickerSupplier);
         holder[0] = transport;
-        transport.attach(events, state);
-        return transport;
+        try {
+            transport.attach(events, state);
+            transport.renderCurrentFrameUnderUiLock();
+            return transport;
+        } catch (RuntimeException exception) {
+            closeAfterOpenFailure(transport, exception);
+            throw exception;
+        }
     }
 
     static JLineTuiTransport open(
@@ -270,6 +333,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     public void attach(EventBus events, SessionRuntimeState state) {
         synchronized (uiMonitor) {
             closeSubscription();
+            if (reducer != null) {
+                reducer.configureRuntimeState(state);
+                syncInputLoopToolState(reducer.view());
+            }
             subscription = events.subscribe(
                 new EventFilter(Optional.ofNullable(state).map(SessionRuntimeState::sessionId), Optional.empty()),
                 envelope -> {
@@ -287,9 +354,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             uiLockEntries++;
             reducer.reduce(event);
-            TuiViewModel view = reducer.view();
-            syncInputLoopToolState(view);
-            frameSink.render(tuiRenderer.render(view, screen, layout, currentDraft(), currentCursor()));
+            renderCurrentFrame();
+        }
+    }
+
+    void renderCurrentFrameUnderUiLock() {
+        synchronized (uiMonitor) {
+            uiLockEntries++;
+            renderCurrentFrame();
         }
     }
 
@@ -358,6 +430,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         }
     }
 
+    private static void closeAfterOpenFailure(JLineTuiTransport transport, RuntimeException original) {
+        try {
+            transport.close();
+        } catch (Exception closeFailure) {
+            original.addSuppressed(closeFailure);
+        }
+    }
+
     private void runUiMutation(Runnable mutation) {
         synchronized (uiMonitor) {
             uiLockEntries++;
@@ -387,8 +467,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             if (inputLoop != null) {
                 inputLoop.updateViewport(screen, layout);
             }
-            frameSink.render(tuiRenderer.render(reducer.view(), screen, layout, currentDraft(), currentCursor()));
+            renderCurrentFrame();
         }
+    }
+
+    private void renderCurrentFrame() {
+        TuiViewModel view = reducer.view();
+        syncInputLoopToolState(view);
+        frameSink.render(tuiRenderer.render(view, screen, layout, currentDraft(), currentCursor()));
     }
 
     private String currentDraft() {
@@ -403,10 +489,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         if (inputLoop == null) {
             return;
         }
-        boolean toolRunning = view.blocks()
+        boolean activeToolBlock = view.blocks()
             .stream()
             .anyMatch(block -> block instanceof TuiToolBlock tool && tool.active());
-        inputLoop.setToolRunning(toolRunning);
+        inputLoop.setToolRunning(activeToolBlock || view.statusBar().hasInterruptibleTool());
     }
 
     private boolean exitRequested() {

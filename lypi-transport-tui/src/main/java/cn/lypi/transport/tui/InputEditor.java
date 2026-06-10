@@ -67,6 +67,17 @@ final class InputEditor {
         clearYankState();
     }
 
+    void deletePreviousCharacter() {
+        if (cursor == 0) {
+            return;
+        }
+        saveUndo();
+        text.delete(cursor - 1, cursor);
+        cursor--;
+        clearYankState();
+        history.resetNavigation(text());
+    }
+
     void deletePreviousWord() {
         if (cursor == 0) {
             return;

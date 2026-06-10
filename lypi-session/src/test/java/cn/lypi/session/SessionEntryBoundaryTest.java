@@ -29,6 +29,7 @@ class SessionEntryBoundaryTest {
             "branch_summary",
             "custom",
             "custom_message",
+            "agent_lifecycle",
             "label",
             "session_info"
         );

@@ -123,6 +123,7 @@ final class TuiInputLoop {
         TerminalInputAction action = bindings.actionFor(key);
         switch (action) {
             case INSERT_NEWLINE -> editor.insertNewline();
+            case DELETE_PREVIOUS_CHARACTER -> editor.deletePreviousCharacter();
             case DELETE_PREVIOUS_WORD -> editor.deletePreviousWord();
             case DELETE_NEXT_WORD -> editor.deleteNextWord();
             case DELETE_LINE_BEFORE_CURSOR -> editor.deleteLineBeforeCursor();

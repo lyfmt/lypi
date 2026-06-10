@@ -29,7 +29,7 @@ class TuiInputLoopTest {
 
         assertEquals(List.of("hello"), submit.submitted);
         assertEquals("", loop.draft());
-        assertEquals("> |CURSOR|", frames.getLast().lines().skip(3).findFirst().orElseThrow());
+        assertEquals("\033[48;5;236m> |CURSOR|\033[0m", frames.getLast().lines().skip(2).findFirst().orElseThrow());
     }
 
     @Test
@@ -48,7 +48,28 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.LEFT);
         loop.acceptKey(TerminalKey.LEFT);
 
-        assertEquals("> alpha be|CURSOR|ta", frames.getLast().lines().skip(3).findFirst().orElseThrow());
+        assertEquals("\033[48;5;236m> alpha be|CURSOR|ta\033[0m", frames.getLast().lines().skip(2).findFirst().orElseThrow());
+    }
+
+    @Test
+    void backspaceDeletesPreviousCharacterAndRerendersInput() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(30, 4)
+        );
+
+        loop.acceptText("abcd");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.BACKSPACE);
+
+        assertEquals("acd", loop.draft());
+        assertEquals("\033[48;5;236m> a|CURSOR|cd\033[0m", frames.getLast().lines().skip(2).findFirst().orElseThrow());
     }
 
     @Test

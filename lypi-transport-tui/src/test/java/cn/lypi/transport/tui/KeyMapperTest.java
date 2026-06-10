@@ -12,6 +12,8 @@ class KeyMapperTest {
 
         assertEquals(TerminalKey.CTRL_O, mapper.map("\u000f").orElseThrow());
         assertEquals(TerminalKey.TAB, mapper.map("\t").orElseThrow());
+        assertEquals(TerminalKey.BACKSPACE, mapper.map("\u007f").orElseThrow());
+        assertEquals(TerminalKey.BACKSPACE, mapper.map("\b").orElseThrow());
         assertEquals(TerminalKey.ALT_BACKSPACE, mapper.map("\033\u007f").orElseThrow());
         assertEquals(TerminalKey.ALT_DELETE, mapper.map("\033[3;3~").orElseThrow());
     }

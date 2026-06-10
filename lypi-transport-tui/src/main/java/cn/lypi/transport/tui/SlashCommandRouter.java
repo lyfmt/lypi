@@ -17,7 +17,9 @@ import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.tui.SlashCommand;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
@@ -42,6 +44,7 @@ final class SlashCommandRouter {
     private final SessionManagerPort sessionManager;
     private final ResourceRuntimePort resourceRuntime;
     private final CompactionRuntimePort compactionRuntime;
+    private final List<SlashCommand> slashCommands;
 
     SlashCommandRouter(
         String sessionId,
@@ -49,7 +52,7 @@ final class SlashCommandRouter {
         SessionManagerPort sessionManager,
         ResourceRuntimePort resourceRuntime
     ) {
-        this(sessionId, cwd, sessionManager, resourceRuntime, null);
+        this(sessionId, cwd, sessionManager, resourceRuntime, null, List.of());
     }
 
     SlashCommandRouter(
@@ -59,11 +62,32 @@ final class SlashCommandRouter {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) {
+        this(sessionId, cwd, sessionManager, resourceRuntime, compactionRuntime, List.of());
+    }
+
+    SlashCommandRouter(
+        String sessionId,
+        Path cwd,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        List<SlashCommand> slashCommands
+    ) {
         this.sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
         this.cwd = cwd == null ? Path.of(".") : cwd;
         this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
         this.resourceRuntime = Objects.requireNonNull(resourceRuntime, "resourceRuntime must not be null");
         this.compactionRuntime = compactionRuntime;
+        this.slashCommands = safeSlashCommands(slashCommands);
+    }
+
+    SlashCommandRouter(List<SlashCommand> slashCommands) {
+        this.sessionId = "";
+        this.cwd = Path.of(".");
+        this.sessionManager = null;
+        this.resourceRuntime = null;
+        this.compactionRuntime = null;
+        this.slashCommands = safeSlashCommands(slashCommands);
     }
 
     SlashCommandResult route(String input) {
@@ -85,8 +109,12 @@ final class SlashCommandRouter {
             case "/mode" -> routeMode(arguments, input);
             case "/permission-mode" -> routePermissionMode(arguments, input);
             case "/compact" -> routeCompact(arguments);
-            default -> routePromptTemplate(match.command().orElseThrow().substring(1), arguments);
+            default -> routeExternalOrPromptTemplate(match.command().orElseThrow(), arguments);
         };
+    }
+
+    List<String> commandNames() {
+        return candidateCommands();
     }
 
     private CommandMatch matchCommand(String command) {
@@ -111,15 +139,31 @@ final class SlashCommandRouter {
     }
 
     private List<String> candidateCommands() {
-        List<String> commands = new java.util.ArrayList<>(BUILT_IN_COMMANDS);
-        commands.sort(String::compareTo);
-        ResourceSnapshot resources = resourceRuntime.load(cwd);
-        resources.promptTemplates().stream()
-            .map(PromptTemplate::name)
+        List<String> commands = new java.util.ArrayList<>();
+        if (sessionManager != null && resourceRuntime != null) {
+            commands.addAll(BUILT_IN_COMMANDS);
+        }
+        slashCommands.stream()
+            .map(SlashCommand::name)
             .filter(name -> name != null && !name.isBlank())
             .map(name -> name.startsWith("/") ? name : "/" + name)
-            .forEach(commands::add);
+            .forEach(command -> addUnique(commands, command));
+        if (resourceRuntime != null) {
+            ResourceSnapshot resources = resourceRuntime.load(cwd);
+            resources.promptTemplates().stream()
+                .map(PromptTemplate::name)
+                .filter(name -> name != null && !name.isBlank())
+                .map(name -> name.startsWith("/") ? name : "/" + name)
+                .forEach(command -> addUnique(commands, command));
+        }
+        commands.sort(String::compareTo);
         return List.copyOf(commands);
+    }
+
+    private void addUnique(List<String> commands, String command) {
+        if (!commands.contains(command)) {
+            commands.add(command);
+        }
     }
 
     private SlashCommandResult routeCompact(SlashCommandArguments arguments) {
@@ -146,6 +190,9 @@ final class SlashCommandRouter {
     }
 
     private SlashCommandResult routePromptTemplate(String templateName, SlashCommandArguments arguments) {
+        if (resourceRuntime == null) {
+            return SlashCommandResult.notMatched();
+        }
         ResourceSnapshot resources = resourceRuntime.load(cwd);
         PromptTemplate template = resources.promptTemplates().stream()
             .filter(candidate -> normalizedTemplateName(candidate).equals(templateName))
@@ -162,6 +209,79 @@ final class SlashCommandRouter {
             }
         }
         return SlashCommandResult.submitPrompt(renderTemplate(template, arguments.named()));
+    }
+
+    private SlashCommandResult routeExternalOrPromptTemplate(String commandName, SlashCommandArguments arguments) {
+        Optional<SlashCommand> slashCommand = externalCommand(commandName);
+        if (slashCommand.isPresent()) {
+            return routeExternal(slashCommand.orElseThrow(), arguments);
+        }
+        return routePromptTemplate(commandName.substring(1), arguments);
+    }
+
+    private SlashCommandResult routeExternal(SlashCommand command, SlashCommandArguments arguments) {
+        try {
+            command.handler().handle(externalArguments(command, arguments));
+        } catch (RuntimeException exception) {
+            return SlashCommandResult.error(command.name() + ": " + errorMessage(exception));
+        }
+        String output = command.handler().lastOutput();
+        if (output == null || output.isBlank()) {
+            return SlashCommandResult.consumedCommand();
+        }
+        return SlashCommandResult.notice(output);
+    }
+
+    private Optional<SlashCommand> externalCommand(String commandName) {
+        String normalized = commandName == null ? "" : commandName.replaceFirst("^/", "");
+        return slashCommands.stream()
+            .filter(command -> command.name().equals(normalized))
+            .findFirst();
+    }
+
+    private Map<String, String> externalArguments(SlashCommand command, SlashCommandArguments parsed) {
+        Map<String, String> arguments = new LinkedHashMap<>(parsed.named());
+        List<String> tokens = parsed.tokens();
+        if (applyMailboxShorthand(command.name(), tokens, arguments)) {
+            return Map.copyOf(arguments);
+        }
+        if (applyAgentShorthand(command.name(), tokens, arguments)) {
+            return Map.copyOf(arguments);
+        }
+        List<PromptParameter> parameters = command.parameters();
+        List<String> positionals = parsed.positionals();
+        for (int index = 0; index < positionals.size() && index < parameters.size(); index++) {
+            arguments.putIfAbsent(parameters.get(index).name(), positionals.get(index));
+        }
+        return Map.copyOf(arguments);
+    }
+
+    private boolean applyMailboxShorthand(String commandName, List<String> tokens, Map<String, String> arguments) {
+        if (!"mailbox".equals(commandName) || tokens.size() < 3 || tokens.get(1).contains("=") || tokens.get(2).contains("=")) {
+            return false;
+        }
+        if (isMailboxCommandAction(tokens.get(1))) {
+            arguments.put("action", tokens.get(1));
+            arguments.put("mailId", tokens.get(2));
+            return true;
+        }
+        return false;
+    }
+
+    private boolean applyAgentShorthand(String commandName, List<String> tokens, Map<String, String> arguments) {
+        if (!"agent".equals(commandName) || tokens.size() < 3 || tokens.get(1).contains("=") || tokens.get(2).contains("=")) {
+            return false;
+        }
+        if ("interrupt".equals(tokens.get(1))) {
+            arguments.put("action", tokens.get(1));
+            arguments.put("agentId", tokens.get(2));
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isMailboxCommandAction(String action) {
+        return "accept".equals(action) || "stash".equals(action) || "discard".equals(action);
     }
 
     private SlashCommandResult routeModel(SlashCommandArguments arguments, String reason) {
@@ -285,6 +405,10 @@ final class SlashCommandRouter {
             return exception.getMessage();
         }
         return exception.getClass().getSimpleName();
+    }
+
+    private List<SlashCommand> safeSlashCommands(List<SlashCommand> commands) {
+        return commands == null ? List.of() : List.copyOf(commands);
     }
 
     private record CommandMatch(Optional<String> command, List<String> matches) {

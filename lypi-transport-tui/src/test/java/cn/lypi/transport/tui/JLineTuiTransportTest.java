@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
+import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
@@ -16,7 +17,7 @@ import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.ErrorEvent;
-import cn.lypi.contracts.context.ContextBudget;
+import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -32,10 +33,14 @@ import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.SlashCommand;
+import cn.lypi.contracts.tui.SlashCommandHandler;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -97,6 +102,48 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void openRendersInitialFrameFromRuntimeState() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            120,
+            4
+        );
+
+        String frame = io.output.toString();
+        assertTrue(frame.contains("\033[?2026h\033[H\033[J"));
+        assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
+        assertTrue(frame.contains("> "));
+
+        transport.close();
+    }
+
+    @Test
+    void openClosesTerminalSessionWhenInitialFrameRenderFails() {
+        FailingInitialFrameTerminalIo io = new FailingInitialFrameTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+
+        assertThrows(UncheckedIOException.class, () -> JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            40,
+            4
+        ));
+
+        assertTrue(io.rawModeRestored);
+        assertTrue(io.output.toString().contains(TerminalSession.EXIT_ALTERNATE_SCREEN));
+    }
+
+    @Test
     void openResizeCallbackReadsCurrentTerminalDimensions() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         RecordingEventBus events = new RecordingEventBus();
@@ -119,6 +166,35 @@ class JLineTuiTransportTest {
         String frame = io.output.toString();
         String rendered = frame.substring(frame.indexOf("\033[H\033[J") + "\033[H\033[J".length(), frame.indexOf("\033[?2026l"));
         assertEquals(6, rendered.split("\n", -1).length);
+
+        transport.close();
+    }
+
+    @Test
+    void openWithSlashCommandsExecutesSlashInputWithoutStartingTurn() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingCore core = new RecordingCore();
+        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("mailId: mail_1");
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            core,
+            events,
+            io,
+            new QueueInputSource("/mailbox accept mail_1", "\r"),
+            Runnable::run,
+            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), slash)),
+            40,
+            4
+        );
+
+        transport.drainInputForTest();
+
+        assertTrue(core.requests.isEmpty());
+        assertEquals(Map.of("action", "accept", "mailId", "mail_1"), slash.arguments);
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
+        assertEquals("mailId: mail_1", delta.delta());
 
         transport.close();
     }
@@ -218,6 +294,9 @@ class JLineTuiTransportTest {
             AgentMode.EXECUTE,
             PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(0, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
+            false,
+            false,
+            false,
             false
         );
     }
@@ -239,9 +318,11 @@ class JLineTuiTransportTest {
     private static final class RecordingEventBus implements EventBus {
         private EventConsumer consumer;
         private boolean subscribed;
+        private final List<AgentEvent> published = new ArrayList<>();
 
         @Override
         public void publish(AgentEvent event) {
+            published.add(event);
         }
 
         @Override
@@ -263,29 +344,6 @@ class JLineTuiTransportTest {
         }
 
         private EventFilter filter;
-    }
-
-    private static final class RecordingCore implements AgentCorePort {
-        private final List<TurnRequest> requests = new ArrayList<>();
-
-        @Override
-        public TurnState execute(TurnRequest request) {
-            requests.add(request);
-            return null;
-        }
-    }
-
-    private static final class QueueInputSource implements TerminalInputSource {
-        private final java.util.Queue<String> chunks = new java.util.ArrayDeque<>();
-
-        private QueueInputSource(String... chunks) {
-            this.chunks.addAll(List.of(chunks));
-        }
-
-        @Override
-        public Optional<String> read() {
-            return Optional.ofNullable(chunks.poll());
-        }
     }
 
     private static ResourceRuntimePort emptyResources() {
@@ -378,6 +436,48 @@ class JLineTuiTransportTest {
         }
     }
 
+    private static final class RecordingCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            return null;
+        }
+    }
+
+    private static final class RecordingSlashCommandHandler implements SlashCommandHandler {
+        private final String output;
+        private Map<String, String> arguments;
+
+        private RecordingSlashCommandHandler(String output) {
+            this.output = output;
+        }
+
+        @Override
+        public void handle(Map<String, String> arguments) {
+            this.arguments = arguments;
+        }
+
+        @Override
+        public String lastOutput() {
+            return output;
+        }
+    }
+
+    private static final class QueueInputSource implements TerminalInputSource {
+        private final ArrayDeque<String> chunks;
+
+        private QueueInputSource(String... chunks) {
+            this.chunks = new ArrayDeque<>(List.of(chunks));
+        }
+
+        @Override
+        public Optional<String> read() {
+            return Optional.ofNullable(chunks.pollFirst());
+        }
+    }
+
     private static final class RecordingTerminalIo implements TerminalIo {
         private final StringBuilder output = new StringBuilder();
         private boolean rawModeEntered;
@@ -417,6 +517,47 @@ class JLineTuiTransportTest {
         @Override
         public int height() {
             return height;
+        }
+    }
+
+    private static final class FailingInitialFrameTerminalIo implements TerminalIo {
+        private final StringBuilder output = new StringBuilder();
+        private boolean rawModeRestored;
+        private int writesUntilFailure = 5;
+
+        @Override
+        public AutoCloseable enterRawMode() {
+            return () -> rawModeRestored = true;
+        }
+
+        @Override
+        public void write(String value) throws IOException {
+            if (writesUntilFailure == 0) {
+                writesUntilFailure--;
+                throw new IOException("initial frame failed");
+            }
+            writesUntilFailure--;
+            output.append(value);
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public AutoCloseable onResize(Runnable callback) {
+            return () -> {
+            };
+        }
+
+        @Override
+        public int width() {
+            return 40;
+        }
+
+        @Override
+        public int height() {
+            return 4;
         }
     }
 }

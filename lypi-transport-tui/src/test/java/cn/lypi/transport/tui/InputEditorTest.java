@@ -36,6 +36,18 @@ class InputEditorTest {
     }
 
     @Test
+    void deletesPreviousCharacterBeforeCursor() {
+        InputEditor editor = new InputEditor();
+        editor.insert("abcd");
+        editor.moveLeft();
+
+        editor.deletePreviousCharacter();
+
+        assertEquals("abd", editor.text());
+        assertEquals(2, editor.cursor());
+    }
+
+    @Test
     void undoYankAndYankPopUseKillRing() {
         InputEditor editor = new InputEditor();
         editor.insert("alpha beta gamma");

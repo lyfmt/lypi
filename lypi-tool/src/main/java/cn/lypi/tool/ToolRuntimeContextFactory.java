@@ -48,6 +48,10 @@ public final class ToolRuntimeContextFactory {
         if (turnId != null && !turnId.isBlank()) {
             metadata.put("turnId", turnId);
         }
+        String parentEntryId = invocation == null ? null : invocation.parentEntryId();
+        if (parentEntryId != null && !parentEntryId.isBlank()) {
+            metadata.put("parentEntryId", parentEntryId);
+        }
         return new ToolUseContext(
             sessionId(invocation),
             request.parentMessageId(),

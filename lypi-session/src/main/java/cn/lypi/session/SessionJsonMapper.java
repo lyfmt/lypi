@@ -4,6 +4,7 @@ import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
+import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.LabelEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
@@ -40,6 +41,7 @@ final class SessionJsonMapper {
         Map.entry("branch_summary", BranchSummaryEntry.class),
         Map.entry("custom", CustomEntry.class),
         Map.entry("custom_message", CustomMessageEntry.class),
+        Map.entry("agent_lifecycle", AgentLifecycleEntry.class),
         Map.entry("label", LabelEntry.class),
         Map.entry("session_info", SessionInfoEntry.class)
     );
@@ -53,6 +55,7 @@ final class SessionJsonMapper {
         Map.entry(BranchSummaryEntry.class, "branch_summary"),
         Map.entry(CustomEntry.class, "custom"),
         Map.entry(CustomMessageEntry.class, "custom_message"),
+        Map.entry(AgentLifecycleEntry.class, "agent_lifecycle"),
         Map.entry(LabelEntry.class, "label"),
         Map.entry(SessionInfoEntry.class, "session_info")
     );

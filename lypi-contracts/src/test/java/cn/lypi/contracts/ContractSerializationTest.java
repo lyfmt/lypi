@@ -1,6 +1,7 @@
 package cn.lypi.contracts;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -48,13 +49,20 @@ import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.subagent.AgentRunStatus;
+import cn.lypi.contracts.subagent.AgentView;
+import cn.lypi.contracts.subagent.MailboxMessage;
+import cn.lypi.contracts.subagent.MailboxStatus;
+import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
@@ -170,6 +178,116 @@ class ContractSerializationTest {
             SessionEntry restored = mapper.readValue(json, SessionEntry.class);
             assertEquals(entry, restored);
         }
+    }
+
+    @Test
+    void sessionHeaderRoundTripKeepsSubagentRelationshipFields() throws Exception {
+        SessionHeader header = new SessionHeader(
+            "session",
+            1,
+            "ses_child",
+            Path.of("/tmp/project"),
+            Optional.of("ses_parent"),
+            Optional.of("entry_spawn"),
+            2,
+            Optional.of("reviewer"),
+            Optional.of("code-review"),
+            Instant.parse("2026-06-09T00:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(header);
+        SessionHeader restored = mapper.readValue(json, SessionHeader.class);
+
+        assertEquals(header, restored);
+        assertTrue(json.contains("\"parentSessionId\":\"ses_parent\""));
+        assertTrue(json.contains("\"parentSpawnEntryId\":\"entry_spawn\""));
+        assertTrue(json.contains("\"depth\":2"));
+    }
+
+    @Test
+    void legacySessionHeaderDefaultsSubagentRelationshipFields() throws Exception {
+        String json = """
+            {
+              "type": "session",
+              "version": 1,
+              "id": "ses_main",
+              "cwd": "/tmp/project",
+              "parentSessionId": null,
+              "timestamp": "2026-06-09T00:00:00Z"
+            }
+            """;
+
+        SessionHeader restored = mapper.readValue(json, SessionHeader.class);
+
+        assertEquals(Optional.empty(), restored.parentSpawnEntryId());
+        assertEquals(0, restored.depth());
+        assertEquals(Optional.empty(), restored.agentName());
+        assertEquals(Optional.empty(), restored.agentRole());
+    }
+
+    @Test
+    void subagentContractsRoundTripKeepSessionRelationsAndMailboxStatus() throws Exception {
+        Instant now = Instant.parse("2026-06-09T00:00:00Z");
+        SessionEntry entry = new AgentLifecycleEntry(
+            "entry_spawn",
+            "entry_parent",
+            "agent_01",
+            "ses_child",
+            "ses_parent",
+            "spawned",
+            Map.of("agentName", "reviewer"),
+            now
+        );
+
+        String entryJson = mapper.writeValueAsString(entry);
+        SessionEntry restoredEntry = mapper.readValue(entryJson, SessionEntry.class);
+
+        assertTrue(entryJson.contains("\"type\":\"agent_lifecycle\""));
+        assertInstanceOf(AgentLifecycleEntry.class, restoredEntry);
+        assertEquals(entry, restoredEntry);
+
+        MailboxMessage message = new MailboxMessage(
+            "mail_01",
+            "agent_01",
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "完成摘要",
+            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
+            MailboxStatus.PENDING,
+            now,
+            now
+        );
+
+        String messageJson = mapper.writeValueAsString(message);
+        MailboxMessage restoredMessage = mapper.readValue(messageJson, MailboxMessage.class);
+
+        assertEquals(message, restoredMessage);
+        assertTrue(messageJson.contains("\"status\":\"PENDING\""));
+    }
+
+    @Test
+    void agentViewRoundTripKeepsManagementFields() throws Exception {
+        AgentView view = new AgentView(
+            "agent_01",
+            "Scout [explorer]",
+            "ses_parent",
+            "ses_child",
+            "entry_spawn",
+            AgentRunStatus.RUNNING,
+            Optional.of(MailboxStatus.PENDING),
+            Optional.of("完成摘要"),
+            Optional.of("entry_final"),
+            Optional.of("Scout"),
+            Optional.of("explorer")
+        );
+
+        String json = mapper.writeValueAsString(view);
+        AgentView restored = mapper.readValue(json, AgentView.class);
+
+        assertEquals(view, restored);
+        assertTrue(json.contains("\"status\":\"RUNNING\""));
+        assertTrue(json.contains("\"mailboxStatus\":\"PENDING\""));
     }
 
     @Test
@@ -786,11 +904,22 @@ class ContractSerializationTest {
                     "bash",
                     TuiToolState.RUNNING,
                     "Bash",
+                    "stdout: hello",
                     true
                 ),
                 new TuiErrorBlock("block_error", "boom")
             ),
-            new StatusBarState("ses_01", "gpt-5.4", "running", "main"),
+            new StatusBarState(
+                "ses_01",
+                "gpt-5.4",
+                "running",
+                "main",
+                "ly-pi",
+                "leaf_01",
+                "1234/200000tok",
+                true
+            ),
+            "retrying attempt 2",
             List.of(new SessionFileView(Path.of("src/App.java"), Set.of(), Instant.parse("2026-06-01T12:00:00Z"), Map.of())),
             Optional.of(new PermissionPromptView("perm_toolu_01", "toolu_01", "Need approval", "allow_once", "allow_once", "cancel")),
             Optional.of(new DiffView("src/App.java", "diff://ses_01/src/App.java"))
@@ -808,13 +937,79 @@ class ContractSerializationTest {
         assertInstanceOf(TuiToolBlock.class, restored.blocks().get(2));
         assertInstanceOf(TuiErrorBlock.class, restored.blocks().get(3));
         TuiToolBlock tool = (TuiToolBlock) restored.blocks().get(2);
+        assertEquals("ly-pi", restored.statusBar().cwd());
+        assertEquals("leaf_01", restored.statusBar().branchLeafId());
+        assertEquals("1234/200000tok", restored.statusBar().budget());
+        assertTrue(restored.statusBar().hasInterruptibleTool());
         assertEquals("msg_01", tool.messageId());
         assertEquals(TuiToolState.RUNNING, tool.state());
+        assertEquals("stdout: hello", tool.details());
         assertTrue(tool.active());
+        assertEquals("retrying attempt 2", restored.runtimeLine());
         assertTrue(restored.files().getFirst().path().endsWith(Path.of("src/App.java")));
         assertEquals("perm_toolu_01", restored.permissionPrompt().orElseThrow().requestId());
         assertEquals("cancel", restored.permissionPrompt().orElseThrow().cancelOptionId());
         assertEquals("diff://ses_01/src/App.java", restored.diffView().orElseThrow().diffRef());
+    }
+
+    @Test
+    void statusBarStateReadsLegacyFourFieldJson() throws Exception {
+        StatusBarState restored = mapper.readValue(
+            """
+                {
+                  "sessionId": "ses_legacy",
+                  "model": "gpt-5.4",
+                  "mode": "execute",
+                  "permissionMode": "default_execute"
+                }
+                """,
+            StatusBarState.class
+        );
+
+        assertEquals("ses_legacy", restored.sessionId());
+        assertEquals("gpt-5.4", restored.model());
+        assertEquals("execute", restored.mode());
+        assertEquals("default_execute", restored.permissionMode());
+        assertEquals("", restored.cwd());
+        assertEquals("", restored.branchLeafId());
+        assertEquals("", restored.budget());
+        assertFalse(restored.hasInterruptibleTool());
+    }
+
+    @Test
+    void tuiViewModelReadsLegacyJsonWithoutRuntimeLineAndToolDetails() throws Exception {
+        TuiViewModel restored = mapper.readValue(
+            """
+                {
+                  "blocks": [
+                    {
+                      "type": "tool",
+                      "blockId": "block_tool",
+                      "messageId": "msg_01",
+                      "toolUseId": "toolu_01",
+                      "toolName": "bash",
+                      "state": "RUNNING",
+                      "label": "Bash",
+                      "active": true
+                    }
+                  ],
+                  "statusBar": {
+                    "sessionId": "ses_01",
+                    "model": "gpt-5.4",
+                    "mode": "running",
+                    "permissionMode": "main"
+                  },
+                  "files": [],
+                  "permissionPrompt": null,
+                  "diffView": null
+                }
+                """,
+            TuiViewModel.class
+        );
+
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, restored.blocks().getFirst());
+        assertEquals("", restored.runtimeLine());
+        assertEquals("", tool.details());
     }
 
     private <T extends ContentBlock> void assertContentBlockRoundTrip(
