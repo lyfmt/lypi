@@ -78,6 +78,7 @@ import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.transport.TransportAdapter;
+import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.skill.SkillIndex;
@@ -1044,6 +1045,30 @@ class LyPiRuntimeAutoConfigurationTest {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
             .run(context -> assertThat(context).hasSingleBean(JLineTuiTransportFactory.class));
+    }
+
+    @Test
+    void registersDefaultDiffViewProviderForTuiTransport() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .run(context -> {
+                assertThat(context).hasSingleBean(DiffViewProvider.class);
+                assertThat(context.getBean(DiffViewProvider.class).currentDiff(tempDir, 1024)).isEmpty();
+                assertThat(context).hasBean("jLineTuiTransportLauncher");
+            });
+    }
+
+    @Test
+    void keepsUserProvidedDiffViewProvider() {
+        DiffViewProvider provider = (cwd, maxPatchBytes) -> Optional.empty();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(DiffViewProvider.class, () -> provider)
+            .run(context -> {
+                assertThat(context).hasSingleBean(DiffViewProvider.class);
+                assertThat(context.getBean(DiffViewProvider.class)).isSameAs(provider);
+            });
     }
 
     @Test

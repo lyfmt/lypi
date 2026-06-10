@@ -32,6 +32,10 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.tui.DiffView;
+import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.GitDiffFileView;
+import cn.lypi.contracts.tui.GitDiffStatus;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.SlashCommandHandler;
@@ -120,6 +124,46 @@ class JLineTuiTransportTest {
         assertTrue(frame.contains("\033[?2026h\033[H\033[J"));
         assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
         assertTrue(frame.contains("> "));
+
+        transport.close();
+    }
+
+    @Test
+    void toolEndRefreshesDiffViewFromProvider() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingDiffProvider diffProvider = new RecordingDiffProvider(Optional.of(new DiffView(
+            "1 file changed",
+            List.of(new GitDiffFileView(Path.of("src/App.java"), GitDiffStatus.MODIFIED, "Modified", Map.of())),
+            "+new line",
+            false,
+            Map.of("snapshotHash", "sha256:1")
+        )));
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            diffProvider,
+            80,
+            8
+        );
+        io.output.setLength(0);
+
+        events.emit(new cn.lypi.contracts.event.ToolEndEvent(
+            "ses_1",
+            "toolu_1",
+            false,
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+
+        assertEquals(1, diffProvider.calls);
+        assertEquals(Path.of("."), diffProvider.cwd);
+        assertTrue(io.output.toString().contains("diff: 1 file changed"));
+        assertTrue(io.output.toString().contains("M src/App.java"));
+        assertTrue(io.output.toString().contains("+new line"));
 
         transport.close();
     }
@@ -462,6 +506,23 @@ class JLineTuiTransportTest {
         @Override
         public String lastOutput() {
             return output;
+        }
+    }
+
+    private static final class RecordingDiffProvider implements DiffViewProvider {
+        private final Optional<DiffView> view;
+        private int calls;
+        private Path cwd;
+
+        private RecordingDiffProvider(Optional<DiffView> view) {
+            this.view = view;
+        }
+
+        @Override
+        public Optional<DiffView> currentDiff(Path cwd, int maxPatchBytes) {
+            calls++;
+            this.cwd = cwd;
+            return view;
         }
     }
 

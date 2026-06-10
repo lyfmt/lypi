@@ -26,6 +26,7 @@ import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
+import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.TuiBlock;
@@ -112,6 +113,14 @@ public final class TuiEventReducer {
 
     public TuiViewModel view() {
         return state.view();
+    }
+
+    public void showDiff(DiffView diffView) {
+        state.diffView(diffView);
+    }
+
+    public void clearDiff() {
+        state.clearDiffView();
     }
 
     private void reduceMessageStart(MessageStartEvent event) {

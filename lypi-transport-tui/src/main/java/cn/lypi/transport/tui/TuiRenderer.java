@@ -86,6 +86,9 @@ final class TuiRenderer {
                 lines.addAll(wrap(prefix + optionLabel(option), width));
             }
         });
+        view.diffView().ifPresent(diff -> new DiffOverlay(diff)
+            .lines()
+            .forEach(line -> lines.addAll(wrap(line, width))));
         if (view.runtimeLine() != null && !view.runtimeLine().isBlank()) {
             lines.addAll(wrap("· " + view.runtimeLine(), width));
         }

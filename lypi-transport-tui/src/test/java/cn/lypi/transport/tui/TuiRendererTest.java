@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.tui.DiffView;
+import cn.lypi.contracts.tui.GitDiffFileView;
+import cn.lypi.contracts.tui.GitDiffStatus;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
@@ -17,6 +20,7 @@ import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -190,6 +194,32 @@ class TuiRendererTest {
         assertEquals("rule: bash:npm test", lines.get(1));
         assertEquals("> 允许一次", lines.get(2));
         assertEquals("  允许并记住", lines.get(3));
+    }
+
+    @Test
+    void diffViewIsRenderedInTranscriptArea() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(4);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.of(new DiffView(
+                "1 file changed",
+                List.of(new GitDiffFileView(Path.of("src/App.java"), GitDiffStatus.MODIFIED, "Modified", Map.of())),
+                "+new line",
+                false,
+                Map.of()
+            ))
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 6), "");
+
+        assertEquals("diff: 1 file changed", lines.get(0));
+        assertEquals("M src/App.java", lines.get(1));
+        assertEquals("", lines.get(2));
+        assertEquals("+new line", lines.get(3));
     }
 
     @Test

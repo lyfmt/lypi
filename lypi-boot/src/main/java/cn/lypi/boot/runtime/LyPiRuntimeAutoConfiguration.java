@@ -35,6 +35,7 @@ import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.transport.TransportAdapter;
+import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.resource.DefaultResourceRuntime;
@@ -54,6 +55,7 @@ import cn.lypi.security.DefaultPolicyEngine;
 import cn.lypi.session.ChildSessionService;
 import cn.lypi.session.ChildSessionView;
 import cn.lypi.session.DefaultSessionManagerFactory;
+import cn.lypi.session.GitWorkingTreeDiffQuery;
 import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.session.SessionTreeQuery;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
@@ -363,16 +365,28 @@ public class LyPiRuntimeAutoConfiguration {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) {
-        return (state, core, events, terminal, slashCommands) -> JLineTuiTransport.open(
+        return (state, core, events, terminal, diffViewProvider, slashCommands) -> JLineTuiTransport.open(
             state,
             core,
             events,
             terminal,
+            diffViewProvider,
             slashCommands,
             sessionManager,
             resourceRuntime,
             compactionRuntime
         );
+    }
+
+    /**
+     * 创建默认 Git working tree diff provider。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public DiffViewProvider diffViewProvider() {
+        return (cwd, maxPatchBytes) -> cwd == null
+            ? Optional.empty()
+            : new GitWorkingTreeDiffQuery(cwd).diffView(maxPatchBytes);
     }
 
     /**
@@ -382,9 +396,10 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnMissingBean(name = "jLineTuiTransportLauncher")
     public TransportLauncher jLineTuiTransportLauncher(
         JLineTuiTransportFactory factory,
+        DiffViewProvider diffViewProvider,
         ObjectProvider<SlashCommand> slashCommands
     ) {
-        return new JLineTuiTransportLauncher(factory, slashCommands.orderedStream().toList());
+        return new JLineTuiTransportLauncher(factory, diffViewProvider, slashCommands.orderedStream().toList());
     }
 
     /**
