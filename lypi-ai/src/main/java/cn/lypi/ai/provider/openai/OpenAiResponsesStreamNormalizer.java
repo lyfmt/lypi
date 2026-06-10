@@ -8,6 +8,7 @@ import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.model.ToolCallDelta;
+import cn.lypi.contracts.model.ProviderConversationState;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,9 +18,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-public final class OpenAiResponsesStreamNormalizer {
+public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormalizer {
     private final ObjectMapper objectMapper;
     private final Map<String, ToolCallAccumulator> toolCalls = new LinkedHashMap<>();
+    private String responseId = "";
+    private boolean responseCompleted;
 
     public OpenAiResponsesStreamNormalizer() {
         this(new ObjectMapper());
@@ -57,6 +60,19 @@ public final class OpenAiResponsesStreamNormalizer {
             case "error", "response.failed", "response.incomplete" -> error(event);
             default -> List.of();
         };
+    }
+
+    @Override
+    public Optional<ProviderConversationState> providerConversationState() {
+        if (!responseCompleted || responseId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(new ProviderConversationState(
+            "openai",
+            "responses",
+            Optional.of(responseId),
+            Map.of()
+        ));
     }
 
     private List<AssistantStreamEvent> start(JsonNode event) {
@@ -146,6 +162,11 @@ public final class OpenAiResponsesStreamNormalizer {
     }
 
     private List<AssistantStreamEvent> done(JsonNode event) {
+        String completedResponseId = event.path("response").path("id").asText();
+        if (!completedResponseId.isBlank()) {
+            responseId = completedResponseId;
+            responseCompleted = true;
+        }
         JsonNode usage = event.path("response").path("usage");
         if (usage.isMissingNode()) {
             return List.of(new AssistantDone(Optional.empty(), Optional.of("stop")));

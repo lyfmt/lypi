@@ -6,6 +6,7 @@ import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ThinkingContentBlock;
 import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.model.ProviderConversationState;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
@@ -62,6 +63,14 @@ public final class AssistantStreamAccumulator {
     }
 
     public AgentMessage toMessage(String fallbackMessageId, boolean aborted) {
+        return toMessage(fallbackMessageId, aborted, Optional.empty());
+    }
+
+    public AgentMessage toMessage(
+        String fallbackMessageId,
+        boolean aborted,
+        Optional<ProviderConversationState> providerConversationState
+    ) {
         List<ContentBlock> content = new ArrayList<>();
         if (!thinking.isEmpty()) {
             content.add(new ThinkingContentBlock(thinking.toString()));
@@ -76,6 +85,7 @@ public final class AssistantStreamAccumulator {
         if (content.isEmpty()) {
             content.add(new TextContentBlock(""));
         }
+        providerConversationState.ifPresent(state -> attachProviderConversationState(content, state));
 
         Optional<String> finalStopReason = aborted ? Optional.of("aborted") : stopReason;
         return messageFactory.assistantMessage(
@@ -85,6 +95,39 @@ public final class AssistantStreamAccumulator {
             usage,
             finalStopReason
         );
+    }
+
+    private void attachProviderConversationState(List<ContentBlock> content, ProviderConversationState state) {
+        if (content.isEmpty()) {
+            return;
+        }
+        ContentBlock first = content.getFirst();
+        Map<String, Object> metadata = new LinkedHashMap<>(first.metadata());
+        Map<String, Object> stateMetadata = new LinkedHashMap<>();
+        stateMetadata.put("provider", state.provider());
+        stateMetadata.put("style", state.style());
+        state.previousResponseId().ifPresent(id -> stateMetadata.put("previousResponseId", id));
+        metadata.put("providerConversationState", Collections.unmodifiableMap(stateMetadata));
+        content.set(0, withMetadata(first, Collections.unmodifiableMap(metadata)));
+    }
+
+    private ContentBlock withMetadata(ContentBlock block, Map<String, Object> metadata) {
+        return switch (block) {
+            case TextContentBlock text -> new TextContentBlock(text.text(), metadata);
+            case ThinkingContentBlock thinking -> new ThinkingContentBlock(thinking.text(), metadata);
+            case ToolCallContentBlock toolCall -> new ToolCallContentBlock(
+                toolCall.toolUseId(),
+                toolCall.toolName(),
+                toolCall.text(),
+                metadata
+            );
+            case cn.lypi.contracts.context.ErrorContentBlock error -> new cn.lypi.contracts.context.ErrorContentBlock(
+                error.errorId(),
+                error.text(),
+                metadata
+            );
+            default -> block;
+        };
     }
 
     public boolean hasToolCalls() {

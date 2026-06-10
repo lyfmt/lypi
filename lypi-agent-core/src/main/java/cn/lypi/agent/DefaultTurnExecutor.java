@@ -261,6 +261,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         final boolean[] assistantStarted = {false};
         final MessageKind[] startedKind = {MessageKind.TEXT};
         Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
+        ProviderConversationStateHolder providerConversationState = new ProviderConversationStateHolder();
         try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
                 if (event instanceof ProviderRetryNotice notice) {
@@ -342,6 +343,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     break;
                 }
             }
+            providerConversationState.value = stream.result().providerConversationState();
         } catch (RuntimeException failure) {
             pendingRetry.ifPresent(notice -> publishRetryEnd(sessionId, notice, false));
             accumulator.messageId()
@@ -353,7 +355,11 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         }
         pendingRetry.ifPresent(notice -> publishRetryEnd(request.sessionId(), notice, false));
 
-        AgentMessage message = accumulator.toMessage(ids.newMessageId(), request.abortSignal().aborted());
+        AgentMessage message = accumulator.toMessage(
+            ids.newMessageId(),
+            request.abortSignal().aborted(),
+            providerConversationState.value
+        );
         ensureAssistantMessageStart(sessionId, message.id(), message.kind(), assistantStarted, startedKind);
         return message;
     }
@@ -553,6 +559,10 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             return Map.of();
         }
         return Collections.unmodifiableMap(new LinkedHashMap<>(value));
+    }
+
+    private static final class ProviderConversationStateHolder {
+        private Optional<cn.lypi.contracts.model.ProviderConversationState> value = Optional.empty();
     }
 
     private MessageDeltaEvent assistantDelta(

@@ -17,8 +17,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 public final class OpenAiResponsesRequestBuilder {
     private final ObjectMapper objectMapper;
@@ -47,7 +49,9 @@ public final class OpenAiResponsesRequestBuilder {
         }
         request.options().maxOutputTokens().ifPresent(tokens -> body.put("max_output_tokens", tokens));
         request.options().temperature().ifPresent(temperature -> body.put("temperature", temperature));
-        body.set("input", input(request));
+        Optional<PreviousResponseState> previousResponseState = previousResponseState(request);
+        previousResponseState.ifPresent(state -> body.put("previous_response_id", state.previousResponseId()));
+        body.set("input", input(request, previousResponseState));
         if (!request.tools().isEmpty()) {
             body.set("tools", tools(request));
         }
@@ -69,12 +73,29 @@ public final class OpenAiResponsesRequestBuilder {
         return event;
     }
 
-    private ArrayNode input(LypiModelRequest request) {
+    private ArrayNode input(LypiModelRequest request, Optional<PreviousResponseState> previousResponseState) {
         ArrayNode input = objectMapper.createArrayNode();
-        for (LypiMessage message : request.messages()) {
+        List<LypiMessage> messages = request.messages();
+        int startIndex = previousResponseState
+            .flatMap(state -> indexAfterMessage(messages, state.messageId()))
+            .orElse(0);
+        for (LypiMessage message : messages.subList(startIndex, messages.size())) {
             input.add(message(message));
         }
         return input;
+    }
+
+    private Optional<Integer> indexAfterMessage(List<LypiMessage> messages, String messageId) {
+        if (messageId.isBlank()) {
+            return Optional.empty();
+        }
+        for (int i = 0; i < messages.size(); i++) {
+            Object currentMessageId = messages.get(i).metadata().get("messageId");
+            if (messageId.equals(String.valueOf(currentMessageId))) {
+                return Optional.of(i + 1);
+            }
+        }
+        return Optional.empty();
     }
 
     private ObjectNode message(LypiMessage message) {
@@ -137,5 +158,35 @@ public final class OpenAiResponsesRequestBuilder {
         ObjectNode reasoning = objectMapper.createObjectNode();
         reasoning.put("effort", effort.toString());
         return java.util.Optional.of(reasoning);
+    }
+
+    private Optional<PreviousResponseState> previousResponseState(LypiModelRequest request) {
+        Object state = request.metadata().get("providerConversationState");
+        if (!(state instanceof Map<?, ?> stateMap)) {
+            return Optional.empty();
+        }
+        if (!"openai".equals(String.valueOf(stateMap.get("provider")))) {
+            return Optional.empty();
+        }
+        if (!"responses".equals(String.valueOf(stateMap.get("style")))) {
+            return Optional.empty();
+        }
+        String previousResponseId = String.valueOf(stateMap.get("previousResponseId"));
+        if (previousResponseId.isBlank() || "null".equals(previousResponseId)) {
+            return Optional.empty();
+        }
+        String messageId = String.valueOf(stateMap.get("messageId"));
+        Optional<Integer> startIndex = indexAfterMessage(request.messages(), messageId);
+        if (startIndex.isEmpty() || hasToolResult(request.messages().subList(startIndex.get(), request.messages().size()))) {
+            return Optional.empty();
+        }
+        return Optional.of(new PreviousResponseState(previousResponseId, messageId));
+    }
+
+    private boolean hasToolResult(List<LypiMessage> messages) {
+        return messages.stream().anyMatch(message -> message.role() == LypiRole.TOOL_RESULT);
+    }
+
+    private record PreviousResponseState(String previousResponseId, String messageId) {
     }
 }

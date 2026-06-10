@@ -12,6 +12,7 @@ import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.context.ContextSnapshot;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -36,11 +37,39 @@ public final class ContextSnapshotRequestFactory {
             snapshot.messages().stream().map(ContextSnapshotRequestFactory::message).toList(),
             tools,
             LypiGenerationOptions.defaults(),
-            Map.of(
-                "mode", snapshot.mode().name(),
-                "permissionMode", snapshot.permissionMode().name()
-            )
+            metadata(snapshot)
         );
+    }
+
+    private static Map<String, Object> metadata(ContextSnapshot snapshot) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("mode", snapshot.mode().name());
+        metadata.put("permissionMode", snapshot.permissionMode().name());
+        providerConversationState(snapshot).ifPresent(state -> metadata.put("providerConversationState", state));
+        return metadata;
+    }
+
+    private static java.util.Optional<Map<String, Object>> providerConversationState(ContextSnapshot snapshot) {
+        for (int i = snapshot.messages().size() - 1; i >= 0; i--) {
+            AgentMessage message = snapshot.messages().get(i);
+            if (message.role() != MessageRole.ASSISTANT) {
+                continue;
+            }
+            for (ContentBlock block : message.content()) {
+                Object state = block.metadata().get("providerConversationState");
+                if (state instanceof Map<?, ?> stateMap) {
+                    Map<String, Object> values = new LinkedHashMap<>();
+                    stateMap.forEach((key, value) -> {
+                        if (key != null) {
+                            values.put(key.toString(), value);
+                        }
+                    });
+                    values.putIfAbsent("messageId", message.id());
+                    return java.util.Optional.of(Map.copyOf(values));
+                }
+            }
+        }
+        return java.util.Optional.empty();
     }
 
     private static LypiMessage message(AgentMessage message) {

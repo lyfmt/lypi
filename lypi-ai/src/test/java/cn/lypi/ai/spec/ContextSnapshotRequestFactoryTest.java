@@ -73,6 +73,31 @@ class ContextSnapshotRequestFactoryTest {
     }
 
     @Test
+    void carriesProviderConversationStateFromAssistantBlockMetadata() {
+        ContextSnapshot snapshot = context(List.of(message(
+            "msg-assistant",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(new TextContentBlock("answer", Map.of(
+                "providerConversationState", Map.of(
+                    "provider", "openai",
+                    "style", "responses",
+                    "previousResponseId", "resp-123"
+                )
+            )))
+        )));
+
+        LypiModelRequest request = ContextSnapshotRequestFactory.from(snapshot, "req-state", List.of());
+
+        assertThat(request.metadata()).containsEntry("providerConversationState", Map.of(
+            "provider", "openai",
+            "style", "responses",
+            "previousResponseId", "resp-123",
+            "messageId", "msg-assistant"
+        ));
+    }
+
+    @Test
     void preservesToolResultsAndAttachments() {
         ContextSnapshot snapshot = context(List.of(message(
             "msg-tool",
