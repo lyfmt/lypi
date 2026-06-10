@@ -72,6 +72,20 @@ class OpenAiResponsesStreamNormalizerTest {
     }
 
     @Test
+    void normalizesCompletedReasoningSummaryWhenNoDeltaArrived() {
+        OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = normalizer.normalize("""
+            {"type":"response.completed","response":{"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"reasoned"}]}]}}
+            """);
+
+        assertThat(events).containsExactly(
+            new ThinkingDelta("reasoned"),
+            new AssistantDone(Optional.empty(), Optional.of("stop"))
+        );
+    }
+
+    @Test
     void doesNotExposeConversationStateBeforeSuccessfulCompletion() {
         OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
 

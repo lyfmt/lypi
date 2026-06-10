@@ -22,6 +22,7 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
     private final ObjectMapper objectMapper;
     private final Map<String, ToolCallAccumulator> toolCalls = new LinkedHashMap<>();
     private String responseId = "";
+    private boolean thinkingEmitted;
     private boolean responseCompleted;
 
     public OpenAiResponsesStreamNormalizer() {
@@ -85,6 +86,7 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
     }
 
     private List<AssistantStreamEvent> thinkingDelta(JsonNode event) {
+        thinkingEmitted = true;
         return List.of(new ThinkingDelta(event.path("delta").asText()));
     }
 
@@ -169,7 +171,7 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
         }
         JsonNode usage = event.path("response").path("usage");
         if (usage.isMissingNode()) {
-            return List.of(new AssistantDone(Optional.empty(), Optional.of("stop")));
+            return doneEvents(event, new AssistantDone(Optional.empty(), Optional.of("stop")));
         }
         TokenUsage tokenUsage = new TokenUsage(
             usage.path("input_tokens").asLong(),
@@ -177,7 +179,46 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
             usage.path("input_tokens_details").path("cached_tokens").asLong(),
             usage.path("output_tokens_details").path("reasoning_tokens").asLong()
         );
-        return List.of(new AssistantDone(Optional.of(tokenUsage), Optional.of("stop")));
+        return doneEvents(event, new AssistantDone(Optional.of(tokenUsage), Optional.of("stop")));
+    }
+
+    private List<AssistantStreamEvent> doneEvents(JsonNode event, AssistantDone done) {
+        Optional<String> summary = completedReasoningSummary(event);
+        if (summary.isEmpty()) {
+            return List.of(done);
+        }
+        thinkingEmitted = true;
+        return List.of(new ThinkingDelta(summary.get()), done);
+    }
+
+    private Optional<String> completedReasoningSummary(JsonNode event) {
+        if (thinkingEmitted) {
+            return Optional.empty();
+        }
+        JsonNode output = event.path("response").path("output");
+        if (!output.isArray()) {
+            return Optional.empty();
+        }
+        List<String> summaries = new ArrayList<>();
+        for (JsonNode item : output) {
+            if (!"reasoning".equals(item.path("type").asText())) {
+                continue;
+            }
+            JsonNode summary = item.path("summary");
+            if (!summary.isArray()) {
+                continue;
+            }
+            for (JsonNode summaryItem : summary) {
+                String text = summaryItem.path("text").asText();
+                if (!text.isBlank()) {
+                    summaries.add(text);
+                }
+            }
+        }
+        if (summaries.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(String.join("\n\n", summaries));
     }
 
     private List<AssistantStreamEvent> error(JsonNode event) {
