@@ -22,6 +22,8 @@ final class TuiInputLoop {
     private boolean slashOverlayClosed;
     private boolean toolRunning;
     private boolean exitRequested;
+    private String permissionRequestId = "";
+    private String selectedPermissionOptionId = "";
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
@@ -77,11 +79,27 @@ final class TuiInputLoop {
     }
 
     void acceptKey(TerminalKey key) {
-        Optional<PermissionPromptView> prompt = viewSupplier.get().permissionPrompt();
-        if (prompt.isPresent() && key == TerminalKey.ENTER) {
+        Optional<PermissionPromptView> prompt = currentView().permissionPrompt();
+        if (prompt.isPresent()) {
             PermissionPromptView currentPrompt = prompt.orElseThrow();
-            submitPermissionOption(currentPrompt, currentPrompt.defaultOptionId());
-            return;
+            if (key == TerminalKey.UP) {
+                movePermissionSelection(currentPrompt, -1);
+                render();
+                return;
+            }
+            if (key == TerminalKey.DOWN) {
+                movePermissionSelection(currentPrompt, 1);
+                render();
+                return;
+            }
+            if (key == TerminalKey.ENTER) {
+                submitPermissionOption(currentPrompt, currentPrompt.selectedOptionId());
+                return;
+            }
+            if (key == TerminalKey.ESC || key == TerminalKey.CTRL_C) {
+                submitPermissionOption(currentPrompt, currentPrompt.cancelOptionId());
+                return;
+            }
         }
         TerminalInputDecision decision = inputPolicy.decide(key, inputContext(prompt));
         if (decision.action() == TerminalInputAction.SUBMIT_PERMISSION_OPTION) {
@@ -210,13 +228,82 @@ final class TuiInputLoop {
 
     private void render() {
         frameSink.render(renderer.render(
-            viewSupplier.get(),
+            currentView(),
             screen,
             layout,
             editor.text(),
             editor.cursor(),
             slashOverlayLines()
         ));
+    }
+
+    private TuiViewModel currentView() {
+        TuiViewModel view = viewSupplier.get();
+        Optional<PermissionPromptView> prompt = view.permissionPrompt();
+        syncPermissionSelection(prompt);
+        return new TuiViewModel(
+            view.blocks(),
+            view.statusBar(),
+            view.runtimeLine(),
+            view.files(),
+            prompt.map(this::withSelectedPermissionOption),
+            view.diffView()
+        );
+    }
+
+    private void syncPermissionSelection(Optional<PermissionPromptView> prompt) {
+        if (prompt.isEmpty()) {
+            permissionRequestId = "";
+            selectedPermissionOptionId = "";
+            return;
+        }
+        PermissionPromptView currentPrompt = prompt.orElseThrow();
+        if (!currentPrompt.requestId().equals(permissionRequestId)) {
+            permissionRequestId = currentPrompt.requestId();
+            selectedPermissionOptionId = currentPrompt.selectedOptionId();
+            return;
+        }
+        if (!hasOptionId(currentPrompt, selectedPermissionOptionId)) {
+            selectedPermissionOptionId = currentPrompt.selectedOptionId();
+        }
+    }
+
+    private PermissionPromptView withSelectedPermissionOption(PermissionPromptView prompt) {
+        return new PermissionPromptView(
+            prompt.requestId(),
+            prompt.toolUseId(),
+            prompt.reason(),
+            prompt.rule(),
+            prompt.defaultOptionId(),
+            prompt.cancelOptionId(),
+            prompt.options(),
+            selectedPermissionOptionId
+        );
+    }
+
+    private void movePermissionSelection(PermissionPromptView prompt, int delta) {
+        if (prompt.options().isEmpty()) {
+            return;
+        }
+        int currentIndex = selectedOptionIndex(prompt);
+        int nextIndex = Math.max(0, Math.min(prompt.options().size() - 1, currentIndex + delta));
+        selectedPermissionOptionId = prompt.options().get(nextIndex).optionId();
+    }
+
+    private int selectedOptionIndex(PermissionPromptView prompt) {
+        for (int index = 0; index < prompt.options().size(); index++) {
+            if (prompt.options().get(index).optionId().equals(selectedPermissionOptionId)) {
+                return index;
+            }
+        }
+        return 0;
+    }
+
+    private boolean hasOptionId(PermissionPromptView prompt, String optionId) {
+        if (prompt.options().isEmpty()) {
+            return optionId != null && !optionId.isBlank();
+        }
+        return prompt.options().stream().anyMatch(option -> option.optionId().equals(optionId));
     }
 
     private boolean slashOverlayOpen() {

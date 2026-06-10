@@ -189,6 +189,9 @@ class TuiContractEndToEndTest {
         assertEquals("bash:npm test", prompt.rule());
         assertEquals("remember", prompt.defaultOptionId());
         assertEquals("escape_cancel", prompt.cancelOptionId());
+        assertEquals(List.of("allow_once", "remember", "escape_cancel"),
+            prompt.options().stream().map(PermissionOption::optionId).toList());
+        assertEquals("remember", prompt.selectedOptionId());
 
         PermissionDecisionEvent decisionEvent = new PermissionDecisionEvent(
             "ses_1",

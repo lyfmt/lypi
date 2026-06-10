@@ -486,7 +486,9 @@ public final class TuiEventReducer {
             event.message(),
             rule,
             event.defaultOptionId(),
-            event.cancelOptionId()
+            event.cancelOptionId(),
+            event.options(),
+            event.defaultOptionId()
         ));
     }
 
