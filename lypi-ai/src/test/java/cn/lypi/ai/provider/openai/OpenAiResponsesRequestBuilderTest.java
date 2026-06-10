@@ -147,6 +147,26 @@ class OpenAiResponsesRequestBuilderTest {
     }
 
     @Test
+    void includesPromptCacheKeyFromRequestMetadata() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-prompt-cache",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(new LypiMessage(LypiRole.USER, List.of(new LypiTextBlock("hello", Map.of())), Map.of())),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of("promptCacheKey", "ses_main")
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
+        JsonNode envelope = new OpenAiResponsesRequestBuilder().buildWebSocketCreateEvent(request, config());
+
+        assertThat(body.get("prompt_cache_key").asText()).isEqualTo("ses_main");
+        assertThat(envelope.at("/response/prompt_cache_key").asText()).isEqualTo("ses_main");
+    }
+
+    @Test
     void usesPreviousResponseIdAndOnlySendsMessagesAfterCachedAssistantPrefix() {
         LypiModelRequest request = new LypiModelRequest(
             "req-cache",

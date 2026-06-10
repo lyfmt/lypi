@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 public final class OpenAiChatCompletionsRequestBuilder {
     private final ObjectMapper objectMapper;
@@ -44,6 +45,7 @@ public final class OpenAiChatCompletionsRequestBuilder {
         body.put("stream", true);
         request.options().maxOutputTokens().ifPresent(tokens -> body.put("max_tokens", tokens));
         request.options().temperature().ifPresent(temperature -> body.put("temperature", temperature));
+        promptCacheKey(request).ifPresent(key -> body.put("prompt_cache_key", key));
         body.set("messages", messages(request));
         if (!request.tools().isEmpty()) {
             body.set("tools", tools(request));
@@ -170,5 +172,14 @@ public final class OpenAiChatCompletionsRequestBuilder {
         Map<String, Object> mapped = OpenAiCompatibleThinkingParameterMapper.map(level);
         Object effort = mapped.get("reasoning_effort");
         return effort == null ? java.util.Optional.empty() : java.util.Optional.of(effort.toString());
+    }
+
+    private Optional<String> promptCacheKey(LypiModelRequest request) {
+        Object key = request.metadata().get("promptCacheKey");
+        if (key == null) {
+            return Optional.empty();
+        }
+        String value = String.valueOf(key);
+        return value.isBlank() ? Optional.empty() : Optional.of(value);
     }
 }

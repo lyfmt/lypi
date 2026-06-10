@@ -105,6 +105,8 @@ class DefaultTurnExecutorTest {
         assertThat(session.messages()).extracting(AgentMessage::id)
             .containsExactly("msg-user", "msg-assistant");
         assertThat(provider.contexts).hasSize(1);
+        assertThat(provider.streamOptions).extracting(cn.lypi.contracts.runtime.AiStreamOptions::sessionId)
+            .containsExactly("session-1");
         assertThat(eventBus.events).extracting(AgentEvent::getClass)
             .containsExactly(
                 TurnStartEvent.class,

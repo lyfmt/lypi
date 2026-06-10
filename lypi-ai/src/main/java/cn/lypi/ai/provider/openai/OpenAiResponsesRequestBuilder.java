@@ -49,6 +49,7 @@ public final class OpenAiResponsesRequestBuilder {
         }
         request.options().maxOutputTokens().ifPresent(tokens -> body.put("max_output_tokens", tokens));
         request.options().temperature().ifPresent(temperature -> body.put("temperature", temperature));
+        promptCacheKey(request).ifPresent(key -> body.put("prompt_cache_key", key));
         Optional<PreviousResponseState> previousResponseState = previousResponseState(request);
         previousResponseState.ifPresent(state -> body.put("previous_response_id", state.previousResponseId()));
         body.set("input", input(request, previousResponseState));
@@ -194,6 +195,15 @@ public final class OpenAiResponsesRequestBuilder {
         ObjectNode reasoning = objectMapper.createObjectNode();
         reasoning.put("effort", effort.toString());
         return java.util.Optional.of(reasoning);
+    }
+
+    private Optional<String> promptCacheKey(LypiModelRequest request) {
+        Object key = request.metadata().get("promptCacheKey");
+        if (key == null) {
+            return Optional.empty();
+        }
+        String value = String.valueOf(key);
+        return value.isBlank() ? Optional.empty() : Optional.of(value);
     }
 
     private Optional<PreviousResponseState> previousResponseState(LypiModelRequest request) {

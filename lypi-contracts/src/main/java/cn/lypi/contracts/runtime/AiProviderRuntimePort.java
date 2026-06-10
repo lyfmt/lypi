@@ -16,12 +16,35 @@ public interface AiProviderRuntimePort {
     AssistantEventStream stream(ContextSnapshot context, AbortSignal signal);
 
     /**
+     * 发起一次带运行选项的模型流式调用。
+     *
+     * NOTE: 默认实现保持旧 provider 兼容；支持会话级调用选项的 provider 应重写该方法。
+     */
+    default AssistantEventStream stream(ContextSnapshot context, AiStreamOptions options, AbortSignal signal) {
+        return stream(context, signal);
+    }
+
+    /**
      * 发起一次带工具注册表快照的模型流式调用。
      *
      * NOTE: 默认实现保持旧 provider 兼容；支持工具调用的 provider 应重写该方法并把工具定义传给模型。
      */
     default AssistantEventStream stream(ContextSnapshot context, ToolRegistrySnapshot tools, AbortSignal signal) {
         return stream(context, signal);
+    }
+
+    /**
+     * 发起一次带工具注册表快照和运行选项的模型流式调用。
+     *
+     * NOTE: 默认实现保持旧 provider 兼容；支持工具调用和会话级选项的 provider 应重写该方法。
+     */
+    default AssistantEventStream stream(
+        ContextSnapshot context,
+        ToolRegistrySnapshot tools,
+        AiStreamOptions options,
+        AbortSignal signal
+    ) {
+        return stream(context, tools, signal);
     }
 
     /**

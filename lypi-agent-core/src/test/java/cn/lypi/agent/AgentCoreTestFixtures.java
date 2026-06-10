@@ -573,6 +573,7 @@ final class AgentCoreTestFixtures {
         private final List<RuntimeException> failures = new ArrayList<>();
         final List<ContextSnapshot> contexts = new ArrayList<>();
         final List<ToolRegistrySnapshot> toolSnapshots = new ArrayList<>();
+        final List<cn.lypi.contracts.runtime.AiStreamOptions> streamOptions = new ArrayList<>();
         final List<AbortSignal> abortSignals = new ArrayList<>();
 
         void enqueue(List<AssistantStreamEvent> events) {
@@ -597,13 +598,24 @@ final class AgentCoreTestFixtures {
 
         @Override
         public AssistantEventStream stream(ContextSnapshot context, AbortSignal signal) {
-            return stream(context, null, signal);
+            return stream(context, AiProviderRuntimePort.emptyTools(), signal);
         }
 
         @Override
         public AssistantEventStream stream(ContextSnapshot context, ToolRegistrySnapshot tools, AbortSignal signal) {
+            return stream(context, tools, cn.lypi.contracts.runtime.AiStreamOptions.empty(), signal);
+        }
+
+        @Override
+        public AssistantEventStream stream(
+            ContextSnapshot context,
+            ToolRegistrySnapshot tools,
+            cn.lypi.contracts.runtime.AiStreamOptions options,
+            AbortSignal signal
+        ) {
             contexts.add(context);
             toolSnapshots.add(tools);
+            streamOptions.add(options);
             abortSignals.add(signal);
             if (!failures.isEmpty()) {
                 throw failures.removeFirst();
