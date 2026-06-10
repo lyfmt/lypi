@@ -29,19 +29,24 @@ import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ProviderRetryNotice;
+import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
 import cn.lypi.contracts.security.PermissionResponse;
@@ -204,6 +209,30 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"parentSessionId\":\"ses_parent\""));
         assertTrue(json.contains("\"parentSpawnEntryId\":\"entry_spawn\""));
         assertTrue(json.contains("\"depth\":2"));
+    }
+
+    @Test
+    void sessionStateEventRoundTripKeepsRuntimeProjectionFields() throws Exception {
+        AgentEvent event = new SessionStateEvent(
+            "ses_1",
+            "entry_1",
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.PLAN,
+            PermissionMode.PLAN,
+            Instant.parse("2026-06-11T00:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"session_state\""));
+        SessionStateEvent state = assertInstanceOf(SessionStateEvent.class, restored);
+        assertEquals("entry_1", state.leafId());
+        assertEquals(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH), state.model());
+        assertEquals(ThinkingLevel.HIGH, state.thinkingLevel());
+        assertEquals(AgentMode.PLAN, state.agentMode());
+        assertEquals(PermissionMode.PLAN, state.permissionMode());
     }
 
     @Test

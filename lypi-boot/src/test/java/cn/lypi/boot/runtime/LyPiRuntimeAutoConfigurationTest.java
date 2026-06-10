@@ -64,6 +64,7 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxMessage;
@@ -449,6 +450,50 @@ class LyPiRuntimeAutoConfigurationTest {
 
                 assertThat(state.sessionId()).isEqualTo("default");
                 assertThat(tempDir.resolve(".lypi/sessions/default.jsonl")).exists();
+            });
+    }
+
+    @Test
+    void appEntryLaunchesTuiWithSessionTreeProjectedRuntimeState() {
+        RecordingCore core = new RecordingCore();
+        RecordingTransportLauncher launcher = new RecordingTransportLauncher("tui");
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.thinking-level=medium",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.transport=tui"
+            )
+            .withBean(AgentCorePort.class, () -> core)
+            .withBean(TransportLauncher.class, () -> launcher)
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+                sessionManager.openOrCreate("session-tui-tree");
+                sessionManager.append(new ThinkingChangeEntry(
+                    "thinking-high",
+                    null,
+                    ThinkingLevel.HIGH,
+                    "/thinking high",
+                    Instant.parse("2026-06-11T00:00:00Z")
+                ));
+
+                AppEntry appEntry = context.getBean(AppEntry.class);
+                appEntry.start(new BootstrapRequest(
+                    tempDir,
+                    List.of(),
+                    Optional.of("session-tui-tree"),
+                    Optional.empty()
+                ));
+
+                assertThat(launcher.state.get()).isNotNull();
+                assertThat(launcher.state.get().thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
+                assertThat(launcher.state.get().model())
+                    .isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH));
+                assertThat(launcher.state.get().currentBranchLeafId()).isEqualTo("thinking-high");
             });
     }
 

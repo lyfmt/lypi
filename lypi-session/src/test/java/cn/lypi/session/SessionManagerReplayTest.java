@@ -75,7 +75,7 @@ class SessionManagerReplayTest {
     }
 
     @Test
-    void newSessionPersistsConfiguredInitialStateForStableReplay() {
+    void reopenedSessionUsesCurrentConfiguredBaselineWhenBranchHasNoOverrides() {
         SessionManager firstManager = new SessionManagerImpl(
             tempDir,
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM),
@@ -96,14 +96,14 @@ class SessionManagerReplayTest {
 
         assertThat(reopened.leafId()).isEqualTo(firstHandle.leafId());
         SessionContext context = reopenedWithDifferentDefaults.context(reopened.leafId());
-        assertThat(context.model()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
-        assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
-        assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(context.model()).isEqualTo(new ModelSelection("anthropic", "claude-sonnet", ThinkingLevel.HIGH));
+        assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
+        assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.PLAN);
     }
 
     @Test
-    void legacySessionWithoutInitialStateUsesStableLegacyDefaults() {
+    void legacySessionWithoutInitialStateUsesCurrentConfiguredBaseline() {
         JsonlSessionStore store = new JsonlSessionStore(tempDir);
         store.create(new SessionHeader("session", 1, "ses_legacy", tempDir, Optional.empty(), NOW));
         SessionManager manager = new SessionManagerImpl(
@@ -117,10 +117,10 @@ class SessionManagerReplayTest {
 
         SessionContext context = manager.context(null);
 
-        assertThat(context.model()).isEqualTo(new ModelSelection("default", "default", ThinkingLevel.MEDIUM));
+        assertThat(context.model()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
-        assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.PLAN);
     }
 
     @Test
@@ -228,6 +228,31 @@ class SessionManagerReplayTest {
             .containsExactly("msg-root", "msg-right");
         assertThat(manager.branch("left")).extracting(entry -> entry.id()).containsExactly("root", "left");
         assertThat(manager.branch("right")).extracting(entry -> entry.id()).containsExactly("root", "right");
+    }
+
+    @Test
+    void branchScopedConfigChangesOnlyApplyOnCurrentBranchPath() {
+        SessionManager manager = new SessionManagerImpl(
+            tempDir,
+            new ModelSelection("openai", "gpt-baseline", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        );
+        manager.openOrCreate("ses_main");
+        manager.append(new MessageEntry("root", null, textMessage("msg-root", "root"), NOW));
+        manager.append(new ThinkingChangeEntry("left-thinking", "root", ThinkingLevel.HIGH, "left", NOW));
+        manager.append(new MessageEntry("left", "left-thinking", textMessage("msg-left", "left"), NOW));
+        manager.switchLeaf("root");
+        manager.append(new MessageEntry("right", "root", textMessage("msg-right", "right"), NOW));
+
+        SessionContext left = manager.context("left");
+        SessionContext right = manager.context("right");
+
+        assertThat(left.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
+        assertThat(left.model()).isEqualTo(new ModelSelection("openai", "gpt-baseline", ThinkingLevel.HIGH));
+        assertThat(right.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
+        assertThat(right.model()).isEqualTo(new ModelSelection("openai", "gpt-baseline", ThinkingLevel.MEDIUM));
     }
 
     @Test

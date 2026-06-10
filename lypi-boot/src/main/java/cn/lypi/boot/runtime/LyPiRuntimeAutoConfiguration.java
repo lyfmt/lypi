@@ -346,6 +346,7 @@ public class LyPiRuntimeAutoConfiguration {
         AgentCorePort agentCore,
         EventBus eventBus,
         LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
         ObjectProvider<TransportLauncher> transportLaunchers
     ) {
         return new DefaultAppEntry(
@@ -353,6 +354,7 @@ public class LyPiRuntimeAutoConfiguration {
             agentCore,
             eventBus,
             properties,
+            sessionManager,
             List.copyOf(transportLaunchers.orderedStream().toList())
         );
     }

@@ -12,6 +12,8 @@ import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.SessionStateEvent;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.time.Instant;
@@ -72,10 +74,14 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         if (slashCommandRouter != null) {
             SlashCommandResult result = slashCommandRouter.route(routedInput);
             result.message().ifPresent(this::publishSlashCommandError);
-            result.notice().ifPresent(this::publishSlashCommandNotice);
             if (result.consumed()) {
+                if (result.stateChanged() && slashCommandRouter != null) {
+                    publishSessionState();
+                }
+                result.notice().ifPresent(this::publishSlashCommandNotice);
                 return;
             }
+            result.notice().ifPresent(this::publishSlashCommandNotice);
             if (result.prompt().isPresent()) {
                 routedInput = result.prompt().orElseThrow();
             }
@@ -102,6 +108,18 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
 
     private void publishSlashCommandNotice(String message) {
         publishSlashOutput("slash_command", message);
+    }
+
+    private void publishSessionState() {
+        slashCommandRouter.sessionContext().ifPresent(context -> events.publish(new SessionStateEvent(
+            sessionId,
+            slashCommandRouter.currentLeafIdForState().orElse(""),
+            context.model(),
+            context.thinkingLevel(),
+            context.mode(),
+            context.permissionMode(),
+            Instant.now()
+        )));
     }
 
     @Override

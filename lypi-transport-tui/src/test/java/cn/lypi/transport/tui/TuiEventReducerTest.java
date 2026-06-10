@@ -24,6 +24,11 @@ import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.RetryEndEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.SessionStartEvent;
+import cn.lypi.contracts.event.SessionStateEvent;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
@@ -382,6 +387,26 @@ class TuiEventReducerTest {
 
         assertEquals("EXECUTE", reducer.view().statusBar().mode());
         assertFalse(reducer.view().statusBar().hasInterruptibleTool());
+    }
+
+    @Test
+    void sessionStateEventRefreshesStatusBarFromCurrentTreeProjection() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+
+        reducer.reduce(new SessionStateEvent(
+            "ses_1",
+            "leaf_2",
+            new ModelSelection("anthropic", "claude-sonnet", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.PLAN,
+            PermissionMode.PLAN,
+            NOW
+        ));
+
+        assertEquals("claude-sonnet", reducer.view().statusBar().model());
+        assertEquals("PLAN", reducer.view().statusBar().mode());
+        assertEquals("PLAN", reducer.view().statusBar().permissionMode());
+        assertEquals("leaf_2", reducer.view().statusBar().branchLeafId());
     }
 
     @Test

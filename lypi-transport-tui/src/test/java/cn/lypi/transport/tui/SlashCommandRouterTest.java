@@ -52,6 +52,7 @@ class SlashCommandRouterTest {
         assertTrue(result.matched());
         assertTrue(result.consumed());
         assertTrue(result.prompt().isEmpty());
+        assertEquals("thinking: HIGH", result.notice().orElseThrow());
         ThinkingChangeEntry entry = assertInstanceOf(ThinkingChangeEntry.class, session.entries.getFirst());
         assertEquals("root", entry.parentId());
         assertEquals(ThinkingLevel.HIGH, entry.thinkingLevel());

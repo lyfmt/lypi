@@ -17,6 +17,7 @@ import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.RetryEndEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.SessionStartEvent;
+import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
@@ -104,6 +105,7 @@ public final class TuiEventReducer {
             case CompactEndEvent ignored -> state.compactEnded();
             case InterruptEvent interrupt -> state.interrupted(interrupt.reason());
             case SessionStartEvent start -> state.sessionStarted(start.sessionId());
+            case SessionStateEvent sessionState -> state.sessionStateChanged(sessionState);
             default -> {
                 return view();
             }
