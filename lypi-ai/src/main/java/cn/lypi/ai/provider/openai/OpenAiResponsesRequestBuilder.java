@@ -49,8 +49,11 @@ public final class OpenAiResponsesRequestBuilder {
         }
         request.options().maxOutputTokens().ifPresent(tokens -> body.put("max_output_tokens", tokens));
         request.options().temperature().ifPresent(temperature -> body.put("temperature", temperature));
-        promptCacheKey(request).ifPresent(key -> body.put("prompt_cache_key", key));
-        Optional<PreviousResponseState> previousResponseState = previousResponseState(request);
+        Optional<String> promptCacheKey = promptCacheKey(request);
+        promptCacheKey.ifPresent(key -> body.put("prompt_cache_key", key));
+        Optional<PreviousResponseState> previousResponseState = promptCacheKey.isPresent()
+            ? Optional.empty()
+            : previousResponseState(request);
         previousResponseState.ifPresent(state -> body.put("previous_response_id", state.previousResponseId()));
         body.set("input", input(request, previousResponseState));
         if (!request.tools().isEmpty()) {

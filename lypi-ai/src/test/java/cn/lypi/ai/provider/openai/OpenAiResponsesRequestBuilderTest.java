@@ -216,6 +216,58 @@ class OpenAiResponsesRequestBuilderTest {
     }
 
     @Test
+    void keepsFullInputWhenPromptCacheKeyIsPresentEvenWithPreviousResponseState() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-prompt-cache-with-state",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "You are concise.",
+            List.of(
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("first", Map.of())),
+                    Map.of("messageId", "msg-user-1")
+                ),
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiTextBlock("answer", Map.of(
+                        "providerConversationState", Map.of(
+                            "provider", "openai",
+                            "style", "responses",
+                            "previousResponseId", "resp-123"
+                        )
+                    ))),
+                    Map.of("messageId", "msg-assistant-1")
+                ),
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("follow up", Map.of())),
+                    Map.of("messageId", "msg-user-2")
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of(
+                "promptCacheKey", "ses_main",
+                "providerConversationState", Map.of(
+                    "provider", "openai",
+                    "style", "responses",
+                    "previousResponseId", "resp-123",
+                    "messageId", "msg-assistant-1"
+                )
+            )
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
+
+        assertThat(body.get("previous_response_id")).isNull();
+        assertThat(body.get("input")).hasSize(3);
+        assertThat(body.at("/input/0/content/0/text").asText()).isEqualTo("first");
+        assertThat(body.at("/input/2/content/0/text").asText()).isEqualTo("follow up");
+        assertThat(body.get("prompt_cache_key").asText()).isEqualTo("ses_main");
+    }
+
+    @Test
     void keepsFullInputWithoutPreviousResponseIdWhenToolResultsFollowCachedAssistant() {
         LypiModelRequest request = new LypiModelRequest(
             "req-tool-cache",
