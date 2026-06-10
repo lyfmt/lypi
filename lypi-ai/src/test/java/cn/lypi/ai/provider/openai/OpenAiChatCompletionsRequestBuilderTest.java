@@ -9,6 +9,7 @@ import cn.lypi.ai.spec.LypiMessage;
 import cn.lypi.ai.spec.LypiModelRequest;
 import cn.lypi.ai.spec.LypiRole;
 import cn.lypi.ai.spec.LypiTextBlock;
+import cn.lypi.ai.spec.LypiToolCallBlock;
 import cn.lypi.ai.spec.LypiToolResultBlock;
 import cn.lypi.ai.spec.LypiToolSpec;
 import cn.lypi.contracts.model.ModelSelection;
@@ -67,6 +68,73 @@ class OpenAiChatCompletionsRequestBuilderTest {
         assertThat(body.get("reasoning_effort").asText()).isEqualTo("medium");
         assertThat(body.get("max_tokens").asInt()).isEqualTo(256);
         assertThat(body.get("api_key")).isNull();
+    }
+
+    @Test
+    void serializesAssistantToolCallHistoryAsToolCalls() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-tool-history",
+            new ModelSelection("openai", "gpt-4o-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiToolCallBlock(
+                        "call-1",
+                        "read_file",
+                        "",
+                        Map.of("input", Map.of("path", "pom.xml"))
+                    )),
+                    Map.of()
+                ),
+                new LypiMessage(
+                    LypiRole.TOOL_RESULT,
+                    List.of(new LypiToolResultBlock("call-1", "contents", false, Map.of())),
+                    Map.of()
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of()
+        );
+
+        JsonNode body = new OpenAiChatCompletionsRequestBuilder().build(request, config());
+
+        assertThat(body.at("/messages/0/role").asText()).isEqualTo("assistant");
+        assertThat(body.at("/messages/0/content").isNull()).isTrue();
+        assertThat(body.at("/messages/0/tool_calls/0/id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/messages/0/tool_calls/0/type").asText()).isEqualTo("function");
+        assertThat(body.at("/messages/0/tool_calls/0/function/name").asText()).isEqualTo("read_file");
+        assertThat(body.at("/messages/0/tool_calls/0/function/arguments").asText()).isEqualTo("{\"path\":\"pom.xml\"}");
+        assertThat(body.at("/messages/1/role").asText()).isEqualTo("tool");
+        assertThat(body.at("/messages/1/tool_call_id").asText()).isEqualTo("call-1");
+    }
+
+    @Test
+    void preservesAssistantContentWhenToolCallHistoryAlsoHasText() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-tool-history-text",
+            new ModelSelection("openai", "gpt-4o-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(new LypiMessage(
+                LypiRole.ASSISTANT,
+                List.of(
+                    new LypiTextBlock("I will read it.", Map.of()),
+                    new LypiToolCallBlock("call-1", "read_file", "", Map.of("input", Map.of("path", "pom.xml")))
+                ),
+                Map.of()
+            )),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of()
+        );
+
+        JsonNode body = new OpenAiChatCompletionsRequestBuilder().build(request, config());
+
+        assertThat(body.at("/messages/0/content").asText()).isEqualTo("I will read it.");
+        assertThat(body.at("/messages/0/tool_calls/0/id").asText()).isEqualTo("call-1");
     }
 
     @Test

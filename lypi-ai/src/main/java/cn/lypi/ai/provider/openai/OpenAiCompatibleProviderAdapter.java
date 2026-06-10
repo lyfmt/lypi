@@ -8,6 +8,7 @@ import cn.lypi.ai.provider.ProviderTransport;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.ai.spec.ContextSnapshotRequestFactory;
 import cn.lypi.ai.spec.LypiModelRequest;
+import cn.lypi.ai.spec.LypiToolSpec;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.error.ErrorSeverity;
@@ -15,6 +16,9 @@ import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.tool.ToolDescriptor;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.util.ArrayList;
@@ -79,6 +83,16 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
 
     @Override
     public AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+        return stream(context, descriptor, AiProviderRuntimePort.emptyTools(), signal);
+    }
+
+    @Override
+    public AssistantEventStream stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        ToolRegistrySnapshot tools,
+        AbortSignal signal
+    ) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(descriptor, "descriptor");
         Objects.requireNonNull(signal, "signal");
@@ -90,8 +104,28 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
                 "Provider API key is not configured."
             );
         }
-        LypiModelRequest request = ContextSnapshotRequestFactory.from(context, UUID.randomUUID().toString(), List.of());
+        LypiModelRequest request = ContextSnapshotRequestFactory.from(context, UUID.randomUUID().toString(), toolSpecs(tools));
         return new OpenAiAssistantEventStream(attempts(request), signal, fallbackDecider, config.maxRetries());
+    }
+
+    private List<LypiToolSpec> toolSpecs(ToolRegistrySnapshot tools) {
+        if (tools == null || tools.tools() == null || tools.tools().isEmpty()) {
+            return List.of();
+        }
+        return tools.tools().stream()
+            .map(this::toolSpec)
+            .toList();
+    }
+
+    private LypiToolSpec toolSpec(ToolDescriptor descriptor) {
+        Map<String, Object> inputSchema = descriptor.inputSchema() == null || descriptor.inputSchema().value() == null
+            ? Map.of()
+            : descriptor.inputSchema().value();
+        return new LypiToolSpec(
+            descriptor.name(),
+            descriptor.description(),
+            inputSchema
+        );
     }
 
     private List<OpenAiStreamAttempt> attempts(LypiModelRequest request) {

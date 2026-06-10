@@ -80,7 +80,7 @@ public final class OpenAiResponsesRequestBuilder {
             .flatMap(state -> indexAfterMessage(messages, state.messageId()))
             .orElse(0);
         for (LypiMessage message : messages.subList(startIndex, messages.size())) {
-            input.add(message(message));
+            appendMessage(input, message);
         }
         return input;
     }
@@ -98,14 +98,41 @@ public final class OpenAiResponsesRequestBuilder {
         return Optional.empty();
     }
 
-    private ObjectNode message(LypiMessage message) {
+    private void appendMessage(ArrayNode input, LypiMessage message) {
+        for (LypiContentBlock block : message.content()) {
+            if (block instanceof LypiToolCallBlock toolCall) {
+                input.add(functionCall(toolCall));
+            } else if (block instanceof LypiToolResultBlock toolResult) {
+                input.add(functionCallOutput(toolResult));
+            } else {
+                input.add(message(message, block));
+            }
+        }
+    }
+
+    private ObjectNode message(LypiMessage message, LypiContentBlock block) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("role", role(message.role()));
         ArrayNode content = objectMapper.createArrayNode();
-        for (LypiContentBlock block : message.content()) {
-            contentBlock(block, message.role(), content);
-        }
+        contentBlock(block, message.role(), content);
         node.set("content", content);
+        return node;
+    }
+
+    private ObjectNode functionCall(LypiToolCallBlock toolCall) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "function_call");
+        node.put("call_id", toolCall.toolUseId());
+        node.put("name", toolCall.toolName());
+        node.put("arguments", arguments(toolCall));
+        return node;
+    }
+
+    private ObjectNode functionCallOutput(LypiToolResultBlock toolResult) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "function_call_output");
+        node.put("call_id", toolResult.toolUseId());
+        node.put("output", toolResult.text());
         return node;
     }
 
@@ -134,6 +161,15 @@ public final class OpenAiResponsesRequestBuilder {
         node.put("type", role == LypiRole.ASSISTANT ? "output_text" : "input_text");
         node.put("text", text);
         return node;
+    }
+
+    private String arguments(LypiToolCallBlock toolCall) {
+        Object input = toolCall.metadata().get("input");
+        if (input instanceof Map<?, ?> inputMap) {
+            return objectMapper.valueToTree(inputMap).toString();
+        }
+        String text = toolCall.text();
+        return text == null || text.isBlank() ? "{}" : text;
     }
 
     private ArrayNode tools(LypiModelRequest request) {

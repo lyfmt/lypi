@@ -11,6 +11,7 @@ import cn.lypi.ai.provider.ProviderTransport;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.AgentMessage;
@@ -29,6 +30,8 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.tool.ToolDescriptor;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Duration;
@@ -77,6 +80,76 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(sse.requests.getFirst().uri().getPath()).isEqualTo("/v1/responses");
         assertThat(chat.requests.getFirst().uri().getPath()).isEqualTo("/v1/chat/completions");
         assertThat(events).contains(new TextDelta("hello"), new AssistantDone(Optional.empty(), Optional.of("stop")));
+    }
+
+    @Test
+    void includesRuntimeToolSnapshotInResponsesRequest() throws Exception {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+        ToolRegistrySnapshot tools = new ToolRegistrySnapshot(List.of(new ToolDescriptor(
+            "read",
+            List.of("cat"),
+            "读取文件内容。",
+            new JsonSchema(Map.of(
+                "type", "object",
+                "properties", Map.of("path", Map.of("type", "string")),
+                "required", List.of("path")
+            )),
+            true,
+            false
+        )));
+
+        collect(adapter.stream(context(), descriptor(), tools, () -> false));
+
+        JsonNode tool = OBJECT_MAPPER.readTree(websocket.requests.getFirst().body()).at("/response/tools/0");
+        assertThat(tool.get("type").asText()).isEqualTo("function");
+        assertThat(tool.get("name").asText()).isEqualTo("read");
+        assertThat(tool.get("description").asText()).isEqualTo("读取文件内容。");
+        assertThat(tool.at("/parameters/properties/path/type").asText()).isEqualTo("string");
+    }
+
+    @Test
+    void includesRuntimeToolSnapshotInChatCompletionsFallbackRequest() throws Exception {
+        RecordingTransport websocket = RecordingTransport.fail("WebSocket handshake failed");
+        RecordingTransport sse = RecordingTransport.fail("Provider HTTP 404: endpoint unsupported");
+        RecordingTransport chat = RecordingTransport.events(
+            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}",
+            "[DONE]"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            chat
+        );
+        ToolRegistrySnapshot tools = new ToolRegistrySnapshot(List.of(new ToolDescriptor(
+            "read",
+            List.of("cat"),
+            "读取文件内容。",
+            new JsonSchema(Map.of(
+                "type", "object",
+                "properties", Map.of("path", Map.of("type", "string")),
+                "required", List.of("path")
+            )),
+            true,
+            false
+        )));
+
+        collect(adapter.stream(context(), descriptor(), tools, () -> false));
+
+        JsonNode tool = OBJECT_MAPPER.readTree(chat.requests.getFirst().body()).at("/tools/0");
+        assertThat(tool.get("type").asText()).isEqualTo("function");
+        assertThat(tool.at("/function/name").asText()).isEqualTo("read");
+        assertThat(tool.at("/function/description").asText()).isEqualTo("读取文件内容。");
+        assertThat(tool.at("/function/parameters/properties/path/type").asText()).isEqualTo("string");
     }
 
     @Test
