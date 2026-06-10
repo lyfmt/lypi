@@ -58,13 +58,6 @@ final class SessionReplayProjector {
         ThinkingLevel thinkingLevel = defaultThinkingLevel;
         AgentMode mode = defaultMode;
         PermissionMode permissionMode = defaultPermissionMode;
-        if (header != null) {
-            model = header.initialModel().orElse(DEFAULT_MODEL);
-            thinkingLevel = header.initialThinkingLevel().orElse(ThinkingLevel.MEDIUM);
-            mode = header.initialAgentMode().orElse(AgentMode.EXECUTE);
-            permissionMode = header.initialPermissionMode().orElse(PermissionMode.DEFAULT_EXECUTE);
-            model = withThinkingLevel(model, thinkingLevel);
-        }
         List<AgentMessage> messages = new ArrayList<>();
         List<String> branchEntryIds = new ArrayList<>();
         CompactionEntry latestCompaction = null;

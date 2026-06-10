@@ -1,5 +1,6 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.SessionFileView;
@@ -156,6 +157,20 @@ final class TuiRenderState {
             statusBar.permissionMode(),
             statusBar.cwd(),
             statusBar.branchLeafId(),
+            statusBar.budget(),
+            statusBar.hasInterruptibleTool()
+        );
+    }
+
+    void sessionStateChanged(SessionStateEvent event) {
+        agentMode = enumLabel(event.agentMode());
+        statusBar = new StatusBarState(
+            valueOrEmpty(event.sessionId()),
+            event.model() == null ? "" : valueOrEmpty(event.model().modelId()),
+            currentMode(),
+            enumLabel(event.permissionMode()),
+            statusBar.cwd(),
+            valueOrEmpty(event.leafId()),
             statusBar.budget(),
             statusBar.hasInterruptibleTool()
         );

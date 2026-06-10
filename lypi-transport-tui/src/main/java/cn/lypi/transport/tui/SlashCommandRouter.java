@@ -117,6 +117,21 @@ final class SlashCommandRouter {
         return candidateCommands();
     }
 
+    Optional<SessionContext> sessionContext() {
+        if (sessionManager == null) {
+            return Optional.empty();
+        }
+        String leafId = currentLeafId();
+        return Optional.of(currentContext(leafId));
+    }
+
+    Optional<String> currentLeafIdForState() {
+        if (sessionManager == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(currentLeafId());
+    }
+
     private CommandMatch matchCommand(String command) {
         String normalized = command.toLowerCase(Locale.ROOT);
         List<String> commands = candidateCommands();
@@ -307,7 +322,7 @@ final class SlashCommandRouter {
             reason,
             Instant.now()
         ));
-        return SlashCommandResult.consumedCommand();
+        return SlashCommandResult.stateChangedNotice("model: " + provider + "/" + modelId);
     }
 
     private SlashCommandResult routeThinking(SlashCommandArguments arguments, String reason) {
@@ -319,7 +334,7 @@ final class SlashCommandRouter {
             return SlashCommandResult.error("unknown thinking level: " + arguments.positionals().getFirst());
         }
         append(new ThinkingChangeEntry(newEntryId(), currentLeafId(), level, reason, Instant.now()));
-        return SlashCommandResult.consumedCommand();
+        return SlashCommandResult.stateChangedNotice("thinking: " + level.name());
     }
 
     private SlashCommandResult routeMode(SlashCommandArguments arguments, String reason) {
@@ -331,7 +346,7 @@ final class SlashCommandRouter {
             return SlashCommandResult.error("unknown agent mode: " + arguments.positionals().getFirst());
         }
         append(new ModeChangeEntry(newEntryId(), currentLeafId(), mode, reason, Instant.now()));
-        return SlashCommandResult.consumedCommand();
+        return SlashCommandResult.stateChangedNotice("mode: " + mode.name());
     }
 
     private SlashCommandResult routePermissionMode(SlashCommandArguments arguments, String reason) {
@@ -343,7 +358,7 @@ final class SlashCommandRouter {
             return SlashCommandResult.error("unknown permission mode: " + arguments.positionals().getFirst());
         }
         append(new PermissionModeChangeEntry(newEntryId(), currentLeafId(), mode, reason, Instant.now()));
-        return SlashCommandResult.consumedCommand();
+        return SlashCommandResult.stateChangedNotice("permission-mode: " + mode.name());
     }
 
     private SessionContext currentContext(String leafId) {

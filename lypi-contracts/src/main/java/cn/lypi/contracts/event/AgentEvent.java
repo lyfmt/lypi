@@ -7,6 +7,7 @@ import java.time.Instant;
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes({
     @JsonSubTypes.Type(value = SessionStartEvent.class, name = "session_start"),
+    @JsonSubTypes.Type(value = SessionStateEvent.class, name = "session_state"),
     @JsonSubTypes.Type(value = TurnStartEvent.class, name = "turn_start"),
     @JsonSubTypes.Type(value = MessageStartEvent.class, name = "message_start"),
     @JsonSubTypes.Type(value = MessageDeltaEvent.class, name = "message_delta"),
@@ -28,6 +29,7 @@ import java.time.Instant;
 })
 public sealed interface AgentEvent permits
     SessionStartEvent,
+    SessionStateEvent,
     TurnStartEvent,
     MessageStartEvent,
     MessageDeltaEvent,

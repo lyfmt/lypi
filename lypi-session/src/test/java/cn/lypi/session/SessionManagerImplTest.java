@@ -16,11 +16,15 @@ import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.ModeChangeEntry;
+import cn.lypi.contracts.session.ModelChangeEntry;
+import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.session.ThinkingChangeEntry;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -492,7 +496,7 @@ class SessionManagerImplTest {
     }
 
     @Test
-    void forkPreservesSourceInitialRuntimeStateWhenReopened() {
+    void forkReopenUsesTargetBaselineWhenPathHasNoRuntimeOverrides() {
         ModelSelection sourceModel = new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH);
         SessionManager sourceEngine = new SessionManagerImpl(
             tempDir,
@@ -507,7 +511,73 @@ class SessionManagerImplTest {
 
         SessionHandle forked = sourceEngine.fork(new ForkRequest("ses_main", "root", targetCwd, "explore"));
 
-        SessionManager targetEngine = new SessionManagerImpl(targetCwd);
+        ModelSelection targetModel = new ModelSelection("anthropic", "claude-sonnet-4", ThinkingLevel.LOW);
+        SessionManager targetEngine = new SessionManagerImpl(
+            targetCwd,
+            targetModel,
+            ThinkingLevel.LOW,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        );
+        targetEngine.openOrCreate(forked.sessionId());
+        SessionContext context = targetEngine.context(forked.leafId());
+        assertThat(context.model()).isEqualTo(targetModel);
+        assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.LOW);
+        assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+    }
+
+    @Test
+    void forkReopenAppliesCopiedPathRuntimeOverridesOverTargetBaseline() {
+        ModelSelection sourceModel = new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH);
+        SessionManager sourceEngine = new SessionManagerImpl(
+            tempDir,
+            sourceModel,
+            ThinkingLevel.HIGH,
+            AgentMode.PLAN,
+            PermissionMode.PLAN
+        );
+        sourceEngine.openOrCreate("ses_main");
+        sourceEngine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        sourceEngine.append(new ModelChangeEntry(
+            "model_change",
+            "root",
+            sourceModel,
+            "/model openai/gpt-5-mini",
+            Instant.parse("2026-06-01T00:01:00Z")
+        ));
+        sourceEngine.append(new ThinkingChangeEntry(
+            "thinking_change",
+            "model_change",
+            ThinkingLevel.HIGH,
+            "/thinking high",
+            Instant.parse("2026-06-01T00:02:00Z")
+        ));
+        sourceEngine.append(new ModeChangeEntry(
+            "mode_change",
+            "thinking_change",
+            AgentMode.PLAN,
+            "/mode plan",
+            Instant.parse("2026-06-01T00:03:00Z")
+        ));
+        sourceEngine.append(new PermissionModeChangeEntry(
+            "permission_change",
+            "mode_change",
+            PermissionMode.PLAN,
+            "/permission-mode plan",
+            Instant.parse("2026-06-01T00:04:00Z")
+        ));
+        Path targetCwd = tempDir.resolve("fork-cwd");
+
+        SessionHandle forked = sourceEngine.fork(new ForkRequest("ses_main", "permission_change", targetCwd, "explore"));
+
+        SessionManager targetEngine = new SessionManagerImpl(
+            targetCwd,
+            new ModelSelection("anthropic", "claude-sonnet-4", ThinkingLevel.LOW),
+            ThinkingLevel.LOW,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        );
         targetEngine.openOrCreate(forked.sessionId());
         SessionContext context = targetEngine.context(forked.leafId());
         assertThat(context.model()).isEqualTo(sourceModel);

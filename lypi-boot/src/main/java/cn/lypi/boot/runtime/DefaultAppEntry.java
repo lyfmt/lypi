@@ -9,6 +9,8 @@ import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AppEntry;
+import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import java.math.BigDecimal;
 import java.util.List;
@@ -27,6 +29,7 @@ final class DefaultAppEntry implements AppEntry {
     private final AgentCorePort agentCore;
     private final EventBus eventBus;
     private final LyPiRuntimeProperties properties;
+    private final SessionManagerPort sessionManager;
     private final List<TransportLauncher> transportLaunchers;
 
     DefaultAppEntry(
@@ -34,12 +37,14 @@ final class DefaultAppEntry implements AppEntry {
         AgentCorePort agentCore,
         EventBus eventBus,
         LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
         List<TransportLauncher> transportLaunchers
     ) {
         this.bootstrapService = Objects.requireNonNull(bootstrapService, "bootstrapService must not be null");
         this.agentCore = Objects.requireNonNull(agentCore, "agentCore must not be null");
         this.eventBus = Objects.requireNonNull(eventBus, "eventBus must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
+        this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
         this.transportLaunchers = List.copyOf(transportLaunchers);
     }
 
@@ -66,20 +71,25 @@ final class DefaultAppEntry implements AppEntry {
             .filter(candidate -> "tui".equalsIgnoreCase(candidate.name()))
             .findFirst()
             .orElseThrow(() -> new IllegalStateException("TUI transport launcher is not available"));
+        SessionContext sessionContext = sessionContext(context);
         launcher.launch(new SessionRuntimeState(
             context.session().sessionId(),
             context.cwd(),
             context.session().leafId(),
-            context.modelSelection(),
-            context.modelSelection().thinkingLevel(),
-            properties.getAgentMode(),
-            properties.getPermissionMode(),
+            sessionContext.model(),
+            sessionContext.thinkingLevel(),
+            sessionContext.mode(),
+            sessionContext.permissionMode(),
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
             false,
             false,
             false,
             false
         ), agentCore, eventBus);
+    }
+
+    private SessionContext sessionContext(BootstrapContext context) {
+        return sessionManager.context(context.session().leafId());
     }
 
     private Optional<String> initialPrompt(BootstrapRequest request) {

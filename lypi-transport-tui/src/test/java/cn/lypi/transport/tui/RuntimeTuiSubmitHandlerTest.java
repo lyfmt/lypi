@@ -20,6 +20,7 @@ import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
@@ -33,6 +34,9 @@ import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.ModeChangeEntry;
+import cn.lypi.contracts.session.ModelChangeEntry;
+import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
@@ -135,6 +139,14 @@ class RuntimeTuiSubmitHandlerTest {
         assertEquals(List.of(), core.requests);
         ThinkingChangeEntry entry = assertInstanceOf(ThinkingChangeEntry.class, session.entries.getFirst());
         assertEquals(ThinkingLevel.HIGH, entry.thinkingLevel());
+        SessionStateEvent state = assertInstanceOf(SessionStateEvent.class, events.published.getFirst());
+        assertEquals(entry.id(), state.leafId());
+        assertEquals(ThinkingLevel.HIGH, state.thinkingLevel());
+        assertEquals(new ModelSelection("openai", "gpt-5", ThinkingLevel.HIGH), state.model());
+        assertEquals(AgentMode.EXECUTE, state.agentMode());
+        assertEquals(PermissionMode.DEFAULT_EXECUTE, state.permissionMode());
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(2));
+        assertEquals("thinking: HIGH", delta.delta());
     }
 
     @Test
@@ -433,14 +445,30 @@ class RuntimeTuiSubmitHandlerTest {
 
         @Override
         public SessionContext context(String leafId) {
+            ModelSelection model = new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM);
+            ThinkingLevel thinkingLevel = ThinkingLevel.MEDIUM;
+            AgentMode agentMode = AgentMode.EXECUTE;
+            PermissionMode permissionMode = PermissionMode.DEFAULT_EXECUTE;
+            for (SessionEntry entry : entries) {
+                if (entry instanceof ModelChangeEntry modelChange) {
+                    model = modelChange.model();
+                } else if (entry instanceof ThinkingChangeEntry thinkingChange) {
+                    thinkingLevel = thinkingChange.thinkingLevel();
+                    model = new ModelSelection(model.provider(), model.modelId(), thinkingLevel);
+                } else if (entry instanceof ModeChangeEntry modeChange) {
+                    agentMode = modeChange.agentMode();
+                } else if (entry instanceof PermissionModeChangeEntry permissionModeChange) {
+                    permissionMode = permissionModeChange.permissionMode();
+                }
+            }
             return new SessionContext(
                 List.of(),
                 List.of(this.leafId),
                 List.of(),
-                new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
-                ThinkingLevel.MEDIUM,
-                AgentMode.EXECUTE,
-                PermissionMode.DEFAULT_EXECUTE
+                model,
+                thinkingLevel,
+                agentMode,
+                permissionMode
             );
         }
 
