@@ -23,6 +23,14 @@ public interface SessionManager extends SessionManagerPort {
     SessionHandle openOrCreate(String sessionId);
 
     /**
+     * 打开临时 session。
+     *
+     * NOTE: 临时 session 只有追加用户消息时才写入 JSONL。
+     */
+    @Override
+    SessionHandle openTemporary(String sessionId);
+
+    /**
      * 追加一条 session entry。
      *
      * NOTE: entry 必须满足 append-only 约束，不能复用已有 id。

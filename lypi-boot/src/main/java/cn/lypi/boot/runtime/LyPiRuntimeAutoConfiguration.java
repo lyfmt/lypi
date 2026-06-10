@@ -301,7 +301,9 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(SessionRuntimeState.class)
     public SessionRuntimeState sessionRuntimeState(LyPiRuntimeProperties properties, SessionManagerPort sessionManager) {
-        var handle = sessionManager.openOrCreate(properties.getSessionId());
+        var handle = properties.isSessionIdConfigured()
+            ? sessionManager.openOrCreate(properties.getSessionId())
+            : sessionManager.openTemporary(properties.getSessionId());
         return new SessionRuntimeState(
             handle.sessionId(),
             properties.getCwd(),
@@ -446,7 +448,7 @@ public class LyPiRuntimeAutoConfiguration {
             appEntry.start(new cn.lypi.contracts.bootstrap.BootstrapRequest(
                 properties.getCwd(),
                 args == null ? List.of() : args.getNonOptionArgs(),
-                Optional.of(properties.getSessionId()),
+                properties.isSessionIdConfigured() ? Optional.of(properties.getSessionId()) : Optional.empty(),
                 Optional.ofNullable(properties.getInitialPrompt())
             ));
         };

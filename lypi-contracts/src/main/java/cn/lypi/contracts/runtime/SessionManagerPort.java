@@ -17,6 +17,15 @@ public interface SessionManagerPort {
     SessionHandle openOrCreate(String sessionId);
 
     /**
+     * 打开临时 session。
+     *
+     * NOTE: 临时 session 只有追加用户消息时才写入 JSONL。
+     */
+    default SessionHandle openTemporary(String sessionId) {
+        return openOrCreate(sessionId);
+    }
+
+    /**
      * 追加 session entry。
      *
      * NOTE: 这是 session 的唯一写入口，必须保持 append-only。

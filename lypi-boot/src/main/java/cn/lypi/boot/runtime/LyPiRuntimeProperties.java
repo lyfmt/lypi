@@ -4,12 +4,14 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import java.nio.file.Path;
+import java.util.UUID;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "lypi.runtime")
 public class LyPiRuntimeProperties {
     private Path cwd = Path.of(".").toAbsolutePath().normalize();
-    private String sessionId = "default";
+    private String sessionId;
+    private boolean sessionIdConfigured;
     private String defaultProvider = "openai";
     private String defaultModel = "gpt-5-mini";
     private ThinkingLevel thinkingLevel = ThinkingLevel.MEDIUM;
@@ -27,11 +29,19 @@ public class LyPiRuntimeProperties {
     }
 
     public String getSessionId() {
+        if (sessionId == null || sessionId.isBlank()) {
+            sessionId = "session_" + UUID.randomUUID().toString().replace("-", "");
+        }
         return sessionId;
     }
 
     public void setSessionId(String sessionId) {
-        this.sessionId = sessionId == null || sessionId.isBlank() ? "default" : sessionId;
+        this.sessionIdConfigured = sessionId != null && !sessionId.isBlank();
+        this.sessionId = sessionIdConfigured ? sessionId : null;
+    }
+
+    public boolean isSessionIdConfigured() {
+        return sessionIdConfigured;
     }
 
     public String getDefaultProvider() {

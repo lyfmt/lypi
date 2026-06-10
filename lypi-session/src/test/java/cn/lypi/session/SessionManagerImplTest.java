@@ -60,6 +60,97 @@ class SessionManagerImplTest {
     }
 
     @Test
+    void openTemporaryDoesNotCreateSessionFileUntilUserMessage() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+
+        SessionHandle handle = engine.openTemporary("ses_temp");
+
+        assertThat(handle.leafId()).isNull();
+        assertThat(handle.byId()).isEmpty();
+        assertThat(handle.sessionFile()).doesNotExist();
+    }
+
+    @Test
+    void openTemporaryKeepsNonUserEntriesInMemoryWithoutCreatingSessionFile() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+        SessionHandle opened = engine.openTemporary("ses_temp");
+
+        SessionHandle afterInfo = engine.append(
+            new SessionInfoEntry("entry_info", null, Map.of("source", "slash command"), Instant.parse("2026-06-01T00:00:00Z"))
+        );
+        SessionHandle afterAssistant = engine.append(
+            new MessageEntry(
+                "entry_assistant",
+                "entry_info",
+                assistantMessage("msg_assistant", "thinking"),
+                Instant.parse("2026-06-01T00:01:00Z")
+            )
+        );
+
+        assertThat(opened.sessionFile()).doesNotExist();
+        assertThat(afterInfo.sessionFile()).doesNotExist();
+        assertThat(afterAssistant.sessionFile()).doesNotExist();
+        assertThat(afterAssistant.leafId()).isEqualTo("entry_assistant");
+        assertThat(engine.branch("entry_assistant"))
+            .extracting(SessionEntry::id)
+            .containsExactly("entry_info", "entry_assistant");
+    }
+
+    @Test
+    void openTemporaryPersistsPendingEntriesWhenFirstUserMessageIsAppended() throws Exception {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+        SessionHandle opened = engine.openTemporary("ses_temp");
+        engine.append(new SessionInfoEntry("entry_info", null, Map.of("source", "slash command"), Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(
+            new MessageEntry(
+                "entry_assistant",
+                "entry_info",
+                assistantMessage("msg_assistant", "thinking"),
+                Instant.parse("2026-06-01T00:01:00Z")
+            )
+        );
+
+        SessionHandle persisted = engine.append(
+            new MessageEntry(
+                "entry_user",
+                "entry_assistant",
+                textMessage("msg_user", "hello"),
+                Instant.parse("2026-06-01T00:02:00Z")
+            )
+        );
+
+        assertThat(persisted.sessionFile()).exists();
+        assertThat(Files.readAllLines(opened.sessionFile())).hasSize(4);
+        assertThat(engine.branch("entry_user"))
+            .extracting(SessionEntry::id)
+            .containsExactly("entry_info", "entry_assistant", "entry_user");
+
+        SessionManager reopenedEngine = new SessionManagerImpl(tempDir);
+        SessionHandle reopened = reopenedEngine.openTemporary("ses_temp");
+
+        assertThat(reopened.leafId()).isEqualTo("entry_user");
+        assertThat(reopenedEngine.branch("entry_user"))
+            .extracting(SessionEntry::id)
+            .containsExactly("entry_info", "entry_assistant", "entry_user");
+    }
+
+    @Test
+    void openTemporaryRestoresExistingSessionInsteadOfUsingPendingMode() {
+        SessionManager first = new SessionManagerImpl(tempDir);
+        first.openOrCreate("ses_temp");
+        first.append(new CustomMessageEntry("entry_1", null, "persisted", Instant.parse("2026-06-01T00:00:00Z")));
+
+        SessionManager reopened = new SessionManagerImpl(tempDir);
+        SessionHandle handle = reopened.openTemporary("ses_temp");
+
+        assertThat(handle.sessionFile()).exists();
+        assertThat(handle.leafId()).isEqualTo("entry_1");
+        assertThat(reopened.branch("entry_1"))
+            .extracting(SessionEntry::id)
+            .containsExactly("entry_1");
+    }
+
+    @Test
     void exposesSessionStorageRootSeparatelyFromExecutionCwd() {
         SessionManager engine = new SessionManagerImpl(tempDir);
 
@@ -523,6 +614,18 @@ class SessionManagerImplTest {
         return new AgentMessage(
             id,
             MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new TextContentBlock(text, Map.of())),
+            Instant.parse("2026-06-01T00:00:00Z"),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private static AgentMessage assistantMessage(String id, String text) {
+        return new AgentMessage(
+            id,
+            MessageRole.ASSISTANT,
             MessageKind.TEXT,
             List.of(new TextContentBlock(text, Map.of())),
             Instant.parse("2026-06-01T00:00:00Z"),

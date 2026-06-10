@@ -31,6 +31,10 @@ final class EntryTreeIndex {
         return byId.isEmpty();
     }
 
+    List<SessionEntry> entries() {
+        return List.copyOf(byId.values());
+    }
+
     String leafId() {
         return leafId;
     }
