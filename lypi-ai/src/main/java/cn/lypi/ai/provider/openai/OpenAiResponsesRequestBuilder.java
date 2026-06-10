@@ -176,7 +176,15 @@ public final class OpenAiResponsesRequestBuilder {
             return Optional.empty();
         }
         String messageId = String.valueOf(stateMap.get("messageId"));
+        Optional<Integer> startIndex = indexAfterMessage(request.messages(), messageId);
+        if (startIndex.isEmpty() || hasToolResult(request.messages().subList(startIndex.get(), request.messages().size()))) {
+            return Optional.empty();
+        }
         return Optional.of(new PreviousResponseState(previousResponseId, messageId));
+    }
+
+    private boolean hasToolResult(List<LypiMessage> messages) {
+        return messages.stream().anyMatch(message -> message.role() == LypiRole.TOOL_RESULT);
     }
 
     private record PreviousResponseState(String previousResponseId, String messageId) {

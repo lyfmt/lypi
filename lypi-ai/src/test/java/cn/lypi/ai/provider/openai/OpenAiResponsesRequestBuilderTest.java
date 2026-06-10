@@ -153,6 +153,48 @@ class OpenAiResponsesRequestBuilderTest {
         assertThat(body.at("/input/0/content/0/text").asText()).isEqualTo("follow up");
     }
 
+    @Test
+    void keepsFullInputWithoutPreviousResponseIdWhenToolResultsFollowCachedAssistant() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-tool-cache",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "You are concise.",
+            List.of(
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiTextBlock("tool call", Map.of())),
+                    Map.of(
+                        "messageId", "msg-assistant-1",
+                        "providerConversationState", Map.of(
+                            "provider", "openai",
+                            "style", "responses",
+                            "previousResponseId", "resp-123"
+                        )
+                    )
+                ),
+                new LypiMessage(
+                    LypiRole.TOOL_RESULT,
+                    List.of(new LypiTextBlock("tool output", Map.of())),
+                    Map.of("messageId", "msg-tool-1")
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of("providerConversationState", Map.of(
+                "provider", "openai",
+                "style", "responses",
+                "previousResponseId", "resp-123",
+                "messageId", "msg-assistant-1"
+            ))
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
+
+        assertThat(body.get("previous_response_id")).isNull();
+        assertThat(body.get("input")).hasSize(2);
+    }
+
     private static OpenAiProviderConfig config() {
         return new OpenAiProviderConfig(
             "openai",
