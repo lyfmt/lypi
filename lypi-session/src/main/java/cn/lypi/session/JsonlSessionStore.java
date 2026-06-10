@@ -128,6 +128,16 @@ final class JsonlSessionStore {
         }
     }
 
+    /**
+     * 创建新的 session 文件并按顺序写入 header 和 entries。
+     */
+    void createWithEntries(SessionHeader header, List<SessionEntry> entries) {
+        create(header);
+        for (SessionEntry entry : entries) {
+            append(header.id(), entry);
+        }
+    }
+
     private SessionHeader readHeaderLine(Path file, String line) {
         try {
             return mapper.readHeader(mapper.readEnvelope(line));

@@ -401,6 +401,58 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void appEntryUsesTemporaryUuidSessionWhenSessionIdIsNotConfigured() {
+        RecordingCore core = new RecordingCore();
+        RecordingTransportLauncher launcher = new RecordingTransportLauncher("tui");
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.transport=tui"
+            )
+            .withBean(AgentCorePort.class, () -> core)
+            .withBean(TransportLauncher.class, () -> launcher)
+            .run(context -> {
+                AppEntry appEntry = context.getBean(AppEntry.class);
+                appEntry.start(new BootstrapRequest(
+                    tempDir,
+                    List.of(),
+                    Optional.empty(),
+                    Optional.empty()
+                ));
+
+                assertThat(launcher.state.get()).isNotNull();
+                assertThat(launcher.state.get().sessionId()).matches("session_[0-9a-f]{32}");
+                assertThat(launcher.state.get().sessionId()).isNotEqualTo("default");
+                assertThat(core.request.get()).isNull();
+                assertThat(tempDir.resolve(".lypi/sessions")).doesNotExist();
+            });
+    }
+
+    @Test
+    void explicitDefaultSessionIdStillCreatesAndReusesDefaultSession() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir,
+                "lypi.runtime.session-id=default"
+            )
+            .run(context -> {
+                SessionRuntimeState state = context.getBean(SessionRuntimeState.class);
+
+                assertThat(state.sessionId()).isEqualTo("default");
+                assertThat(tempDir.resolve(".lypi/sessions/default.jsonl")).exists();
+            });
+    }
+
+    @Test
     void createsDefaultJLineTuiTransportLauncherWithRuntimePorts() {
         runtimeAutoConfigurations()
             .withPropertyValues(
@@ -1330,6 +1382,11 @@ class LyPiRuntimeAutoConfigurationTest {
         @Override
         public SessionHandle openOrCreate(String sessionId) {
             return new SessionHandle(sessionId, null, "leaf-1", Map.of());
+        }
+
+        @Override
+        public SessionHandle openTemporary(String sessionId) {
+            return openOrCreate(sessionId);
         }
 
         @Override

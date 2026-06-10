@@ -1,6 +1,7 @@
 package cn.lypi.session;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
@@ -35,6 +36,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     private String sessionId;
     private SessionHeader header;
     private EntryTreeIndex index;
+    private boolean persistent;
 
     public SessionManagerImpl(Path cwd) {
         this(cwd, Clock.systemUTC());
@@ -77,6 +79,26 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
         SessionFile sessionFile = store.read(sessionId);
         header = sessionFile.header();
         index = new EntryTreeIndex(sessionFile.entries());
+        persistent = true;
+        return handle();
+    }
+
+    /**
+     * 打开临时 session。
+     */
+    @Override
+    public SessionHandle openTemporary(String sessionId) {
+        this.sessionId = sessionId;
+        if (store.exists(sessionId)) {
+            SessionFile sessionFile = store.read(sessionId);
+            header = sessionFile.header();
+            index = new EntryTreeIndex(sessionFile.entries());
+            persistent = true;
+            return handle();
+        }
+        header = initialHeader(sessionId);
+        index = new EntryTreeIndex(List.of());
+        persistent = false;
         return handle();
     }
 
@@ -87,7 +109,14 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     public SessionHandle append(SessionEntry entry) {
         ensureOpen();
         index.validateAppend(entry);
-        store.append(sessionId, entry);
+        if (persistent) {
+            store.append(sessionId, entry);
+        } else if (shouldPersist(entry)) {
+            List<SessionEntry> pendingEntries = new java.util.ArrayList<>(index.entries());
+            pendingEntries.add(entry);
+            store.createWithEntries(header, pendingEntries);
+            persistent = true;
+        }
         index.add(entry);
         return handle();
     }
@@ -185,6 +214,12 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
 
     private SessionHandle handle() {
         return new SessionHandle(sessionId, store.sessionFile(sessionId), index.leafId(), index.byId());
+    }
+
+    private boolean shouldPersist(SessionEntry entry) {
+        return entry instanceof MessageEntry messageEntry
+            && messageEntry.message() != null
+            && messageEntry.message().role() == MessageRole.USER;
     }
 
     private SessionHeader initialHeader(String sessionId) {

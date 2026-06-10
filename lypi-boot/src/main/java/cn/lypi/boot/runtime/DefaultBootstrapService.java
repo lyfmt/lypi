@@ -51,7 +51,9 @@ final class DefaultBootstrapService implements BootstrapService {
             : request;
         Path cwd = (safeRequest.cwd() == null ? properties.getCwd() : safeRequest.cwd()).toAbsolutePath().normalize();
         String sessionId = safeRequest.sessionId().orElse(properties.getSessionId());
-        SessionHandle session = sessionManager.openOrCreate(sessionId);
+        SessionHandle session = safeRequest.sessionId().isPresent() || properties.isSessionIdConfigured()
+            ? sessionManager.openOrCreate(sessionId)
+            : sessionManager.openTemporary(sessionId);
         ResourceSnapshot resources = resourceRuntime.load(cwd);
         SystemPrompt systemPrompt = resourceRuntime.buildSystemPrompt(resources);
         ModelSelection modelSelection = new ModelSelection(
