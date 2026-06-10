@@ -5,8 +5,6 @@ import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 public final class TerminalSession implements AutoCloseable {
-    static final String ENTER_ALTERNATE_SCREEN = "\033[?1049h";
-    static final String EXIT_ALTERNATE_SCREEN = "\033[?1049l";
     static final String ENABLE_BRACKETED_PASTE = "\033[?2004h";
     static final String DISABLE_BRACKETED_PASTE = "\033[?2004l";
     static final String HIDE_CURSOR = "\033[?25l";
@@ -20,6 +18,7 @@ public final class TerminalSession implements AutoCloseable {
     private final AutoCloseable rawMode;
     private final AutoCloseable resizeHandler;
     private boolean closed;
+    private int renderedRows;
 
     private TerminalSession(TerminalIo io, AutoCloseable rawMode, AutoCloseable resizeHandler) {
         this.io = io;
@@ -56,7 +55,6 @@ public final class TerminalSession implements AutoCloseable {
         try {
             rawMode = io.enterRawMode();
             resizeHandler = io.onResize(resizeCallback);
-            io.write(ENTER_ALTERNATE_SCREEN);
             io.write(ENABLE_BRACKETED_PASTE);
             io.write(HIDE_CURSOR);
             io.write(ENABLE_KITTY_KEYBOARD);
@@ -67,6 +65,10 @@ public final class TerminalSession implements AutoCloseable {
             restoreAfterOpenFailure(resizeHandler, rawMode);
             throw exception;
         }
+    }
+
+    void updateRenderedRows(int renderedRows) {
+        this.renderedRows = Math.max(0, renderedRows);
     }
 
     @Override
@@ -80,7 +82,10 @@ public final class TerminalSession implements AutoCloseable {
             io.write(DISABLE_KITTY_KEYBOARD);
             io.write(SHOW_CURSOR);
             io.write(DISABLE_BRACKETED_PASTE);
-            io.write(EXIT_ALTERNATE_SCREEN);
+            if (renderedRows > 0) {
+                io.write("\033[" + renderedRows + ";1H");
+            }
+            io.write("\n");
             io.flush();
         } finally {
             closeQuietly(resizeHandler);

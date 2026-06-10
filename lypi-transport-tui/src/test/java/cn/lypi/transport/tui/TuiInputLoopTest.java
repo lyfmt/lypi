@@ -32,7 +32,7 @@ class TuiInputLoopTest {
 
         assertEquals(List.of("hello"), submit.submitted);
         assertEquals("", loop.draft());
-        assertEquals("\033[48;5;236m> |CURSOR|\033[0m", frames.getLast().lines().skip(2).findFirst().orElseThrow());
+        assertEquals("\033[48;5;236m> |CURSOR|\033[0m", inputLine(frames.getLast()));
     }
 
     @Test
@@ -51,7 +51,7 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.LEFT);
         loop.acceptKey(TerminalKey.LEFT);
 
-        assertEquals("\033[48;5;236m> alpha be|CURSOR|ta\033[0m", frames.getLast().lines().skip(2).findFirst().orElseThrow());
+        assertEquals("\033[48;5;236m> alpha be|CURSOR|ta\033[0m", inputLine(frames.getLast()));
     }
 
     @Test
@@ -72,7 +72,7 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.BACKSPACE);
 
         assertEquals("acd", loop.draft());
-        assertEquals("\033[48;5;236m> a|CURSOR|cd\033[0m", frames.getLast().lines().skip(2).findFirst().orElseThrow());
+        assertEquals("\033[48;5;236m> a|CURSOR|cd\033[0m", inputLine(frames.getLast()));
     }
 
     @Test
@@ -377,6 +377,11 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.ALT_Y);
 
         assertEquals("alpha gamma", loop.draft());
+    }
+
+    private static String inputLine(String frame) {
+        List<String> lines = frame.lines().toList();
+        return lines.get(lines.size() - 2);
     }
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {

@@ -16,7 +16,7 @@ class TerminalSessionTest {
 
         assertTrue(io.rawModeEntered);
         assertEquals(
-            "\033[?1049h\033[?2004h\033[?25l\033[?u\033[>4;2m",
+            "\033[?2004h\033[?25l\033[?u\033[>4;2m",
             io.output.toString()
         );
 
@@ -24,10 +24,21 @@ class TerminalSessionTest {
 
         assertTrue(io.rawModeRestored);
         assertEquals(
-            "\033[?1049h\033[?2004h\033[?25l\033[?u\033[>4;2m"
-                + "\033[>4m\033[?u\033[?25h\033[?2004l\033[?1049l",
+            "\033[?2004h\033[?25l\033[?u\033[>4;2m"
+                + "\033[>4m\033[?u\033[?25h\033[?2004l\n",
             io.output.toString()
         );
+    }
+
+    @Test
+    void closeMovesBelowRenderedContentWhenRendererReportedRows() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        TerminalSession session = TerminalSession.open(io);
+
+        session.updateRenderedRows(3);
+        session.close();
+
+        assertTrue(io.output.toString().endsWith("\033[3;1H\n"));
     }
 
     @Test

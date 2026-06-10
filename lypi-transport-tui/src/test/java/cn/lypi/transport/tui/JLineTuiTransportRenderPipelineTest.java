@@ -51,6 +51,35 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
+    void rendererFrameContainsFullTranscriptBeyondTerminalHeightForScrollback() {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 40, 4);
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        for (int i = 0; i < 6; i++) {
+            events.emit(new MessageDeltaEvent(
+                "ses_1",
+                "msg_" + i,
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                "block_" + i,
+                ContentBlockKind.TEXT,
+                "line " + i,
+                true,
+                java.util.Map.of(),
+                Instant.parse("2026-06-09T00:00:00Z")
+            ));
+        }
+
+        List<String> latest = frames.getLast();
+        assertTrue(latest.contains("line 0"));
+        assertTrue(latest.contains("line 5"));
+        assertEquals("\033[48;5;236m> \033[0m", latest.get(latest.size() - 2));
+        assertTrue(latest.size() > 4);
+    }
+
+    @Test
     void eventRenderProjectsRuntimeStateIntoStatusBar() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
@@ -133,7 +162,6 @@ class JLineTuiTransportRenderPipelineTest {
         transport.resizeForTest(8, 4);
 
         assertEquals(2, frames.size());
-        assertEquals(4, frames.getLast().size());
         frames.getLast().forEach(line -> assertEquals(line, AnsiWidth.truncate(line, 8)));
         assertEquals(2, transport.uiLockEntryCountForTest());
     }
@@ -254,8 +282,7 @@ class JLineTuiTransportRenderPipelineTest {
         List<String> latest = frames.getLast();
         assertEquals("hello", latest.get(0));
         assertEquals("· retrying attempt 2 rate limit", latest.get(1));
-        assertEquals("", latest.get(2));
-        assertEquals("\033[48;5;236m> \033[0m", latest.get(3));
+        assertEquals("\033[48;5;236m> \033[0m", latest.get(latest.size() - 2));
         assertTrue(latest.getLast().contains("ses_1"));
     }
 
@@ -276,7 +303,6 @@ class JLineTuiTransportRenderPipelineTest {
         transport.resizeForTest(8, 4);
         transport.drainInputForTest();
 
-        assertEquals(4, frames.getLast().size());
         frames.getLast().forEach(line -> assertEquals(
             line.replace(TerminalFrameRenderer.CURSOR_MARKER, ""),
             AnsiWidth.truncate(line.replace(TerminalFrameRenderer.CURSOR_MARKER, ""), 8)
