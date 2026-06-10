@@ -23,6 +23,7 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ProviderConversationState;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -577,6 +578,10 @@ final class AgentCoreTestFixtures {
             streams.add(new ListAssistantEventStream(events));
         }
 
+        void enqueue(List<AssistantStreamEvent> events, ProviderConversationState providerConversationState) {
+            streams.add(new ListAssistantEventStream(events, Optional.of(providerConversationState)));
+        }
+
         void enqueueFailingAfter(List<AssistantStreamEvent> events, RuntimeException failure) {
             streams.add(new FailingAssistantEventStream(events, failure));
         }
@@ -689,10 +694,19 @@ final class AgentCoreTestFixtures {
 
     static final class ListAssistantEventStream implements AssistantEventStream {
         private final List<AssistantStreamEvent> events;
+        private final Optional<ProviderConversationState> providerConversationState;
         private boolean closed;
 
         ListAssistantEventStream(List<AssistantStreamEvent> events) {
+            this(events, Optional.empty());
+        }
+
+        ListAssistantEventStream(
+            List<AssistantStreamEvent> events,
+            Optional<ProviderConversationState> providerConversationState
+        ) {
             this.events = List.copyOf(events);
+            this.providerConversationState = providerConversationState;
         }
 
         @Override
@@ -702,7 +716,16 @@ final class AgentCoreTestFixtures {
 
         @Override
         public AssistantStreamResult result() {
-            return new AssistantStreamResult("", events, Optional.empty(), Optional.empty(), !closed, false, Optional.empty());
+            return new AssistantStreamResult(
+                "",
+                events,
+                Optional.empty(),
+                Optional.empty(),
+                !closed,
+                false,
+                Optional.empty(),
+                providerConversationState
+            );
         }
 
         @Override

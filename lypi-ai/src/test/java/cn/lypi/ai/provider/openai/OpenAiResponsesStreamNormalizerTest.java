@@ -10,6 +10,7 @@ import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class OpenAiResponsesStreamNormalizerTest {
@@ -49,6 +50,25 @@ class OpenAiResponsesStreamNormalizerTest {
             new ToolCallDelta("call-1", "read_file", MapBuilder.map("path", "pom.xml"), true),
             new AssistantDone(java.util.Optional.of(new cn.lypi.contracts.model.TokenUsage(10, 5, 2, 3)), java.util.Optional.of("stop"))
         );
+    }
+
+    @Test
+    void capturesCompletedResponseIdAsConversationState() {
+        OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+
+        normalizer.normalize("""
+            {"type":"response.created","response":{"id":"resp-created"}}
+            """);
+        normalizer.normalize("""
+            {"type":"response.completed","response":{"id":"resp-completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}]}}
+            """);
+
+        assertThat(normalizer.providerConversationState())
+            .hasValueSatisfying(state -> {
+                assertThat(state.provider()).isEqualTo("openai");
+                assertThat(state.style()).isEqualTo("responses");
+                assertThat(state.previousResponseId()).isEqualTo(Optional.of("resp-completed"));
+            });
     }
 
     @Test

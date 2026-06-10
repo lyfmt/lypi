@@ -104,6 +104,55 @@ class OpenAiResponsesRequestBuilderTest {
         assertThat(envelope.at("/response/input/0/content/0/text").asText()).isEqualTo("hello");
     }
 
+    @Test
+    void usesPreviousResponseIdAndOnlySendsMessagesAfterCachedAssistantPrefix() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-cache",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "You are concise.",
+            List.of(
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("first", Map.of())),
+                    Map.of("messageId", "msg-user-1")
+                ),
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiTextBlock("answer", Map.of())),
+                    Map.of(
+                        "messageId", "msg-assistant-1",
+                        "providerConversationState", Map.of(
+                            "provider", "openai",
+                            "style", "responses",
+                            "previousResponseId", "resp-123"
+                        )
+                    )
+                ),
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("follow up", Map.of())),
+                    Map.of("messageId", "msg-user-2")
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of("providerConversationState", Map.of(
+                "provider", "openai",
+                "style", "responses",
+                "previousResponseId", "resp-123",
+                "messageId", "msg-assistant-1"
+            ))
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
+
+        assertThat(body.get("previous_response_id").asText()).isEqualTo("resp-123");
+        assertThat(body.get("input")).hasSize(1);
+        assertThat(body.at("/input/0/role").asText()).isEqualTo("user");
+        assertThat(body.at("/input/0/content/0/text").asText()).isEqualTo("follow up");
+    }
+
     private static OpenAiProviderConfig config() {
         return new OpenAiProviderConfig(
             "openai",

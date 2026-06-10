@@ -13,6 +13,7 @@ import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.model.ProviderRetryNotice;
+import cn.lypi.contracts.model.ProviderConversationState;
 import cn.lypi.contracts.model.TokenUsage;
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -88,8 +89,17 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
             Optional.ofNullable(stopReason),
             completed,
             aborted,
-            Optional.ofNullable(error)
+            Optional.ofNullable(error),
+            providerConversationState()
         );
+    }
+
+    private Optional<ProviderConversationState> providerConversationState() {
+        if (attempts.isEmpty()) {
+            return Optional.empty();
+        }
+        int resultAttemptIndex = Math.min(attemptIndex, attempts.size() - 1);
+        return attempts.get(resultAttemptIndex).normalizer().providerConversationState();
     }
 
     @Override
