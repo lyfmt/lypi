@@ -62,6 +62,7 @@ class OpenAiResponsesRequestBuilderTest {
         assertThat(body.at("/tools/0/name").asText()).isEqualTo("math_operation");
         assertThat(body.at("/tools/0/parameters/properties/a/type").asText()).isEqualTo("number");
         assertThat(body.at("/reasoning/effort").asText()).isEqualTo("high");
+        assertThat(body.at("/reasoning/summary").asText()).isEqualTo("auto");
         assertThat(body.get("max_output_tokens").asInt()).isEqualTo(512);
         assertThat(body.get("api_key")).isNull();
     }
