@@ -1,12 +1,16 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.security.PermissionOption;
+import cn.lypi.contracts.security.PermissionOptionKind;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -132,6 +136,29 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void upAndDownSelectPermissionOptionAndEnterSubmitsSelectedOption() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(4),
+            new TuiLayout(40, 6),
+            () -> permissionViewWithOptions("allow_once", "escape_cancel")
+        );
+
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.UP);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("perm_toolu_1:toolu_1:remember"), submit.permissionOptions);
+        assertTrue(frames.getFirst().contains("> 允许并记住"));
+        assertTrue(frames.get(2).contains("> 允许并记住"));
+    }
+
+    @Test
     void escapeAndCtrlCCancelPermissionPromptInsteadOfExitOrInterrupt() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
@@ -141,13 +168,16 @@ class TuiInputLoopTest {
             new TuiRenderer(),
             new TuiScreen(2),
             new TuiLayout(40, 4),
-            () -> permissionView("allow_once", "cancel")
+            () -> permissionViewWithOptions("allow_once", "escape_cancel")
         );
 
         loop.acceptKey(TerminalKey.ESC);
         loop.acceptKey(TerminalKey.CTRL_C);
 
-        assertEquals(List.of("perm_toolu_1:toolu_1:cancel", "perm_toolu_1:toolu_1:cancel"), submit.permissionOptions);
+        assertEquals(
+            List.of("perm_toolu_1:toolu_1:escape_cancel", "perm_toolu_1:toolu_1:escape_cancel"),
+            submit.permissionOptions
+        );
         assertEquals(0, submit.exits);
         assertEquals(0, submit.interrupts);
     }
@@ -244,6 +274,29 @@ class TuiInputLoopTest {
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.of(new PermissionPromptView("perm_toolu_1", "toolu_1", "Need approval", "bash:npm test", defaultOptionId, cancelOptionId)),
+            Optional.empty()
+        );
+    }
+
+    private static TuiViewModel permissionViewWithOptions(String defaultOptionId, String cancelOptionId) {
+        return new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.of(new PermissionPromptView(
+                "perm_toolu_1",
+                "toolu_1",
+                "Need approval",
+                "bash:npm test",
+                defaultOptionId,
+                cancelOptionId,
+                List.of(
+                    new PermissionOption("allow_once", PermissionOptionKind.ALLOW_ONCE, "允许一次", "", Optional.empty(), Map.of()),
+                    new PermissionOption("remember", PermissionOptionKind.ALLOW_ONCE, "允许并记住", "", Optional.empty(), Map.of()),
+                    new PermissionOption("escape_cancel", PermissionOptionKind.CANCEL, "取消", "", Optional.empty(), Map.of())
+                ),
+                defaultOptionId
+            )),
             Optional.empty()
         );
     }
