@@ -433,7 +433,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 holder[0].resize(io.width(), io.height());
             }
         });
-        TerminalFrameRenderer frameRenderer = new TerminalFrameRenderer(io);
+        TerminalFrameRenderer frameRenderer = new TerminalFrameRenderer(io, session::updateRenderedRows);
         FrameSink frameSink = lines -> {
             try {
                 frameRenderer.render(lines);

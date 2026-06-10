@@ -2,6 +2,7 @@ package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -96,13 +97,13 @@ class JLineTuiTransportTest {
         events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
 
         assertTrue(io.rawModeEntered);
-        assertTrue(io.output.toString().contains(TerminalSession.ENTER_ALTERNATE_SCREEN));
-        assertTrue(io.output.toString().contains("\033[?2026h\033[H\033[Jerror: boom"));
+        assertFalse(io.output.toString().contains("\033[?1049h"));
+        assertTrue(io.output.toString().contains("\033[?2026h\033[1;1H\033[2Kerror: boom"));
 
         transport.close();
 
         assertTrue(io.rawModeRestored);
-        assertTrue(io.output.toString().contains(TerminalSession.EXIT_ALTERNATE_SCREEN));
+        assertFalse(io.output.toString().contains("\033[?1049l"));
     }
 
     @Test
@@ -121,11 +122,89 @@ class JLineTuiTransportTest {
         );
 
         String frame = io.output.toString();
-        assertTrue(frame.contains("\033[?2026h\033[H\033[J"));
+        assertFalse(frame.contains("\033[H\033[J"));
         assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
         assertTrue(frame.contains("> "));
 
         transport.close();
+    }
+
+    @Test
+    void openPipelineKeepsLongTranscriptInOutputStreamWithoutAlternateScreenOrRepeatedHomeClear() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 3;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            80,
+            3
+        );
+
+        for (int i = 0; i < 8; i++) {
+            events.emit(new MessageDeltaEvent(
+                "ses_1",
+                "msg_" + i,
+                cn.lypi.contracts.context.MessageRole.ASSISTANT,
+                cn.lypi.contracts.context.MessageKind.TEXT,
+                "block_" + i,
+                cn.lypi.contracts.context.ContentBlockKind.TEXT,
+                "line " + i,
+                true,
+                Map.of(),
+                Instant.parse("2026-06-09T00:00:00Z")
+            ));
+        }
+
+        String output = io.output.toString();
+        assertTrue(output.contains("line 0"));
+        assertTrue(output.contains("line 7"));
+        assertFalse(output.contains("\033[?1049h"));
+        assertFalse(output.contains("\033[?1049l"));
+        assertFalse(output.contains("\033[H\033[J"));
+
+        transport.close();
+    }
+
+    @Test
+    void closeAfterOverflowMovesPromptBelowPhysicalViewport() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 3;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            80,
+            3
+        );
+
+        for (int i = 0; i < 6; i++) {
+            events.emit(new MessageDeltaEvent(
+                "ses_1",
+                "msg_" + i,
+                cn.lypi.contracts.context.MessageRole.ASSISTANT,
+                cn.lypi.contracts.context.MessageKind.TEXT,
+                "block_" + i,
+                cn.lypi.contracts.context.ContentBlockKind.TEXT,
+                "line " + i,
+                true,
+                Map.of(),
+                Instant.parse("2026-06-09T00:00:00Z")
+            ));
+        }
+        io.output.setLength(0);
+
+        transport.close();
+
+        assertTrue(io.output.toString().endsWith("\033[3;1H\n"));
     }
 
     @Test
@@ -184,7 +263,7 @@ class JLineTuiTransportTest {
         ));
 
         assertTrue(io.rawModeRestored);
-        assertTrue(io.output.toString().contains(TerminalSession.EXIT_ALTERNATE_SCREEN));
+        assertFalse(io.output.toString().contains("\033[?1049l"));
     }
 
     @Test
@@ -208,8 +287,10 @@ class JLineTuiTransportTest {
         io.resizeCallback.run();
 
         String frame = io.output.toString();
-        String rendered = frame.substring(frame.indexOf("\033[H\033[J") + "\033[H\033[J".length(), frame.indexOf("\033[?2026l"));
-        assertEquals(6, rendered.split("\n", -1).length);
+        String fullClear = "\033[2J\033[H\033[3J";
+        String rendered = frame.substring(frame.indexOf(fullClear) + fullClear.length(), frame.indexOf("\033[?2026l"));
+        assertEquals(2, rendered.split("\n", -1).length);
+        assertTrue(rendered.contains("> "));
 
         transport.close();
     }

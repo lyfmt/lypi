@@ -37,15 +37,11 @@ final class TuiRenderer {
         screen.setTranscript(transcript);
 
         List<String> lines = new ArrayList<>();
-        List<String> visible = screen.visibleTranscript();
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
             .limit(Math.max(0, layout.transcriptHeight()))
             .map(line -> AnsiWidth.truncate(line, layout.width()))
             .toList();
-        int transcriptHeight = Math.max(0, layout.transcriptHeight() - overlay.size());
-        for (int i = 0; i < transcriptHeight; i++) {
-            lines.add(i < visible.size() ? visible.get(i) : "");
-        }
+        lines.addAll(transcript);
         lines.addAll(overlay);
         lines.add(inputLine(input, cursor, layout.width()));
         lines.add(statusLine(view.statusBar(), screen, layout.width()));

@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 
 class TuiRendererTest {
     @Test
-    void rendersTranscriptStatusAndInputWithinFixedHeight() {
+    void rendersFullTranscriptStatusAndInputForScrollback() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(2);
         TuiViewModel view = new TuiViewModel(
@@ -41,11 +41,10 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(12, 4), "draft");
 
-        assertEquals(4, lines.size());
+        assertEquals(3, lines.size());
         assertEquals("hello world", lines.get(0));
-        assertEquals("", lines.get(1));
-        assertEquals("\033[48;5;236m> draft\033[0m", lines.get(2));
-        assertTrue(lines.get(3).contains("tool"));
+        assertEquals("\033[48;5;236m> draft\033[0m", lines.get(lines.size() - 2));
+        assertTrue(lines.getLast().contains("tool"));
     }
 
     @Test
@@ -62,7 +61,7 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "");
 
-        assertTrue(lines.get(2).contains("tool"));
+        assertTrue(lines.getLast().contains("tool"));
     }
 
     @Test
@@ -88,11 +87,11 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(120, 3), "");
 
-        assertEquals("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE", lines.get(2));
-        assertFalse(lines.get(2).contains("cwd:"));
-        assertFalse(lines.get(2).contains("leaf:"));
-        assertFalse(lines.get(2).contains("ctx:"));
-        assertFalse(lines.get(2).contains("tool:interruptible"));
+        assertEquals("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE", lines.getLast());
+        assertFalse(lines.getLast().contains("cwd:"));
+        assertFalse(lines.getLast().contains("leaf:"));
+        assertFalse(lines.getLast().contains("ctx:"));
+        assertFalse(lines.getLast().contains("tool:interruptible"));
     }
 
     @Test
@@ -127,7 +126,7 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(30, 3), "alpha beta", 6);
 
-        assertEquals("\033[48;5;236m> alpha |CURSOR|beta\033[0m", lines.get(1));
+        assertEquals("\033[48;5;236m> alpha |CURSOR|beta\033[0m", lines.get(lines.size() - 2));
     }
 
     @Test
@@ -144,7 +143,7 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(8, 3), "abcdefgh", 8);
 
-        assertEquals("\033[48;5;236m> …efgh|CURSOR|\033[0m", lines.get(1));
+        assertEquals("\033[48;5;236m> …efgh|CURSOR|\033[0m", lines.get(lines.size() - 2));
     }
 
     @Test
@@ -241,11 +240,12 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(40, 5), "");
 
-        assertEquals("line2", lines.get(0));
-        assertEquals("line3", lines.get(1));
-        assertEquals("· retrying attempt 2 rate limit", lines.get(2));
-        assertTrue(lines.get(3).startsWith("\033[48;5;236m> "));
-        assertTrue(lines.get(4).contains("ses_1"));
+        assertEquals("line1", lines.get(0));
+        assertEquals("line2", lines.get(1));
+        assertEquals("line3", lines.get(2));
+        assertEquals("· retrying attempt 2 rate limit", lines.get(3));
+        assertTrue(lines.get(lines.size() - 2).startsWith("\033[48;5;236m> "));
+        assertTrue(lines.getLast().contains("ses_1"));
 
         TuiScreen screenWithoutRuntime = new TuiScreen(3);
         TuiViewModel withoutRuntime = new TuiViewModel(
