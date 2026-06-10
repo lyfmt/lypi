@@ -156,6 +156,24 @@ class OpenAiChatCompletionsRequestBuilderTest {
         assertThat(body.get("reasoning_effort")).isNull();
     }
 
+    @Test
+    void includesPromptCacheKeyFromRequestMetadata() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-prompt-cache",
+            new ModelSelection("openai", "gpt-4o-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(new LypiMessage(LypiRole.USER, List.of(new LypiTextBlock("hello", Map.of())), Map.of())),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of("promptCacheKey", "ses_main")
+        );
+
+        JsonNode body = new OpenAiChatCompletionsRequestBuilder().build(request, config());
+
+        assertThat(body.get("prompt_cache_key").asText()).isEqualTo("ses_main");
+    }
+
     private static OpenAiProviderConfig config() {
         return new OpenAiProviderConfig(
             "openai",

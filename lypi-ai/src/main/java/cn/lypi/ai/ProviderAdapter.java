@@ -4,6 +4,7 @@ import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.runtime.AiStreamOptions;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 
 public interface ProviderAdapter {
@@ -22,6 +23,20 @@ public interface ProviderAdapter {
     AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal);
 
     /**
+     * 发起带运行选项的 provider 流式调用并标准化输出。
+     *
+     * NOTE: 默认实现保持旧 adapter 兼容；支持运行选项的 adapter 应重写该方法。
+     */
+    default AssistantEventStream stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        AiStreamOptions options,
+        AbortSignal signal
+    ) {
+        return stream(context, descriptor, signal);
+    }
+
+    /**
      * 发起带工具注册表快照的 provider 流式调用并标准化输出。
      *
      * NOTE: 默认实现保持旧 adapter 兼容；支持工具调用的 adapter 应重写该方法。
@@ -33,5 +48,20 @@ public interface ProviderAdapter {
         AbortSignal signal
     ) {
         return stream(context, descriptor, signal);
+    }
+
+    /**
+     * 发起带工具注册表快照和运行选项的 provider 流式调用并标准化输出。
+     *
+     * NOTE: 默认实现保持旧 adapter 兼容；支持工具调用和运行选项的 adapter 应重写该方法。
+     */
+    default AssistantEventStream stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        ToolRegistrySnapshot tools,
+        AiStreamOptions options,
+        AbortSignal signal
+    ) {
+        return stream(context, descriptor, tools, signal);
     }
 }

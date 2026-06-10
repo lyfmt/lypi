@@ -17,6 +17,7 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.runtime.AiStreamOptions;
 import cn.lypi.contracts.tool.ToolDescriptor;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -90,11 +91,33 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
     public AssistantEventStream stream(
         ContextSnapshot context,
         ModelDescriptor descriptor,
+        AiStreamOptions options,
+        AbortSignal signal
+    ) {
+        return stream(context, descriptor, AiProviderRuntimePort.emptyTools(), options, signal);
+    }
+
+    @Override
+    public AssistantEventStream stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
         ToolRegistrySnapshot tools,
+        AbortSignal signal
+    ) {
+        return stream(context, descriptor, tools, AiStreamOptions.empty(), signal);
+    }
+
+    @Override
+    public AssistantEventStream stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        ToolRegistrySnapshot tools,
+        AiStreamOptions options,
         AbortSignal signal
     ) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(descriptor, "descriptor");
+        Objects.requireNonNull(options, "options");
         Objects.requireNonNull(signal, "signal");
         if (config.apiKey() == null || config.apiKey().isBlank()) {
             throw new ModelProviderException(
@@ -105,7 +128,25 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
             );
         }
         LypiModelRequest request = ContextSnapshotRequestFactory.from(context, UUID.randomUUID().toString(), toolSpecs(tools));
+        if (!options.sessionId().isBlank()) {
+            request = requestWithPromptCacheKey(request, options.sessionId());
+        }
         return new OpenAiAssistantEventStream(attempts(request), signal, fallbackDecider, config.maxRetries());
+    }
+
+    private LypiModelRequest requestWithPromptCacheKey(LypiModelRequest request, String promptCacheKey) {
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>(request.metadata());
+        metadata.put("promptCacheKey", promptCacheKey);
+        return new LypiModelRequest(
+            request.requestId(),
+            request.model(),
+            request.thinkingLevel(),
+            request.systemPrompt(),
+            request.messages(),
+            request.tools(),
+            request.options(),
+            metadata
+        );
     }
 
     private List<LypiToolSpec> toolSpecs(ToolRegistrySnapshot tools) {

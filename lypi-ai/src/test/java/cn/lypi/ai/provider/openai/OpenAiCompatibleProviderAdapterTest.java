@@ -28,6 +28,8 @@ import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
+import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.runtime.AiStreamOptions;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.ToolDescriptor;
@@ -150,6 +152,31 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(tool.at("/function/name").asText()).isEqualTo("read");
         assertThat(tool.at("/function/description").asText()).isEqualTo("读取文件内容。");
         assertThat(tool.at("/function/parameters/properties/path/type").asText()).isEqualTo("string");
+    }
+
+    @Test
+    void mapsStreamSessionIdToPromptCacheKeyAcrossOpenAiRequests() throws Exception {
+        RecordingTransport websocket = RecordingTransport.fail("WebSocket handshake failed");
+        RecordingTransport sse = RecordingTransport.fail("Provider HTTP 404: endpoint unsupported");
+        RecordingTransport chat = RecordingTransport.events(
+            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}",
+            "[DONE]"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            chat
+        );
+
+        collect(adapter.stream(context(), descriptor(), AiProviderRuntimePort.emptyTools(), new AiStreamOptions("ses_main"), () -> false));
+
+        assertThat(OBJECT_MAPPER.readTree(websocket.requests.getFirst().body()).at("/response/prompt_cache_key").asText())
+            .isEqualTo("ses_main");
+        assertThat(OBJECT_MAPPER.readTree(sse.requests.getFirst().body()).get("prompt_cache_key").asText())
+            .isEqualTo("ses_main");
+        assertThat(OBJECT_MAPPER.readTree(chat.requests.getFirst().body()).get("prompt_cache_key").asText())
+            .isEqualTo("ses_main");
     }
 
     @Test
