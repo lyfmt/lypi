@@ -446,10 +446,17 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     }
 
     private void drainInput() throws IOException {
-        synchronized (uiMonitor) {
-            uiLockEntries++;
-            if (inputPump != null) {
-                inputPump.drainAvailable(MAX_INPUT_CHUNKS_PER_DRAIN);
+        if (inputPump == null) {
+            return;
+        }
+        for (int drained = 0; drained < MAX_INPUT_CHUNKS_PER_DRAIN; drained++) {
+            Optional<String> chunk = inputPump.readChunk();
+            if (chunk.isEmpty()) {
+                return;
+            }
+            synchronized (uiMonitor) {
+                uiLockEntries++;
+                inputPump.dispatchChunk(chunk.orElseThrow());
             }
         }
     }
