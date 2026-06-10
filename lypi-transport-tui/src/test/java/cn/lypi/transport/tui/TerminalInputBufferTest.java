@@ -15,6 +15,13 @@ class TerminalInputBufferTest {
     }
 
     @Test
+    void emitsStandaloneEscapeAsKeySequence() {
+        TerminalInputBuffer buffer = new TerminalInputBuffer();
+
+        assertEquals(List.of(TerminalInputSegment.key("\033")), buffer.accept("\033"));
+    }
+
+    @Test
     void splitsTextPasteAndRemainingInputFromOneChunk() {
         TerminalInputBuffer buffer = new TerminalInputBuffer();
 

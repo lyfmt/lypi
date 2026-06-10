@@ -108,7 +108,7 @@ final class TerminalInputBuffer {
 
     private int completeEscapeSequenceLength(CharSequence value) {
         if (value.length() < 2) {
-            return 0;
+            return 1;
         }
 
         char afterEsc = value.charAt(1);
