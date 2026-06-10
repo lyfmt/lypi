@@ -572,6 +572,7 @@ final class AgentCoreTestFixtures {
         private final List<AssistantEventStream> streams = new ArrayList<>();
         private final List<RuntimeException> failures = new ArrayList<>();
         final List<ContextSnapshot> contexts = new ArrayList<>();
+        final List<ToolRegistrySnapshot> toolSnapshots = new ArrayList<>();
         final List<AbortSignal> abortSignals = new ArrayList<>();
 
         void enqueue(List<AssistantStreamEvent> events) {
@@ -596,7 +597,13 @@ final class AgentCoreTestFixtures {
 
         @Override
         public AssistantEventStream stream(ContextSnapshot context, AbortSignal signal) {
+            return stream(context, null, signal);
+        }
+
+        @Override
+        public AssistantEventStream stream(ContextSnapshot context, ToolRegistrySnapshot tools, AbortSignal signal) {
             contexts.add(context);
+            toolSnapshots.add(tools);
             abortSignals.add(signal);
             if (!failures.isEmpty()) {
                 throw failures.removeFirst();
@@ -614,6 +621,7 @@ final class AgentCoreTestFixtures {
         private final List<List<ToolResult<?>>> results = new ArrayList<>();
         private final List<RuntimeException> failures = new ArrayList<>();
         private final Map<String, Tool<?, ?>> toolsByNameOrAlias = new LinkedHashMap<>();
+        private ToolRegistrySnapshot snapshot = new ToolRegistrySnapshot(List.of());
         private Path cwd = Path.of(".").toAbsolutePath().normalize();
 
         void enqueue(List<ToolResult<?>> result) {
@@ -626,6 +634,10 @@ final class AgentCoreTestFixtures {
 
         void cwd(Path cwd) {
             this.cwd = cwd.toAbsolutePath().normalize();
+        }
+
+        void snapshot(ToolRegistrySnapshot snapshot) {
+            this.snapshot = snapshot;
         }
 
         @Override
@@ -643,7 +655,7 @@ final class AgentCoreTestFixtures {
 
         @Override
         public ToolRegistrySnapshot snapshot() {
-            return new ToolRegistrySnapshot(List.of());
+            return snapshot;
         }
 
         @Override

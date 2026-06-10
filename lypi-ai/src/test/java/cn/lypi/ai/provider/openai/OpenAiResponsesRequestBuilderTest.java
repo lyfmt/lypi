@@ -9,6 +9,8 @@ import cn.lypi.ai.spec.LypiMessage;
 import cn.lypi.ai.spec.LypiModelRequest;
 import cn.lypi.ai.spec.LypiRole;
 import cn.lypi.ai.spec.LypiTextBlock;
+import cn.lypi.ai.spec.LypiToolCallBlock;
+import cn.lypi.ai.spec.LypiToolResultBlock;
 import cn.lypi.ai.spec.LypiToolSpec;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
@@ -80,6 +82,46 @@ class OpenAiResponsesRequestBuilderTest {
         JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
 
         assertThat(body.get("reasoning")).isNull();
+    }
+
+    @Test
+    void serializesToolCallAndResultHistoryAsResponsesItems() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-tool-history",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiToolCallBlock(
+                        "call-1",
+                        "read_file",
+                        "",
+                        Map.of("input", Map.of("path", "pom.xml"))
+                    )),
+                    Map.of()
+                ),
+                new LypiMessage(
+                    LypiRole.TOOL_RESULT,
+                    List.of(new LypiToolResultBlock("call-1", "contents", false, Map.of())),
+                    Map.of()
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of()
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
+
+        assertThat(body.at("/input/0/type").asText()).isEqualTo("function_call");
+        assertThat(body.at("/input/0/call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/input/0/name").asText()).isEqualTo("read_file");
+        assertThat(body.at("/input/0/arguments").asText()).isEqualTo("{\"path\":\"pom.xml\"}");
+        assertThat(body.at("/input/1/type").asText()).isEqualTo("function_call_output");
+        assertThat(body.at("/input/1/call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/input/1/output").asText()).isEqualTo("contents");
     }
 
     @Test

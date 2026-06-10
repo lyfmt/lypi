@@ -22,6 +22,7 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.util.List;
@@ -62,6 +63,27 @@ class DefaultModelPortTest {
         assertThat(apiProvider.descriptor).isEqualTo(descriptor);
         assertThat(apiProvider.context).isEqualTo(context);
         assertThat(apiProvider.signal.aborted()).isFalse();
+    }
+
+    @Test
+    void streamForwardsRuntimeToolSnapshotThroughSelectedApiProvider() {
+        ModelDescriptor descriptor = descriptor("openai", "gpt-5", true, ApiStyle.OPENAI_COMPATIBLE);
+        RecordingApiProvider apiProvider = new RecordingApiProvider(
+            ApiStyle.OPENAI_COMPATIBLE,
+            Stream.of(new AssistantDone(Optional.empty(), Optional.of("stop")))
+        );
+        DefaultModelPort port = new DefaultModelPort(
+            new DefaultModelRegistry(List.of(descriptor)),
+            new DefaultApiProviderRegistry(List.of(apiProvider))
+        );
+        ContextSnapshot context = context(new ModelSelection("openai", "gpt-5", ThinkingLevel.HIGH), ThinkingLevel.HIGH);
+        ToolRegistrySnapshot tools = new ToolRegistrySnapshot(List.of());
+
+        try (AssistantEventStream stream = port.stream(context, tools, () -> false)) {
+            StreamSupport.stream(stream.spliterator(), false).toList();
+        }
+
+        assertThat(apiProvider.tools).isSameAs(tools);
     }
 
     @Test
@@ -161,6 +183,7 @@ class DefaultModelPortTest {
         private final Stream<AssistantStreamEvent> events;
         private ContextSnapshot context;
         private ModelDescriptor descriptor;
+        private ToolRegistrySnapshot tools;
         private AbortSignal signal;
 
         private RecordingApiProvider(ApiStyle apiStyle, Stream<AssistantStreamEvent> events) {
@@ -175,8 +198,19 @@ class DefaultModelPortTest {
 
         @Override
         public AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal) {
+            return stream(context, descriptor, cn.lypi.contracts.runtime.AiProviderRuntimePort.emptyTools(), signal);
+        }
+
+        @Override
+        public AssistantEventStream stream(
+            ContextSnapshot context,
+            ModelDescriptor descriptor,
+            ToolRegistrySnapshot tools,
+            AbortSignal signal
+        ) {
             this.context = context;
             this.descriptor = descriptor;
+            this.tools = tools;
             this.signal = signal;
             List<AssistantStreamEvent> eventList = events.toList();
             return new TestAssistantEventStream(eventList);

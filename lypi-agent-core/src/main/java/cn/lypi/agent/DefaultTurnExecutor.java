@@ -262,7 +262,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         final MessageKind[] startedKind = {MessageKind.TEXT};
         Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
         ProviderConversationStateHolder providerConversationState = new ProviderConversationStateHolder();
-        try (AssistantEventStream stream = ports.aiProvider().stream(context, request.abortSignal())) {
+        try (AssistantEventStream stream = ports.aiProvider().stream(context, ports.toolRuntime().snapshot(), request.abortSignal())) {
             for (AssistantStreamEvent event : stream) {
                 if (event instanceof ProviderRetryNotice notice) {
                     pendingRetry.ifPresent(previous -> publishRetryEnd(request.sessionId(), previous, false));

@@ -26,6 +26,7 @@ import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
@@ -37,6 +38,8 @@ import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
+import cn.lypi.contracts.tool.ToolDescriptor;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
@@ -125,6 +128,54 @@ class DefaultTurnExecutorTest {
         assertThat(assistantEnd.blocks().getFirst().text()).isEqualTo("hi");
         assertThat(assistantEnd.stopReason()).contains("end_turn");
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void passesToolRuntimeSnapshotToAiProvider() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        ToolRegistrySnapshot snapshot = new ToolRegistrySnapshot(List.of(new ToolDescriptor(
+            "read",
+            List.of("cat"),
+            "读取文件内容。",
+            new JsonSchema(Map.of("type", "object")),
+            true,
+            false
+        )));
+        tools.snapshot(snapshot);
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> new ContextAssembly(
+                    AgentCoreTestFixtures.minimalContext(session.messages()),
+                    AgentCoreTestFixtures.emptyResources(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    false
+                ),
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "entry-1"),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(provider.toolSnapshots).containsExactly(snapshot);
     }
 
     @Test

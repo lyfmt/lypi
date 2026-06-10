@@ -5,6 +5,7 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 
 public interface ApiProvider {
     /**
@@ -18,4 +19,16 @@ public interface ApiProvider {
      * 发起 provider 流式调用并标准化输出。
      */
     AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal);
+
+    /**
+     * 发起带工具注册表快照的 provider 流式调用并标准化输出。
+     */
+    default AssistantEventStream stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        ToolRegistrySnapshot tools,
+        AbortSignal signal
+    ) {
+        return stream(context, descriptor, signal);
+    }
 }

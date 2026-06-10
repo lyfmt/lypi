@@ -16,6 +16,7 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -66,6 +67,27 @@ public final class OpenAiChatCompletionsRequestBuilder {
     }
 
     private void appendMessage(ArrayNode messages, LypiMessage message) {
+        List<LypiToolCallBlock> toolCallBlocks = message.content().stream()
+            .filter(LypiToolCallBlock.class::isInstance)
+            .map(LypiToolCallBlock.class::cast)
+            .toList();
+        if (message.role() == LypiRole.ASSISTANT && !toolCallBlocks.isEmpty()) {
+            ObjectNode node = objectMapper.createObjectNode();
+            node.put("role", "assistant");
+            String content = assistantToolCallContent(message);
+            if (content.isBlank()) {
+                node.putNull("content");
+            } else {
+                node.put("content", content);
+            }
+            ArrayNode toolCalls = objectMapper.createArrayNode();
+            for (LypiToolCallBlock block : toolCallBlocks) {
+                toolCalls.add(toolCall(block));
+            }
+            node.set("tool_calls", toolCalls);
+            messages.add(node);
+            return;
+        }
         for (LypiContentBlock block : message.content()) {
             if (block instanceof LypiToolResultBlock toolResult) {
                 ObjectNode node = objectMapper.createObjectNode();
@@ -80,6 +102,25 @@ public final class OpenAiChatCompletionsRequestBuilder {
                 messages.add(node);
             }
         }
+    }
+
+    private String assistantToolCallContent(LypiMessage message) {
+        return message.content().stream()
+            .filter(block -> !(block instanceof LypiToolCallBlock))
+            .map(this::blockText)
+            .filter(text -> text != null && !text.isBlank())
+            .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private ObjectNode toolCall(LypiToolCallBlock toolCall) {
+        ObjectNode wrapper = objectMapper.createObjectNode();
+        ObjectNode function = objectMapper.createObjectNode();
+        wrapper.put("id", toolCall.toolUseId());
+        wrapper.put("type", "function");
+        function.put("name", toolCall.toolName());
+        function.put("arguments", arguments(toolCall));
+        wrapper.set("function", function);
+        return wrapper;
     }
 
     private String role(LypiRole role) {
@@ -99,6 +140,15 @@ public final class OpenAiChatCompletionsRequestBuilder {
             case LypiAttachmentBlock attachment -> attachment.text();
             case LypiErrorBlock error -> error.text();
         };
+    }
+
+    private String arguments(LypiToolCallBlock toolCall) {
+        Object input = toolCall.metadata().get("input");
+        if (input instanceof Map<?, ?> inputMap) {
+            return objectMapper.valueToTree(inputMap).toString();
+        }
+        String text = toolCall.text();
+        return text == null || text.isBlank() ? "{}" : text;
     }
 
     private ArrayNode tools(LypiModelRequest request) {
