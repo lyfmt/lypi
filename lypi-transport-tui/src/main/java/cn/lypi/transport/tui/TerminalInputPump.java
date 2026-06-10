@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 
 final class TerminalInputPump {
@@ -32,6 +33,7 @@ final class TerminalInputPump {
         for (int drained = 0; drained < maxChunks; drained++) {
             Optional<String> chunk = inputSource.read();
             if (chunk.isEmpty()) {
+                flushBufferedInput();
                 return;
             }
             dispatch(chunk.orElseThrow());
@@ -44,6 +46,18 @@ final class TerminalInputPump {
 
     void dispatchChunk(String chunk) {
         dispatch(chunk);
+    }
+
+    boolean hasBufferedIncompleteKeySequence() {
+        return inputBuffer.hasIncompleteKeySequence();
+    }
+
+    boolean flushBufferedInput() {
+        List<TerminalInputSegment> segments = inputBuffer.flushIncompleteKeySequence();
+        for (TerminalInputSegment segment : segments) {
+            dispatchSegment(segment);
+        }
+        return !segments.isEmpty();
     }
 
     private void dispatch(String chunk) {

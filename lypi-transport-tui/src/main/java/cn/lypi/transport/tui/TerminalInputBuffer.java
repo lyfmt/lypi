@@ -29,18 +29,20 @@ final class TerminalInputBuffer {
         return List.copyOf(segments);
     }
 
-    List<TerminalInputSegment> flush() {
-        List<TerminalInputSegment> segments = new ArrayList<>();
+    List<TerminalInputSegment> flushIncompleteKeySequence() {
         if (pasteMode) {
-            buffer.insert(0, BRACKETED_PASTE_START + pasteBuffer);
-            pasteBuffer.setLength(0);
-            pasteMode = false;
+            return List.of();
         }
         if (!buffer.isEmpty()) {
-            segments.add(TerminalInputSegment.key(buffer.toString()));
+            TerminalInputSegment segment = TerminalInputSegment.key(buffer.toString());
             buffer.setLength(0);
+            return List.of(segment);
         }
-        return List.copyOf(segments);
+        return List.of();
+    }
+
+    boolean hasIncompleteKeySequence() {
+        return !pasteMode && !buffer.isEmpty();
     }
 
     private void processBufferedInput(List<TerminalInputSegment> segments) {

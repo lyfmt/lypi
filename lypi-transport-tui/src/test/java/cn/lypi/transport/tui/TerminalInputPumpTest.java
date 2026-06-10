@@ -169,6 +169,52 @@ class TerminalInputPumpTest {
         assertEquals(List.of("alpha"), submit.submitted);
     }
 
+    @Test
+    void flushesIncompleteBufferedSequenceWhenInputIsDrained() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4)
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("\033[<35"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+        pump.dispatchChunk("tail\r");
+
+        assertEquals(List.of("tail"), submit.submitted);
+    }
+
+    @Test
+    void keepsPendingPasteWhenInputIsTemporarilyDrained() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4)
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("\033[200~alpha\n"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+        pump.dispatchChunk("beta\033[201~\r");
+
+        assertEquals(List.of("alpha\nbeta"), submit.submitted);
+    }
+
     private static final class QueueInputSource implements TerminalInputSource {
         private final ArrayDeque<String> chunks;
 

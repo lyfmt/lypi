@@ -42,4 +42,21 @@ class TerminalInputBufferTest {
             TerminalInputSegment.text("tail")
         ), buffer.accept("beta\033[201~tail"));
     }
+
+    @Test
+    void flushesIncompleteKeySequenceWhenNoMoreInputArrives() {
+        TerminalInputBuffer buffer = new TerminalInputBuffer();
+
+        assertEquals(List.of(), buffer.accept("\033[<35"));
+        assertEquals(List.of(TerminalInputSegment.key("\033[<35")), buffer.flushIncompleteKeySequence());
+    }
+
+    @Test
+    void keepsPendingPasteWhenFlushingIncompleteKeySequence() {
+        TerminalInputBuffer buffer = new TerminalInputBuffer();
+
+        assertEquals(List.of(), buffer.accept("\033[200~alpha\n"));
+        assertEquals(List.of(), buffer.flushIncompleteKeySequence());
+        assertEquals(List.of(TerminalInputSegment.paste("alpha\nbeta")), buffer.accept("beta\033[201~"));
+    }
 }
