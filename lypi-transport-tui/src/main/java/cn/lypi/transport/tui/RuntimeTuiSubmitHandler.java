@@ -5,17 +5,16 @@ import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.InterruptEvent;
 import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
-import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,7 +25,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private final AgentCorePort core;
     private final EventBus events;
     private final Executor executor;
-    private final List<SlashCommand> slashCommands;
+    private final SlashCommandRouter slashCommandRouter;
     private MutableAbortSignal activeSignal;
 
     RuntimeTuiSubmitHandler(String sessionId, AgentCorePort core, EventBus events) {
@@ -34,7 +33,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     }
 
     RuntimeTuiSubmitHandler(String sessionId, AgentCorePort core, EventBus events, Executor executor) {
-        this(sessionId, core, events, executor, List.of());
+        this(sessionId, core, events, executor, (SlashCommandRouter) null);
     }
 
     RuntimeTuiSubmitHandler(
@@ -44,27 +43,65 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         Executor executor,
         List<SlashCommand> slashCommands
     ) {
+        this(
+            sessionId,
+            core,
+            events,
+            executor,
+            slashCommands == null || slashCommands.isEmpty() ? null : new SlashCommandRouter(slashCommands)
+        );
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        SlashCommandRouter slashCommandRouter
+    ) {
         this.sessionId = sessionId;
         this.core = core;
         this.events = events;
         this.executor = executor;
-        this.slashCommands = slashCommands == null ? List.of() : List.copyOf(slashCommands);
+        this.slashCommandRouter = slashCommandRouter;
     }
 
     @Override
     public void submitUserInput(String input) {
-        if (trySubmitSlashCommand(input)) {
-            return;
+        String routedInput = input == null ? "" : input;
+        if (slashCommandRouter != null) {
+            SlashCommandResult result = slashCommandRouter.route(routedInput);
+            result.message().ifPresent(this::publishSlashCommandError);
+            result.notice().ifPresent(this::publishSlashCommandNotice);
+            if (result.consumed()) {
+                return;
+            }
+            if (result.prompt().isPresent()) {
+                routedInput = result.prompt().orElseThrow();
+            }
         }
         MutableAbortSignal signal = new MutableAbortSignal();
         activeSignal = signal;
         TurnRequest request = new TurnRequest(
             sessionId,
-            input == null ? "" : input,
+            routedInput,
             Optional.empty(),
             signal
         );
         executor.execute(() -> core.execute(request));
+    }
+
+    private void publishSlashCommandError(String message) {
+        events.publish(new ErrorEvent(
+            sessionId,
+            "slash_command_error",
+            message,
+            Instant.now()
+        ));
+    }
+
+    private void publishSlashCommandNotice(String message) {
+        publishSlashOutput("slash_command", message);
     }
 
     @Override
@@ -88,80 +125,6 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             false,
             Instant.now()
         ));
-    }
-
-    private boolean trySubmitSlashCommand(String input) {
-        String trimmed = input == null ? "" : input.trim();
-        if (!trimmed.startsWith("/") || trimmed.length() == 1) {
-            return false;
-        }
-        String[] tokens = trimmed.substring(1).split("\\s+");
-        Optional<SlashCommand> command = slashCommands.stream()
-            .filter(candidate -> candidate.name().equals(tokens[0]))
-            .findFirst();
-        if (command.isEmpty()) {
-            publishSlashOutput(tokens[0], "未知 slash command: /" + tokens[0]);
-            return true;
-        }
-        command.get().handler().handle(arguments(command.get(), tokens));
-        publishSlashOutput(command.get().name(), output(command.get()));
-        return true;
-    }
-
-    private Map<String, String> arguments(SlashCommand command, String[] tokens) {
-        Map<String, String> arguments = new LinkedHashMap<>();
-        if (applyMailboxShorthand(command.name(), tokens, arguments)) {
-            return Map.copyOf(arguments);
-        }
-        if (applyAgentShorthand(command.name(), tokens, arguments)) {
-            return Map.copyOf(arguments);
-        }
-        List<PromptParameter> parameters = command.parameters();
-        for (int index = 1; index < tokens.length; index++) {
-            String token = tokens[index];
-            int equals = token.indexOf('=');
-            if (equals > 0) {
-                arguments.put(token.substring(0, equals), token.substring(equals + 1));
-                continue;
-            }
-            int parameterIndex = index - 1;
-            if (parameterIndex < parameters.size()) {
-                arguments.put(parameters.get(parameterIndex).name(), token);
-            }
-        }
-        return Map.copyOf(arguments);
-    }
-
-    private boolean applyMailboxShorthand(String commandName, String[] tokens, Map<String, String> arguments) {
-        if (!"mailbox".equals(commandName) || tokens.length < 3 || tokens[1].contains("=") || tokens[2].contains("=")) {
-            return false;
-        }
-        if (isMailboxCommandAction(tokens[1])) {
-            arguments.put("action", tokens[1]);
-            arguments.put("mailId", tokens[2]);
-            return true;
-        }
-        return false;
-    }
-
-    private boolean applyAgentShorthand(String commandName, String[] tokens, Map<String, String> arguments) {
-        if (!"agent".equals(commandName) || tokens.length < 3 || tokens[1].contains("=") || tokens[2].contains("=")) {
-            return false;
-        }
-        if ("interrupt".equals(tokens[1])) {
-            arguments.put("action", tokens[1]);
-            arguments.put("agentId", tokens[2]);
-            return true;
-        }
-        return false;
-    }
-
-    private boolean isMailboxCommandAction(String action) {
-        return "accept".equals(action) || "stash".equals(action) || "discard".equals(action);
-    }
-
-    private String output(SlashCommand command) {
-        return command.handler().lastOutput();
     }
 
     private void publishSlashOutput(String commandName, String output) {

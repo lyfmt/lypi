@@ -5,6 +5,7 @@ public enum TerminalKey {
     CTRL_O,
     ESC,
     BRACKETED_PASTE,
+    TAB,
     ENTER,
     BACKSPACE,
     MODIFIED_ENTER,

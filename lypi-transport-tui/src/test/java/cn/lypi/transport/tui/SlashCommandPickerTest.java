@@ -8,6 +8,18 @@ import org.junit.jupiter.api.Test;
 
 class SlashCommandPickerTest {
     @Test
+    void defaultCommandsIncludeImplementedStateCommandsAndTemplates() {
+        SlashCommandPicker picker = SlashCommandPicker.withTemplates(List.of("review", "commit"));
+
+        picker.updateFilter("/");
+
+        assertEquals(
+            List.of("/model", "/thinking", "/mode", "/permission-mode", "/compact", "/review", "/commit"),
+            picker.visibleCommands()
+        );
+    }
+
+    @Test
     void fuzzyMatchesCommandsAndAcceptsSelection() {
         SlashCommandPicker picker = new SlashCommandPicker(List.of("/model", "/thinking", "/compact"));
 
@@ -37,5 +49,20 @@ class SlashCommandPickerTest {
 
         assertEquals("(0/0)", picker.title());
         assertTrue(picker.accept().isEmpty());
+    }
+
+    @Test
+    void prefixMatchesCommandsAndMovesSelection() {
+        SlashCommandPicker picker = SlashCommandPicker.withTemplates(List.of("memory", "review"));
+
+        picker.updateFilter("/m");
+
+        assertEquals(List.of("/model", "/mode", "/memory"), picker.visibleCommands());
+        assertEquals("(1/3)", picker.title());
+        picker.moveDown();
+        assertEquals("(2/3)", picker.title());
+        assertEquals("/mode", picker.accept().orElseThrow());
+        picker.moveUp();
+        assertEquals("(1/3)", picker.title());
     }
 }
