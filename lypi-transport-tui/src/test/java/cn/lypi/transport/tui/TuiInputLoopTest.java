@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.StatusBarState;
@@ -132,6 +133,31 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void permissionPromptTakesPriorityOverSlashOverlayNavigation() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(4),
+            new TuiLayout(40, 6),
+            () -> permissionView("allow_once", "cancel"),
+            () -> new SlashCommandPicker(List.of("/model", "/mode"))
+        );
+
+        loop.acceptText("/");
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.TAB);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals("/", loop.draft());
+        assertEquals(List.of("perm_toolu_1:toolu_1:allow_once"), submit.permissionOptions);
+        assertTrue(frames.getLast().contains("permission toolu_1: Need approval"));
+        assertTrue(!frames.getLast().contains("/model"));
+    }
+
+    @Test
     void escapeAndCtrlCCancelPermissionPromptInsteadOfExitOrInterrupt() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
@@ -172,6 +198,119 @@ class TuiInputLoopTest {
         assertEquals("second", loop.draft());
         loop.acceptKey(TerminalKey.DOWN);
         assertEquals("draft", loop.draft());
+    }
+
+    @Test
+    void slashOverlayShowsCandidatesAndAcceptsSelection() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(6),
+            new TuiLayout(40, 8),
+            null,
+            () -> SlashCommandPicker.withTemplates(List.of("review"))
+        );
+
+        loop.acceptText("/");
+
+        assertTrue(frames.getLast().contains("> /model"));
+        assertTrue(frames.getLast().contains("  /compact"));
+
+        loop.acceptText("th");
+        assertTrue(frames.getLast().contains("> /thinking"));
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals("/thinking ", loop.draft());
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void slashOverlayUsesArrowKeysAndEscWithoutHistoryNavigation() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(3),
+            new TuiLayout(40, 5),
+            null,
+            () -> new SlashCommandPicker(List.of("/model", "/mode", "/compact"))
+        );
+
+        loop.acceptText("first");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("/");
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.TAB);
+
+        assertEquals("/mode ", loop.draft());
+
+        loop.acceptKey(TerminalKey.CTRL_U);
+        loop.acceptText("/");
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("first", loop.draft());
+    }
+
+    @Test
+    void slashOverlayScrollsSelectedCandidateIntoVisibleWindow() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(6),
+            new TuiLayout(40, 8),
+            null,
+            () -> new SlashCommandPicker(List.of(
+                "/model",
+                "/thinking",
+                "/mode",
+                "/permission-mode",
+                "/compact",
+                "/review"
+            ))
+        );
+
+        loop.acceptText("/");
+        for (int i = 0; i < 5; i++) {
+            loop.acceptKey(TerminalKey.DOWN);
+        }
+
+        assertTrue(frames.getLast().contains("> /review"));
+        assertTrue(!frames.getLast().contains("> /model"));
+
+        loop.acceptKey(TerminalKey.TAB);
+
+        assertEquals("/review ", loop.draft());
+    }
+
+    @Test
+    void unknownSlashWithNoOverlayCandidatesSubmitsAsNormalInput() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(3),
+            new TuiLayout(40, 5),
+            null,
+            () -> new SlashCommandPicker(List.of("/model"))
+        );
+
+        loop.acceptText("/unknown");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("/unknown"), submit.submitted);
+        assertEquals("", loop.draft());
     }
 
     @Test

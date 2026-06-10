@@ -8,22 +8,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
+import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.InterruptEvent;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.prompt.PromptParameter;
+import cn.lypi.contracts.prompt.PromptTemplate;
+import cn.lypi.contracts.prompt.PromptTemplateSource;
+import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.CompactionResult;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.SessionContext;
+import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.SlashCommandHandler;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
@@ -97,7 +118,46 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
-    void slashCommandInputRunsHandlerAndPublishesLocalOutputWithoutStartingTurn() {
+    void stateSlashCommandDoesNotSubmitTurnAndAppendsSessionEntry() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources())
+        );
+
+        handler.submitUserInput("/thinking high");
+
+        assertEquals(List.of(), core.requests);
+        ThinkingChangeEntry entry = assertInstanceOf(ThinkingChangeEntry.class, session.entries.getFirst());
+        assertEquals(ThinkingLevel.HIGH, entry.thinkingLevel());
+    }
+
+    @Test
+    void templateSlashCommandSubmitsRenderedPrompt() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            new SlashCommandRouter("ses_1", Path.of("."), session, reviewResources())
+        );
+
+        handler.submitUserInput("/review scope=staged");
+
+        assertEquals("Review staged.", core.requests.getFirst().userInput());
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void externalSlashCommandRunsHandlerAndPublishesLocalOutputWithoutStartingTurn() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
         RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("mailId: mail_1");
@@ -160,22 +220,81 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
-    void unknownSlashCommandPublishesLocalOutputWithoutStartingTurn() {
+    void unknownSlashCommandStillSubmitsAsUserInput() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
         RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
             "ses_1",
             core,
             events,
             Runnable::run,
-            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("."),
+                session,
+                emptyResources(),
+                null,
+                List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+            )
         );
 
-        handler.submitUserInput("/unknown do-not-send-to-model");
+        handler.submitUserInput("/unknown text");
 
-        assertTrue(core.requests.isEmpty());
+        assertEquals("/unknown text", core.requests.getFirst().userInput());
+        assertEquals(List.of(), session.entries);
+        assertTrue(events.published.isEmpty());
+    }
+
+    @Test
+    void invalidSlashCommandPublishesVisibleErrorWithoutSubmittingTurn() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources())
+        );
+
+        handler.submitUserInput("/thinking huge");
+
+        assertEquals(List.of(), core.requests);
+        ErrorEvent event = assertInstanceOf(ErrorEvent.class, events.published.getFirst());
+        assertEquals("ses_1", event.sessionId());
+        assertTrue(event.message().contains("unknown thinking level"));
+    }
+
+    @Test
+    void compactSlashCommandPublishesVisibleResultWithoutSubmittingTurn() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("."),
+                session,
+                emptyResources(),
+                request -> new CompactionResult(true, Optional.of("entry-compact-1"), "compacted")
+            )
+        );
+
+        handler.submitUserInput("/compact");
+
+        assertEquals(List.of(), core.requests);
+        MessageStartEvent start = assertInstanceOf(MessageStartEvent.class, events.published.getFirst());
+        assertEquals("ses_1", start.sessionId());
         MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
-        assertEquals("未知 slash command: /unknown", delta.delta());
+        assertEquals("ses_1", delta.sessionId());
+        assertEquals("compact: compacted", delta.delta());
+        assertInstanceOf(MessageEndEvent.class, events.published.get(2));
     }
 
     private static final class RecordingCore implements AgentCorePort {
@@ -219,6 +338,7 @@ class RuntimeTuiSubmitHandlerTest {
             this.arguments = arguments;
         }
 
+        @Override
         public String lastOutput() {
             return output;
         }
@@ -236,6 +356,102 @@ class RuntimeTuiSubmitHandlerTest {
         public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
             return () -> {
             };
+        }
+    }
+
+    private static ResourceRuntimePort emptyResources() {
+        return resources(List.of());
+    }
+
+    private static ResourceRuntimePort reviewResources() {
+        PromptTemplate review = new PromptTemplate(
+            "review",
+            "Review changes",
+            PromptTemplateSource.PROJECT,
+            List.of(new PromptParameter("scope", "Review scope", true, Optional.empty())),
+            "Review {{scope}}.",
+            "sha256:review"
+        );
+        return resources(List.of(review));
+    }
+
+    private static ResourceRuntimePort resources(List<PromptTemplate> templates) {
+        return new ResourceRuntimePort() {
+            @Override
+            public ResourceSnapshot load(Path cwd) {
+                return new ResourceSnapshot(List.of(), List.of(), new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()), templates, List.of(), List.of());
+            }
+
+            @Override
+            public cn.lypi.contracts.prompt.SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
+                return null;
+            }
+        };
+    }
+
+    private static final class RecordingSessionManager implements SessionManagerPort {
+        private final List<SessionEntry> entries = new ArrayList<>();
+        private String leafId = "root";
+
+        @Override
+        public SessionHandle openOrCreate(String sessionId) {
+            return new SessionHandle(sessionId, Path.of("session.jsonl"), leafId, Map.of());
+        }
+
+        @Override
+        public SessionHandle append(SessionEntry entry) {
+            entries.add(entry);
+            leafId = entry.id();
+            return openOrCreate("ses_1");
+        }
+
+        @Override
+        public SessionHandle switchLeaf(String leafId) {
+            this.leafId = leafId;
+            return openOrCreate("ses_1");
+        }
+
+        @Override
+        public List<SessionEntry> branch(String leafId) {
+            return List.copyOf(entries);
+        }
+
+        @Override
+        public SessionView currentView() {
+            return new SessionView("ses_1", leafId);
+        }
+
+        @Override
+        public SessionView view(String leafId) {
+            return new SessionView("ses_1", leafId);
+        }
+
+        @Override
+        public List<AgentMessage> transcript(String leafId) {
+            return List.of();
+        }
+
+        @Override
+        public SessionContext context(String leafId) {
+            return new SessionContext(
+                List.of(),
+                List.of(this.leafId),
+                List.of(),
+                new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+                ThinkingLevel.MEDIUM,
+                AgentMode.EXECUTE,
+                PermissionMode.DEFAULT_EXECUTE
+            );
+        }
+
+        @Override
+        public SessionHandle appendMessage(AgentMessage message) {
+            return openOrCreate("ses_1");
+        }
+
+        @Override
+        public SessionHandle fork(ForkRequest request) {
+            return openOrCreate("ses_1");
         }
     }
 }

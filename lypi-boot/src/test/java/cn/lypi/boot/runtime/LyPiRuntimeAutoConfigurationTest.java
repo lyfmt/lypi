@@ -42,6 +42,9 @@ import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AppEntry;
 import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.CompactionRequest;
+import cn.lypi.contracts.runtime.CompactionResult;
+import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
 import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
@@ -203,6 +206,7 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(context).hasSingleBean(ResourceRuntimePort.class);
                 assertThat(context).hasSingleBean(AiProviderRuntimePort.class);
                 assertThat(context).hasSingleBean(ToolRuntimePort.class);
+                assertThat(context).hasSingleBean(CompactionRuntimePort.class);
                 assertThat(context).hasSingleBean(AgentCorePort.class);
                 assertThat(context).hasSingleBean(LyPiRuntime.class);
 
@@ -213,6 +217,45 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(runtime.toolRuntime()).isSameAs(context.getBean(ToolRuntimePort.class));
                 assertThat(runtime.securityRuntime()).isSameAs(context.getBean(SecurityRuntimePort.class));
                 assertThat(runtime.resourceRuntime()).isSameAs(context.getBean(ResourceRuntimePort.class));
+                assertThat(runtime.compactionRuntime()).isSameAs(context.getBean(CompactionRuntimePort.class));
+            });
+    }
+
+    @Test
+    void compactionRuntimeUsesManualPlannerIndependentOfAutoThreshold() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir
+            )
+            .withBean(CompactionSummarizer.class, () -> request -> new CompactSummaryResult(
+                "manual summary",
+                new cn.lypi.contracts.model.TokenUsage(1, 1, 0, 2)
+            ))
+            .run(context -> {
+                SessionManagerPort session = context.getBean(SessionManagerPort.class);
+                session.openOrCreate("session-manual-compact");
+                String rootLeaf = session.currentView().leafId();
+                session.append(messageEntry("entry-user-1", rootLeaf, MessageRole.USER, "old user"));
+                session.append(messageEntry("entry-assistant-1", "entry-user-1", MessageRole.ASSISTANT, "old assistant"));
+                session.append(messageEntry("entry-user-2", "entry-assistant-1", MessageRole.USER, "recent user"));
+
+                CompactionResult result = context.getBean(CompactionRuntimePort.class).compact(new CompactionRequest(
+                    "session-manual-compact",
+                    Optional.of("entry-user-2"),
+                    tempDir,
+                    () -> false
+                ));
+
+                assertThat(result.compacted()).isTrue();
+                assertThat(session.branch(session.currentView().leafId()))
+                    .filteredOn(cn.lypi.contracts.session.CompactionEntry.class::isInstance)
+                    .singleElement()
+                    .satisfies(entry -> assertThat(((cn.lypi.contracts.session.CompactionEntry) entry).kind())
+                        .isEqualTo(cn.lypi.contracts.session.CompactionKind.MANUAL));
             });
     }
 
@@ -353,6 +396,27 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(launcher.core.get()).isSameAs(core);
                 assertThat(launcher.events.get()).isSameAs(context.getBean(EventBus.class));
                 assertThat(core.request.get()).isNull();
+            });
+    }
+
+    @Test
+    void createsDefaultJLineTuiTransportLauncherWithRuntimePorts() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir
+            )
+            .run(context -> {
+                assertThat(context).hasBean("jLineTuiTransportLauncher");
+                TransportLauncher launcher = context.getBean("jLineTuiTransportLauncher", TransportLauncher.class);
+
+                assertThat(launcher.name()).isEqualTo("tui");
+                assertThat(context).hasSingleBean(CompactionRuntimePort.class);
+                assertThat(context).hasSingleBean(JLineTuiTransportFactory.class);
+                assertThat(launcher).hasFieldOrPropertyWithValue("factory", context.getBean(JLineTuiTransportFactory.class));
             });
     }
 
@@ -1066,6 +1130,28 @@ class LyPiRuntimeAutoConfigurationTest {
             new SubagentResultRef("ses_child", "entry_final", java.util.Optional.empty()),
             MailboxStatus.PENDING,
             Instant.EPOCH,
+            Instant.EPOCH
+        );
+    }
+
+    private static cn.lypi.contracts.session.MessageEntry messageEntry(
+        String id,
+        String parentId,
+        MessageRole role,
+        String text
+    ) {
+        return new cn.lypi.contracts.session.MessageEntry(
+            id,
+            parentId,
+            new cn.lypi.contracts.context.AgentMessage(
+                "msg-" + id,
+                role,
+                MessageKind.TEXT,
+                List.of(new cn.lypi.contracts.context.TextContentBlock(text)),
+                Instant.EPOCH,
+                Optional.empty(),
+                Optional.empty()
+            ),
             Instant.EPOCH
         );
     }

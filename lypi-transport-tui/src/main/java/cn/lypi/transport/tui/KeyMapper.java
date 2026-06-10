@@ -10,6 +10,7 @@ final class KeyMapper {
             case "\u0015" -> Optional.of(TerminalKey.CTRL_U);
             case "\u0019" -> Optional.of(TerminalKey.CTRL_Y);
             case "\u001a" -> Optional.of(TerminalKey.CTRL_Z);
+            case "\t" -> Optional.of(TerminalKey.TAB);
             case "\033" -> Optional.of(TerminalKey.ESC);
             case "\r", "\n" -> Optional.of(TerminalKey.ENTER);
             case "\u007f", "\b" -> Optional.of(TerminalKey.BACKSPACE);

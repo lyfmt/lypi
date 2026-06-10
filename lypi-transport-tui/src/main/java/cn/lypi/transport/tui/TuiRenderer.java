@@ -21,14 +21,31 @@ final class TuiRenderer {
     }
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input, int cursor) {
+        return render(view, screen, layout, input, cursor, List.of());
+    }
+
+    List<String> render(
+        TuiViewModel view,
+        TuiScreen screen,
+        TuiLayout layout,
+        String input,
+        int cursor,
+        List<String> overlayLines
+    ) {
         List<String> transcript = transcriptLines(view, layout.width());
         screen.setTranscript(transcript);
 
         List<String> lines = new ArrayList<>();
         List<String> visible = screen.visibleTranscript();
-        for (int i = 0; i < layout.transcriptHeight(); i++) {
+        List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
+            .limit(Math.max(0, layout.transcriptHeight()))
+            .map(line -> AnsiWidth.truncate(line, layout.width()))
+            .toList();
+        int transcriptHeight = Math.max(0, layout.transcriptHeight() - overlay.size());
+        for (int i = 0; i < transcriptHeight; i++) {
             lines.add(i < visible.size() ? visible.get(i) : "");
         }
+        lines.addAll(overlay);
         lines.add(inputLine(input, cursor, layout.width()));
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
         return lines;

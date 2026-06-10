@@ -211,4 +211,32 @@ class TuiRendererTest {
         assertEquals("  stdout: ok", lines.get(1));
         assertEquals("  exit 0", lines.get(2));
     }
+
+    @Test
+    void slashOverlayRendersAboveInputLineAndKeepsFixedHeight() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(2);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(
+            view,
+            screen,
+            new TuiLayout(40, 5),
+            "/",
+            1,
+            List.of("> /model", "  /thinking", "  /compact")
+        );
+
+        assertEquals(5, lines.size());
+        assertEquals("> /model", lines.get(0));
+        assertEquals("  /thinking", lines.get(1));
+        assertEquals("\033[48;5;236m> /|CURSOR|\033[0m", lines.get(3));
+        assertTrue(lines.get(4).contains("ses_1"));
+    }
 }
