@@ -84,6 +84,19 @@ class TerminalFrameRendererTest {
     }
 
     @Test
+    void multilineInputPatchUsesBottomAnchoredRows() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 5;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of("line4", "> abcdef", "ghij|CURSOR|", "status"));
+        io.output.setLength(0);
+        renderer.render(List.of("line4", "> abcdef", "ghijX|CURSOR|", "status"));
+
+        assertEquals("\033[?2026h\033[3;1H\033[2KghijX\033[3;6H\033[?2026l", io.output.toString());
+    }
+
+    @Test
     void middleLineChangePatchesFromFirstChangedLine() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);

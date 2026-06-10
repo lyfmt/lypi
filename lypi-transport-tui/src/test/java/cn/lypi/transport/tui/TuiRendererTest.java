@@ -143,7 +143,105 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(8, 3), "abcdefgh", 8);
 
-        assertEquals("\033[48;5;236m> …efgh|CURSOR|\033[0m", lines.get(lines.size() - 2));
+        assertEquals("\033[48;5;236mgh|CURSOR|\033[0m", lines.get(lines.size() - 2));
+    }
+
+    @Test
+    void longSingleLineInputSoftWrapsIntoBottomInputArea() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(8, 5), "abcdefghij", 10);
+
+        assertEquals(3, lines.size());
+        assertEquals("\033[48;5;236m> abcdef\033[0m", lines.get(0));
+        assertEquals("\033[48;5;236mghij|CURSOR|\033[0m", lines.get(1));
+        assertEquals("ses_1 g…", lines.get(2));
+    }
+
+    @Test
+    void explicitNewlineStartsAnotherInputRow() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(12, 5), "hello\nworld", 11);
+
+        assertEquals("\033[48;5;236m> hello\033[0m", lines.get(0));
+        assertEquals("\033[48;5;236mworld|CURSOR|\033[0m", lines.get(1));
+        assertEquals("ses_1 gpt-5…", lines.get(2));
+    }
+
+    @Test
+    void transcriptKeepsBottomInputAndStatusAnchoredWhenMessagesOverflow() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock("b1", "m1", "assistant", "line1", false),
+                new TuiMessageBlock("b2", "m2", "assistant", "line2", false),
+                new TuiMessageBlock("b3", "m3", "assistant", "line3", false),
+                new TuiMessageBlock("b4", "m4", "assistant", "line4", false)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(12, 5), "abcdefghij", 10);
+
+        assertEquals(5, lines.size());
+        assertEquals("line2", lines.get(0));
+        assertEquals("line3", lines.get(1));
+        assertEquals("line4", lines.get(2));
+        assertEquals("\033[48;5;236m> abcdefghij|CURSOR|\033[0m", lines.get(3));
+        assertEquals("ses_1 gpt-5…", lines.get(4));
+    }
+
+    @Test
+    void overlaySharesTranscriptBudgetAndDoesNotPushOutInputOrStatus() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(2);
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock("b1", "m1", "assistant", "line1", false),
+                new TuiMessageBlock("b2", "m2", "assistant", "line2", false),
+                new TuiMessageBlock("b3", "m3", "assistant", "line3", false)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(
+            view,
+            screen,
+            new TuiLayout(20, 5),
+            "draft",
+            5,
+            List.of("> /model", "  /mode", "  /compact")
+        );
+
+        assertEquals(5, lines.size());
+        assertEquals("line3", lines.get(0));
+        assertEquals("> /model", lines.get(1));
+        assertEquals("\033[48;5;236m> draft|CURSOR|\033[0m", lines.get(3));
+        assertEquals("ses_1 gpt-5.4 execu…", lines.get(4));
     }
 
     @Test
@@ -240,10 +338,9 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(40, 5), "");
 
-        assertEquals("line1", lines.get(0));
-        assertEquals("line2", lines.get(1));
-        assertEquals("line3", lines.get(2));
-        assertEquals("· retrying attempt 2 rate limit", lines.get(3));
+        assertEquals("line2", lines.get(0));
+        assertEquals("line3", lines.get(1));
+        assertEquals("· retrying attempt 2 rate limit", lines.get(2));
         assertTrue(lines.get(lines.size() - 2).startsWith("\033[48;5;236m> "));
         assertTrue(lines.getLast().contains("ses_1"));
 
@@ -302,10 +399,10 @@ class TuiRendererTest {
             List.of("> /model", "  /thinking", "  /compact")
         );
 
-        assertEquals(5, lines.size());
+        assertEquals(4, lines.size());
         assertEquals("> /model", lines.get(0));
         assertEquals("  /thinking", lines.get(1));
-        assertEquals("\033[48;5;236m> /|CURSOR|\033[0m", lines.get(3));
-        assertTrue(lines.get(4).contains("ses_1"));
+        assertEquals("\033[48;5;236m> /|CURSOR|\033[0m", lines.get(2));
+        assertTrue(lines.get(3).contains("ses_1"));
     }
 }

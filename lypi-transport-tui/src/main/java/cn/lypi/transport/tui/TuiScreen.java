@@ -4,15 +4,20 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class TuiScreen {
-    private final int viewportHeight;
+    private int viewportHeight;
     private List<String> transcript = List.of();
     private int viewportStart;
 
     TuiScreen(int viewportHeight) {
+        updateViewportHeight(viewportHeight);
+    }
+
+    void updateViewportHeight(int viewportHeight) {
         if (viewportHeight <= 0) {
             throw new IllegalArgumentException("viewportHeight must be positive");
         }
         this.viewportHeight = viewportHeight;
+        viewportStart = Math.min(viewportStart, maxViewportStart());
     }
 
     void setTranscript(List<String> transcript) {

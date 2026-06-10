@@ -90,6 +90,28 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void modifiedEnterRendersMultilineInputWithoutSubmitting() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(1),
+            new TuiLayout(12, 5)
+        );
+
+        loop.acceptText("hello");
+        loop.acceptKey(TerminalKey.MODIFIED_ENTER);
+        loop.acceptText("world");
+
+        List<String> lines = frames.getLast().lines().toList();
+        assertEquals("\033[48;5;236m> hello\033[0m", lines.get(0));
+        assertEquals("\033[48;5;236mworld|CURSOR|\033[0m", lines.get(1));
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
     void ctrlCClearsDraftBeforeInterruptingActiveTool() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {

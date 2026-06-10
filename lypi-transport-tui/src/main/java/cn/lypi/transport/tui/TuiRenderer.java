@@ -15,6 +15,7 @@ import java.util.Locale;
 final class TuiRenderer {
     private static final String INPUT_BACKGROUND = "\033[48;5;236m";
     private static final String ANSI_RESET = "\033[0m";
+    private static final String INPUT_PREFIX = "> ";
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input) {
@@ -34,16 +35,23 @@ final class TuiRenderer {
         List<String> overlayLines
     ) {
         List<String> transcript = transcriptLines(view, layout.width());
+        InputBlock inputBlock = layoutInput(input, cursor, layout);
+        int transcriptHeight = layout.transcriptHeight(inputBlock.lines().size());
+        List<String> rawOverlay = overlayLines == null ? List.of() : overlayLines.stream()
+            .map(line -> AnsiWidth.truncate(line, layout.width()))
+            .toList();
+        int overlayBudget = Math.max(0, transcriptHeight - 1);
+        List<String> overlay = rawOverlay.stream()
+            .limit(overlayBudget)
+            .toList();
+        int visibleTranscriptBudget = Math.max(1, transcriptHeight - overlay.size());
+        screen.updateViewportHeight(Math.max(1, visibleTranscriptBudget));
         screen.setTranscript(transcript);
 
         List<String> lines = new ArrayList<>();
-        List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
-            .limit(Math.max(0, layout.transcriptHeight()))
-            .map(line -> AnsiWidth.truncate(line, layout.width()))
-            .toList();
-        lines.addAll(transcript);
+        lines.addAll(screen.visibleTranscript());
         lines.addAll(overlay);
-        lines.add(inputLine(input, cursor, layout.width()));
+        lines.addAll(inputBlock.lines());
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
         return lines;
     }
@@ -146,79 +154,117 @@ final class TuiRenderer {
         return AnsiWidth.truncate(full, width);
     }
 
-    private String inputLine(String input, int cursor, int width) {
-        return INPUT_BACKGROUND + rawInputLine(input, cursor, width) + ANSI_RESET;
-    }
-
-    private String rawInputLine(String input, int cursor, int width) {
+    private InputBlock layoutInput(String input, int cursor, TuiLayout layout) {
         String value = input == null ? "" : input;
-        if (cursor < 0) {
-            return AnsiWidth.truncate("> " + value, width);
-        }
-        if (width <= 0) {
-            return TerminalFrameRenderer.CURSOR_MARKER;
-        }
-        int boundedCursor = Math.max(0, Math.min(cursor, value.length()));
-        String prefix = width >= 2 ? "> " : "";
-        int beforeBudget = Math.max(0, width - AnsiWidth.displayWidth(prefix) - 1);
-        String before = value.substring(0, boundedCursor);
-        String visibleBefore = before;
-        if (AnsiWidth.displayWidth(visibleBefore) > beforeBudget) {
-            visibleBefore = beforeBudget <= 1
-                ? ""
-                : "…" + displaySuffix(before, beforeBudget - 1);
-        }
-        int remaining = Math.max(0, width - AnsiWidth.displayWidth(prefix) - AnsiWidth.displayWidth(visibleBefore));
-        String visibleAfter = displayPrefix(value.substring(boundedCursor), remaining);
-        return prefix + visibleBefore + TerminalFrameRenderer.CURSOR_MARKER + visibleAfter;
-    }
+        int boundedCursor = cursor < 0 ? -1 : Math.max(0, Math.min(cursor, value.length()));
+        int maxHeight = layout.maxInputHeight();
+        List<String> lines = new ArrayList<>();
+        StringBuilder currentLine = new StringBuilder();
+        int currentWidth = 0;
+        int cursorLine = 0;
+        int cursorColumn = -1;
 
-    private String displayPrefix(String value, int maxWidth) {
-        if (maxWidth <= 0 || value.isEmpty()) {
-            return "";
+        if (boundedCursor == 0) {
+            cursorColumn = 0;
         }
-        if (AnsiWidth.displayWidth(value) <= maxWidth) {
-            return value;
-        }
-        int contentLimit = Math.max(0, maxWidth - 1);
-        StringBuilder result = new StringBuilder();
-        int width = 0;
         for (int index = 0; index < value.length();) {
-            int codePoint = value.codePointAt(index);
-            int codePointWidth = AnsiWidth.displayWidth(new String(Character.toChars(codePoint)));
-            if (width + codePointWidth > contentLimit) {
-                break;
+            if (boundedCursor == index) {
+                cursorLine = lines.size();
+                cursorColumn = currentWidth;
             }
-            result.appendCodePoint(codePoint);
-            width += codePointWidth;
+            int codePoint = value.codePointAt(index);
+            String chunk = new String(Character.toChars(codePoint));
+            int chunkWidth = AnsiWidth.displayWidth(chunk);
+            int availableWidth = lines.isEmpty()
+                ? Math.max(1, layout.width() - AnsiWidth.displayWidth(INPUT_PREFIX))
+                : Math.max(1, layout.width());
+            if (codePoint == '\n') {
+                lines.add(currentLine.toString());
+                currentLine = new StringBuilder();
+                currentWidth = 0;
+                index += Character.charCount(codePoint);
+                if (boundedCursor == index) {
+                    cursorLine = lines.size();
+                    cursorColumn = 0;
+                }
+                continue;
+            }
+            if (currentWidth > 0 && currentWidth + chunkWidth > availableWidth) {
+                lines.add(currentLine.toString());
+                currentLine = new StringBuilder();
+                currentWidth = 0;
+                availableWidth = Math.max(1, layout.width());
+                if (boundedCursor == index) {
+                    cursorLine = lines.size();
+                    cursorColumn = 0;
+                }
+            }
+            currentLine.appendCodePoint(codePoint);
+            currentWidth += chunkWidth;
             index += Character.charCount(codePoint);
         }
-        return result.append("…").toString();
+        if (boundedCursor == value.length()) {
+            cursorLine = lines.size();
+            cursorColumn = currentWidth;
+        }
+        lines.add(currentLine.toString());
+
+        int start = Math.max(0, lines.size() - maxHeight);
+        if (cursorLine < start) {
+            start = cursorLine;
+        }
+        List<String> visibleContent = new ArrayList<>(lines.subList(start, lines.size()));
+        if (visibleContent.isEmpty()) {
+            visibleContent.add("");
+        }
+        int visibleCursorLine = cursor < 0 ? -1 : cursorLine - start;
+        List<String> rendered = new ArrayList<>(visibleContent.size());
+        for (int i = 0; i < visibleContent.size(); i++) {
+            String prefix = i == 0 && start == 0 ? INPUT_PREFIX : "";
+            String content = visibleContent.get(i);
+            if (visibleCursorLine == i) {
+                rendered.add(applyInputBackground(insertCursor(content, cursorColumn, prefix)));
+                continue;
+            }
+            rendered.add(applyInputBackground(prefix + content));
+        }
+        if (cursor >= 0 && visibleCursorLine == visibleContent.size()) {
+            rendered.add(applyInputBackground(insertCursor("", 0, "")));
+        }
+        return new InputBlock(rendered);
     }
 
-    private String displaySuffix(String value, int maxWidth) {
-        if (maxWidth <= 0 || value.isEmpty()) {
-            return "";
-        }
-        if (AnsiWidth.displayWidth(value) <= maxWidth) {
-            return value;
-        }
-        StringBuilder reversed = new StringBuilder();
+    private String insertCursor(String content, int cursorColumn, String prefix) {
+        StringBuilder visible = new StringBuilder(prefix);
         int width = 0;
-        for (int index = value.length(); index > 0;) {
-            int codePoint = value.codePointBefore(index);
-            int codePointWidth = AnsiWidth.displayWidth(new String(Character.toChars(codePoint)));
-            if (width + codePointWidth > maxWidth) {
-                break;
-            }
-            reversed.appendCodePoint(codePoint);
-            width += codePointWidth;
-            index -= Character.charCount(codePoint);
+        if (cursorColumn <= 0) {
+            visible.append(TerminalFrameRenderer.CURSOR_MARKER).append(content);
+            return visible.toString();
         }
-        return reversed.reverse().toString();
+        for (int index = 0; index < content.length();) {
+            if (width == cursorColumn) {
+                visible.append(TerminalFrameRenderer.CURSOR_MARKER);
+            }
+            int codePoint = content.codePointAt(index);
+            String chunk = new String(Character.toChars(codePoint));
+            visible.append(chunk);
+            width += AnsiWidth.displayWidth(chunk);
+            index += Character.charCount(codePoint);
+        }
+        if (width == cursorColumn) {
+            visible.append(TerminalFrameRenderer.CURSOR_MARKER);
+        }
+        return visible.toString();
+    }
+
+    private String applyInputBackground(String line) {
+        return INPUT_BACKGROUND + line + ANSI_RESET;
     }
 
     private String nullToEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private record InputBlock(List<String> lines) {
     }
 }

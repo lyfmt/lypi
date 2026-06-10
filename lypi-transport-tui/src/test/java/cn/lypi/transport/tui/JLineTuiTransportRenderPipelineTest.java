@@ -51,7 +51,7 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void rendererFrameContainsFullTranscriptBeyondTerminalHeightForScrollback() {
+    void rendererFrameKeepsBottomInputAndStatusAnchoredWhenTranscriptOverflows() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
         JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 40, 4);
@@ -73,10 +73,12 @@ class JLineTuiTransportRenderPipelineTest {
         }
 
         List<String> latest = frames.getLast();
-        assertTrue(latest.contains("line 0"));
+        assertTrue(!latest.contains("line 0"));
+        assertTrue(latest.contains("line 4"));
         assertTrue(latest.contains("line 5"));
         assertEquals("\033[48;5;236m> \033[0m", latest.get(latest.size() - 2));
-        assertTrue(latest.size() > 4);
+        assertTrue(latest.getLast().contains("ses_1"));
+        assertEquals(4, latest.size());
     }
 
     @Test

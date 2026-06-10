@@ -70,8 +70,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.tuiRenderer = new TuiRenderer();
         int safeWidth = safeWidth(width);
         int safeHeight = safeHeight(height);
-        this.screen = new TuiScreen(Math.max(1, safeHeight - 2));
         this.layout = new TuiLayout(safeWidth, safeHeight);
+        this.screen = new TuiScreen(this.layout.transcriptHeight());
         this.frameSink = frameSink;
         this.inputPump = null;
         this.inputLoop = null;
@@ -96,8 +96,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.tuiRenderer = new TuiRenderer();
         int safeWidth = safeWidth(width);
         int safeHeight = safeHeight(height);
-        this.screen = new TuiScreen(Math.max(1, safeHeight - 2));
         this.layout = new TuiLayout(safeWidth, safeHeight);
+        this.screen = new TuiScreen(this.layout.transcriptHeight());
         this.frameSink = frameSink;
         this.inputLoop = new TuiInputLoop(submitHandler, frameSink, tuiRenderer, screen, layout, reducer::view, slashPickerSupplier);
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
@@ -650,8 +650,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             }
             int safeWidth = safeWidth(width);
             int safeHeight = safeHeight(height);
-            screen = new TuiScreen(Math.max(1, safeHeight - 2));
             layout = new TuiLayout(safeWidth, safeHeight);
+            screen = new TuiScreen(layout.transcriptHeight());
             if (inputLoop != null) {
                 inputLoop.updateViewport(screen, layout);
             }
