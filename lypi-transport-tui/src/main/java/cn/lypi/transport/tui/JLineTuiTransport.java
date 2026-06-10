@@ -627,6 +627,12 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         for (int drained = 0; drained < MAX_INPUT_CHUNKS_PER_DRAIN; drained++) {
             Optional<String> chunk = inputPump.readChunk();
             if (chunk.isEmpty()) {
+                if (inputPump.hasBufferedIncompleteKeySequence()) {
+                    synchronized (uiMonitor) {
+                        uiLockEntries++;
+                        inputPump.flushBufferedInput();
+                    }
+                }
                 return;
             }
             synchronized (uiMonitor) {

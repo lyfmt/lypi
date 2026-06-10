@@ -2,6 +2,9 @@ package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.TuiViewModel;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -31,6 +34,51 @@ class TerminalInputPumpTest {
 
         assertEquals(List.of("hello\nworld"), submit.submitted);
         assertEquals("", loop.draft());
+    }
+
+    @Test
+    void handlesSplitModifiedEnterSequenceAcrossRawInputChunks() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4)
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("hello", "\033[13", ";5u", "world", "\r"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+
+        assertEquals(List.of("hello\nworld"), submit.submitted);
+    }
+
+    @Test
+    void dispatchesStandaloneEscapeToInputLoop() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4),
+            TerminalInputPumpTest::permissionView
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("\033"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+
+        assertEquals(List.of("perm_toolu_1:toolu_1:cancel"), submit.permissionOptions);
     }
 
     @Test
@@ -78,6 +126,28 @@ class TerminalInputPumpTest {
     }
 
     @Test
+    void dispatchesTextPasteAndRemainingKeyFromOneRawChunk() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4)
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("hi\033[200~alpha\nbeta\033[201~\r"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+
+        assertEquals(List.of("hialpha\nbeta"), submit.submitted);
+    }
+
+    @Test
     void dispatchesInputRemainingAfterPasteEndMarker() throws IOException {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
@@ -99,6 +169,52 @@ class TerminalInputPumpTest {
         assertEquals(List.of("alpha"), submit.submitted);
     }
 
+    @Test
+    void flushesIncompleteBufferedSequenceWhenInputIsDrained() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4)
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("\033[<35"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+        pump.dispatchChunk("tail\r");
+
+        assertEquals(List.of("tail"), submit.submitted);
+    }
+
+    @Test
+    void keepsPendingPasteWhenInputIsTemporarilyDrained() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4)
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("\033[200~alpha\n"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+        pump.dispatchChunk("beta\033[201~\r");
+
+        assertEquals(List.of("alpha\nbeta"), submit.submitted);
+    }
+
     private static final class QueueInputSource implements TerminalInputSource {
         private final ArrayDeque<String> chunks;
 
@@ -114,6 +230,7 @@ class TerminalInputPumpTest {
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
+        private final List<String> permissionOptions = new ArrayList<>();
 
         @Override
         public void submitUserInput(String input) {
@@ -123,5 +240,20 @@ class TerminalInputPumpTest {
         @Override
         public void requestInterrupt(String reason) {
         }
+
+        @Override
+        public void submitPermissionOption(String requestId, String toolUseId, String optionId) {
+            permissionOptions.add(requestId + ":" + toolUseId + ":" + optionId);
+        }
+    }
+
+    private static TuiViewModel permissionView() {
+        return new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.of(new PermissionPromptView("perm_toolu_1", "toolu_1", "Need approval", "bash:npm test", "allow_once", "cancel")),
+            Optional.empty()
+        );
     }
 }
