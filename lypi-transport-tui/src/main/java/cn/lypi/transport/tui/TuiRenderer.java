@@ -14,6 +14,8 @@ import java.util.Locale;
 
 final class TuiRenderer {
     private static final String INPUT_BACKGROUND = "\033[48;5;236m";
+    private static final String USER_MESSAGE = "\033[38;5;81m";
+    private static final String THINKING_MESSAGE = "\033[38;5;244m";
     private static final String ANSI_RESET = "\033[0m";
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
 
@@ -53,16 +55,21 @@ final class TuiRenderer {
         for (TuiBlock block : blocks) {
             String text = switch (block) {
                 case TuiMessageBlock message -> null;
-                case TuiThinkingBlock thinking -> thinking.collapsed()
-                    ? "thinking: collapsed"
-                    : "thinking: " + thinking.content();
+                case TuiThinkingBlock thinking -> null;
                 case TuiToolBlock tool -> null;
                 case TuiErrorBlock error -> "error: " + error.message();
             };
             if (block instanceof TuiMessageBlock message) {
-                lines.addAll(markdownRenderer.render(message.content(), width));
+                if ("user".equalsIgnoreCase(message.role())) {
+                    lines.addAll(styledLines(prefixedLines("user: ", message.content(), width), USER_MESSAGE));
+                } else {
+                    lines.addAll(markdownRenderer.render(message.content(), width));
+                }
             } else if (block instanceof TuiToolBlock tool) {
                 lines.addAll(toolLines(tool, width));
+            } else if (block instanceof TuiThinkingBlock thinking) {
+                String content = thinking.collapsed() ? "collapsed" : thinking.content();
+                lines.addAll(styledLines(prefixedLines("thinking: ", content, width), THINKING_MESSAGE));
             } else {
                 lines.addAll(wrap(text, width));
             }
@@ -109,6 +116,24 @@ final class TuiRenderer {
             lines.addAll(wrap("  " + detailLine, width));
         }
         return lines;
+    }
+
+    private List<String> prefixedLines(String prefix, String content, int width) {
+        List<String> lines = new ArrayList<>();
+        String value = content == null ? "" : content;
+        String[] contentLines = value.split("\\R", -1);
+        String continuationPrefix = " ".repeat(AnsiWidth.displayWidth(prefix));
+        for (int index = 0; index < contentLines.length; index++) {
+            String linePrefix = index == 0 ? prefix : continuationPrefix;
+            lines.addAll(wrap(linePrefix + contentLines[index], width));
+        }
+        return lines;
+    }
+
+    private List<String> styledLines(List<String> lines, String style) {
+        return lines.stream()
+            .map(line -> style + line + ANSI_RESET)
+            .toList();
     }
 
     private List<String> wrap(String text, int width) {

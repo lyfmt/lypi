@@ -106,6 +106,56 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
+    void eventPipelineRendersUserAndThinkingAsDistinctLines() {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 80, 5);
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            "block_user",
+            ContentBlockKind.TEXT,
+            "请修复 TUI",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_assistant",
+            MessageRole.ASSISTANT,
+            MessageKind.THINKING,
+            "block_thinking",
+            ContentBlockKind.THINKING,
+            "分析路径",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_assistant",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_answer",
+            ContentBlockKind.TEXT,
+            "已处理",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:02Z")
+        ));
+
+        List<String> latest = frames.getLast();
+        assertTrue(latest.contains("\033[38;5;81muser: 请修复 TUI\033[0m"));
+        assertTrue(latest.contains("\033[38;5;244mthinking: 分析路径\033[0m"));
+        assertTrue(latest.contains("已处理"));
+    }
+
+    @Test
     void inputRerenderPreservesRuntimeStatusBar() throws Exception {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();

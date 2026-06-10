@@ -17,6 +17,7 @@ import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.TuiMessageBlock;
+import cn.lypi.contracts.tui.TuiThinkingBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
@@ -110,6 +111,47 @@ class TuiRendererTest {
 
         assertEquals("Done", lines.get(0));
         assertEquals("[x] task", lines.get(1));
+    }
+
+    @Test
+    void rendersUserAndThinkingBlocksWithRoleStyles() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(3);
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock("u1", "m1", "user", "请修复 TUI", false),
+                new TuiThinkingBlock("t1", "m2", "分析路径", false, false),
+                new TuiMessageBlock("a1", "m2", "assistant", "已处理", false)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 5), "");
+
+        assertEquals("\033[38;5;81muser: 请修复 TUI\033[0m", lines.get(0));
+        assertEquals("\033[38;5;244mthinking: 分析路径\033[0m", lines.get(1));
+        assertEquals("已处理", lines.get(2));
+    }
+
+    @Test
+    void rendersMultilineThinkingWithoutEmbeddedNewlines() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(2);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiThinkingBlock("t1", "m1", "第一行\n第二行", false, false)),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 4), "");
+
+        assertEquals("\033[38;5;244mthinking: 第一行\033[0m", lines.get(0));
+        assertEquals("\033[38;5;244m          第二行\033[0m", lines.get(1));
     }
 
     @Test
