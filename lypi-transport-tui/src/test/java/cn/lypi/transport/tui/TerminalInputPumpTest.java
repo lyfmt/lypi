@@ -34,6 +34,28 @@ class TerminalInputPumpTest {
     }
 
     @Test
+    void handlesSplitModifiedEnterSequenceAcrossRawInputChunks() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4)
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("hello", "\033[13", ";5u", "world", "\r"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+
+        assertEquals(List.of("hello\nworld"), submit.submitted);
+    }
+
+    @Test
     void dispatchesBracketedPasteAsAtomicPaste() throws IOException {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
@@ -75,6 +97,28 @@ class TerminalInputPumpTest {
         pump.drainAvailable();
 
         assertEquals(List.of("alpha\nbeta"), submit.submitted);
+    }
+
+    @Test
+    void dispatchesTextPasteAndRemainingKeyFromOneRawChunk() throws IOException {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 4)
+        );
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource("hi\033[200~alpha\nbeta\033[201~\r"),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+
+        assertEquals(List.of("hialpha\nbeta"), submit.submitted);
     }
 
     @Test

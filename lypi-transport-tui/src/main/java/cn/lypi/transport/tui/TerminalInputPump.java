@@ -4,13 +4,10 @@ import java.io.IOException;
 import java.util.Optional;
 
 final class TerminalInputPump {
-    private static final String BRACKETED_PASTE_START = "\033[200~";
-    private static final String BRACKETED_PASTE_END = "\033[201~";
-
     private final TerminalInputSource inputSource;
     private final KeyMapper keyMapper;
     private final TuiInputLoop inputLoop;
-    private StringBuilder pendingPaste;
+    private final TerminalInputBuffer inputBuffer = new TerminalInputBuffer();
 
     TerminalInputPump(TerminalInputSource inputSource, KeyMapper keyMapper, TuiInputLoop inputLoop) {
         this.inputSource = inputSource;
@@ -53,47 +50,16 @@ final class TerminalInputPump {
         if (chunk == null || chunk.isEmpty()) {
             return;
         }
-        if (pendingPaste != null) {
-            appendPasteChunk(chunk);
-            return;
+        for (TerminalInputSegment segment : inputBuffer.accept(chunk)) {
+            dispatchSegment(segment);
         }
-        if (isBracketedPaste(chunk)) {
-            inputLoop.acceptPaste(chunk.substring(
-                BRACKETED_PASTE_START.length(),
-                chunk.length() - BRACKETED_PASTE_END.length()
-            ));
-            return;
-        }
-        if (chunk.startsWith(BRACKETED_PASTE_START)) {
-            pendingPaste = new StringBuilder();
-            appendPasteChunk(chunk.substring(BRACKETED_PASTE_START.length()));
-            return;
-        }
-        if (isPlainText(chunk)) {
-            inputLoop.acceptText(chunk);
-            return;
-        }
-        keyMapper.map(chunk).ifPresent(inputLoop::acceptKey);
     }
 
-    private void appendPasteChunk(String chunk) {
-        int end = chunk.indexOf(BRACKETED_PASTE_END);
-        if (end >= 0) {
-            pendingPaste.append(chunk, 0, end);
-            inputLoop.acceptPaste(pendingPaste.toString());
-            pendingPaste = null;
-            String remaining = chunk.substring(end + BRACKETED_PASTE_END.length());
-            dispatch(remaining);
-            return;
+    private void dispatchSegment(TerminalInputSegment segment) {
+        switch (segment.kind()) {
+            case TEXT -> inputLoop.acceptText(segment.value());
+            case PASTE -> inputLoop.acceptPaste(segment.value());
+            case KEY_SEQUENCE -> keyMapper.map(segment.value()).ifPresent(inputLoop::acceptKey);
         }
-        pendingPaste.append(chunk);
-    }
-
-    private boolean isBracketedPaste(String chunk) {
-        return chunk.startsWith(BRACKETED_PASTE_START) && chunk.endsWith(BRACKETED_PASTE_END);
-    }
-
-    private boolean isPlainText(String chunk) {
-        return chunk.codePoints().allMatch(codePoint -> codePoint >= 0x20 && codePoint != 0x7F);
     }
 }
