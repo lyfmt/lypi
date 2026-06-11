@@ -2,6 +2,7 @@ package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.List;
@@ -147,7 +148,7 @@ class TerminalFrameRendererTest {
     }
 
     @Test
-    void contentShrinkUsesFullRenderWithoutClearingTerminalScrollback() throws Exception {
+    void contentShrinkPatchesVisibleRowsWithoutClearingTerminalScrollback() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
@@ -155,7 +156,86 @@ class TerminalFrameRendererTest {
         io.output.setLength(0);
         renderer.render(List.of("one"));
 
-        assertEquals("\033[?2026h\033[2J\033[Hone\033[?2026l", io.output.toString());
+        assertTrue(io.output.toString().startsWith("\033[?2026h\033[1;1H\033[2Kone"));
+        assertTrue(io.output.toString().contains("\033[3;1H\033[2K"));
+        assertTrue(io.output.toString().endsWith("\033[?2026l"));
+        assertFalse(io.output.toString().contains("\033[2J\033[H"));
+    }
+
+    @Test
+    void transientRuntimeLineRemovalPatchesBottomChromeWithoutFullRedraw() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 6;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of(
+            "test 1",
+            "test 2",
+            "test 3",
+            "test 4",
+            "test 5",
+            "test 6",
+            "test 7",
+            "test 8",
+            "test 9",
+            "test 10",
+            "test 11",
+            "test 12",
+            "test 13",
+            "test 14",
+            "test 15",
+            "test 16",
+            "test 17",
+            "test 18",
+            "test 19",
+            "test 20",
+            "· turn running abc",
+            "──",
+            "> |CURSOR|",
+            "──",
+            "session running"
+        ));
+        io.output.setLength(0);
+        renderer.render(List.of(
+            "test 1",
+            "test 2",
+            "test 3",
+            "test 4",
+            "test 5",
+            "test 6",
+            "test 7",
+            "test 8",
+            "test 9",
+            "test 10",
+            "test 11",
+            "test 12",
+            "test 13",
+            "test 14",
+            "test 15",
+            "test 16",
+            "test 17",
+            "test 18",
+            "test 19",
+            "test 20",
+            "──",
+            "> |CURSOR|",
+            "──",
+            "session PLAN"
+        ));
+
+        assertEquals(
+            "\033[?2026h"
+                + "\033[1;1H\033[2Ktest 19"
+                + "\033[2;1H\033[2Ktest 20"
+                + "\033[3;1H\033[2K──"
+                + "\033[4;1H\033[2K> "
+                + "\033[5;1H\033[2K──"
+                + "\033[6;1H\033[2Ksession PLAN"
+                + "\033[4;3H"
+                + "\033[?2026l",
+            io.output.toString()
+        );
+        assertFalse(io.output.toString().contains("\033[2J\033[H"));
     }
 
     @Test

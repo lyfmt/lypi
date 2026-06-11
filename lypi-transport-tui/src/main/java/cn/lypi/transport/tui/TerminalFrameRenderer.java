@@ -54,10 +54,10 @@ final class TerminalFrameRenderer {
         }
 
         if (newLines.size() < previousLines.size()) {
-            logFullRedraw("content shrank");
             viewportTop = Math.max(0, newLines.size() - height);
-            writeFullFrame(newLines, frame.cursor(), true, viewportTop, height);
+            writeShrinkPatch(newLines, frame.cursor(), viewportTop, height);
             updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height));
+            io.flush();
             return;
         }
 
@@ -142,6 +142,30 @@ final class TerminalFrameRenderer {
             io.write("\033[2K");
             io.write(lines.get(i));
             hardwareCursorRow = physicalRow;
+        }
+        moveCursor(cursor, viewportTop, height);
+        io.write(SYNC_END);
+    }
+
+    private void writeShrinkPatch(
+        List<String> lines,
+        java.util.Optional<CursorPosition> cursor,
+        int viewportTop,
+        int height
+    ) throws IOException {
+        io.write(SYNC_START);
+        List<String> visible = visibleLines(lines, viewportTop, height);
+        for (int row = 0; row < Math.max(previousHeight, height); row++) {
+            int physicalRow = row + 1;
+            if (physicalRow > Math.max(1, height)) {
+                break;
+            }
+            io.write("\033[" + physicalRow + ";1H");
+            io.write("\033[2K");
+            if (row < visible.size()) {
+                io.write(visible.get(row));
+                hardwareCursorRow = physicalRow;
+            }
         }
         moveCursor(cursor, viewportTop, height);
         io.write(SYNC_END);
