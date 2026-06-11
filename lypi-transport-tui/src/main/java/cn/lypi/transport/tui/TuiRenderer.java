@@ -23,11 +23,11 @@ final class TuiRenderer {
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input) {
-        return render(view, screen, layout, input, -1);
+        return renderFrame(view, screen, layout, input, -1).lines();
     }
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input, int cursor) {
-        return render(view, screen, layout, input, cursor, List.of());
+        return renderFrame(view, screen, layout, input, cursor, List.of()).lines();
     }
 
     List<String> render(

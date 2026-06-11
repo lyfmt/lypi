@@ -230,6 +230,39 @@ class TerminalFrameRendererTest {
     }
 
     @Test
+    void chromeGrowthWithoutTranscriptAppendDoesNotScrollTerminal() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 5;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(new TuiRenderFrame(List.of(
+            "line1",
+            "line2",
+            "line3",
+            "line4",
+            "> |CURSOR|",
+            "status"
+        ), 2));
+        io.output.setLength(0);
+        renderer.render(new TuiRenderFrame(List.of(
+            "line1",
+            "line2",
+            "line3",
+            "line4",
+            "> wrapped input",
+            "continuation|CURSOR|",
+            "status"
+        ), 3));
+
+        String output = io.output.toString();
+        assertFalse(output.contains("\r\n"));
+        assertFalse(output.contains("\n"));
+        assertTrue(output.contains("\033[3;1H\033[2K> wrapped input"));
+        assertTrue(output.contains("\033[4;1H\033[2Kcontinuation"));
+        assertTrue(output.contains("\033[5;1H\033[2Kstatus"));
+    }
+
+    @Test
     void contentShrinkPatchesVisibleRowsWithoutClearingTerminalScrollback() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);

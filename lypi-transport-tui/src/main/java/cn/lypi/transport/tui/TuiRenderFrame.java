@@ -11,4 +11,8 @@ record TuiRenderFrame(List<String> lines, int chromeLineCount) {
     static TuiRenderFrame transcriptOnly(List<String> lines) {
         return new TuiRenderFrame(lines, 0);
     }
+
+    int transcriptLineCount() {
+        return lines.size() - chromeLineCount;
+    }
 }
