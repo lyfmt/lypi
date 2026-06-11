@@ -17,7 +17,7 @@ class TerminalSessionTest {
 
         assertTrue(io.rawModeEntered);
         assertEquals(
-            "\033[?2004h\033[?25l\033[?u\033[>4;2m",
+            "\033[?2004h\033[?25l\033[>4;2m",
             io.output.toString()
         );
 
@@ -25,10 +25,20 @@ class TerminalSessionTest {
 
         assertTrue(io.rawModeRestored);
         assertEquals(
-            "\033[?2004h\033[?25l\033[?u\033[>4;2m"
-                + "\033[>4m\033[?u\033[?25h\033[?2004l\n",
+            "\033[?2004h\033[?25l\033[>4;2m"
+                + "\033[>4m\033[?25h\033[?2004l\n",
             io.output.toString()
         );
+    }
+
+    @Test
+    void terminalModesDoNotQueryKittyKeyboardProtocol() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+
+        TerminalSession session = TerminalSession.open(io);
+        session.close();
+
+        assertTrue(!io.output.toString().contains("\033[?u"));
     }
 
     @Test

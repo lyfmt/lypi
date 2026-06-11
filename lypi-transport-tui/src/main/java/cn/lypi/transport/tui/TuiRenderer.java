@@ -48,7 +48,9 @@ final class TuiRenderer {
         int visibleTranscriptHeight = Math.max(0, transcriptHeight - overlay.size());
         screen.updateViewportHeight(visibleTranscriptHeight);
         screen.setTranscript(transcript);
-        lines.addAll(screen.visibleTranscript());
+        List<String> visibleTranscript = screen.visibleTranscript();
+        lines.addAll(blankLines(visibleTranscriptHeight - visibleTranscript.size()));
+        lines.addAll(visibleTranscript);
         lines.addAll(overlay);
         lines.addAll(inputBlock.lines());
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
@@ -304,6 +306,13 @@ final class TuiRenderer {
 
     private String inputBorder(int width) {
         return INPUT_BORDER + "─".repeat(width) + ANSI_RESET;
+    }
+
+    private List<String> blankLines(int count) {
+        if (count <= 0) {
+            return List.of();
+        }
+        return java.util.Collections.nCopies(count, "");
     }
 
     private String nullToEmpty(String value) {

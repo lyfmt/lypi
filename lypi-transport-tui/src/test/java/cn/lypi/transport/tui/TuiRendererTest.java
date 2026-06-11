@@ -137,6 +137,29 @@ class TuiRendererTest {
     }
 
     @Test
+    void emptyTranscriptStillAnchorsInputBlockAtBottomOfViewport() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(20, 6), "", 0);
+
+        assertEquals(6, lines.size());
+        assertEquals("", lines.get(0));
+        assertEquals("", lines.get(1));
+        assertInputBorder(lines.get(2), 20);
+        assertInputContent(lines.get(3), "> |CURSOR|" + INPUT_CURSOR);
+        assertInputBorder(lines.get(4), 20);
+        assertTrue(lines.get(5).contains("ses_1"));
+    }
+
+    @Test
     void inputLineKeepsCursorMarkerAfterNarrowWrapping() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
@@ -381,9 +404,10 @@ class TuiRendererTest {
         );
         List<String> withoutRuntimeLines = renderer.render(withoutRuntime, screenWithoutRuntime, new TuiLayout(40, 8), "");
 
-        assertEquals("line1", withoutRuntimeLines.get(0));
-        assertEquals("line2", withoutRuntimeLines.get(1));
-        assertEquals("line3", withoutRuntimeLines.get(2));
+        assertEquals("", withoutRuntimeLines.get(0));
+        assertEquals("line1", withoutRuntimeLines.get(1));
+        assertEquals("line2", withoutRuntimeLines.get(2));
+        assertEquals("line3", withoutRuntimeLines.get(3));
     }
 
     @Test

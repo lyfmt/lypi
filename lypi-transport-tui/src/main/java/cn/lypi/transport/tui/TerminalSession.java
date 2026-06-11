@@ -9,8 +9,6 @@ public final class TerminalSession implements AutoCloseable {
     static final String DISABLE_BRACKETED_PASTE = "\033[?2004l";
     static final String HIDE_CURSOR = "\033[?25l";
     static final String SHOW_CURSOR = "\033[?25h";
-    static final String ENABLE_KITTY_KEYBOARD = "\033[?u";
-    static final String DISABLE_KITTY_KEYBOARD = "\033[?u";
     static final String ENABLE_MODIFY_OTHER_KEYS = "\033[>4;2m";
     static final String DISABLE_MODIFY_OTHER_KEYS = "\033[>4m";
 
@@ -66,7 +64,6 @@ public final class TerminalSession implements AutoCloseable {
             interruptHandler = io.onInterrupt(interruptCallback);
             io.write(ENABLE_BRACKETED_PASTE);
             io.write(HIDE_CURSOR);
-            io.write(ENABLE_KITTY_KEYBOARD);
             io.write(ENABLE_MODIFY_OTHER_KEYS);
             io.flush();
             return new TerminalSession(io, rawMode, resizeHandler, interruptHandler);
@@ -88,7 +85,6 @@ public final class TerminalSession implements AutoCloseable {
         closed = true;
         try {
             io.write(DISABLE_MODIFY_OTHER_KEYS);
-            io.write(DISABLE_KITTY_KEYBOARD);
             io.write(SHOW_CURSOR);
             io.write(DISABLE_BRACKETED_PASTE);
             if (renderedRows > 0) {
