@@ -767,6 +767,51 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void messageEndToolSnapshotUpdatesStreamingToolBlockWithoutUnknownDuplicate() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_tool_call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            "msg_tool_call:tool_call:call_1",
+            ContentBlockKind.TOOL_CALL,
+            "",
+            false,
+            Map.of(
+                "toolUseId", "call_1",
+                "toolName", "glob",
+                "inputSummary", "glob {pattern=*.java}"
+            ),
+            NOW
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_tool_call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new MessageBlockSnapshot("msg_tool_call:tool_call:0", ContentBlockKind.TOOL_CALL, "", Map.of(
+                "toolUseId", "call_1",
+                "toolName", "glob",
+                "inputSummary", "glob {pattern=*.java}"
+            ))),
+            Optional.empty(),
+            Optional.of("tool_calls"),
+            Map.of(),
+            NOW
+        ));
+
+        List<TuiBlock> blocks = reducer.view().blocks();
+        assertEquals(1, blocks.size());
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, blocks.getFirst());
+        assertEquals("call_1", tool.toolUseId());
+        assertEquals("glob", tool.toolName());
+        assertEquals("glob {pattern=*.java}", tool.label());
+        assertFalse(tool.active());
+    }
+
+    @Test
     void messageEndOnlyDeactivatesPendingToolBlocksFromSameMessage() {
         TuiEventReducer reducer = new TuiEventReducer();
 
