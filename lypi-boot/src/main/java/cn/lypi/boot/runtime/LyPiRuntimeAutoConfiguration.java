@@ -391,9 +391,10 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnMissingBean
     public ResumeSessionController resumeSessionController(
         LyPiRuntimeProperties properties,
-        SessionManagerPort sessionManager
+        SessionManagerPort sessionManager,
+        EventBus eventBus
     ) {
-        return new DefaultResumeSessionController(properties.getCwd(), sessionManager);
+        return new DefaultResumeSessionController(properties.getCwd(), sessionManager, eventBus);
     }
 
     /**

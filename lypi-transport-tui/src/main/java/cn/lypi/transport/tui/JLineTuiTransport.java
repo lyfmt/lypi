@@ -44,6 +44,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private SessionRuntimeState runtimeState;
     private String lastDiffSnapshotHash;
     private EventSubscription subscription;
+    private EventBus attachedEvents;
     private boolean lastRenderHeldUiLock;
     private int uiLockEntries;
 
@@ -109,7 +110,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             layout,
             reducer::view,
             slashPickerSupplier,
-            resumeController
+            resumeController,
+            this::resumeRuntimeState
         );
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
         this.terminalSession = terminalSession;
@@ -574,6 +576,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     public void attach(EventBus events, SessionRuntimeState state) {
         synchronized (uiMonitor) {
             closeSubscription();
+            attachedEvents = events;
             runtimeState = state;
             if (reducer != null) {
                 reducer.configureRuntimeState(state);
@@ -589,6 +592,12 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                     }
                 }
             );
+        }
+    }
+
+    private void resumeRuntimeState(SessionRuntimeState state) {
+        if (attachedEvents != null) {
+            attach(attachedEvents, state);
         }
     }
 

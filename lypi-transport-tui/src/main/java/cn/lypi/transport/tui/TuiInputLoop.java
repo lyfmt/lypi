@@ -3,10 +3,12 @@ package cn.lypi.transport.tui;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionResumeInfo;
+import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 final class TuiInputLoop {
@@ -21,6 +23,7 @@ final class TuiInputLoop {
     private final TerminalInputPolicy inputPolicy = new TerminalInputPolicy();
     private final Supplier<SlashCommandPicker> slashPickerSupplier;
     private final ResumeSessionController resumeController;
+    private final Consumer<SessionRuntimeState> resumeStateConsumer;
     private SlashCommandPicker slashPicker;
     private ResumeSessionSelector resumeSessionSelector;
     private ResumeBranchTreeSelector resumeBranchTreeSelector;
@@ -74,6 +77,20 @@ final class TuiInputLoop {
         Supplier<SlashCommandPicker> slashPickerSupplier,
         ResumeSessionController resumeController
     ) {
+        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, resumeController, null);
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        FrameSink frameSink,
+        TuiRenderer renderer,
+        TuiScreen screen,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer
+    ) {
         this.submitHandler = submitHandler;
         this.frameSink = frameSink;
         this.renderer = renderer;
@@ -84,6 +101,7 @@ final class TuiInputLoop {
             ? () -> SlashCommandPicker.withTemplates(List.of())
             : slashPickerSupplier;
         this.resumeController = resumeController;
+        this.resumeStateConsumer = resumeStateConsumer;
     }
 
     void acceptText(String text) {
@@ -483,10 +501,18 @@ final class TuiInputLoop {
             render();
             return;
         }
+        if (key == TerminalKey.TAB) {
+            resumeBranchTreeSelector.toggleUserOnly();
+            render();
+            return;
+        }
         if (key == TerminalKey.ENTER) {
             resumeBranchTreeSelector.selectedEntry().ifPresent(entry -> {
-                resumeController.resume(resumeSessionId, entry.id());
+                SessionRuntimeState resumed = resumeController.resume(resumeSessionId, entry.id());
                 submitHandler.resumeSession(resumeSessionId, entry.id());
+                if (resumeStateConsumer != null && resumed != null) {
+                    resumeStateConsumer.accept(resumed);
+                }
             });
             closeResumeOverlay();
             render();

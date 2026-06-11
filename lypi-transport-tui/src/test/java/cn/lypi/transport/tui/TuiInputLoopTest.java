@@ -9,6 +9,7 @@ import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionBranchTreeView;
 import cn.lypi.contracts.tui.SessionResumeInfo;
+import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SessionTreeNodeView;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
@@ -390,11 +391,30 @@ class TuiInputLoopTest {
                     ),
                     Instant.EPOCH
                 );
-                return new SessionBranchTreeView(sessionId, "leaf_old", List.of(new SessionTreeNodeView(root, List.of())));
+                MessageEntry assistant = new MessageEntry(
+                    "assistant_old",
+                    "leaf_old",
+                    new AgentMessage(
+                        "msg_assistant",
+                        MessageRole.ASSISTANT,
+                        MessageKind.TEXT,
+                        List.of(new TextContentBlock("old answer")),
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.empty()
+                    ),
+                    Instant.EPOCH
+                );
+                return new SessionBranchTreeView(
+                    sessionId,
+                    "assistant_old",
+                    List.of(new SessionTreeNodeView(root, List.of(new SessionTreeNodeView(assistant, List.of()))))
+                );
             }
 
             @Override
-            public void resume(String sessionId, String leafId) {
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
             }
         };
         TuiInputLoop loop = new TuiInputLoop(
@@ -416,6 +436,12 @@ class TuiInputLoopTest {
 
         loop.acceptKey(TerminalKey.ENTER);
         assertTrue(frames.getLast().contains("user: old prompt"));
+        assertTrue(frames.getLast().contains("assistant: old answer"));
+
+        loop.acceptKey(TerminalKey.TAB);
+        assertTrue(frames.getLast().contains("[user]"));
+        assertTrue(frames.getLast().contains("user: old prompt"));
+        assertTrue(!frames.getLast().contains("assistant: old answer"));
 
         loop.acceptKey(TerminalKey.ENTER);
         assertEquals(List.of("ses_old:leaf_old"), submit.resumes);
@@ -498,9 +524,27 @@ class TuiInputLoopTest {
             }
 
             @Override
-            public void resume(String sessionId, String leafId) {
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
             }
         };
+    }
+
+    private static SessionRuntimeState runtimeState(String sessionId, String leafId) {
+        return new SessionRuntimeState(
+            sessionId,
+            Path.of("."),
+            leafId,
+            new cn.lypi.contracts.model.ModelSelection("openai", "gpt-5.4", cn.lypi.contracts.model.ThinkingLevel.MEDIUM),
+            cn.lypi.contracts.model.ThinkingLevel.MEDIUM,
+            cn.lypi.contracts.security.AgentMode.EXECUTE,
+            cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE,
+            new cn.lypi.contracts.context.ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, java.math.BigDecimal.ZERO),
+            false,
+            false,
+            false,
+            false
+        );
     }
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {

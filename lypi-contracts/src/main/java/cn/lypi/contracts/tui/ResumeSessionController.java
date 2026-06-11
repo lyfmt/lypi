@@ -16,5 +16,5 @@ public interface ResumeSessionController {
     /**
      * 恢复到指定 session leaf。
      */
-    void resume(String sessionId, String leafId);
+    SessionRuntimeState resume(String sessionId, String leafId);
 }

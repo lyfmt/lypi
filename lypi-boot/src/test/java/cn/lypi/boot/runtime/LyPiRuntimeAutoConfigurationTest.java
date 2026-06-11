@@ -24,6 +24,7 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
@@ -524,6 +525,7 @@ class LyPiRuntimeAutoConfigurationTest {
     @Test
     void createsResumeSessionControllerBackedBySessionStorageAndManager() {
         SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        RecordingEventBus events = new RecordingEventBus();
         sessionManager.openOrCreate("ses_old");
         SessionHandle userLeaf = sessionManager.appendMessage(new AgentMessage(
             "msg_user",
@@ -544,6 +546,7 @@ class LyPiRuntimeAutoConfigurationTest {
                 "lypi.runtime.cwd=" + tempDir
             )
             .withBean(SessionManagerPort.class, () -> sessionManager)
+            .withBean(EventBus.class, () -> events)
             .run(context -> {
                 assertThat(context).hasSingleBean(ResumeSessionController.class);
                 ResumeSessionController controller = context.getBean(ResumeSessionController.class);
@@ -555,10 +558,16 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(tree.sessionId()).isEqualTo("ses_old");
                 assertThat(tree.roots()).isNotEmpty();
 
-                controller.resume("ses_old", userLeaf.leafId());
+                SessionRuntimeState resumed = controller.resume("ses_old", userLeaf.leafId());
 
                 assertThat(sessionManager.currentView().sessionId()).isEqualTo("ses_old");
                 assertThat(sessionManager.currentView().leafId()).isEqualTo(userLeaf.leafId());
+                assertThat(resumed.sessionId()).isEqualTo("ses_old");
+                assertThat(resumed.currentBranchLeafId()).isEqualTo(userLeaf.leafId());
+                assertThat(events.events).hasAtLeastOneElementOfType(SessionStateEvent.class);
+                SessionStateEvent state = (SessionStateEvent) events.events.getLast();
+                assertThat(state.sessionId()).isEqualTo("ses_old");
+                assertThat(state.leafId()).isEqualTo(userLeaf.leafId());
             });
     }
 
