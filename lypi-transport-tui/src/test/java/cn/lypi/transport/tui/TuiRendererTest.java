@@ -454,7 +454,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void slashOverlayFloatsAboveInputWithoutShrinkingTranscript() {
+    void slashOverlayRendersBelowInputBlock() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(2);
         TuiViewModel view = new TuiViewModel(
@@ -474,18 +474,18 @@ class TuiRendererTest {
             List.of("> /model", "  /thinking", "  /compact")
         );
 
-        assertEquals(10, lines.size());
+        assertEquals(7, lines.size());
+        assertInputBorder(lines.get(0), 40);
+        assertInputContent(lines.get(1), "> /|CURSOR|" + INPUT_CURSOR);
+        assertInputBorder(lines.get(2), 40);
         assertTrue(lines.get(3).startsWith("> /model"));
-        assertTrue(lines.get(4).contains("/thinking"));
-        assertTrue(lines.get(5).contains("/compact"));
-        assertInputBorder(lines.get(6), 40);
-        assertInputContent(lines.get(7), "> /|CURSOR|" + INPUT_CURSOR);
-        assertInputBorder(lines.get(8), 40);
-        assertTrue(lines.get(9).contains("ses_1"));
+        assertTrue(lines.get(4).contains("  /thinking"));
+        assertTrue(lines.get(5).contains("  /compact"));
+        assertTrue(lines.get(6).contains("ses_1"));
     }
 
     @Test
-    void overlayDoesNotShrinkTranscriptViewport() {
+    void overlayRendersBelowInputWithTranscriptContent() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(10);
         TuiViewModel view = new TuiViewModel(
@@ -508,10 +508,20 @@ class TuiRendererTest {
             view, screen, new TuiLayout(40, 10), "/", 1
         );
 
-        assertTrue(withOverlay.contains("> /model"));
-        assertTrue(withOverlay.contains("  /thinking"));
-        assertTrue(withOverlay.contains("  /compact"));
-        assertEquals(withoutOverlay.size() + 3, withOverlay.size());
+        assertEquals(withoutOverlay.size(), withOverlay.size());
+        int overlayIndex = -1;
+        int inputBorderIndex = -1;
+        for (int i = 0; i < withOverlay.size(); i++) {
+            if (withOverlay.get(i).contains("> /model")) {
+                overlayIndex = i;
+            }
+            if (withOverlay.get(i).contains("─")) {
+                inputBorderIndex = i;
+            }
+        }
+        assertTrue(overlayIndex >= 0, "overlay should be present");
+        assertTrue(inputBorderIndex >= 0, "input border should be present");
+        assertTrue(overlayIndex > inputBorderIndex, "overlay should be below input block");
     }
 
     @Test

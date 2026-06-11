@@ -38,19 +38,20 @@ final class TuiRenderer {
     ) {
         List<String> transcript = transcriptLines(view, layout.width());
         InputBlock inputBlock = layoutInput(input, cursor, layout);
-        int transcriptHeight = layout.transcriptHeight(inputBlock.height());
-
-        List<String> lines = new ArrayList<>();
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
             .map(line -> AnsiWidth.truncate(line, layout.width()))
             .toList();
+        int inputAndOverlayHeight = inputBlock.height() + overlay.size();
+        int transcriptHeight = layout.transcriptHeight(inputAndOverlayHeight);
         screen.updateViewportHeight(transcriptHeight);
         screen.setTranscript(transcript);
         List<String> visibleTranscript = screen.visibleTranscript();
+
+        List<String> lines = new ArrayList<>();
         lines.addAll(blankLines(transcriptHeight - visibleTranscript.size()));
         lines.addAll(visibleTranscript);
-        lines.addAll(overlay);
         lines.addAll(inputBlock.lines());
+        lines.addAll(overlay);
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
         return lines;
     }
