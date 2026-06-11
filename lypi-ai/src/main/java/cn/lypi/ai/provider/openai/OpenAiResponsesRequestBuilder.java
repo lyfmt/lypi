@@ -197,6 +197,7 @@ public final class OpenAiResponsesRequestBuilder {
         }
         ObjectNode reasoning = objectMapper.createObjectNode();
         reasoning.put("effort", effort.toString());
+        reasoning.put("summary", "auto");
         return java.util.Optional.of(reasoning);
     }
 

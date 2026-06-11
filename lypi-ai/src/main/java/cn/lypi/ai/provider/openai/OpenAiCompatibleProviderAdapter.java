@@ -182,17 +182,17 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         if (style == cn.lypi.ai.provider.RequestStyle.RESPONSES) {
             if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.WEBSOCKET) {
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
-                attempts.add(new OpenAiStreamAttempt(webSocketTransport, responsesWebSocketRequest(request), normalizer::normalize));
+                attempts.add(new OpenAiStreamAttempt(webSocketTransport, responsesWebSocketRequest(request), normalizer));
             }
             if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
-                attempts.add(new OpenAiStreamAttempt(responsesSseTransport, responsesSseRequest(request), normalizer::normalize));
+                attempts.add(new OpenAiStreamAttempt(responsesSseTransport, responsesSseRequest(request), normalizer));
             }
             return;
         }
         if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
             OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
-            attempts.add(new OpenAiStreamAttempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer::normalize));
+            attempts.add(new OpenAiStreamAttempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer));
         }
     }
 

@@ -72,6 +72,61 @@ class OpenAiResponsesStreamNormalizerTest {
     }
 
     @Test
+    void normalizesCompletedReasoningSummaryWhenNoDeltaArrived() {
+        OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = normalizer.normalize("""
+            {"type":"response.completed","response":{"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"reasoned"}]}]}}
+            """);
+
+        assertThat(events).containsExactly(
+            new ThinkingDelta("reasoned"),
+            new AssistantDone(Optional.empty(), Optional.of("stop"))
+        );
+    }
+
+    @Test
+    void normalizesCompletedReasoningSummaryAfterBlankDelta() {
+        OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("""
+                {"type":"response.reasoning_summary_text.delta","delta":""}
+                """),
+            normalizer.normalize("""
+                {"type":"response.completed","response":{"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"reasoned"}]}]}}
+                """)
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new ThinkingDelta("reasoned"),
+            new AssistantDone(Optional.empty(), Optional.of("stop"))
+        );
+    }
+
+    @Test
+    void normalizesOutputItemDoneReasoningSummaryWhenNoDeltaArrived() {
+        OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = normalizer.normalize("""
+            {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","summary":[{"type":"summary_text","text":"reasoned"}]}}
+            """);
+
+        assertThat(events).containsExactly(new ThinkingDelta("reasoned"));
+    }
+
+    @Test
+    void ignoresNonSummaryTextReasoningSummaryItems() {
+        OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = normalizer.normalize("""
+            {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","summary":[{"type":"other","text":"hidden"}]}}
+            """);
+
+        assertThat(events).isEmpty();
+    }
+
+    @Test
     void doesNotExposeConversationStateBeforeSuccessfulCompletion() {
         OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
 

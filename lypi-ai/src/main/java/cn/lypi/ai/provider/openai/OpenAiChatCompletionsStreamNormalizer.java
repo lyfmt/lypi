@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-public final class OpenAiChatCompletionsStreamNormalizer {
+public final class OpenAiChatCompletionsStreamNormalizer implements OpenAiStreamNormalizer {
     private final ObjectMapper objectMapper;
     private final Map<String, ToolCallAccumulator> toolCalls = new LinkedHashMap<>();
     private boolean started;
@@ -36,6 +36,7 @@ public final class OpenAiChatCompletionsStreamNormalizer {
      *
      * `[DONE]` 会转为无 usage 的完成事件，usage chunk 可补充 token 统计。
      */
+    @Override
     public List<AssistantStreamEvent> normalize(String data) {
         String trimmed = data == null ? "" : data.trim();
         if (trimmed.isEmpty()) {
