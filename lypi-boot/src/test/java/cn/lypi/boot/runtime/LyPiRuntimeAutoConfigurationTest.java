@@ -80,6 +80,9 @@ import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.ResumeSessionController;
+import cn.lypi.contracts.tui.SessionBranchTreeView;
+import cn.lypi.contracts.tui.SessionResumeInfo;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.skill.SkillIndex;
@@ -515,6 +518,47 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(context).hasSingleBean(CompactionRuntimePort.class);
                 assertThat(context).hasSingleBean(JLineTuiTransportFactory.class);
                 assertThat(launcher).hasFieldOrPropertyWithValue("factory", context.getBean(JLineTuiTransportFactory.class));
+            });
+    }
+
+    @Test
+    void createsResumeSessionControllerBackedBySessionStorageAndManager() {
+        SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        sessionManager.openOrCreate("ses_old");
+        SessionHandle userLeaf = sessionManager.appendMessage(new AgentMessage(
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new cn.lypi.contracts.context.TextContentBlock("old prompt")),
+            Instant.EPOCH,
+            Optional.empty(),
+            Optional.empty()
+        ));
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir
+            )
+            .withBean(SessionManagerPort.class, () -> sessionManager)
+            .run(context -> {
+                assertThat(context).hasSingleBean(ResumeSessionController.class);
+                ResumeSessionController controller = context.getBean(ResumeSessionController.class);
+
+                List<SessionResumeInfo> sessions = controller.sessions();
+                assertThat(sessions).extracting(SessionResumeInfo::sessionId).contains("ses_old");
+
+                SessionBranchTreeView tree = controller.tree("ses_old");
+                assertThat(tree.sessionId()).isEqualTo("ses_old");
+                assertThat(tree.roots()).isNotEmpty();
+
+                controller.resume("ses_old", userLeaf.leafId());
+
+                assertThat(sessionManager.currentView().sessionId()).isEqualTo("ses_old");
+                assertThat(sessionManager.currentView().leafId()).isEqualTo(userLeaf.leafId());
             });
     }
 

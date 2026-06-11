@@ -6,12 +6,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
 import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.ResumeSessionController;
+import cn.lypi.contracts.tui.SessionBranchTreeView;
+import cn.lypi.contracts.tui.SessionResumeInfo;
+import cn.lypi.contracts.tui.SessionTreeNodeView;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
+import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.session.MessageEntry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.nio.file.Path;
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 class TuiInputLoopTest {
@@ -343,6 +354,75 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void resumeSlashOpensSessionThenBranchOverlayAndResumesSelectedLeaf() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        ResumeSessionController controller = new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("/tmp/ses_old.jsonl"),
+                    "ses_old",
+                    Path.of("/tmp/project"),
+                    Optional.empty(),
+                    "leaf_old",
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old session",
+                    "old session"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                MessageEntry root = new MessageEntry(
+                    "leaf_old",
+                    null,
+                    new AgentMessage(
+                        "msg_old",
+                        MessageRole.USER,
+                        MessageKind.TEXT,
+                        List.of(new TextContentBlock("old prompt")),
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.empty()
+                    ),
+                    Instant.EPOCH
+                );
+                return new SessionBranchTreeView(sessionId, "leaf_old", List.of(new SessionTreeNodeView(root, List.of())));
+            }
+
+            @Override
+            public void resume(String sessionId, String leafId) {
+            }
+        };
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(8),
+            new TuiLayout(80, 10),
+            null,
+            () -> new SlashCommandPicker(List.of("/resume")),
+            controller
+        );
+
+        loop.acceptText("/resume");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertTrue(frames.getLast().contains("Resume Session (Current Folder)"));
+        assertTrue(frames.getLast().contains("old session"));
+
+        loop.acceptKey(TerminalKey.ENTER);
+        assertTrue(frames.getLast().contains("user: old prompt"));
+
+        loop.acceptKey(TerminalKey.ENTER);
+        assertEquals(List.of("ses_old:leaf_old"), submit.resumes);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
     void editingKeysMoveCursorDeleteLineUndoAndYank() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
@@ -387,6 +467,7 @@ class TuiInputLoopTest {
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
         private final List<String> permissionOptions = new ArrayList<>();
+        private final List<String> resumes = new ArrayList<>();
         private int interrupts;
         private int exits;
 
@@ -408,6 +489,11 @@ class TuiInputLoopTest {
         @Override
         public void submitPermissionOption(String requestId, String toolUseId, String optionId) {
             permissionOptions.add(requestId + ":" + toolUseId + ":" + optionId);
+        }
+
+        @Override
+        public void resumeSession(String sessionId, String leafId) {
+            resumes.add(sessionId + ":" + leafId);
         }
     }
 

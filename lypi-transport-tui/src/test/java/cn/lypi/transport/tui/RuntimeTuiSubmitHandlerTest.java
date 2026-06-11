@@ -74,6 +74,20 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
+    void resumeSessionChangesNextTurnSessionId() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, Runnable::run);
+
+        handler.resumeSession("ses_old", "leaf_old");
+        handler.submitUserInput("hello");
+
+        TurnRequest request = core.requests.getFirst();
+        assertEquals("ses_old", request.sessionId());
+        assertEquals("hello", request.userInput());
+    }
+
+    @Test
     void interruptOnlyAbortsCurrentActiveTurnAndPublishesEvent() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();

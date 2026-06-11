@@ -3,6 +3,7 @@ package cn.lypi.boot.runtime;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
@@ -15,15 +16,18 @@ import org.jline.terminal.TerminalBuilder;
 final class JLineTuiTransportLauncher implements TransportLauncher {
     private final JLineTuiTransportFactory factory;
     private final DiffViewProvider diffViewProvider;
+    private final ResumeSessionController resumeController;
     private final List<SlashCommand> slashCommands;
 
     JLineTuiTransportLauncher(
         JLineTuiTransportFactory factory,
         DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
         List<SlashCommand> slashCommands
     ) {
         this.factory = factory;
         this.diffViewProvider = diffViewProvider;
+        this.resumeController = resumeController;
         this.slashCommands = slashCommands == null ? List.of() : List.copyOf(slashCommands);
     }
 
@@ -35,7 +39,15 @@ final class JLineTuiTransportLauncher implements TransportLauncher {
     @Override
     public void launch(SessionRuntimeState state, AgentCorePort core, EventBus events) {
         try (Terminal terminal = TerminalBuilder.builder().system(true).build();
-             var transport = factory.open(state, core, events, terminal, diffViewProvider, slashCommands)) {
+             var transport = factory.open(
+                 state,
+                 core,
+                 events,
+                 terminal,
+                 diffViewProvider,
+                 resumeController,
+                 slashCommands
+             )) {
             transport.runUntilExit();
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
