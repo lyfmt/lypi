@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
@@ -92,14 +93,14 @@ final class ResumeBranchTreeSelector {
     }
 
     private String treePrefix(FlatNode node) {
-        if (node.depth() == 0) {
+        if (node.displayDepth() == 0) {
             return "";
         }
         StringBuilder prefix = new StringBuilder();
-        for (int index = 0; index < node.depth() - 1; index++) {
+        for (int index = 0; index < node.displayDepth() - 1; index++) {
             prefix.append("   ");
         }
-        prefix.append(node.last() ? "└─ " : "├─ ");
+        prefix.append(node.displayLast() ? "└─ " : "├─ ");
         return prefix.toString();
     }
 
@@ -137,6 +138,7 @@ final class ResumeBranchTreeSelector {
         visibleNodes = flatNodes.stream()
             .filter(this::passesFilter)
             .toList();
+        recalculateVisibleTree();
         selectedIndex = findNearestVisibleIndex(lastSelectedId);
         rememberSelection();
     }
@@ -146,7 +148,10 @@ final class ResumeBranchTreeSelector {
         if (filterMode == FilterMode.USER_ONLY) {
             return entry instanceof MessageEntry messageEntry
                 && messageEntry.message() != null
-                && messageEntry.message().role() == cn.lypi.contracts.context.MessageRole.USER;
+                && messageEntry.message().role() == MessageRole.USER;
+        }
+        if (entry instanceof MessageEntry messageEntry && isProtocolMessageWithoutReadableContent(messageEntry)) {
+            return false;
         }
         return !(entry instanceof ModelChangeEntry)
             && !(entry instanceof ThinkingChangeEntry)
@@ -155,6 +160,65 @@ final class ResumeBranchTreeSelector {
             && !(entry instanceof cn.lypi.contracts.session.SessionInfoEntry)
             && !(entry instanceof cn.lypi.contracts.session.LabelEntry)
             && !(entry instanceof cn.lypi.contracts.session.CustomEntry);
+    }
+
+    private boolean isProtocolMessageWithoutReadableContent(MessageEntry entry) {
+        AgentMessage message = entry.message();
+        if (message == null || hasReadableText(message)) {
+            return false;
+        }
+        return message.role() == MessageRole.ASSISTANT || message.role() == MessageRole.TOOL_RESULT;
+    }
+
+    private boolean hasReadableText(AgentMessage message) {
+        if (message.content() == null) {
+            return false;
+        }
+        return message.content().stream()
+            .filter(TextContentBlock.class::isInstance)
+            .map(TextContentBlock.class::cast)
+            .map(TextContentBlock::text)
+            .anyMatch(value -> value != null && !value.isBlank());
+    }
+
+    private void recalculateVisibleTree() {
+        if (visibleNodes.isEmpty()) {
+            return;
+        }
+        java.util.Set<String> visibleIds = visibleNodes.stream()
+            .map(node -> node.entry().id())
+            .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        Map<String, List<FlatNode>> childrenByParent = new LinkedHashMap<>();
+        List<FlatNode> roots = new ArrayList<>();
+        for (FlatNode node : visibleNodes) {
+            String parentId = nearestVisibleAncestor(node.entry().parentId(), visibleIds);
+            if (parentId == null) {
+                roots.add(node);
+            } else {
+                childrenByParent.computeIfAbsent(parentId, ignored -> new ArrayList<>()).add(node);
+            }
+        }
+        assignVisibleDisplay(roots, childrenByParent, 0);
+    }
+
+    private String nearestVisibleAncestor(String parentId, java.util.Set<String> visibleIds) {
+        String current = parentId;
+        while (current != null) {
+            if (visibleIds.contains(current)) {
+                return current;
+            }
+            FlatNode parent = byId.get(current);
+            current = parent == null ? null : parent.entry().parentId();
+        }
+        return null;
+    }
+
+    private void assignVisibleDisplay(List<FlatNode> nodes, Map<String, List<FlatNode>> childrenByParent, int depth) {
+        for (int index = 0; index < nodes.size(); index++) {
+            FlatNode node = nodes.get(index);
+            node.setDisplay(depth, index == nodes.size() - 1);
+            assignVisibleDisplay(childrenByParent.getOrDefault(node.entry().id(), List.of()), childrenByParent, depth + 1);
+        }
     }
 
     private int findNearestVisibleIndex(String entryId) {
@@ -218,6 +282,32 @@ final class ResumeBranchTreeSelector {
         USER_ONLY
     }
 
-    private record FlatNode(SessionEntry entry, int depth, boolean last) {
+    private static final class FlatNode {
+        private final SessionEntry entry;
+        private int displayDepth;
+        private boolean displayLast;
+
+        private FlatNode(SessionEntry entry, int displayDepth, boolean displayLast) {
+            this.entry = entry;
+            this.displayDepth = displayDepth;
+            this.displayLast = displayLast;
+        }
+
+        private SessionEntry entry() {
+            return entry;
+        }
+
+        private int displayDepth() {
+            return displayDepth;
+        }
+
+        private boolean displayLast() {
+            return displayLast;
+        }
+
+        private void setDisplay(int displayDepth, boolean displayLast) {
+            this.displayDepth = displayDepth;
+            this.displayLast = displayLast;
+        }
     }
 }
