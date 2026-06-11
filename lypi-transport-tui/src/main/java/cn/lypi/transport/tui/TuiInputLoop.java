@@ -294,7 +294,7 @@ final class TuiInputLoop {
     }
 
     private void render() {
-        frameSink.render(renderer.render(
+        frameSink.render(renderer.renderFrame(
             currentView(),
             screen,
             layout,
