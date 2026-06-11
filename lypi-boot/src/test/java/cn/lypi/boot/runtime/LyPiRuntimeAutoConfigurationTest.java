@@ -17,6 +17,7 @@ import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventEnvelope;
@@ -564,6 +565,9 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(sessionManager.currentView().leafId()).isEqualTo(userLeaf.leafId());
                 assertThat(resumed.sessionId()).isEqualTo("ses_old");
                 assertThat(resumed.currentBranchLeafId()).isEqualTo(userLeaf.leafId());
+                assertThat(resumed.transcript())
+                    .extracting(AgentMessage::id)
+                    .containsExactly("msg_user");
                 assertThat(events.events).hasAtLeastOneElementOfType(SessionStateEvent.class);
                 SessionStateEvent state = (SessionStateEvent) events.events.getLast();
                 assertThat(state.sessionId()).isEqualTo("ses_old");

@@ -11,6 +11,9 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
@@ -382,6 +385,8 @@ class JLineTuiTransportTest {
     @Test
     void resumeRuntimeStateRebindsEventSubscriptionToResumedSession() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 12;
         RecordingEventBus events = new RecordingEventBus();
 
         JLineTuiTransport transport = JLineTuiTransport.open(
@@ -392,19 +397,20 @@ class JLineTuiTransportTest {
             new RecordingSubmitHandler(),
             () -> new SlashCommandPicker(List.of("/resume")),
             NOOP_DIFF_PROVIDER,
-            resumeControllerReturning(runtimeState("ses_old", "leaf_old")),
+            resumeControllerReturning(runtimeStateWithTranscript("ses_old", "leaf_old", "restored context")),
             80,
             8
         );
         io.output.setLength(0);
 
         transport.drainInputForTest();
+        transport.renderCurrentFrameUnderUiLock();
         events.emit(new ErrorEvent("ses_1", "err_old", "old", Instant.parse("2026-06-09T00:00:00Z")));
         events.emit(new ErrorEvent("ses_old", "err_new", "new", Instant.parse("2026-06-09T00:00:00Z")));
 
         assertEquals(Optional.of("ses_old"), events.filter.sessionId());
         assertFalse(io.output.toString().contains("error: old"));
-        assertTrue(io.output.toString().contains("error: new"));
+        assertTrue(io.output.toString().contains("restored context"));
 
         transport.close();
     }
@@ -461,6 +467,32 @@ class JLineTuiTransportTest {
             AgentMode.EXECUTE,
             PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(0, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
+            false,
+            false,
+            false,
+            false
+        );
+    }
+
+    private SessionRuntimeState runtimeStateWithTranscript(String sessionId, String leafId, String content) {
+        return new SessionRuntimeState(
+            sessionId,
+            Path.of("."),
+            leafId,
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            new ContextBudget(0, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
+            List.of(new AgentMessage(
+                "msg_restored",
+                MessageRole.USER,
+                MessageKind.TEXT,
+                List.of(new TextContentBlock(content)),
+                Instant.parse("2026-06-09T00:00:00Z"),
+                Optional.empty(),
+                Optional.empty()
+            )),
             false,
             false,
             false,

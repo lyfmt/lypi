@@ -6,9 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
 import cn.lypi.contracts.event.ErrorEvent;
@@ -42,6 +44,7 @@ import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiBlockKind;
 import cn.lypi.contracts.tui.TuiErrorBlock;
@@ -387,6 +390,54 @@ class TuiEventReducerTest {
 
         assertEquals("EXECUTE", reducer.view().statusBar().mode());
         assertFalse(reducer.view().statusBar().hasInterruptibleTool());
+    }
+
+    @Test
+    void runtimeStateProjectsResumedTranscriptBlocks() {
+        SessionRuntimeState runtimeState = new SessionRuntimeState(
+            "ses_old",
+            Path.of("/home/lyfmt/src/study/ly-pi"),
+            "leaf_old",
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            TestRuntimeStates.basic("ses_old").budget(),
+            List.of(
+                new AgentMessage(
+                    "msg_user",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("old prompt")),
+                    NOW,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                new AgentMessage(
+                    "msg_assistant",
+                    MessageRole.ASSISTANT,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("old answer")),
+                    NOW.plusMillis(1),
+                    Optional.empty(),
+                    Optional.empty()
+                )
+            ),
+            false,
+            false,
+            false,
+            false
+        );
+
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(runtimeState);
+
+        assertEquals(2, reducer.view().blocks().size());
+        TuiMessageBlock user = assertInstanceOf(TuiMessageBlock.class, reducer.view().blocks().get(0));
+        TuiMessageBlock assistant = assertInstanceOf(TuiMessageBlock.class, reducer.view().blocks().get(1));
+        assertEquals("user", user.role());
+        assertEquals("old prompt", user.content());
+        assertEquals("assistant", assistant.role());
+        assertEquals("old answer", assistant.content());
     }
 
     @Test

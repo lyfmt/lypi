@@ -62,6 +62,7 @@ final class DefaultResumeSessionController implements ResumeSessionController {
             context.mode(),
             context.permissionMode(),
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
+            sessionManager.transcript(handle.leafId()),
             false,
             false,
             false,
