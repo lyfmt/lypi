@@ -46,7 +46,7 @@ class SessionBranchTreeQueryTest {
         SessionBranchTreeView view = new SessionBranchTreeQuery(tempDir).tree("ses_main");
 
         assertThat(view.sessionId()).isEqualTo("ses_main");
-        assertThat(view.currentLeafId()).isEqualTo("model");
+        assertThat(view.currentLeafId()).isEqualTo("right");
         assertThat(view.roots()).singleElement().satisfies(root -> {
             assertThat(root.entry().id()).isEqualTo("root");
             assertThat(root.children()).extracting(child -> child.entry().id()).containsExactly("left", "right");
