@@ -339,8 +339,7 @@ public final class TuiEventReducer {
                         label,
                         false
                     );
-                    int toolIndex = state.toolIndex(toolUseId).orElse(index);
-                    putOrAdd(toolIndex, block);
+                    putOrAdd(index, block);
                 }
                 default -> {
                 }
@@ -356,6 +355,15 @@ public final class TuiEventReducer {
         }
         if (snapshot.blockKind() == ContentBlockKind.TEXT) {
             return emptyStreamingTextPlaceholderIndex(event.messageId()).orElse(-1);
+        }
+        if (snapshot.blockKind() == ContentBlockKind.TOOL_CALL) {
+            String toolUseId = metadataString(snapshot, "toolUseId", "");
+            if (!toolUseId.isBlank()) {
+                java.util.Optional<Integer> toolIdx = state.toolIndex(toolUseId);
+                if (toolIdx.isPresent()) {
+                    return toolIdx.orElseThrow();
+                }
+            }
         }
         return -1;
     }

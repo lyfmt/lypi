@@ -679,6 +679,94 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void messageEndSnapshotDoesNotDuplicateDeltaToolCallBlock() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            "msg_1:tool_call:toolu_1",
+            ContentBlockKind.TOOL_CALL,
+            "",
+            false,
+            Map.of(
+                "toolUseId", "toolu_1",
+                "toolName", "bash",
+                "inputSummary", "mvn test"
+            ),
+            NOW
+        ));
+
+        assertEquals(1, reducer.view().blocks().size(), "delta creates exactly one pending tool block");
+
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new MessageBlockSnapshot(
+                "msg_1:tool_call:0",
+                ContentBlockKind.TOOL_CALL,
+                "",
+                Map.of("toolUseId", "toolu_1", "toolName", "bash", "inputSummary", "mvn test")
+            )),
+            Optional.empty(),
+            Optional.of("tool_calls"),
+            Map.of(),
+            NOW
+        ));
+
+        assertEquals(1, reducer.view().blocks().size(), "snapshot must overwrite delta block, not add a duplicate");
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().getFirst());
+        assertEquals("toolu_1", tool.toolUseId());
+        assertEquals("bash", tool.toolName());
+        assertFalse(tool.active());
+    }
+
+    @Test
+    void messageEndSnapshotKeepsMultipleDistinctToolCallBlocksSeparate() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(toolCallDelta("msg_1", "toolu_a", "bash"));
+        reducer.reduce(toolCallDelta("msg_1", "toolu_b", "read"));
+
+        assertEquals(2, reducer.view().blocks().size());
+
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(
+                new MessageBlockSnapshot(
+                    "msg_1:tool_call:0",
+                    ContentBlockKind.TOOL_CALL,
+                    "",
+                    Map.of("toolUseId", "toolu_a", "toolName", "bash", "inputSummary", "bash")
+                ),
+                new MessageBlockSnapshot(
+                    "msg_1:tool_call:1",
+                    ContentBlockKind.TOOL_CALL,
+                    "",
+                    Map.of("toolUseId", "toolu_b", "toolName", "read", "inputSummary", "read")
+                )
+            ),
+            Optional.empty(),
+            Optional.of("tool_calls"),
+            Map.of(),
+            NOW
+        ));
+
+        assertEquals(2, reducer.view().blocks().size(), "two distinct tool calls must not produce duplicates");
+        TuiToolBlock first = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().get(0));
+        TuiToolBlock second = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().get(1));
+        assertEquals("toolu_a", first.toolUseId());
+        assertEquals("toolu_b", second.toolUseId());
+    }
+
+    @Test
     void messageEndDeactivatesPendingToolBlockWhenToolExecutionNeverStarts() {
         TuiEventReducer reducer = new TuiEventReducer();
 
