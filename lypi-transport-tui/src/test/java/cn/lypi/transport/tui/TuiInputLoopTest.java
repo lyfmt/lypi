@@ -547,8 +547,49 @@ class TuiInputLoopTest {
         assertTrue(!frames.getLast().contains("assistant: old answer"));
 
         loop.acceptKey(TerminalKey.ENTER);
-        assertEquals(List.of("ses_old:leaf_old"), submit.resumes);
-        assertEquals("", loop.draft());
+        assertEquals(List.of("ses_old:null"), submit.resumes);
+        assertEquals("old prompt", loop.draft());
+    }
+
+    @Test
+    void resumeSelectingUserEntrySwitchesToParentLeafAndRestoresDraftText() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        ResumeSessionController controller = resumeControllerWithTree(
+            "ses_old",
+            new MessageEntry(
+                "user_old",
+                "assistant_parent",
+                new AgentMessage(
+                    "msg_old",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("edit this again")),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                Instant.EPOCH
+            )
+        );
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(8),
+            new TuiLayout(80, 10),
+            null,
+            () -> new SlashCommandPicker(List.of("/resume")),
+            controller
+        );
+
+        loop.acceptText("/resume");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("ses_old:assistant_parent"), submit.resumes);
+        assertEquals("edit this again", loop.draft());
     }
 
     @Test
@@ -633,6 +674,36 @@ class TuiInputLoopTest {
             @Override
             public SessionBranchTreeView tree(String sessionId) {
                 return new SessionBranchTreeView(sessionId, null, List.of());
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+        };
+    }
+
+    private static ResumeSessionController resumeControllerWithTree(String sessionId, cn.lypi.contracts.session.SessionEntry entry) {
+        return new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("/tmp/" + sessionId + ".jsonl"),
+                    sessionId,
+                    Path.of("/tmp/project"),
+                    Optional.empty(),
+                    entry.id(),
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old session",
+                    "old session"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                return new SessionBranchTreeView(sessionId, entry.id(), List.of(new SessionTreeNodeView(entry, List.of())));
             }
 
             @Override
