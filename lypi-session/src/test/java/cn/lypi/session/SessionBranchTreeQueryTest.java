@@ -6,12 +6,14 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.tui.SessionBranchTreeView;
 import cn.lypi.contracts.tui.SessionTreeNodeView;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -71,6 +73,18 @@ class SessionBranchTreeQueryTest {
             "test",
             NOW.plusSeconds(1)
         ));
+
+        SessionBranchTreeView view = new SessionBranchTreeQuery(tempDir).tree("ses_main");
+
+        assertThat(view.currentLeafId()).isEqualTo("root");
+    }
+
+    @Test
+    void treeReportsLatestConversationLeafWhenLastEntryIsCustomState() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_main");
+        manager.append(new MessageEntry("root", null, message("msg_root", MessageRole.USER, "hello"), NOW));
+        manager.append(new CustomEntry("custom", "root", "state", Map.of("key", "value"), NOW.plusSeconds(1)));
 
         SessionBranchTreeView view = new SessionBranchTreeQuery(tempDir).tree("ses_main");
 

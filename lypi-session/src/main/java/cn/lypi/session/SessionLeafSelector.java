@@ -1,6 +1,7 @@
 package cn.lypi.session;
 
 import cn.lypi.contracts.session.AgentLifecycleEntry;
+import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.LabelEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
@@ -34,6 +35,7 @@ final class SessionLeafSelector {
             && !(entry instanceof ModeChangeEntry)
             && !(entry instanceof PermissionModeChangeEntry)
             && !(entry instanceof SessionInfoEntry)
-            && !(entry instanceof LabelEntry);
+            && !(entry instanceof LabelEntry)
+            && !(entry instanceof CustomEntry);
     }
 }
