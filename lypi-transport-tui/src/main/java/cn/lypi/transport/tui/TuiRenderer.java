@@ -132,16 +132,15 @@ final class TuiRenderer {
     }
 
     private String statusLine(StatusBarState status, TuiScreen screen, int width) {
-        String scroll = screen.linesBelow() > 0 ? " scroll +" + screen.linesBelow() : "";
         String full = String.join(
             " ",
             List.of(nullToEmpty(status.sessionId()), nullToEmpty(status.model()), nullToEmpty(status.mode()), nullToEmpty(status.permissionMode()))
-        ).trim() + scroll;
+        ).trim();
         if (AnsiWidth.displayWidth(full) <= width) {
             return full;
         }
         if (status.permissionMode() != null && status.permissionMode().contains("tool")) {
-            return AnsiWidth.truncate("tool " + status.permissionMode() + scroll, width);
+            return AnsiWidth.truncate("tool " + status.permissionMode(), width);
         }
         return AnsiWidth.truncate(full, width);
     }

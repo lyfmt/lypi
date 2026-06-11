@@ -108,7 +108,46 @@ class TerminalFrameRendererTest {
     }
 
     @Test
-    void contentShrinkUsesFullRenderToClearStaleRows() throws Exception {
+    void bottomActivityChangeAfterOverflowPatchesVisibleRowsWithoutAppendingToScrollback() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 4;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of("one", "two", "three", "> |CURSOR|", "status A"));
+        io.output.setLength(0);
+        renderer.render(List.of("one", "two", "three", "> draft|CURSOR|", "status A"));
+
+        assertEquals("\033[?2026h\033[3;1H\033[2K> draft\033[3;8H\033[?2026l", io.output.toString());
+    }
+
+    @Test
+    void transcriptAppendThatOverflowsTerminalScrollsThenPatchesBottomChrome() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 4;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of("one", "two", "> |CURSOR|", "status"));
+        io.output.setLength(0);
+        renderer.render(List.of("one", "two", "three", "> |CURSOR|", "status"));
+
+        assertEquals("\033[?2026h\033[3;1H\033[2Kthree\r\n\033[2K> \r\n\033[2Kstatus\033[3;3H\033[?2026l", io.output.toString());
+    }
+
+    @Test
+    void transcriptAppendAfterOverflowScrollsOneLineAndKeepsInputAndStatusVisible() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 4;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of("one", "two", "three", "> |CURSOR|", "status"));
+        io.output.setLength(0);
+        renderer.render(List.of("one", "two", "three", "four", "> |CURSOR|", "status"));
+
+        assertEquals("\033[?2026h\033[3;1H\033[2Kfour\r\n\033[2K> \r\n\033[2Kstatus\033[3;3H\033[?2026l", io.output.toString());
+    }
+
+    @Test
+    void contentShrinkUsesFullRenderWithoutClearingTerminalScrollback() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
@@ -116,11 +155,11 @@ class TerminalFrameRendererTest {
         io.output.setLength(0);
         renderer.render(List.of("one"));
 
-        assertEquals("\033[?2026h\033[2J\033[H\033[3Jone\033[?2026l", io.output.toString());
+        assertEquals("\033[?2026h\033[2J\033[Hone\033[?2026l", io.output.toString());
     }
 
     @Test
-    void widthOrHeightChangeUsesFullRender() throws Exception {
+    void widthOrHeightChangeUsesFullRenderWithoutClearingTerminalScrollback() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
@@ -129,7 +168,7 @@ class TerminalFrameRendererTest {
         io.width = 100;
         renderer.render(List.of("one"));
 
-        assertEquals("\033[?2026h\033[2J\033[H\033[3Jone\033[?2026l", io.output.toString());
+        assertEquals("\033[?2026h\033[2J\033[Hone\033[?2026l", io.output.toString());
     }
 
     @Test
@@ -142,7 +181,7 @@ class TerminalFrameRendererTest {
         io.output.setLength(0);
         renderer.render(List.of("ONE", "two", "three"));
 
-        assertEquals("\033[?2026h\033[2J\033[H\033[3JONE\ntwo\nthree\033[?2026l", io.output.toString());
+        assertEquals("\033[?2026h\033[2J\033[HONE\ntwo\nthree\033[?2026l", io.output.toString());
     }
 
     private static final class RecordingTerminalIo implements TerminalIo {

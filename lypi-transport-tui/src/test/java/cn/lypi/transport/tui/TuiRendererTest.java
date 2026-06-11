@@ -65,6 +65,27 @@ class TuiRendererTest {
     }
 
     @Test
+    void statusBarDoesNotRenderApplicationScrollbackCounter() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        screen.setTranscript(List.of("old", "current"));
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock("b1", "m1", "assistant", "old", false),
+                new TuiMessageBlock("b2", "m2", "assistant", "current", false)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(80, 3), "");
+
+        assertFalse(lines.getLast().contains("scroll +"));
+    }
+
+    @Test
     void statusBarDoesNotRenderInternalRuntimeFields() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);

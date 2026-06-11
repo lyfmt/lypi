@@ -9,7 +9,7 @@ final class TerminalFrameRenderer {
     static final String CURSOR_MARKER = "|CURSOR|";
     private static final String SYNC_START = "\033[?2026h";
     private static final String SYNC_END = "\033[?2026l";
-    private static final String FULL_CLEAR = "\033[2J\033[H\033[3J";
+    private static final String FULL_CLEAR = "\033[2J\033[H";
     private static final IntConsumer NOOP_RENDERED_ROWS = rows -> {
     };
 
@@ -90,6 +90,13 @@ final class TerminalFrameRenderer {
             return;
         }
 
+        if (viewportTop > previousViewportTop && newLines.size() > previousLines.size()) {
+            writeFlowingTail(newLines, frame.cursor(), firstChanged, previousViewportTop, viewportTop, height);
+            updateState(newLines, width, height, viewportTop, hardwareCursorRow);
+            io.flush();
+            return;
+        }
+
         writePatch(newLines, frame.cursor(), firstChanged, lastChangedLine(newLines), previousViewportTop, height);
         updateState(newLines, width, height, previousViewportTop, hardwareCursorRow);
         io.flush();
@@ -130,6 +137,30 @@ final class TerminalFrameRenderer {
             io.write("\033[2K");
             io.write(lines.get(i));
             hardwareCursorRow = physicalRow;
+        }
+        moveCursor(cursor, viewportTop, height);
+        io.write(SYNC_END);
+    }
+
+    private void writeFlowingTail(
+        List<String> lines,
+        java.util.Optional<CursorPosition> cursor,
+        int firstChanged,
+        int previousViewportTop,
+        int viewportTop,
+        int height
+    ) throws IOException {
+        io.write(SYNC_START);
+        int firstVisibleChange = Math.max(firstChanged, previousViewportTop);
+        int startRow = physicalRow(firstVisibleChange + 1, previousViewportTop, height);
+        io.write("\033[" + startRow + ";1H");
+        for (int i = firstVisibleChange; i < lines.size(); i++) {
+            if (i > firstVisibleChange) {
+                io.write("\r\n");
+            }
+            io.write("\033[2K");
+            io.write(lines.get(i));
+            hardwareCursorRow = physicalRow(i + 1, viewportTop, height);
         }
         moveCursor(cursor, viewportTop, height);
         io.write(SYNC_END);
