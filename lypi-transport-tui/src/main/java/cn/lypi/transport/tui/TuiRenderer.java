@@ -228,14 +228,14 @@ final class TuiRenderer {
                 ? Math.max(1, width - AnsiWidth.displayWidth(INPUT_PREFIX) - cursorReserveWidth)
                 : Math.max(1, width - cursorReserveWidth);
             if (currentWidth > 0 && currentWidth + chunkWidth > availableWidth) {
+                if (showCursor && cursor == index) {
+                    cursorLine = lines.size();
+                    cursorColumn = currentWidth;
+                    cursorSeen = true;
+                }
                 lines.add(new InputVisualLine(current.toString(), cursorSeen && cursorLine == lines.size(), cursorColumn));
                 current = new StringBuilder();
                 currentWidth = 0;
-                if (showCursor && cursor == index) {
-                    cursorLine = lines.size();
-                    cursorColumn = 0;
-                    cursorSeen = true;
-                }
             }
             if (showCursor && cursor == index) {
                 cursorLine = lines.size();

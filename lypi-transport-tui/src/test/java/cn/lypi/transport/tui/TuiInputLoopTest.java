@@ -305,6 +305,34 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void upAndDownMoveCursorAcrossSoftWrappedInputRowsBeforeHistoryNavigation() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(8, 6)
+        );
+
+        loop.acceptText("history");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("abcdefghij");
+
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("abcdefghij", loop.draft());
+        assertEquals(5, loop.cursor());
+        assertTrue(frames.getLast().contains(inputContent("> abcde|CURSOR|" + INPUT_CURSOR)));
+
+        loop.acceptKey(TerminalKey.DOWN);
+
+        assertEquals(10, loop.cursor());
+        assertTrue(frames.getLast().contains(inputContent("fghij|CURSOR|" + INPUT_CURSOR)));
+    }
+
+    @Test
     void slashOverlayShowsCandidatesAndAcceptsSelection() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();

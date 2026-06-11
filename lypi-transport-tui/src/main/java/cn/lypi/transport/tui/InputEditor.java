@@ -6,6 +6,9 @@ import java.util.Deque;
 import java.util.List;
 
 final class InputEditor {
+    private static final int INPUT_PREFIX_WIDTH = 2;
+    private static final int INPUT_CURSOR_WIDTH = 1;
+
     private final StringBuilder text = new StringBuilder();
     private final Deque<EditorSnapshot> undo = new ArrayDeque<>();
     private final List<String> killRing = new ArrayList<>();
@@ -82,12 +85,29 @@ final class InputEditor {
         moveVertical(1);
     }
 
+    void moveVisualUp(int width) {
+        moveVisualVertical(width, -1);
+    }
+
+    void moveVisualDown(int width) {
+        moveVisualVertical(width, 1);
+    }
+
     boolean canMoveUp() {
         return lineStart(cursor) > 0;
     }
 
     boolean canMoveDown() {
         return lineEnd(cursor) < text.length();
+    }
+
+    boolean canMoveVisualUp(int width) {
+        return visualLineIndex(width) > 0;
+    }
+
+    boolean canMoveVisualDown(int width) {
+        List<VisualLine> lines = visualLines(width);
+        return visualLineIndex(lines) < lines.size() - 1;
     }
 
     void deletePreviousCharacter() {
@@ -269,6 +289,96 @@ final class InputEditor {
         clearYankState();
     }
 
+    private void moveVisualVertical(int width, int delta) {
+        List<VisualLine> lines = visualLines(width);
+        int currentLine = visualLineIndex(lines);
+        int targetLine = currentLine + delta;
+        if (targetLine < 0 || targetLine >= lines.size()) {
+            return;
+        }
+        int currentColumn = preferredColumn >= 0 ? preferredColumn : cursorColumn(lines.get(currentLine), cursor);
+        VisualLine target = lines.get(targetLine);
+        cursor = cursorAtColumn(target, currentColumn);
+        preferredColumn = currentColumn;
+        clearYankState();
+    }
+
+    private int visualLineIndex(int width) {
+        return visualLineIndex(visualLines(width));
+    }
+
+    private int visualLineIndex(List<VisualLine> lines) {
+        for (int index = 0; index < lines.size(); index++) {
+            VisualLine line = lines.get(index);
+            if (cursor >= line.start() && cursor <= line.end()) {
+                return index;
+            }
+        }
+        return Math.max(0, lines.size() - 1);
+    }
+
+    private List<VisualLine> visualLines(int width) {
+        List<VisualLine> lines = new ArrayList<>();
+        int firstContentWidth = Math.max(1, width - INPUT_PREFIX_WIDTH - INPUT_CURSOR_WIDTH);
+        int otherContentWidth = Math.max(1, width - INPUT_CURSOR_WIDTH);
+        int lineStart = 0;
+        int lineWidth = 0;
+        boolean firstLine = true;
+
+        for (int index = 0; index < text.length();) {
+            int codePoint = text.codePointAt(index);
+            if (codePoint == '\n') {
+                lines.add(new VisualLine(lineStart, index));
+                index += Character.charCount(codePoint);
+                lineStart = index;
+                lineWidth = 0;
+                firstLine = false;
+                continue;
+            }
+
+            String chunk = new String(Character.toChars(codePoint));
+            int chunkWidth = AnsiWidth.displayWidth(chunk);
+            int availableWidth = firstLine ? firstContentWidth : otherContentWidth;
+            if (lineWidth > 0 && lineWidth + chunkWidth > availableWidth) {
+                lines.add(new VisualLine(lineStart, index));
+                lineStart = index;
+                lineWidth = 0;
+                firstLine = false;
+                availableWidth = otherContentWidth;
+            }
+            lineWidth += chunkWidth;
+            index += Character.charCount(codePoint);
+        }
+
+        lines.add(new VisualLine(lineStart, text.length()));
+        return lines;
+    }
+
+    private int cursorColumn(VisualLine line, int position) {
+        int column = 0;
+        int end = Math.min(Math.max(position, line.start()), line.end());
+        for (int index = line.start(); index < end;) {
+            int codePoint = text.codePointAt(index);
+            column += AnsiWidth.displayWidth(new String(Character.toChars(codePoint)));
+            index += Character.charCount(codePoint);
+        }
+        return column;
+    }
+
+    private int cursorAtColumn(VisualLine line, int column) {
+        int width = 0;
+        for (int index = line.start(); index < line.end();) {
+            int codePoint = text.codePointAt(index);
+            int codePointWidth = AnsiWidth.displayWidth(new String(Character.toChars(codePoint)));
+            if (width + codePointWidth > column) {
+                return index;
+            }
+            width += codePointWidth;
+            index += Character.charCount(codePoint);
+        }
+        return line.end();
+    }
+
     private int lineStart(int from) {
         return text.lastIndexOf("\n", Math.max(0, Math.min(from, text.length()) - 1)) + 1;
     }
@@ -311,5 +421,8 @@ final class InputEditor {
     }
 
     private record EditorSnapshot(String text, int cursor) {
+    }
+
+    private record VisualLine(int start, int end) {
     }
 }
