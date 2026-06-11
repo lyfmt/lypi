@@ -57,7 +57,7 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void rendererFrameKeepsInputBlockAnchoredAndShowsVisibleTranscript() {
+    void rendererFrameKeepsInputBlockAfterFullTranscriptForTerminalScrollback() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
         JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 40, 7);
@@ -79,8 +79,8 @@ class JLineTuiTransportRenderPipelineTest {
         }
 
         List<String> latest = frames.getLast();
-        assertEquals(7, latest.size());
-        assertTrue(!latest.contains("line 0"));
+        assertEquals(10, latest.size());
+        assertTrue(latest.contains("line 0"));
         assertTrue(latest.contains("line 3"));
         assertTrue(latest.contains("line 5"));
         assertEquals(inputContent("> "), inputLine(latest));

@@ -71,6 +71,27 @@ class TuiRendererTest {
     }
 
     @Test
+    void statusBarDoesNotRenderApplicationScrollbackCounter() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        screen.setTranscript(List.of("old", "current"));
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock("b1", "m1", "assistant", "old", false),
+                new TuiMessageBlock("b2", "m2", "assistant", "current", false)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(80, 3), "");
+
+        assertFalse(lines.getLast().contains("scroll +"));
+    }
+
+    @Test
     void statusBarDoesNotRenderInternalRuntimeFields() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
@@ -198,7 +219,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void longInputSoftWrapsInsideAnchoredBottomInputBlock() {
+    void longInputSoftWrapsInsideBottomInputBlockWithFullTranscript() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -216,13 +237,16 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(8, 6), "abcdefghij", 10);
 
-        assertEquals(6, lines.size());
-        assertEquals("line4", lines.get(0));
-        assertInputBorder(lines.get(1), 8);
-        assertEquals("\033[48;5;236m> abcde\033[0m", lines.get(2));
-        assertEquals("\033[48;5;236mfghij|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(3));
-        assertInputBorder(lines.get(4), 8);
-        assertTrue(lines.get(5).contains("ses_1"));
+        assertEquals(9, lines.size());
+        assertEquals("line1", lines.get(0));
+        assertEquals("line2", lines.get(1));
+        assertEquals("line3", lines.get(2));
+        assertEquals("line4", lines.get(3));
+        assertInputBorder(lines.get(lines.size() - 5), 8);
+        assertEquals("\033[48;5;236m> abcde\033[0m", lines.get(lines.size() - 4));
+        assertEquals("\033[48;5;236mfghij|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 3));
+        assertInputBorder(lines.get(lines.size() - 2), 8);
+        assertTrue(lines.getLast().contains("ses_1"));
     }
 
     @Test
@@ -248,7 +272,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void inputViewportShowsLatestRowsWhenDraftExceedsTerminalHeight() {
+    void inputViewportShowsLatestRowsWhileKeepingTranscriptForScrollback() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -261,13 +285,13 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 6), "one\ntwo\nthree\nfour", 18);
 
-        assertEquals(6, lines.size());
-        assertFalse(lines.contains("history"));
-        assertInputBorder(lines.get(0), 10);
-        assertEquals("\033[48;5;236mtwo\033[0m", lines.get(1));
-        assertEquals("\033[48;5;236mthree\033[0m", lines.get(2));
-        assertEquals("\033[48;5;236mfour|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(3));
-        assertInputBorder(lines.get(4), 10);
+        assertEquals(7, lines.size());
+        assertTrue(lines.contains("history"));
+        assertInputBorder(lines.get(lines.size() - 6), 10);
+        assertEquals("\033[48;5;236mtwo\033[0m", lines.get(lines.size() - 5));
+        assertEquals("\033[48;5;236mthree\033[0m", lines.get(lines.size() - 4));
+        assertEquals("\033[48;5;236mfour|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 3));
+        assertInputBorder(lines.get(lines.size() - 2), 10);
     }
 
     @Test
@@ -284,11 +308,11 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "one\ntwo\nthree\nfour", 18);
 
-        assertEquals(3, lines.size());
-        assertFalse(lines.contains("history"));
-        assertInputBorder(lines.get(0), 10);
-        assertEquals("\033[48;5;236mfour|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(1));
-        assertTrue(lines.get(2).contains("ses_1"));
+        assertEquals(4, lines.size());
+        assertTrue(lines.contains("history"));
+        assertInputBorder(lines.get(lines.size() - 3), 10);
+        assertEquals("\033[48;5;236mfour|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 2));
+        assertTrue(lines.getLast().contains("ses_1"));
     }
 
     @Test

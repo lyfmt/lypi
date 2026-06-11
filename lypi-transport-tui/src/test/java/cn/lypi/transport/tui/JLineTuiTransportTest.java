@@ -289,7 +289,7 @@ class JLineTuiTransportTest {
         io.resizeCallback.run();
 
         String frame = io.output.toString();
-        String fullClear = "\033[2J\033[H\033[3J";
+        String fullClear = "\033[2J\033[H";
         String rendered = frame.substring(frame.indexOf(fullClear) + fullClear.length(), frame.indexOf("\033[?2026l"));
         assertEquals(6, rendered.split("\n", -1).length);
         assertTrue(rendered.contains("> "));
