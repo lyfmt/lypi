@@ -1,6 +1,8 @@
 package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlockKind;
+import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.session.BranchSummaryEntry;
@@ -13,16 +15,18 @@ import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.SessionTreeNodeView;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 final class ResumeBranchTreeSelector {
     private final List<FlatNode> flatNodes;
     private final Map<String, FlatNode> byId = new LinkedHashMap<>();
     private final String currentLeafId;
     private final int maxVisible;
-    private final java.util.Set<String> activePath = new java.util.LinkedHashSet<>();
+    private final Set<String> activePath = new LinkedHashSet<>();
     private FilterMode filterMode = FilterMode.DEFAULT;
     private List<FlatNode> visibleNodes = List.of();
     private int selectedIndex;
@@ -150,6 +154,12 @@ final class ResumeBranchTreeSelector {
                 && messageEntry.message() != null
                 && messageEntry.message().role() == MessageRole.USER;
         }
+        if (isToolCallAssistant(entry)) {
+            return false;
+        }
+        if (isToolResult(entry)) {
+            return false;
+        }
         if (entry instanceof MessageEntry messageEntry && isProtocolMessageWithoutReadableContent(messageEntry)) {
             return false;
         }
@@ -160,6 +170,26 @@ final class ResumeBranchTreeSelector {
             && !(entry instanceof cn.lypi.contracts.session.SessionInfoEntry)
             && !(entry instanceof cn.lypi.contracts.session.LabelEntry)
             && !(entry instanceof cn.lypi.contracts.session.CustomEntry);
+    }
+
+    private boolean isToolCallAssistant(SessionEntry entry) {
+        if (!(entry instanceof MessageEntry messageEntry) || messageEntry.message() == null) {
+            return false;
+        }
+        AgentMessage message = messageEntry.message();
+        if (message.role() != MessageRole.ASSISTANT || message.content() == null || message.content().isEmpty()) {
+            return false;
+        }
+        if (message.kind() == MessageKind.ERROR) {
+            return false;
+        }
+        return message.content().stream().anyMatch(block -> block.kind() == ContentBlockKind.TOOL_CALL);
+    }
+
+    private boolean isToolResult(SessionEntry entry) {
+        return entry instanceof MessageEntry messageEntry
+            && messageEntry.message() != null
+            && messageEntry.message().role() == MessageRole.TOOL_RESULT;
     }
 
     private boolean isProtocolMessageWithoutReadableContent(MessageEntry entry) {
@@ -185,9 +215,9 @@ final class ResumeBranchTreeSelector {
         if (visibleNodes.isEmpty()) {
             return;
         }
-        java.util.Set<String> visibleIds = visibleNodes.stream()
+        Set<String> visibleIds = visibleNodes.stream()
             .map(node -> node.entry().id())
-            .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+            .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         Map<String, List<FlatNode>> childrenByParent = new LinkedHashMap<>();
         List<FlatNode> roots = new ArrayList<>();
         for (FlatNode node : visibleNodes) {
@@ -201,7 +231,7 @@ final class ResumeBranchTreeSelector {
         assignVisibleDisplay(roots, childrenByParent, 0);
     }
 
-    private String nearestVisibleAncestor(String parentId, java.util.Set<String> visibleIds) {
+    private String nearestVisibleAncestor(String parentId, Set<String> visibleIds) {
         String current = parentId;
         while (current != null) {
             if (visibleIds.contains(current)) {

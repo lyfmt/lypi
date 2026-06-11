@@ -2118,6 +2118,104 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void rejectsTurnWhenRequestedParentIsToolOnlyAssistant() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
+        session.appendMessage(AgentCoreTestFixtures.assistantToolCallMessage(
+            "msg-tool-call",
+            "toolu-1",
+            "read",
+            Map.of("path", "README.md")
+        ));
+        String unsafeParent = session.leafId();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> new ContextAssembly(
+                    AgentCoreTestFixtures.minimalContext(session.messages()),
+                    AgentCoreTestFixtures.emptyResources(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    false
+                ),
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(unsafeParent), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(provider.contexts).isEmpty();
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-root", "msg-tool-call");
+        assertThat(eventBus.events).extracting(AgentEvent::getClass)
+            .containsExactly(TurnStartEvent.class, ErrorEvent.class, TurnEndEvent.class);
+        ErrorEvent error = (ErrorEvent) eventBus.events.get(1);
+        assertThat(error.errorId()).isEqualTo("cannot-continue-from-tool-call-assistant");
+        assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void rejectsTurnWhenRequestedParentAssistantContainsTextAndToolCall() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
+        session.appendMessage(AgentCoreTestFixtures.assistantTextAndToolCallMessage(
+            "msg-tool-call",
+            "I will edit it",
+            "toolu-1",
+            "edit",
+            Map.of("path", "main.c")
+        ));
+        String unsafeParent = session.leafId();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> new ContextAssembly(
+                    AgentCoreTestFixtures.minimalContext(session.messages()),
+                    AgentCoreTestFixtures.emptyResources(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    false
+                ),
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(unsafeParent), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(provider.contexts).isEmpty();
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-root", "msg-tool-call");
+        ErrorEvent error = (ErrorEvent) eventBus.events.get(1);
+        assertThat(error.errorId()).isEqualTo("cannot-continue-from-tool-call-assistant");
+    }
+
+    @Test
     void buildsFirstModelContextFromNewBranchLeafWhenParentEntryIdProvided() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         session.openOrCreate("session-1");
