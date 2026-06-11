@@ -1858,6 +1858,66 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void assistantEndSnapshotIncludesToolCallMetadata() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "ok",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "ok", false)),
+            Optional.empty()
+        )));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("done"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        MessageBlockSnapshot snapshot = messageEnd(eventBus, "msg-tool-call").blocks().stream()
+            .filter(block -> block.blockKind() == ContentBlockKind.TOOL_CALL)
+            .findFirst()
+            .orElseThrow();
+        assertThat(snapshot.metadata())
+            .containsEntry("toolUseId", "toolu-1")
+            .containsEntry("toolName", "read")
+            .containsEntry("input", Map.of("path", "pom.xml"))
+            .containsEntry("complete", true);
+        assertThat(snapshot.metadata().get("inputSummary").toString()).contains("pom.xml");
+    }
+
+    @Test
     void publishesToolCallDeltaWhenPartialInputContainsNullValue() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();

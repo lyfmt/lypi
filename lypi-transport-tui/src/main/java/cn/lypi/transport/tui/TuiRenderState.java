@@ -4,6 +4,7 @@ import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.SessionFileView;
@@ -174,13 +175,8 @@ final class TuiRenderState {
                     ));
                     case ERROR -> projected.add(new TuiErrorBlock(blockId, block.text()));
                     case TOOL_CALL -> projected.add(projectToolCall(message.id(), block, blockId));
-                    case TOOL_RESULT -> projected.add(new TuiMessageBlock(
-                        blockId,
-                        message.id(),
-                        "tool",
-                        block.text(),
-                        false
-                    ));
+                    case TOOL_RESULT -> {
+                    }
                     default -> {
                     }
                 }
@@ -190,8 +186,12 @@ final class TuiRenderState {
     }
 
     private TuiToolBlock projectToolCall(String messageId, ContentBlock block, String blockId) {
-        String toolUseId = metadataString(block.metadata(), "toolUseId", blockId);
-        String toolName = metadataString(block.metadata(), "toolName", "unknown");
+        String toolUseId = block instanceof ToolCallContentBlock toolCall
+            ? firstNonBlank(toolCall.toolUseId(), metadataString(block.metadata(), "toolUseId", blockId))
+            : metadataString(block.metadata(), "toolUseId", blockId);
+        String toolName = block instanceof ToolCallContentBlock toolCall
+            ? firstNonBlank(toolCall.toolName(), metadataString(block.metadata(), "toolName", "unknown"))
+            : metadataString(block.metadata(), "toolName", "unknown");
         String label = metadataString(block.metadata(), "inputSummary", firstNonBlank(block.text(), toolName));
         return new TuiToolBlock(
             "tool:" + toolUseId,
