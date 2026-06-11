@@ -6,17 +6,22 @@ import org.jline.terminal.Terminal;
 import org.jline.utils.NonBlockingReader;
 
 final class JLineTerminalInputSource implements TerminalInputSource {
+    private static final long FIRST_CHARACTER_TIMEOUT_MILLIS = 10L;
     private static final long ESCAPE_CONTINUATION_TIMEOUT_MILLIS = 10L;
 
     private final NonBlockingReader reader;
 
     JLineTerminalInputSource(Terminal terminal) {
-        this.reader = terminal.reader();
+        this(terminal.reader());
+    }
+
+    JLineTerminalInputSource(NonBlockingReader reader) {
+        this.reader = reader;
     }
 
     @Override
     public Optional<String> read() throws IOException {
-        int first = reader.read(0L);
+        int first = reader.read(FIRST_CHARACTER_TIMEOUT_MILLIS);
         if (first == NonBlockingReader.READ_EXPIRED || first == NonBlockingReader.EOF) {
             return Optional.empty();
         }
