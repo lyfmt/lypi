@@ -11,6 +11,7 @@ final class InputEditor {
     private final List<String> killRing = new ArrayList<>();
     private final HistoryRing history = new HistoryRing();
     private int cursor;
+    private int preferredColumn = -1;
     private int killCursor = -1;
     private int lastYankLength;
     private int yankIndex = -1;
@@ -30,6 +31,7 @@ final class InputEditor {
         saveUndo();
         text.insert(cursor, value);
         cursor += value.length();
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
@@ -43,28 +45,49 @@ final class InputEditor {
         saveUndo();
         text.insert(cursor, paste);
         cursor += paste.length();
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
 
     void moveLeft() {
         cursor = Math.max(0, cursor - 1);
+        preferredColumn = -1;
         clearYankState();
     }
 
     void moveRight() {
         cursor = Math.min(text.length(), cursor + 1);
+        preferredColumn = -1;
         clearYankState();
     }
 
     void moveWordLeft() {
         cursor = previousWordStart(cursor);
+        preferredColumn = -1;
         clearYankState();
     }
 
     void moveWordRight() {
         cursor = nextWordEnd(cursor);
+        preferredColumn = -1;
         clearYankState();
+    }
+
+    void moveUp() {
+        moveVertical(-1);
+    }
+
+    void moveDown() {
+        moveVertical(1);
+    }
+
+    boolean canMoveUp() {
+        return lineStart(cursor) > 0;
+    }
+
+    boolean canMoveDown() {
+        return lineEnd(cursor) < text.length();
     }
 
     void deletePreviousCharacter() {
@@ -74,6 +97,7 @@ final class InputEditor {
         saveUndo();
         text.delete(cursor - 1, cursor);
         cursor--;
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
@@ -132,6 +156,7 @@ final class InputEditor {
         text.setLength(0);
         text.append(snapshot.text());
         cursor = snapshot.cursor();
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
@@ -140,6 +165,7 @@ final class InputEditor {
         saveUndo();
         text.setLength(0);
         cursor = 0;
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation("");
     }
@@ -150,6 +176,7 @@ final class InputEditor {
         saveUndo();
         text.replace(0, end, replacement);
         cursor = replacement.length();
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
@@ -159,10 +186,16 @@ final class InputEditor {
     }
 
     void previousHistory() {
+        if (!text.isEmpty() && !history.navigating()) {
+            return;
+        }
         history.previous(text()).ifPresent(this::replaceDraftWithoutUndo);
     }
 
     void nextHistory() {
+        if (!history.navigating()) {
+            return;
+        }
         history.next().ifPresent(this::replaceDraftWithoutUndo);
     }
 
@@ -174,6 +207,7 @@ final class InputEditor {
         String killed = text.substring(start, end).stripTrailing();
         text.delete(start, end);
         cursor = start;
+        preferredColumn = -1;
         killRing.add(killed);
         killCursor = cursor;
         lastYankLength = 0;
@@ -185,6 +219,7 @@ final class InputEditor {
         saveUndo();
         text.insert(cursor, value);
         cursor += value.length();
+        preferredColumn = -1;
         lastYankLength = value.length();
         killCursor = cursor;
         history.resetNavigation(text());
@@ -212,6 +247,37 @@ final class InputEditor {
         return index;
     }
 
+    private void moveVertical(int delta) {
+        int currentStart = lineStart(cursor);
+        int currentColumn = preferredColumn >= 0 ? preferredColumn : cursor - currentStart;
+        int targetStart;
+        if (delta < 0) {
+            if (currentStart == 0) {
+                return;
+            }
+            targetStart = lineStart(currentStart - 1);
+        } else {
+            int currentEnd = lineEnd(cursor);
+            if (currentEnd >= text.length()) {
+                return;
+            }
+            targetStart = currentEnd + 1;
+        }
+        int targetEnd = lineEnd(targetStart);
+        cursor = Math.min(targetStart + currentColumn, targetEnd);
+        preferredColumn = currentColumn;
+        clearYankState();
+    }
+
+    private int lineStart(int from) {
+        return text.lastIndexOf("\n", Math.max(0, Math.min(from, text.length()) - 1)) + 1;
+    }
+
+    private int lineEnd(int from) {
+        int newline = text.indexOf("\n", Math.max(0, Math.min(from, text.length())));
+        return newline < 0 ? text.length() : newline;
+    }
+
     private boolean isWordChar(char value) {
         return Character.isLetterOrDigit(value) || value == '_' || value == '/' || value == '-' || value == '.';
     }
@@ -224,6 +290,7 @@ final class InputEditor {
         text.setLength(0);
         text.append(value);
         cursor = text.length();
+        preferredColumn = -1;
         clearYankState();
     }
 

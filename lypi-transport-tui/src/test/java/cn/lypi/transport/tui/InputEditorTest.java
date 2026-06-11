@@ -20,6 +20,29 @@ class InputEditorTest {
     }
 
     @Test
+    void movesVerticallyAcrossMultilineDraftPreservingColumn() {
+        InputEditor editor = new InputEditor();
+        editor.insert("abcde\nxy\n123456");
+
+        editor.moveLeft();
+        editor.moveLeft();
+        editor.moveLeft();
+        assertEquals(12, editor.cursor());
+
+        editor.moveUp();
+        assertEquals(8, editor.cursor());
+
+        editor.moveUp();
+        assertEquals(3, editor.cursor());
+
+        editor.moveDown();
+        assertEquals(8, editor.cursor());
+
+        editor.moveDown();
+        assertEquals(12, editor.cursor());
+    }
+
+    @Test
     void deletesWordsAndLineBeforeCursor() {
         InputEditor editor = new InputEditor();
         editor.insert("alpha beta/gamma");
@@ -68,7 +91,7 @@ class InputEditorTest {
     }
 
     @Test
-    void historyNavigationKeepsCurrentDraft() {
+    void historyNavigationStartsFromEmptyInputAndReturnsToEmptyDraft() {
         InputEditor editor = new InputEditor();
         editor.insert("first");
         editor.acceptHistoryEntry();
@@ -76,7 +99,6 @@ class InputEditorTest {
         editor.insert("second");
         editor.acceptHistoryEntry();
         editor.clear();
-        editor.insert("draft");
 
         editor.previousHistory();
         assertEquals("second", editor.text());
@@ -85,7 +107,7 @@ class InputEditorTest {
         editor.nextHistory();
         assertEquals("second", editor.text());
         editor.nextHistory();
-        assertEquals("draft", editor.text());
+        assertEquals("", editor.text());
     }
 
     @Test

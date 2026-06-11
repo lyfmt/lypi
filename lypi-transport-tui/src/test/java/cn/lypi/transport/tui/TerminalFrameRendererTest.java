@@ -142,7 +142,18 @@ class TerminalFrameRendererTest {
         io.output.setLength(0);
         renderer.render(List.of("ONE", "two", "three"));
 
-        assertEquals("\033[?2026h\033[2J\033[H\033[3JONE\ntwo\nthree\033[?2026l", io.output.toString());
+        assertEquals("\033[?2026h\033[2J\033[H\033[3Jtwo\nthree\033[?2026l", io.output.toString());
+    }
+
+    @Test
+    void firstFrameOnlyWritesVisibleViewportRows() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 3;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of("one", "two", "three", "four|CURSOR|"));
+
+        assertEquals("two\nthree\nfour\033[3;5H", io.output.toString());
     }
 
     private static final class RecordingTerminalIo implements TerminalIo {

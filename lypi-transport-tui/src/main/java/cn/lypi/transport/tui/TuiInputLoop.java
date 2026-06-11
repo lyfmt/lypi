@@ -138,6 +138,16 @@ final class TuiInputLoop {
             handleCtrlC();
             return;
         }
+        if (key == TerminalKey.UP && editor.canMoveUp()) {
+            editor.moveUp();
+            render();
+            return;
+        }
+        if (key == TerminalKey.DOWN && editor.canMoveDown()) {
+            editor.moveDown();
+            render();
+            return;
+        }
         TerminalInputAction action = bindings.actionFor(key);
         switch (action) {
             case INSERT_NEWLINE -> editor.insertNewline();

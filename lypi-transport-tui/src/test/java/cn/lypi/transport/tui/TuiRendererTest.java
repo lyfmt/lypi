@@ -248,6 +248,27 @@ class TuiRendererTest {
     }
 
     @Test
+    void inputBlockNeverExceedsTerminalHeightWhenDraftHasManyRows() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiMessageBlock("b1", "m1", "assistant", "history", false)),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "one\ntwo\nthree\nfour", 18);
+
+        assertEquals(3, lines.size());
+        assertFalse(lines.contains("history"));
+        assertInputBorder(lines.get(0), 10);
+        assertEquals("\033[48;5;236mfour|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(1));
+        assertTrue(lines.get(2).contains("ses_1"));
+    }
+
+    @Test
     void permissionPromptIsRenderedInTranscriptArea() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(5);

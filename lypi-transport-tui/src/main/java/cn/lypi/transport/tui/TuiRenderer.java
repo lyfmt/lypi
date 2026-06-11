@@ -160,7 +160,7 @@ final class TuiRenderer {
         boolean showCursor = cursor >= 0;
         List<InputVisualLine> visualLines = visualInputLines(value, boundedCursor, showCursor, width);
         int maxBlockRows = layout.maxInputBlockHeight();
-        int maxContentRows = Math.min(layout.maxInputContentHeight(), visualLines.size());
+        int maxContentRows = Math.min(maxVisibleInputContentRows(layout), visualLines.size());
         int start = Math.max(0, visualLines.size() - maxContentRows);
         if (showCursor) {
             int cursorLine = cursorLine(visualLines);
@@ -174,6 +174,7 @@ final class TuiRenderer {
 
         List<String> lines = new ArrayList<>();
         boolean renderBothBorders = maxBlockRows >= 3;
+        boolean renderAnyBorder = maxBlockRows > maxContentRows;
         if (renderBothBorders || maxBlockRows == 2) {
             lines.add(inputBorder(width));
         }
@@ -183,6 +184,8 @@ final class TuiRenderer {
             lines.add(INPUT_BACKGROUND + inputContentLine(line, prefix) + ANSI_RESET);
         }
         if (renderBothBorders) {
+            lines.add(inputBorder(width));
+        } else if (renderAnyBorder && lines.size() < maxBlockRows) {
             lines.add(inputBorder(width));
         }
         return new InputBlock(lines);
@@ -249,6 +252,14 @@ final class TuiRenderer {
         }
         lines.add(new InputVisualLine(current.toString(), cursorSeen && cursorLine == lines.size(), cursorColumn));
         return lines;
+    }
+
+    private int maxVisibleInputContentRows(TuiLayout layout) {
+        int maxContentRows = layout.maxInputContentHeight();
+        if (layout.maxInputBlockHeight() <= 2) {
+            return Math.max(1, layout.maxInputBlockHeight() - 1);
+        }
+        return maxContentRows;
     }
 
     private int cursorLine(List<InputVisualLine> lines) {

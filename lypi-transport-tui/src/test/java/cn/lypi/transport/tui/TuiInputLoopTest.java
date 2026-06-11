@@ -244,7 +244,6 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.ENTER);
         loop.acceptText("second");
         loop.acceptKey(TerminalKey.ENTER);
-        loop.acceptText("draft");
 
         loop.acceptKey(TerminalKey.UP);
         assertEquals("second", loop.draft());
@@ -253,7 +252,56 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.DOWN);
         assertEquals("second", loop.draft());
         loop.acceptKey(TerminalKey.DOWN);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void upDoesNotReplaceNonEmptyDraftWithHistoryUntilHistoryNavigationStartsFromEmptyInput() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
+        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+
+        loop.acceptText("first");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("draft");
+
+        loop.acceptKey(TerminalKey.UP);
         assertEquals("draft", loop.draft());
+
+        loop.acceptKey(TerminalKey.CTRL_U);
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("first", loop.draft());
+        loop.acceptKey(TerminalKey.DOWN);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void upAndDownMoveCursorInsideMultilineDraftBeforeHistoryNavigation() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(20, 6)
+        );
+
+        loop.acceptText("history");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptPaste("abcde\nxy\n123456");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("abcde\nxy\n123456", loop.draft());
+        assertEquals(8, loop.cursor());
+        assertTrue(frames.getLast().contains(inputContent("xy|CURSOR|" + INPUT_CURSOR)));
+
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals(3, loop.cursor());
+        assertTrue(frames.getLast().contains(inputContent("> abc|CURSOR|" + INPUT_CURSOR + "de")));
     }
 
     @Test
@@ -311,7 +359,7 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.ESC);
         loop.acceptKey(TerminalKey.UP);
 
-        assertEquals("first", loop.draft());
+        assertEquals("/", loop.draft());
     }
 
     @Test
