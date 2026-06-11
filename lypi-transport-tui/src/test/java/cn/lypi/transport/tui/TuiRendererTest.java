@@ -454,7 +454,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void slashOverlayRendersAboveInputLineAndKeepsFixedHeight() {
+    void slashOverlayFloatsAboveInputWithoutShrinkingTranscript() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(2);
         TuiViewModel view = new TuiViewModel(
@@ -474,14 +474,67 @@ class TuiRendererTest {
             List.of("> /model", "  /thinking", "  /compact")
         );
 
-        assertEquals(7, lines.size());
-        assertEquals("> /model", lines.get(0));
-        assertEquals("  /thinking", lines.get(1));
-        assertEquals("  /compact", lines.get(2));
-        assertInputBorder(lines.get(3), 40);
-        assertInputContent(lines.get(4), "> /|CURSOR|" + INPUT_CURSOR);
-        assertInputBorder(lines.get(5), 40);
-        assertTrue(lines.get(6).contains("ses_1"));
+        assertEquals(10, lines.size());
+        assertTrue(lines.get(3).startsWith("> /model"));
+        assertTrue(lines.get(4).contains("/thinking"));
+        assertTrue(lines.get(5).contains("/compact"));
+        assertInputBorder(lines.get(6), 40);
+        assertInputContent(lines.get(7), "> /|CURSOR|" + INPUT_CURSOR);
+        assertInputBorder(lines.get(8), 40);
+        assertTrue(lines.get(9).contains("ses_1"));
+    }
+
+    @Test
+    void overlayDoesNotShrinkTranscriptViewport() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(10);
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock("b1", "m1", "assistant", "hello", false),
+                new TuiMessageBlock("b2", "m2", "assistant", "world", false)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> withOverlay = renderer.render(
+            view, screen, new TuiLayout(40, 10), "/", 1,
+            List.of("> /model", "  /thinking", "  /compact")
+        );
+
+        List<String> withoutOverlay = renderer.render(
+            view, screen, new TuiLayout(40, 10), "/", 1
+        );
+
+        assertTrue(withOverlay.contains("> /model"));
+        assertTrue(withOverlay.contains("  /thinking"));
+        assertTrue(withOverlay.contains("  /compact"));
+        assertEquals(withoutOverlay.size() + 3, withOverlay.size());
+    }
+
+    @Test
+    void emptyOverlayProducesSameOutputAsNoOverlay() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen1 = new TuiScreen(5);
+        TuiScreen screen2 = new TuiScreen(5);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiMessageBlock("b1", "m1", "assistant", "test", false)),
+            new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> withEmptyOverlay = renderer.render(
+            view, screen1, new TuiLayout(40, 8), "hello", 5, List.of()
+        );
+        List<String> withoutOverlay = renderer.render(
+            view, screen2, new TuiLayout(40, 8), "hello", 5
+        );
+
+        assertEquals(withoutOverlay, withEmptyOverlay);
     }
 
     private void assertInputBorder(String line, int width) {
