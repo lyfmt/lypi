@@ -1,4 +1,4 @@
-package cn.lypi.session;
+package cn.lypi.contracts.tui;
 
 import java.nio.file.Path;
 import java.time.Instant;

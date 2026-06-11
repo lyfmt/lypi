@@ -8,6 +8,7 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.tui.SessionResumeInfo;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;

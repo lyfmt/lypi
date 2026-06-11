@@ -8,6 +8,7 @@ import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
+import cn.lypi.contracts.tui.SessionResumeInfo;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Comparator;
