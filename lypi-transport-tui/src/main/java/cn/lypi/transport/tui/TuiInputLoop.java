@@ -184,6 +184,16 @@ final class TuiInputLoop {
             handleCtrlC();
             return;
         }
+        if (key == TerminalKey.UP && editor.canMoveVisualUp(layout.width())) {
+            editor.moveVisualUp(layout.width());
+            render();
+            return;
+        }
+        if (key == TerminalKey.DOWN && editor.canMoveVisualDown(layout.width())) {
+            editor.moveVisualDown(layout.width());
+            render();
+            return;
+        }
         TerminalInputAction action = bindings.actionFor(key);
         switch (action) {
             case INSERT_NEWLINE -> editor.insertNewline();

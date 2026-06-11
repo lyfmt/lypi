@@ -500,6 +500,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             if (holder[0] != null) {
                 holder[0].resize(io.width(), io.height());
             }
+        }, () -> {
+            if (holder[0] != null) {
+                holder[0].handleInterruptSignal();
+            }
         });
         TerminalFrameRenderer frameRenderer = new TerminalFrameRenderer(io, session::updateRenderedRows);
         FrameSink frameSink = lines -> {
@@ -733,6 +737,15 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 inputLoop.updateViewport(screen, layout);
             }
             renderCurrentFrame();
+        }
+    }
+
+    private void handleInterruptSignal() {
+        synchronized (uiMonitor) {
+            uiLockEntries++;
+            if (inputLoop != null) {
+                inputLoop.acceptKey(TerminalKey.CTRL_C);
+            }
         }
     }
 

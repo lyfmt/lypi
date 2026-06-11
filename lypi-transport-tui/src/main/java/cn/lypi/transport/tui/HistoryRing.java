@@ -44,4 +44,8 @@ final class HistoryRing {
         }
         return Optional.of(entries.get(cursor));
     }
+
+    boolean navigating() {
+        return cursor >= 0 && cursor < entries.size();
+    }
 }

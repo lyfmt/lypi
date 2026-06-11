@@ -43,13 +43,11 @@ printf -v PTY_COMMAND 'TERM=xterm-256color java -cp %q TuiPtyProbe' "$TMP_DIR:$P
 timeout 15 script -q -e -c "$PTY_COMMAND" "$PTY_OUTPUT" >/dev/null
 
 for expected in \
-  $'\033[?1049h' \
   $'\033[?2004h' \
   $'\033[?25l' \
   "LYPI_TUI_PTY_OPEN" \
   $'\033[?25h' \
   $'\033[?2004l' \
-  $'\033[?1049l' \
   "LYPI_TUI_PTY_CLOSED"
 do
   if ! grep -Fq "$expected" "$PTY_OUTPUT"; then

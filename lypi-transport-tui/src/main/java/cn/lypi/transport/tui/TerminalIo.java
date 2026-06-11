@@ -32,4 +32,9 @@ interface TerminalIo {
      * 注册 resize 回调，并返回用于恢复原信号处理器的句柄。
      */
     AutoCloseable onResize(Runnable callback) throws IOException;
+
+    /**
+     * 注册 Ctrl+C 中断回调，并返回用于恢复原信号处理器的句柄。
+     */
+    AutoCloseable onInterrupt(Runnable callback) throws IOException;
 }
