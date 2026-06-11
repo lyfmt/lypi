@@ -148,6 +148,40 @@ class TerminalFrameRendererTest {
     }
 
     @Test
+    void viewportScrollPatchDoesNotRewriteRowsThatScrolledOutOfView() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 5;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of(
+            "tool done glob: Glob",
+            "  matched AGENTS.md",
+            "──",
+            "> |CURSOR|",
+            "──",
+            "session PLAN"
+        ));
+        io.output.setLength(0);
+        renderer.render(List.of(
+            "tool done glob: Glob",
+            "  matched AGENTS.md",
+            "tool done read: Read",
+            "  File: AGENTS.md",
+            "assistant answer",
+            "──",
+            "> |CURSOR|",
+            "──",
+            "session PLAN"
+        ));
+
+        String output = io.output.toString();
+        assertFalse(output.contains("tool done glob: Glob"));
+        assertFalse(output.contains("matched AGENTS.md"));
+        assertTrue(output.contains("tool done read: Read"));
+        assertTrue(output.contains("assistant answer"));
+    }
+
+    @Test
     void contentShrinkPatchesVisibleRowsWithoutClearingTerminalScrollback() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);

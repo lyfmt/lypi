@@ -11,6 +11,8 @@ import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
 import cn.lypi.contracts.event.ErrorEvent;
@@ -438,6 +440,77 @@ class TuiEventReducerTest {
         assertEquals("old prompt", user.content());
         assertEquals("assistant", assistant.role());
         assertEquals("old answer", assistant.content());
+    }
+
+    @Test
+    void runtimeTranscriptProjectsToolResultWithoutDuplicateToolMessage() {
+        SessionRuntimeState base = TestRuntimeStates.basic("ses_old");
+        SessionRuntimeState runtimeState = new SessionRuntimeState(
+            base.sessionId(),
+            Path.of("/home/lyfmt/src/study/ly-pi"),
+            base.currentBranchLeafId(),
+            base.model(),
+            base.thinkingLevel(),
+            base.agentMode(),
+            base.permissionMode(),
+            base.budget(),
+            List.of(
+                new AgentMessage(
+                    "msg_user",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("read AGENTS")),
+                    NOW,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                new AgentMessage(
+                    "msg_tool_call",
+                    MessageRole.ASSISTANT,
+                    MessageKind.TOOL_CALL,
+                    List.of(new ToolCallContentBlock("call_1", "read", "", Map.of(
+                        "input", Map.of("path", "AGENTS.md"),
+                        "complete", true,
+                        "inputSummary", "read {path=AGENTS.md}"
+                    ))),
+                    NOW.plusMillis(1),
+                    Optional.empty(),
+                    Optional.of("tool_calls")
+                ),
+                new AgentMessage(
+                    "msg_tool_result",
+                    MessageRole.TOOL_RESULT,
+                    MessageKind.TOOL_RESULT,
+                    List.of(new ToolResultContentBlock("call_1", "File: AGENTS.md\n1 | 用户名字叫末声", false)),
+                    NOW.plusMillis(2),
+                    Optional.empty(),
+                    Optional.empty()
+                )
+            ),
+            false,
+            false,
+            false,
+            false
+        );
+
+        TuiEventReducer reducer = TuiEventReducer.fromRuntimeState(runtimeState);
+
+        List<TuiBlock> blocks = reducer.view().blocks();
+        long toolBlocks = blocks.stream().filter(TuiToolBlock.class::isInstance).count();
+        long projectedToolMessages = blocks.stream()
+            .filter(TuiMessageBlock.class::isInstance)
+            .map(TuiMessageBlock.class::cast)
+            .filter(block -> "tool".equals(block.role()))
+            .count();
+        assertEquals(1, toolBlocks);
+        assertEquals(0, projectedToolMessages);
+        TuiToolBlock tool = blocks.stream()
+            .filter(TuiToolBlock.class::isInstance)
+            .map(TuiToolBlock.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertEquals("call_1", tool.toolUseId());
+        assertEquals("read", tool.toolName());
     }
 
     @Test
