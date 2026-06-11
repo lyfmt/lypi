@@ -38,6 +38,21 @@ final class TuiRenderer {
         int cursor,
         List<String> overlayLines
     ) {
+        return renderFrame(view, screen, layout, input, cursor, overlayLines).lines();
+    }
+
+    TuiRenderFrame renderFrame(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input, int cursor) {
+        return renderFrame(view, screen, layout, input, cursor, List.of());
+    }
+
+    TuiRenderFrame renderFrame(
+        TuiViewModel view,
+        TuiScreen screen,
+        TuiLayout layout,
+        String input,
+        int cursor,
+        List<String> overlayLines
+    ) {
         List<String> transcript = transcriptLines(view, layout.width());
         InputBlock inputBlock = layoutInput(input, cursor, layout);
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
@@ -55,7 +70,7 @@ final class TuiRenderer {
         lines.addAll(inputBlock.lines());
         lines.addAll(overlay);
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
-        return lines;
+        return new TuiRenderFrame(lines, inputBlock.height() + overlay.size() + 1);
     }
 
     private List<String> transcriptLines(List<TuiBlock> blocks, int width) {

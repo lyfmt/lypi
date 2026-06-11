@@ -181,6 +181,47 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void openPipelineDoesNotAppendBottomChromeToScrollbackDuringOverflow() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 4;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            80,
+            4
+        );
+        io.output.setLength(0);
+
+        for (int i = 0; i < 4; i++) {
+            events.emit(new MessageDeltaEvent(
+                "ses_1",
+                "msg_" + i,
+                cn.lypi.contracts.context.MessageRole.ASSISTANT,
+                cn.lypi.contracts.context.MessageKind.TEXT,
+                "block_" + i,
+                cn.lypi.contracts.context.ContentBlockKind.TEXT,
+                "line " + i,
+                true,
+                Map.of(),
+                Instant.parse("2026-06-09T00:00:00Z")
+            ));
+        }
+
+        String output = io.output.toString();
+        assertTrue(output.contains("line 3"));
+        assertFalse(output.contains("\r\n\033[2K\033[38;5;240m"));
+        assertFalse(output.contains("\r\n\033[2K\033[48;5;236m> "));
+        assertFalse(output.contains("\r\n\033[2Kses_1 gpt-5.4"));
+
+        transport.close();
+    }
+
+    @Test
     void closeAfterOverflowMovesPromptBelowPhysicalViewport() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 3;
