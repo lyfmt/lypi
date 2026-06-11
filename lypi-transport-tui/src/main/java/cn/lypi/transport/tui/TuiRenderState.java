@@ -1,13 +1,20 @@
 package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.event.SessionStateEvent;
+import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlock;
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.SessionFileView;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.TuiErrorBlock;
 import cn.lypi.contracts.tui.TuiBlock;
+import cn.lypi.contracts.tui.TuiMessageBlock;
+import cn.lypi.contracts.tui.TuiThinkingBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
+import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -120,6 +127,7 @@ final class TuiRenderState {
         }
         agentMode = enumLabel(runtimeState.agentMode());
         runtimeInterruptibleTool = runtimeState.hasInterruptibleTool();
+        replaceBlocks(projectTranscript(runtimeState.transcript()));
         runningToolUseIds.clear();
         clearRuntimeLines();
         statusBar = new StatusBarState(
@@ -131,6 +139,68 @@ final class TuiRenderState {
             valueOrEmpty(runtimeState.currentBranchLeafId()),
             budgetLabel(runtimeState),
             runtimeState.hasInterruptibleTool()
+        );
+    }
+
+    private void replaceBlocks(List<TuiBlock> nextBlocks) {
+        blocks.clear();
+        blocks.addAll(nextBlocks);
+        rebuildIndexes();
+    }
+
+    private List<TuiBlock> projectTranscript(List<AgentMessage> transcript) {
+        if (transcript == null || transcript.isEmpty()) {
+            return List.of();
+        }
+        List<TuiBlock> projected = new ArrayList<>();
+        for (AgentMessage message : transcript) {
+            for (int index = 0; index < message.content().size(); index++) {
+                ContentBlock block = message.content().get(index);
+                String blockId = message.id() + ":" + block.kind().name().toLowerCase() + ":" + index;
+                switch (block.kind()) {
+                    case TEXT -> projected.add(new TuiMessageBlock(
+                        blockId,
+                        message.id(),
+                        roleName(message.role()),
+                        block.text(),
+                        false
+                    ));
+                    case THINKING -> projected.add(new TuiThinkingBlock(
+                        blockId,
+                        message.id(),
+                        block.text(),
+                        false,
+                        false
+                    ));
+                    case ERROR -> projected.add(new TuiErrorBlock(blockId, block.text()));
+                    case TOOL_CALL -> projected.add(projectToolCall(message.id(), block, blockId));
+                    case TOOL_RESULT -> projected.add(new TuiMessageBlock(
+                        blockId,
+                        message.id(),
+                        "tool",
+                        block.text(),
+                        false
+                    ));
+                    default -> {
+                    }
+                }
+            }
+        }
+        return projected;
+    }
+
+    private TuiToolBlock projectToolCall(String messageId, ContentBlock block, String blockId) {
+        String toolUseId = metadataString(block.metadata(), "toolUseId", blockId);
+        String toolName = metadataString(block.metadata(), "toolName", "unknown");
+        String label = metadataString(block.metadata(), "inputSummary", firstNonBlank(block.text(), toolName));
+        return new TuiToolBlock(
+            "tool:" + toolUseId,
+            messageId,
+            toolUseId,
+            toolName,
+            TuiToolState.PENDING,
+            label,
+            false
         );
     }
 
@@ -306,6 +376,40 @@ final class TuiRenderState {
 
     private String valueOrEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private String roleName(MessageRole role) {
+        if (role == MessageRole.USER) {
+            return "user";
+        }
+        if (role == MessageRole.SYSTEM_LOCAL) {
+            return "system";
+        }
+        if (role == MessageRole.TOOL_RESULT) {
+            return "tool";
+        }
+        return "assistant";
+    }
+
+    private String metadataString(Map<String, Object> metadata, String key, String fallback) {
+        if (metadata == null) {
+            return fallback;
+        }
+        Object value = metadata.get(key);
+        if (value == null) {
+            return fallback;
+        }
+        String text = value.toString();
+        return text.isBlank() ? fallback : text;
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
     }
 
     private String suffix(String value) {

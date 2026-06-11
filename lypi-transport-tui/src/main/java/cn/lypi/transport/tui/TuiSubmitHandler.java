@@ -22,4 +22,10 @@ interface TuiSubmitHandler {
      */
     default void requestExit(String reason) {
     }
+
+    /**
+     * 恢复到指定 session leaf。
+     */
+    default void resumeSession(String sessionId, String leafId) {
+    }
 }

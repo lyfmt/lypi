@@ -36,6 +36,7 @@ import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.resource.DefaultResourceRuntime;
@@ -369,17 +370,31 @@ public class LyPiRuntimeAutoConfiguration {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) {
-        return (state, core, events, terminal, diffViewProvider, slashCommands) -> JLineTuiTransport.open(
+        return (state, core, events, terminal, diffViewProvider, resumeController, slashCommands) -> JLineTuiTransport.open(
             state,
             core,
             events,
             terminal,
             diffViewProvider,
             slashCommands,
+            resumeController,
             sessionManager,
             resourceRuntime,
             compactionRuntime
         );
+    }
+
+    /**
+     * 创建默认 resume session 控制器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public ResumeSessionController resumeSessionController(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        EventBus eventBus
+    ) {
+        return new DefaultResumeSessionController(properties.getCwd(), sessionManager, eventBus);
     }
 
     /**
@@ -401,9 +416,15 @@ public class LyPiRuntimeAutoConfiguration {
     public TransportLauncher jLineTuiTransportLauncher(
         JLineTuiTransportFactory factory,
         DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
         ObjectProvider<SlashCommand> slashCommands
     ) {
-        return new JLineTuiTransportLauncher(factory, diffViewProvider, slashCommands.orderedStream().toList());
+        return new JLineTuiTransportLauncher(
+            factory,
+            diffViewProvider,
+            resumeController,
+            slashCommands.orderedStream().toList()
+        );
     }
 
     /**

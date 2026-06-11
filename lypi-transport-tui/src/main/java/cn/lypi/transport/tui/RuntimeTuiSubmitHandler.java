@@ -23,7 +23,7 @@ import java.util.Optional;
 import java.util.concurrent.Executor;
 
 final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
-    private final String sessionId;
+    private String currentSessionId;
     private final AgentCorePort core;
     private final EventBus events;
     private final Executor executor;
@@ -61,7 +61,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         Executor executor,
         SlashCommandRouter slashCommandRouter
     ) {
-        this.sessionId = sessionId;
+        this.currentSessionId = sessionId;
         this.core = core;
         this.events = events;
         this.executor = executor;
@@ -88,6 +88,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         }
         MutableAbortSignal signal = new MutableAbortSignal();
         activeSignal = signal;
+        String sessionId = currentSessionId;
         TurnRequest request = new TurnRequest(
             sessionId,
             routedInput,
@@ -99,7 +100,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
 
     private void publishSlashCommandError(String message) {
         events.publish(new ErrorEvent(
-            sessionId,
+            currentSessionId,
             "slash_command_error",
             message,
             Instant.now()
@@ -112,7 +113,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
 
     private void publishSessionState() {
         slashCommandRouter.sessionContext().ifPresent(context -> events.publish(new SessionStateEvent(
-            sessionId,
+            currentSessionId,
             slashCommandRouter.currentLeafIdForState().orElse(""),
             context.model(),
             context.thinkingLevel(),
@@ -128,7 +129,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             activeSignal.abort();
         }
         events.publish(new InterruptEvent(
-            sessionId,
+            currentSessionId,
             reason == null || reason.isBlank() ? "interrupt" : reason,
             Instant.now()
         ));
@@ -137,12 +138,20 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     @Override
     public void submitPermissionOption(String requestId, String toolUseId, String optionId) {
         events.publish(new PermissionResponseEvent(
-            sessionId,
+            currentSessionId,
             requestId,
             optionId,
             false,
             Instant.now()
         ));
+    }
+
+    @Override
+    public void resumeSession(String sessionId, String leafId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        currentSessionId = sessionId;
     }
 
     private void publishSlashOutput(String commandName, String output) {
@@ -154,7 +163,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         String blockId = messageId + ":text:0";
         Map<String, Object> metadata = Map.of("slashCommand", commandName);
         events.publish(new MessageStartEvent(
-            sessionId,
+            currentSessionId,
             messageId,
             MessageRole.SYSTEM_LOCAL,
             MessageKind.TEXT,
@@ -162,7 +171,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             now
         ));
         events.publish(new MessageDeltaEvent(
-            sessionId,
+            currentSessionId,
             messageId,
             MessageRole.SYSTEM_LOCAL,
             MessageKind.TEXT,
@@ -174,7 +183,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             now
         ));
         events.publish(new MessageEndEvent(
-            sessionId,
+            currentSessionId,
             messageId,
             MessageRole.SYSTEM_LOCAL,
             MessageKind.TEXT,

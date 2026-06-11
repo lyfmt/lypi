@@ -1,10 +1,14 @@
 package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.ResumeSessionController;
+import cn.lypi.contracts.tui.SessionResumeInfo;
+import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 final class TuiInputLoop {
@@ -18,7 +22,12 @@ final class TuiInputLoop {
     private final KeyBindingRegistry bindings = KeyBindingRegistry.defaults();
     private final TerminalInputPolicy inputPolicy = new TerminalInputPolicy();
     private final Supplier<SlashCommandPicker> slashPickerSupplier;
+    private final ResumeSessionController resumeController;
+    private final Consumer<SessionRuntimeState> resumeStateConsumer;
     private SlashCommandPicker slashPicker;
+    private ResumeSessionSelector resumeSessionSelector;
+    private ResumeBranchTreeSelector resumeBranchTreeSelector;
+    private String resumeSessionId;
     private boolean slashOverlayClosed;
     private boolean toolRunning;
     private boolean exitRequested;
@@ -55,6 +64,33 @@ final class TuiInputLoop {
         Supplier<TuiViewModel> viewSupplier,
         Supplier<SlashCommandPicker> slashPickerSupplier
     ) {
+        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, null);
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        FrameSink frameSink,
+        TuiRenderer renderer,
+        TuiScreen screen,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController
+    ) {
+        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, resumeController, null);
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        FrameSink frameSink,
+        TuiRenderer renderer,
+        TuiScreen screen,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer
+    ) {
         this.submitHandler = submitHandler;
         this.frameSink = frameSink;
         this.renderer = renderer;
@@ -64,6 +100,8 @@ final class TuiInputLoop {
         this.slashPickerSupplier = slashPickerSupplier == null
             ? () -> SlashCommandPicker.withTemplates(List.of())
             : slashPickerSupplier;
+        this.resumeController = resumeController;
+        this.resumeStateConsumer = resumeStateConsumer;
     }
 
     void acceptText(String text) {
@@ -107,6 +145,14 @@ final class TuiInputLoop {
             if (prompt.isEmpty()) {
                 render();
             }
+            return;
+        }
+        if (resumeOverlayOpen()) {
+            handleResumeOverlayKey(key);
+            return;
+        }
+        if (key == TerminalKey.ENTER && "/resume".equals(editor.text().trim()) && resumeController != null) {
+            submitDraft();
             return;
         }
         if (slashOverlayOpen() && !slashPicker().visibleCommands().isEmpty()) {
@@ -197,6 +243,13 @@ final class TuiInputLoop {
             render();
             return;
         }
+        if ("/resume".equals(draft.trim()) && resumeController != null) {
+            openResumeSessions();
+            editor.clear();
+            slashOverlayClosed = true;
+            render();
+            return;
+        }
         editor.acceptHistoryEntry();
         slashOverlayClosed = true;
         submitHandler.submitUserInput(draft);
@@ -243,7 +296,7 @@ final class TuiInputLoop {
             layout,
             editor.text(),
             editor.cursor(),
-            slashOverlayLines()
+            overlayLines()
         ));
     }
 
@@ -317,7 +370,10 @@ final class TuiInputLoop {
     }
 
     private boolean slashOverlayOpen() {
-        return viewSupplier.get().permissionPrompt().isEmpty() && !slashOverlayClosed && slashFilter().isPresent();
+        return viewSupplier.get().permissionPrompt().isEmpty()
+            && !resumeOverlayOpen()
+            && !slashOverlayClosed
+            && slashFilter().isPresent();
     }
 
     private Optional<String> slashFilter() {
@@ -343,10 +399,21 @@ final class TuiInputLoop {
 
     private SlashCommandPicker slashPicker() {
         if (slashPicker == null) {
-            slashPicker = slashPickerSupplier.get();
+            slashPicker = slashPickerWithResumeCommand(slashPickerSupplier.get());
         }
         slashFilter().ifPresent(slashPicker::updateFilter);
         return slashPicker;
+    }
+
+    private SlashCommandPicker slashPickerWithResumeCommand(SlashCommandPicker picker) {
+        if (resumeController == null) {
+            return picker;
+        }
+        List<String> commands = new java.util.ArrayList<>(picker.visibleCommands());
+        if (!commands.contains("/resume")) {
+            commands.add("/resume");
+        }
+        return new SlashCommandPicker(commands);
     }
 
     private List<String> slashOverlayLines() {
@@ -363,6 +430,109 @@ final class TuiInputLoop {
             lines.add((index == selected ? "> " : "  ") + visible.get(index));
         }
         return lines;
+    }
+
+    private List<String> overlayLines() {
+        if (resumeBranchTreeSelector != null) {
+            return resumeBranchTreeSelector.render(layout.width());
+        }
+        if (resumeSessionSelector != null) {
+            return resumeSessionSelector.render(layout.width());
+        }
+        return slashOverlayLines();
+    }
+
+    private boolean resumeOverlayOpen() {
+        return resumeSessionSelector != null || resumeBranchTreeSelector != null;
+    }
+
+    private void openResumeSessions() {
+        List<SessionResumeInfo> sessions = resumeController.sessions();
+        String currentSessionId = currentView().statusBar().sessionId();
+        java.nio.file.Path currentPath = sessions.stream()
+            .filter(session -> session.sessionId().equals(currentSessionId))
+            .map(SessionResumeInfo::path)
+            .findFirst()
+            .orElse(null);
+        resumeSessionSelector = new ResumeSessionSelector(sessions, currentPath, Math.max(1, layout.height() - 4));
+        resumeBranchTreeSelector = null;
+        resumeSessionId = null;
+    }
+
+    private void handleResumeOverlayKey(TerminalKey key) {
+        if (key == TerminalKey.ESC || key == TerminalKey.CTRL_C) {
+            closeResumeOverlay();
+            render();
+            return;
+        }
+        if (resumeSessionSelector != null) {
+            handleResumeSessionKey(key);
+            return;
+        }
+        handleResumeTreeKey(key);
+    }
+
+    private void handleResumeSessionKey(TerminalKey key) {
+        if (key == TerminalKey.UP) {
+            resumeSessionSelector.moveUp();
+            render();
+            return;
+        }
+        if (key == TerminalKey.DOWN) {
+            resumeSessionSelector.moveDown();
+            render();
+            return;
+        }
+        if (key == TerminalKey.ENTER) {
+            resumeSessionSelector.selectedSession().ifPresent(session -> {
+                resumeSessionId = session.sessionId();
+                resumeBranchTreeSelector = new ResumeBranchTreeSelector(
+                    resumeController.tree(session.sessionId()).roots(),
+                    session.leafId(),
+                    Math.max(1, layout.height() - 4)
+                );
+                resumeSessionSelector = null;
+            });
+            render();
+        }
+    }
+
+    private void handleResumeTreeKey(TerminalKey key) {
+        if (resumeBranchTreeSelector == null) {
+            return;
+        }
+        if (key == TerminalKey.UP) {
+            resumeBranchTreeSelector.moveUp();
+            render();
+            return;
+        }
+        if (key == TerminalKey.DOWN) {
+            resumeBranchTreeSelector.moveDown();
+            render();
+            return;
+        }
+        if (key == TerminalKey.TAB) {
+            resumeBranchTreeSelector.toggleUserOnly();
+            render();
+            return;
+        }
+        if (key == TerminalKey.ENTER) {
+            resumeBranchTreeSelector.selectedEntry().ifPresent(entry -> {
+                SessionRuntimeState resumed = resumeController.resume(resumeSessionId, entry.id());
+                submitHandler.resumeSession(resumeSessionId, entry.id());
+                if (resumeStateConsumer != null && resumed != null) {
+                    resumeStateConsumer.accept(resumed);
+                }
+            });
+            closeResumeOverlay();
+            render();
+        }
+    }
+
+    private void closeResumeOverlay() {
+        resumeSessionSelector = null;
+        resumeBranchTreeSelector = null;
+        resumeSessionId = null;
     }
 
     private void acceptSlashSelection() {

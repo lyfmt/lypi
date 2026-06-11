@@ -17,6 +17,7 @@ import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventEnvelope;
@@ -24,6 +25,7 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
@@ -80,6 +82,9 @@ import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.ResumeSessionController;
+import cn.lypi.contracts.tui.SessionBranchTreeView;
+import cn.lypi.contracts.tui.SessionResumeInfo;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.skill.SkillIndex;
@@ -515,6 +520,58 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(context).hasSingleBean(CompactionRuntimePort.class);
                 assertThat(context).hasSingleBean(JLineTuiTransportFactory.class);
                 assertThat(launcher).hasFieldOrPropertyWithValue("factory", context.getBean(JLineTuiTransportFactory.class));
+            });
+    }
+
+    @Test
+    void createsResumeSessionControllerBackedBySessionStorageAndManager() {
+        SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        RecordingEventBus events = new RecordingEventBus();
+        sessionManager.openOrCreate("ses_old");
+        SessionHandle userLeaf = sessionManager.appendMessage(new AgentMessage(
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new cn.lypi.contracts.context.TextContentBlock("old prompt")),
+            Instant.EPOCH,
+            Optional.empty(),
+            Optional.empty()
+        ));
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir
+            )
+            .withBean(SessionManagerPort.class, () -> sessionManager)
+            .withBean(EventBus.class, () -> events)
+            .run(context -> {
+                assertThat(context).hasSingleBean(ResumeSessionController.class);
+                ResumeSessionController controller = context.getBean(ResumeSessionController.class);
+
+                List<SessionResumeInfo> sessions = controller.sessions();
+                assertThat(sessions).extracting(SessionResumeInfo::sessionId).contains("ses_old");
+
+                SessionBranchTreeView tree = controller.tree("ses_old");
+                assertThat(tree.sessionId()).isEqualTo("ses_old");
+                assertThat(tree.roots()).isNotEmpty();
+
+                SessionRuntimeState resumed = controller.resume("ses_old", userLeaf.leafId());
+
+                assertThat(sessionManager.currentView().sessionId()).isEqualTo("ses_old");
+                assertThat(sessionManager.currentView().leafId()).isEqualTo(userLeaf.leafId());
+                assertThat(resumed.sessionId()).isEqualTo("ses_old");
+                assertThat(resumed.currentBranchLeafId()).isEqualTo(userLeaf.leafId());
+                assertThat(resumed.transcript())
+                    .extracting(AgentMessage::id)
+                    .containsExactly("msg_user");
+                assertThat(events.events).hasAtLeastOneElementOfType(SessionStateEvent.class);
+                SessionStateEvent state = (SessionStateEvent) events.events.getLast();
+                assertThat(state.sessionId()).isEqualTo("ses_old");
+                assertThat(state.leafId()).isEqualTo(userLeaf.leafId());
             });
     }
 

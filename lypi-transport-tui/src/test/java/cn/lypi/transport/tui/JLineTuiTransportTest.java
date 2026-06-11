@@ -11,6 +11,9 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
@@ -37,6 +40,10 @@ import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.GitDiffFileView;
 import cn.lypi.contracts.tui.GitDiffStatus;
+import cn.lypi.contracts.tui.ResumeSessionController;
+import cn.lypi.contracts.tui.SessionBranchTreeView;
+import cn.lypi.contracts.tui.SessionResumeInfo;
+import cn.lypi.contracts.tui.SessionTreeNodeView;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.SlashCommandHandler;
@@ -53,6 +60,8 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportTest {
+    private static final DiffViewProvider NOOP_DIFF_PROVIDER = (cwd, maxPatchBytes) -> Optional.empty();
+
     @Test
     void attachSubscribesToSessionEventsAndRendersUnderUiLock() {
         RecordingScreen screen = new RecordingScreen();
@@ -374,6 +383,39 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void resumeRuntimeStateRebindsEventSubscriptionToResumedSession() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 12;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            new QueueInputSource("/resume", "\r", "\r", "\r"),
+            new RecordingSubmitHandler(),
+            () -> new SlashCommandPicker(List.of("/resume")),
+            NOOP_DIFF_PROVIDER,
+            resumeControllerReturning(runtimeStateWithTranscript("ses_old", "leaf_old", "restored context")),
+            80,
+            8
+        );
+        io.output.setLength(0);
+
+        transport.drainInputForTest();
+        transport.renderCurrentFrameUnderUiLock();
+        events.emit(new ErrorEvent("ses_1", "err_old", "old", Instant.parse("2026-06-09T00:00:00Z")));
+        events.emit(new ErrorEvent("ses_old", "err_new", "new", Instant.parse("2026-06-09T00:00:00Z")));
+
+        assertEquals(Optional.of("ses_old"), events.filter.sessionId());
+        assertFalse(io.output.toString().contains("error: old"));
+        assertTrue(io.output.toString().contains("restored context"));
+
+        transport.close();
+    }
+
+    @Test
     void resizeFallsBackWhenTerminalSizeUnavailable() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         RecordingEventBus events = new RecordingEventBus();
@@ -412,10 +454,14 @@ class JLineTuiTransportTest {
     }
 
     private SessionRuntimeState runtimeState() {
+        return runtimeState("ses_1", "leaf_1");
+    }
+
+    private SessionRuntimeState runtimeState(String sessionId, String leafId) {
         return new SessionRuntimeState(
-            "ses_1",
+            sessionId,
             Path.of("."),
-            "leaf_1",
+            leafId,
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
@@ -426,6 +472,68 @@ class JLineTuiTransportTest {
             false,
             false
         );
+    }
+
+    private SessionRuntimeState runtimeStateWithTranscript(String sessionId, String leafId, String content) {
+        return new SessionRuntimeState(
+            sessionId,
+            Path.of("."),
+            leafId,
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            new ContextBudget(0, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
+            List.of(new AgentMessage(
+                "msg_restored",
+                MessageRole.USER,
+                MessageKind.TEXT,
+                List.of(new TextContentBlock(content)),
+                Instant.parse("2026-06-09T00:00:00Z"),
+                Optional.empty(),
+                Optional.empty()
+            )),
+            false,
+            false,
+            false,
+            false
+        );
+    }
+
+    private static ResumeSessionController resumeControllerReturning(SessionRuntimeState state) {
+        return new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("old.jsonl"),
+                    state.sessionId(),
+                    Path.of("."),
+                    Optional.empty(),
+                    state.currentBranchLeafId(),
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old prompt",
+                    "old prompt"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                SessionEntry entry = new cn.lypi.contracts.session.CustomMessageEntry(
+                    state.currentBranchLeafId(),
+                    null,
+                    "old prompt",
+                    Instant.EPOCH
+                );
+                return new SessionBranchTreeView(sessionId, state.currentBranchLeafId(), List.of(new SessionTreeNodeView(entry, List.of())));
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return state;
+            }
+        };
     }
 
     @Test
@@ -454,7 +562,7 @@ class JLineTuiTransportTest {
 
         @Override
         public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
-            assertEquals(Optional.of("ses_1"), filter.sessionId());
+            assertTrue(filter.sessionId().isPresent());
             assertTrue(filter.eventType().isEmpty());
             this.consumer = consumer;
             this.filter = filter;

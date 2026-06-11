@@ -6,12 +6,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
 import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.ResumeSessionController;
+import cn.lypi.contracts.tui.SessionBranchTreeView;
+import cn.lypi.contracts.tui.SessionResumeInfo;
+import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.SessionTreeNodeView;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
+import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.session.MessageEntry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.nio.file.Path;
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 class TuiInputLoopTest {
@@ -446,6 +458,121 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void resumeSlashOpensSessionThenBranchOverlayAndResumesSelectedLeaf() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        ResumeSessionController controller = new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("/tmp/ses_old.jsonl"),
+                    "ses_old",
+                    Path.of("/tmp/project"),
+                    Optional.empty(),
+                    "leaf_old",
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old session",
+                    "old session"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                MessageEntry root = new MessageEntry(
+                    "leaf_old",
+                    null,
+                    new AgentMessage(
+                        "msg_old",
+                        MessageRole.USER,
+                        MessageKind.TEXT,
+                        List.of(new TextContentBlock("old prompt")),
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.empty()
+                    ),
+                    Instant.EPOCH
+                );
+                MessageEntry assistant = new MessageEntry(
+                    "assistant_old",
+                    "leaf_old",
+                    new AgentMessage(
+                        "msg_assistant",
+                        MessageRole.ASSISTANT,
+                        MessageKind.TEXT,
+                        List.of(new TextContentBlock("old answer")),
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.empty()
+                    ),
+                    Instant.EPOCH
+                );
+                return new SessionBranchTreeView(
+                    sessionId,
+                    "assistant_old",
+                    List.of(new SessionTreeNodeView(root, List.of(new SessionTreeNodeView(assistant, List.of()))))
+                );
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+        };
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(8),
+            new TuiLayout(80, 10),
+            null,
+            () -> new SlashCommandPicker(List.of("/resume")),
+            controller
+        );
+
+        loop.acceptText("/resume");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertTrue(frames.getLast().contains("Resume Session (Current Folder)"));
+        assertTrue(frames.getLast().contains("old session"));
+
+        loop.acceptKey(TerminalKey.ENTER);
+        assertTrue(frames.getLast().contains("user: old prompt"));
+        assertTrue(frames.getLast().contains("assistant: old answer"));
+
+        loop.acceptKey(TerminalKey.TAB);
+        assertTrue(frames.getLast().contains("[user]"));
+        assertTrue(frames.getLast().contains("user: old prompt"));
+        assertTrue(!frames.getLast().contains("assistant: old answer"));
+
+        loop.acceptKey(TerminalKey.ENTER);
+        assertEquals(List.of("ses_old:leaf_old"), submit.resumes);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void resumeControllerAddsResumeToSlashPickerCandidates() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(5),
+            new TuiLayout(80, 8),
+            null,
+            () -> new SlashCommandPicker(List.of("/review")),
+            emptyResumeController()
+        );
+
+        loop.acceptText("/r");
+
+        assertTrue(frames.getLast().contains("/resume"));
+        assertTrue(frames.getLast().contains("/review"));
+    }
+
+    @Test
     void editingKeysMoveCursorDeleteLineUndoAndYank() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
@@ -496,9 +623,46 @@ class TuiInputLoopTest {
         return INPUT_BACKGROUND + content + ANSI_RESET;
     }
 
+    private static ResumeSessionController emptyResumeController() {
+        return new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of();
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                return new SessionBranchTreeView(sessionId, null, List.of());
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+        };
+    }
+
+    private static SessionRuntimeState runtimeState(String sessionId, String leafId) {
+        return new SessionRuntimeState(
+            sessionId,
+            Path.of("."),
+            leafId,
+            new cn.lypi.contracts.model.ModelSelection("openai", "gpt-5.4", cn.lypi.contracts.model.ThinkingLevel.MEDIUM),
+            cn.lypi.contracts.model.ThinkingLevel.MEDIUM,
+            cn.lypi.contracts.security.AgentMode.EXECUTE,
+            cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE,
+            new cn.lypi.contracts.context.ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, java.math.BigDecimal.ZERO),
+            false,
+            false,
+            false,
+            false
+        );
+    }
+
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
         private final List<String> permissionOptions = new ArrayList<>();
+        private final List<String> resumes = new ArrayList<>();
         private int interrupts;
         private int exits;
 
@@ -520,6 +684,11 @@ class TuiInputLoopTest {
         @Override
         public void submitPermissionOption(String requestId, String toolUseId, String optionId) {
             permissionOptions.add(requestId + ":" + toolUseId + ":" + optionId);
+        }
+
+        @Override
+        public void resumeSession(String sessionId, String leafId) {
+            resumes.add(sessionId + ":" + leafId);
         }
     }
 
