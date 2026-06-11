@@ -92,7 +92,16 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
 
     private List<AssistantStreamEvent> outputItem(JsonNode event) {
         JsonNode item = event.path("item");
-        if (!"function_call".equals(item.path("type").asText())) {
+        String itemType = item.path("type").asText();
+        if ("reasoning".equals(itemType)) {
+            return reasoningSummaryItem(item)
+                .<List<AssistantStreamEvent>>map(summary -> {
+                    thinkingEmitted = true;
+                    return List.of(new ThinkingDelta(summary));
+                })
+                .orElseGet(List::of);
+        }
+        if (!"function_call".equals(itemType)) {
             return List.of();
         }
         String key = toolCallKey(event);
@@ -201,18 +210,30 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
         }
         List<String> summaries = new ArrayList<>();
         for (JsonNode item : output) {
-            if (!"reasoning".equals(item.path("type").asText())) {
+            reasoningSummaryItem(item).ifPresent(summaries::add);
+        }
+        if (summaries.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(String.join("\n\n", summaries));
+    }
+
+    private Optional<String> reasoningSummaryItem(JsonNode item) {
+        if (thinkingEmitted || !"reasoning".equals(item.path("type").asText())) {
+            return Optional.empty();
+        }
+        JsonNode summary = item.path("summary");
+        if (!summary.isArray()) {
+            return Optional.empty();
+        }
+        List<String> summaries = new ArrayList<>();
+        for (JsonNode summaryItem : summary) {
+            if (!"summary_text".equals(summaryItem.path("type").asText())) {
                 continue;
             }
-            JsonNode summary = item.path("summary");
-            if (!summary.isArray()) {
-                continue;
-            }
-            for (JsonNode summaryItem : summary) {
-                String text = summaryItem.path("text").asText();
-                if (!text.isBlank()) {
-                    summaries.add(text);
-                }
+            String text = summaryItem.path("text").asText();
+            if (!text.isBlank()) {
+                summaries.add(text);
             }
         }
         if (summaries.isEmpty()) {

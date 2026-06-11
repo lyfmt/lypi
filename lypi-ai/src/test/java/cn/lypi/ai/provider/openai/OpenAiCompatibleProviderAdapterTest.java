@@ -26,6 +26,7 @@ import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
+import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
@@ -218,6 +219,51 @@ class OpenAiCompatibleProviderAdapterTest {
             assertThat(stream.result().aborted()).isFalse();
             assertThat(stream.result().stopReason()).contains("stop");
         }
+    }
+
+    @Test
+    void preservesResponsesConversationStateAfterCompleteConsumption() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        try (var stream = adapter.stream(context(), descriptor(), () -> false)) {
+            StreamSupport.stream(stream.spliterator(), false).toList();
+
+            assertThat(stream.result().providerConversationState())
+                .hasValueSatisfying(state -> {
+                    assertThat(state.provider()).isEqualTo("openai");
+                    assertThat(state.style()).isEqualTo("responses");
+                    assertThat(state.previousResponseId()).contains("resp-1");
+                });
+        }
+    }
+
+    @Test
+    void emitsThinkingDeltaFromReasoningOutputItemDone() {
+        RecordingTransport websocket = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}",
+            "{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"reasoned\"}]}}",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.WEBSOCKET, "test-key"),
+            websocket,
+            RecordingTransport.events(),
+            RecordingTransport.events()
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
+
+        assertThat(events).contains(new ThinkingDelta("reasoned"), new TextDelta("hello"));
     }
 
     @Test
