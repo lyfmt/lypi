@@ -22,6 +22,8 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportRenderPipelineTest {
@@ -332,6 +334,43 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
+    void runUntilExitReturnsAfterInterruptSignalRequestsExitWhileInputReadIsWaiting() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        CountDownLatch inputReadStarted = new CountDownLatch(1);
+        CountDownLatch releaseInputRead = new CountDownLatch(1);
+        WaitingInputSource input = new WaitingInputSource(inputReadStarted, releaseInputRead);
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            TestRuntimeStates.basic("ses_1"),
+            events,
+            io,
+            input,
+            submit,
+            40,
+            5
+        );
+        Thread runner = new Thread(() -> {
+            try {
+                transport.runUntilExit();
+            } catch (Exception exception) {
+                throw new AssertionError(exception);
+            }
+        });
+
+        runner.start();
+        assertTrue(inputReadStarted.await(1, TimeUnit.SECONDS));
+        io.triggerInterrupt();
+        releaseInputRead.countDown();
+        runner.join(1_000L);
+
+        assertEquals(false, runner.isAlive());
+        assertEquals(1, submit.exits);
+        assertEquals(true, transport.exitRequestedForTest());
+        transport.close();
+    }
+
+    @Test
     void transportDrainProcessesBoundedInputBatch() throws Exception {
         List<String> chunks = new ArrayList<>();
         for (int i = 0; i < 40; i++) {
@@ -516,6 +555,28 @@ class JLineTuiTransportRenderPipelineTest {
         @Override
         public Optional<String> read() {
             return Optional.ofNullable(chunks.pollFirst());
+        }
+    }
+
+    private static final class WaitingInputSource implements TerminalInputSource {
+        private final CountDownLatch waitStarted;
+        private final CountDownLatch release;
+
+        private WaitingInputSource(CountDownLatch waitStarted, CountDownLatch release) {
+            this.waitStarted = waitStarted;
+            this.release = release;
+        }
+
+        @Override
+        public Optional<String> read() throws java.io.IOException {
+            waitStarted.countDown();
+            try {
+                release.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new java.io.IOException("interrupted while waiting", exception);
+            }
+            return Optional.empty();
         }
     }
 
