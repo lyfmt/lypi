@@ -55,6 +55,28 @@ class SessionBranchTreeQueryTest {
         });
     }
 
+    @Test
+    void treeReportsLatestConversationLeafWhenLastEntryIsMetadata() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_main");
+        manager.append(new MessageEntry("root", null, message("msg_root", MessageRole.USER, "hello"), NOW));
+        manager.append(new ModelChangeEntry(
+            "model",
+            "root",
+            new cn.lypi.contracts.model.ModelSelection(
+                "openai",
+                "gpt-5.4",
+                cn.lypi.contracts.model.ThinkingLevel.MEDIUM
+            ),
+            "test",
+            NOW.plusSeconds(1)
+        ));
+
+        SessionBranchTreeView view = new SessionBranchTreeQuery(tempDir).tree("ses_main");
+
+        assertThat(view.currentLeafId()).isEqualTo("root");
+    }
+
     private AgentMessage message(String id, MessageRole role, String text) {
         return new AgentMessage(
             id,

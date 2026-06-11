@@ -71,14 +71,10 @@ final class EntryTreeIndex {
         }
     }
 
-    private boolean advancesLeaf(SessionEntry entry) {
-        return !(entry instanceof AgentLifecycleEntry);
-    }
-
     private void restore(SessionEntry entry) {
         validateAppend(entry);
         byId.put(entry.id(), entry);
-        if (advancesLeaf(entry)) {
+        if (!(entry instanceof AgentLifecycleEntry)) {
             leafId = entry.id();
         }
     }

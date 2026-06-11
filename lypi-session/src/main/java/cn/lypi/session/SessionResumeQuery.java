@@ -39,7 +39,7 @@ public final class SessionResumeQuery {
     private SessionResumeInfo info(SessionHeader header) {
         SessionFile file = store.read(header.id());
         List<SessionEntry> entries = file.entries();
-        String leafId = entries.isEmpty() ? null : entries.getLast().id();
+        String leafId = SessionLeafSelector.latestNavigableLeaf(entries);
         List<String> messageTexts = entries.stream()
             .map(this::displayText)
             .filter(text -> !text.isBlank())
