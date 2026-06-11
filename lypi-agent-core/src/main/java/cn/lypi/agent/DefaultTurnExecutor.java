@@ -13,7 +13,9 @@ import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
@@ -33,6 +35,8 @@ import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.SessionEntry;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -69,6 +73,16 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ports.sessionManager().openOrCreate(request.sessionId());
         request.parentEntryId().ifPresent(parentEntryId -> ports.sessionManager().switchLeaf(parentEntryId));
         ports.eventBus().publish(new TurnStartEvent(request.sessionId(), turnId, clock.instant()));
+        Optional<String> unsafeReason = unsafeContinuationReason(currentLeafId());
+        if (unsafeReason.isPresent()) {
+            ports.eventBus().publish(new ErrorEvent(
+                request.sessionId(),
+                unsafeReason.orElseThrow(),
+                "当前分支停在 assistant 工具调用消息上，不能直接追加用户消息。请选择上一条用户消息或工具结果之后继续。",
+                clock.instant()
+            ));
+            return failedState(turnId, request.sessionId(), null, List.of(), 0);
+        }
 
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
         String contextLeafId = appendNewMessage(request.sessionId(), user);
@@ -170,6 +184,39 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             .filter(ToolCallContentBlock.class::isInstance)
             .map(ToolCallContentBlock.class::cast)
             .anyMatch(toolCall -> !Boolean.TRUE.equals(toolCall.metadata().get("complete")));
+    }
+
+    private Optional<String> unsafeContinuationReason(String leafId) {
+        if (leafId == null || leafId.isBlank()) {
+            return Optional.empty();
+        }
+        List<SessionEntry> branch = ports.sessionManager().branch(leafId);
+        if (branch.isEmpty()) {
+            return Optional.empty();
+        }
+        SessionEntry last = branch.getLast();
+        if (!(last instanceof MessageEntry messageEntry) || messageEntry.message() == null) {
+            return Optional.empty();
+        }
+        AgentMessage message = messageEntry.message();
+        if (isToolCallAssistant(message)) {
+            return Optional.of("cannot-continue-from-tool-call-assistant");
+        }
+        return Optional.empty();
+    }
+
+    private String currentLeafId() {
+        return ports.sessionManager().currentView().leafId();
+    }
+
+    private boolean isToolCallAssistant(AgentMessage message) {
+        if (message.role() != MessageRole.ASSISTANT || message.content() == null || message.content().isEmpty()) {
+            return false;
+        }
+        if (message.kind() == MessageKind.ERROR) {
+            return false;
+        }
+        return message.content().stream().anyMatch(block -> block.kind() == ContentBlockKind.TOOL_CALL);
     }
 
     private TurnState failedState(

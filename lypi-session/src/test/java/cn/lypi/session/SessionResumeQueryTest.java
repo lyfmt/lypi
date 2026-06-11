@@ -6,6 +6,8 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ThinkingContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
@@ -65,6 +67,70 @@ class SessionResumeQueryTest {
                 cn.lypi.contracts.model.ThinkingLevel.MEDIUM
             ),
             "test",
+            NEWER
+        ));
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions.getFirst().leafId()).isEqualTo("entry_user");
+    }
+
+    @Test
+    void sessionsReportNearestUserLeafWhenLatestEntryIsToolOnlyAssistant() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_main");
+        manager.append(new MessageEntry("entry_user", null, message("msg_user", MessageRole.USER, "hello", OLDER), OLDER));
+        manager.append(new MessageEntry(
+            "entry_tool_call",
+            "entry_user",
+            new AgentMessage(
+                "msg_tool_call",
+                MessageRole.ASSISTANT,
+                MessageKind.TOOL_CALL,
+                List.of(new ToolCallContentBlock(
+                    "toolu_1",
+                    "read",
+                    "",
+                    java.util.Map.of("complete", true, "input", java.util.Map.of("path", "README.md"))
+                )),
+                NEWER,
+                Optional.empty(),
+                Optional.of("tool_calls")
+            ),
+            NEWER
+        ));
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions.getFirst().leafId()).isEqualTo("entry_user");
+    }
+
+    @Test
+    void sessionsReportNearestUserLeafWhenLatestAssistantContainsTextAndToolCall() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_main");
+        manager.append(new MessageEntry("entry_user", null, message("msg_user", MessageRole.USER, "hello", OLDER), OLDER));
+        manager.append(new MessageEntry(
+            "entry_tool_call",
+            "entry_user",
+            new AgentMessage(
+                "msg_tool_call",
+                MessageRole.ASSISTANT,
+                MessageKind.TOOL_CALL,
+                List.of(
+                    new ThinkingContentBlock("thinking"),
+                    new TextContentBlock("I will edit it"),
+                    new ToolCallContentBlock(
+                        "toolu_1",
+                        "edit",
+                        "",
+                        java.util.Map.of("complete", true, "input", java.util.Map.of("path", "main.c"))
+                    )
+                ),
+                NEWER,
+                Optional.empty(),
+                Optional.of("tool_calls")
+            ),
             NEWER
         ));
 

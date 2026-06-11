@@ -7,6 +7,8 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ThinkingContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
@@ -118,6 +120,72 @@ class ResumeBranchTreeSelectorTest {
         assertTrue(visible.get(2).indexOf("user:") < 15);
     }
 
+    @Test
+    void defaultFilterHidesToolCallOnlyAssistant() {
+        List<SessionEntry> entries = List.of(
+            user("user-1", null, "hello"),
+            assistantToolCall("asst-tool", "user-1"),
+            user("user-2", "asst-tool", "follow up")
+        );
+
+        ResumeBranchTreeSelector selector = new ResumeBranchTreeSelector(tree(entries), "user-2", 10);
+
+        List<String> lines = selector.render(120);
+        assertTrue(lines.stream().noneMatch(line -> line.contains("assistant: (no content)")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("user: hello")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("user: follow up")));
+    }
+
+    @Test
+    void defaultFilterHidesAssistantWithTextAndToolCallEvenWhenCurrentLeaf() {
+        List<SessionEntry> entries = List.of(
+            user("user-1", null, "hello"),
+            assistantTextAndToolCall("asst-tool", "user-1")
+        );
+
+        ResumeBranchTreeSelector selector = new ResumeBranchTreeSelector(tree(entries), "asst-tool", 10);
+
+        List<String> lines = selector.render(120);
+        assertTrue(lines.stream().noneMatch(line -> line.contains("assistant: I will edit it")));
+        assertEquals("user-1", selector.selectedEntry().orElseThrow().id());
+    }
+
+    @Test
+    void defaultFilterReparentsVisibleDescendantsWhenIntermediateToolNodesAreHidden() {
+        List<SessionEntry> entries = List.of(
+            user("user-1", null, "root"),
+            assistantToolCall("asst-tool", "user-1"),
+            user("user-2", "asst-tool", "follow up"),
+            assistant("asst-2", "user-2", "done")
+        );
+
+        ResumeBranchTreeSelector selector = new ResumeBranchTreeSelector(tree(entries), "asst-2", 10);
+
+        List<String> lines = selector.render(120);
+        assertTrue(lines.stream().noneMatch(line -> line.contains("assistant: (no content)")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("  • user: root")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("  └─ • user: follow up")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("›    └─ • assistant: done")));
+    }
+
+    @Test
+    void defaultFilterHidesToolResultButKeepsVisibleDescendants() {
+        List<SessionEntry> entries = List.of(
+            user("user-1", null, "root"),
+            assistantToolCall("asst-tool", "user-1"),
+            toolResult("tool-result", "asst-tool", "file contents"),
+            assistant("asst-2", "tool-result", "done")
+        );
+
+        ResumeBranchTreeSelector selector = new ResumeBranchTreeSelector(tree(entries), "asst-2", 10);
+
+        List<String> lines = selector.render(120);
+        assertTrue(lines.stream().noneMatch(line -> line.contains("tool_result: (no content)")));
+        assertTrue(lines.stream().noneMatch(line -> line.contains("assistant: (no content)")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("user: root")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("assistant: done")));
+    }
+
     private List<SessionTreeNodeView> tree(List<SessionEntry> entries) {
         Map<String, MutableNode> nodes = new LinkedHashMap<>();
         for (SessionEntry entry : entries) {
@@ -146,6 +214,54 @@ class ResumeBranchTreeSelectorTest {
         return new MessageEntry(id, parentId, message(id, MessageRole.ASSISTANT, text), NOW);
     }
 
+    private MessageEntry assistantToolCall(String id, String parentId) {
+        return new MessageEntry(
+            id,
+            parentId,
+            new AgentMessage(
+                "msg_" + id,
+                MessageRole.ASSISTANT,
+                MessageKind.TOOL_CALL,
+                List.of(new ToolCallContentBlock(
+                    "tool_" + id,
+                    "read",
+                    "",
+                    Map.of("complete", true, "input", Map.of("path", "main.c"))
+                )),
+                NOW,
+                Optional.empty(),
+                Optional.of("tool_calls")
+            ),
+            NOW
+        );
+    }
+
+    private MessageEntry assistantTextAndToolCall(String id, String parentId) {
+        return new MessageEntry(
+            id,
+            parentId,
+            new AgentMessage(
+                "msg_" + id,
+                MessageRole.ASSISTANT,
+                MessageKind.TOOL_CALL,
+                List.of(
+                    new ThinkingContentBlock("thinking"),
+                    new TextContentBlock("I will edit it"),
+                    new ToolCallContentBlock(
+                        "tool_" + id,
+                        "edit",
+                        "",
+                        Map.of("complete", true, "input", Map.of("path", "main.c"))
+                    )
+                ),
+                NOW,
+                Optional.empty(),
+                Optional.of("tool_calls")
+            ),
+            NOW
+        );
+    }
+
     private MessageEntry toolResult(String id, String parentId, String text) {
         return new MessageEntry(
             id,
@@ -154,7 +270,7 @@ class ResumeBranchTreeSelectorTest {
                 "msg_" + id,
                 MessageRole.TOOL_RESULT,
                 MessageKind.TOOL_RESULT,
-                List.of(new ToolResultContentBlock("toolu_" + id, text, false)),
+                List.of(new ToolResultContentBlock("tool_" + parentId, text, false)),
                 NOW,
                 Optional.empty(),
                 Optional.empty()
