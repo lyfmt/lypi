@@ -201,6 +201,12 @@ final class InputEditor {
         history.resetNavigation(text());
     }
 
+    void replaceDraft(String value) {
+        saveUndo();
+        replaceDraftWithoutUndo(value == null ? "" : value);
+        history.resetNavigation(text());
+    }
+
     void acceptHistoryEntry() {
         history.add(text());
     }

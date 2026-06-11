@@ -8,6 +8,7 @@ import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.tui.SessionResumeInfo;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -48,6 +49,28 @@ class SessionResumeQueryTest {
             assertThat(session.modified()).isEqualTo(NEWER.plusSeconds(1));
             assertThat(session.path().getFileName().toString()).isEqualTo("ses_newer.jsonl");
         });
+    }
+
+    @Test
+    void sessionsReportLatestConversationLeafWhenLastEntryIsMetadata() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_main");
+        manager.append(new MessageEntry("entry_user", null, message("msg_user", MessageRole.USER, "hello", OLDER), OLDER));
+        manager.append(new ModelChangeEntry(
+            "entry_model",
+            "entry_user",
+            new cn.lypi.contracts.model.ModelSelection(
+                "openai",
+                "gpt-5.4",
+                cn.lypi.contracts.model.ThinkingLevel.MEDIUM
+            ),
+            "test",
+            NEWER
+        ));
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions.getFirst().leafId()).isEqualTo("entry_user");
     }
 
     @Test

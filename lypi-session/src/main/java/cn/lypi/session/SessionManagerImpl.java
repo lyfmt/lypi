@@ -72,6 +72,9 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      */
     @Override
     public SessionHandle openOrCreate(String sessionId) {
+        if (this.sessionId != null && this.sessionId.equals(sessionId) && header != null && index != null) {
+            return handle();
+        }
         this.sessionId = sessionId;
         if (!store.exists(sessionId)) {
             store.create(initialHeader(sessionId));

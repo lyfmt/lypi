@@ -103,6 +103,20 @@ class SessionManagerReplayTest {
     }
 
     @Test
+    void openOrCreatePreservesCurrentLeafWhenSessionIsAlreadyOpen() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_main");
+        manager.append(new MessageEntry("root", null, textMessage("msg-root", "root"), NOW));
+        manager.append(new MessageEntry("left", "root", textMessage("msg-left", "left"), NOW.plusSeconds(1)));
+        manager.switchLeaf(null);
+
+        SessionHandle reopened = manager.openOrCreate("ses_main");
+
+        assertThat(reopened.leafId()).isNull();
+        assertThat(manager.currentView().leafId()).isNull();
+    }
+
+    @Test
     void legacySessionWithoutInitialStateUsesCurrentConfiguredBaseline() {
         JsonlSessionStore store = new JsonlSessionStore(tempDir);
         store.create(new SessionHeader("session", 1, "ses_legacy", tempDir, Optional.empty(), NOW));

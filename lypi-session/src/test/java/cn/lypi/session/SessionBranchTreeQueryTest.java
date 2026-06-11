@@ -6,12 +6,14 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.tui.SessionBranchTreeView;
 import cn.lypi.contracts.tui.SessionTreeNodeView;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -46,13 +48,47 @@ class SessionBranchTreeQueryTest {
         SessionBranchTreeView view = new SessionBranchTreeQuery(tempDir).tree("ses_main");
 
         assertThat(view.sessionId()).isEqualTo("ses_main");
-        assertThat(view.currentLeafId()).isEqualTo("model");
+        assertThat(view.currentLeafId()).isEqualTo("right");
         assertThat(view.roots()).singleElement().satisfies(root -> {
             assertThat(root.entry().id()).isEqualTo("root");
             assertThat(root.children()).extracting(child -> child.entry().id()).containsExactly("left", "right");
             SessionTreeNodeView right = root.children().get(1);
             assertThat(right.children()).singleElement().satisfies(child -> assertThat(child.entry().id()).isEqualTo("model"));
         });
+    }
+
+    @Test
+    void treeReportsLatestConversationLeafWhenLastEntryIsMetadata() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_main");
+        manager.append(new MessageEntry("root", null, message("msg_root", MessageRole.USER, "hello"), NOW));
+        manager.append(new ModelChangeEntry(
+            "model",
+            "root",
+            new cn.lypi.contracts.model.ModelSelection(
+                "openai",
+                "gpt-5.4",
+                cn.lypi.contracts.model.ThinkingLevel.MEDIUM
+            ),
+            "test",
+            NOW.plusSeconds(1)
+        ));
+
+        SessionBranchTreeView view = new SessionBranchTreeQuery(tempDir).tree("ses_main");
+
+        assertThat(view.currentLeafId()).isEqualTo("root");
+    }
+
+    @Test
+    void treeReportsLatestConversationLeafWhenLastEntryIsCustomState() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_main");
+        manager.append(new MessageEntry("root", null, message("msg_root", MessageRole.USER, "hello"), NOW));
+        manager.append(new CustomEntry("custom", "root", "state", Map.of("key", "value"), NOW.plusSeconds(1)));
+
+        SessionBranchTreeView view = new SessionBranchTreeQuery(tempDir).tree("ses_main");
+
+        assertThat(view.currentLeafId()).isEqualTo("root");
     }
 
     private AgentMessage message(String id, MessageRole role, String text) {

@@ -6,6 +6,10 @@ import cn.lypi.contracts.tui.SessionResumeInfo;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
+import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.SessionEntry;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -518,8 +522,10 @@ final class TuiInputLoop {
         }
         if (key == TerminalKey.ENTER) {
             resumeBranchTreeSelector.selectedEntry().ifPresent(entry -> {
-                SessionRuntimeState resumed = resumeController.resume(resumeSessionId, entry.id());
-                submitHandler.resumeSession(resumeSessionId, entry.id());
+                ResumeTarget target = resumeTarget(entry);
+                SessionRuntimeState resumed = resumeController.resume(resumeSessionId, target.leafId());
+                submitHandler.resumeSession(resumeSessionId, target.leafId());
+                target.draftText().ifPresent(editor::replaceDraft);
                 if (resumeStateConsumer != null && resumed != null) {
                     resumeStateConsumer.accept(resumed);
                 }
@@ -533,6 +539,28 @@ final class TuiInputLoop {
         resumeSessionSelector = null;
         resumeBranchTreeSelector = null;
         resumeSessionId = null;
+    }
+
+    private ResumeTarget resumeTarget(SessionEntry entry) {
+        if (entry instanceof MessageEntry messageEntry
+            && messageEntry.message() != null
+            && messageEntry.message().role() == cn.lypi.contracts.context.MessageRole.USER) {
+            return new ResumeTarget(messageEntry.parentId(), userMessageText(messageEntry.message()));
+        }
+        return new ResumeTarget(entry.id(), Optional.empty());
+    }
+
+    private Optional<String> userMessageText(AgentMessage message) {
+        if (message.content() == null) {
+            return Optional.of("");
+        }
+        return Optional.of(message.content().stream()
+            .filter(TextContentBlock.class::isInstance)
+            .map(TextContentBlock.class::cast)
+            .map(TextContentBlock::text)
+            .filter(text -> text != null && !text.isBlank())
+            .findFirst()
+            .orElse(""));
     }
 
     private void acceptSlashSelection() {
@@ -549,5 +577,11 @@ final class TuiInputLoop {
             Optional.empty(),
             Optional.empty()
         );
+    }
+
+    private record ResumeTarget(String leafId, Optional<String> draftText) {
+        private ResumeTarget {
+            draftText = draftText == null ? Optional.empty() : draftText;
+        }
     }
 }

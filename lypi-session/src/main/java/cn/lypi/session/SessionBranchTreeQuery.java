@@ -37,7 +37,7 @@ public final class SessionBranchTreeQuery {
                 roots.add(node);
             }
         }
-        String leafId = file.entries().isEmpty() ? null : file.entries().getLast().id();
+        String leafId = SessionLeafSelector.latestNavigableLeaf(file.entries());
         return new SessionBranchTreeView(sessionId, leafId, roots.stream().map(this::view).toList());
     }
 
