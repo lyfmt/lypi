@@ -86,8 +86,12 @@ public final class OpenAiResponsesStreamNormalizer implements OpenAiStreamNormal
     }
 
     private List<AssistantStreamEvent> thinkingDelta(JsonNode event) {
+        String delta = event.path("delta").asText();
+        if (delta.isBlank()) {
+            return List.of();
+        }
         thinkingEmitted = true;
-        return List.of(new ThinkingDelta(event.path("delta").asText()));
+        return List.of(new ThinkingDelta(delta));
     }
 
     private List<AssistantStreamEvent> outputItem(JsonNode event) {

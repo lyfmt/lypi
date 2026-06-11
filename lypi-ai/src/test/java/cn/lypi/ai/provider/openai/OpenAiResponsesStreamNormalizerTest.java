@@ -86,6 +86,25 @@ class OpenAiResponsesStreamNormalizerTest {
     }
 
     @Test
+    void normalizesCompletedReasoningSummaryAfterBlankDelta() {
+        OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("""
+                {"type":"response.reasoning_summary_text.delta","delta":""}
+                """),
+            normalizer.normalize("""
+                {"type":"response.completed","response":{"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"reasoned"}]}]}}
+                """)
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new ThinkingDelta("reasoned"),
+            new AssistantDone(Optional.empty(), Optional.of("stop"))
+        );
+    }
+
+    @Test
     void normalizesOutputItemDoneReasoningSummaryWhenNoDeltaArrived() {
         OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
 
