@@ -423,6 +423,27 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void resumeControllerAddsResumeToSlashPickerCandidates() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(5),
+            new TuiLayout(80, 8),
+            null,
+            () -> new SlashCommandPicker(List.of("/review")),
+            emptyResumeController()
+        );
+
+        loop.acceptText("/r");
+
+        assertTrue(frames.getLast().contains("/resume"));
+        assertTrue(frames.getLast().contains("/review"));
+    }
+
+    @Test
     void editingKeysMoveCursorDeleteLineUndoAndYank() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
@@ -462,6 +483,24 @@ class TuiInputLoopTest {
     private static String inputLine(String frame) {
         List<String> lines = frame.lines().toList();
         return lines.get(lines.size() - 2);
+    }
+
+    private static ResumeSessionController emptyResumeController() {
+        return new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of();
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                return new SessionBranchTreeView(sessionId, null, List.of());
+            }
+
+            @Override
+            public void resume(String sessionId, String leafId) {
+            }
+        };
     }
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {

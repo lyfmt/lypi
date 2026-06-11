@@ -371,10 +371,21 @@ final class TuiInputLoop {
 
     private SlashCommandPicker slashPicker() {
         if (slashPicker == null) {
-            slashPicker = slashPickerSupplier.get();
+            slashPicker = slashPickerWithResumeCommand(slashPickerSupplier.get());
         }
         slashFilter().ifPresent(slashPicker::updateFilter);
         return slashPicker;
+    }
+
+    private SlashCommandPicker slashPickerWithResumeCommand(SlashCommandPicker picker) {
+        if (resumeController == null) {
+            return picker;
+        }
+        List<String> commands = new java.util.ArrayList<>(picker.visibleCommands());
+        if (!commands.contains("/resume")) {
+            commands.add("/resume");
+        }
+        return new SlashCommandPicker(commands);
     }
 
     private List<String> slashOverlayLines() {
