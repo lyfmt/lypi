@@ -134,7 +134,7 @@ class TerminalFrameRendererTest {
         assertEquals(
             "\033[?2026h"
                 + "\033[3;1H\033[2Kthree"
-                + "\033[4;1H\n"
+                + "\033[4;1H\033[2K\r\n"
                 + "\033[3;1H\033[2K> "
                 + "\033[4;1H\033[2Kstatus"
                 + "\033[3;3H"
@@ -156,7 +156,7 @@ class TerminalFrameRendererTest {
         assertEquals(
             "\033[?2026h"
                 + "\033[3;1H\033[2Kfour"
-                + "\033[4;1H\n"
+                + "\033[4;1H\033[2K\r\n"
                 + "\033[3;1H\033[2K> "
                 + "\033[4;1H\033[2Kstatus"
                 + "\033[3;3H"
@@ -196,6 +196,40 @@ class TerminalFrameRendererTest {
     }
 
     @Test
+    void viewportScrollPatchDoesNotRewriteRowsThatScrolledOutOfView() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 5;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of(
+            "tool done glob: Glob",
+            "  matched AGENTS.md",
+            "──",
+            "> |CURSOR|",
+            "──",
+            "session PLAN"
+        ));
+        io.output.setLength(0);
+        renderer.render(List.of(
+            "tool done glob: Glob",
+            "  matched AGENTS.md",
+            "tool done read: Read",
+            "  File: AGENTS.md",
+            "assistant answer",
+            "──",
+            "> |CURSOR|",
+            "──",
+            "session PLAN"
+        ));
+
+        String output = io.output.toString();
+        assertFalse(output.contains("tool done glob: Glob"));
+        assertFalse(output.contains("matched AGENTS.md"));
+        assertTrue(output.contains("tool done read: Read"));
+        assertTrue(output.contains("assistant answer"));
+    }
+
+    @Test
     void chromeGrowthWithoutTranscriptAppendDoesNotScrollTerminal() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 5;
@@ -221,6 +255,7 @@ class TerminalFrameRendererTest {
         ), 3));
 
         String output = io.output.toString();
+        assertFalse(output.contains("\r\n"));
         assertFalse(output.contains("\n"));
         assertTrue(output.contains("\033[3;1H\033[2K> wrapped input"));
         assertTrue(output.contains("\033[4;1H\033[2Kcontinuation"));

@@ -511,10 +511,24 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 blockId(message.id(), block.kind(), index),
                 block.kind(),
                 block.text(),
-                block.metadata()
+                snapshotMetadata(block)
             ));
         }
         return List.copyOf(snapshots);
+    }
+
+    private Map<String, Object> snapshotMetadata(ContentBlock block) {
+        if (!(block instanceof ToolCallContentBlock toolCall)) {
+            return block.metadata();
+        }
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>(block.metadata());
+        Map<String, Object> input = immutableNullableMap(asMap(metadata.get("input")));
+        metadata.put("toolUseId", toolCall.toolUseId());
+        metadata.put("toolName", toolCall.toolName());
+        metadata.put("input", input);
+        metadata.put("complete", Boolean.TRUE.equals(metadata.get("complete")));
+        metadata.put("inputSummary", toolCallInputSummary(toolCall.toolName(), input));
+        return Map.copyOf(metadata);
     }
 
     private String textBlockId(String messageId) {
@@ -564,6 +578,19 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             return Map.of();
         }
         return Collections.unmodifiableMap(new LinkedHashMap<>(value));
+    }
+
+    private Map<String, Object> asMap(Object value) {
+        if (!(value instanceof Map<?, ?> source) || source.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        source.forEach((key, mapValue) -> {
+            if (key != null) {
+                result.put(key.toString(), mapValue);
+            }
+        });
+        return result;
     }
 
     private static final class ProviderConversationStateHolder {

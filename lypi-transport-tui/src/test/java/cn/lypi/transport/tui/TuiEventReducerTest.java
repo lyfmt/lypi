@@ -11,6 +11,8 @@ import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
 import cn.lypi.contracts.event.ErrorEvent;
@@ -441,6 +443,77 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void runtimeTranscriptProjectsToolResultWithoutDuplicateToolMessage() {
+        SessionRuntimeState base = TestRuntimeStates.basic("ses_old");
+        SessionRuntimeState runtimeState = new SessionRuntimeState(
+            base.sessionId(),
+            Path.of("/home/lyfmt/src/study/ly-pi"),
+            base.currentBranchLeafId(),
+            base.model(),
+            base.thinkingLevel(),
+            base.agentMode(),
+            base.permissionMode(),
+            base.budget(),
+            List.of(
+                new AgentMessage(
+                    "msg_user",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("read AGENTS")),
+                    NOW,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                new AgentMessage(
+                    "msg_tool_call",
+                    MessageRole.ASSISTANT,
+                    MessageKind.TOOL_CALL,
+                    List.of(new ToolCallContentBlock("call_1", "read", "", Map.of(
+                        "input", Map.of("path", "AGENTS.md"),
+                        "complete", true,
+                        "inputSummary", "read {path=AGENTS.md}"
+                    ))),
+                    NOW.plusMillis(1),
+                    Optional.empty(),
+                    Optional.of("tool_calls")
+                ),
+                new AgentMessage(
+                    "msg_tool_result",
+                    MessageRole.TOOL_RESULT,
+                    MessageKind.TOOL_RESULT,
+                    List.of(new ToolResultContentBlock("call_1", "File: AGENTS.md\n1 | 用户名字叫末声", false)),
+                    NOW.plusMillis(2),
+                    Optional.empty(),
+                    Optional.empty()
+                )
+            ),
+            false,
+            false,
+            false,
+            false
+        );
+
+        TuiEventReducer reducer = TuiEventReducer.fromRuntimeState(runtimeState);
+
+        List<TuiBlock> blocks = reducer.view().blocks();
+        long toolBlocks = blocks.stream().filter(TuiToolBlock.class::isInstance).count();
+        long projectedToolMessages = blocks.stream()
+            .filter(TuiMessageBlock.class::isInstance)
+            .map(TuiMessageBlock.class::cast)
+            .filter(block -> "tool".equals(block.role()))
+            .count();
+        assertEquals(1, toolBlocks);
+        assertEquals(0, projectedToolMessages);
+        TuiToolBlock tool = blocks.stream()
+            .filter(TuiToolBlock.class::isInstance)
+            .map(TuiToolBlock.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertEquals("call_1", tool.toolUseId());
+        assertEquals("read", tool.toolName());
+    }
+
+    @Test
     void sessionStateEventRefreshesStatusBarFromCurrentTreeProjection() {
         TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
 
@@ -764,6 +837,51 @@ class TuiEventReducerTest {
         TuiToolBlock block = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().getFirst());
         assertEquals(TuiToolState.PENDING, block.state());
         assertFalse(block.active());
+    }
+
+    @Test
+    void messageEndToolSnapshotUpdatesStreamingToolBlockWithoutUnknownDuplicate() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_tool_call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            "msg_tool_call:tool_call:call_1",
+            ContentBlockKind.TOOL_CALL,
+            "",
+            false,
+            Map.of(
+                "toolUseId", "call_1",
+                "toolName", "glob",
+                "inputSummary", "glob {pattern=*.java}"
+            ),
+            NOW
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_tool_call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new MessageBlockSnapshot("msg_tool_call:tool_call:0", ContentBlockKind.TOOL_CALL, "", Map.of(
+                "toolUseId", "call_1",
+                "toolName", "glob",
+                "inputSummary", "glob {pattern=*.java}"
+            ))),
+            Optional.empty(),
+            Optional.of("tool_calls"),
+            Map.of(),
+            NOW
+        ));
+
+        List<TuiBlock> blocks = reducer.view().blocks();
+        assertEquals(1, blocks.size());
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, blocks.getFirst());
+        assertEquals("call_1", tool.toolUseId());
+        assertEquals("glob", tool.toolName());
+        assertEquals("glob {pattern=*.java}", tool.label());
+        assertFalse(tool.active());
     }
 
     @Test

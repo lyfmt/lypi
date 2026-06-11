@@ -509,11 +509,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         FrameSink frameSink = new FrameSink() {
             @Override
             public void render(List<String> lines) {
-                try {
-                    frameRenderer.render(lines);
-                } catch (IOException exception) {
-                    throw new UncheckedIOException(exception);
-                }
+                render(TuiRenderFrame.transcriptOnly(lines));
             }
 
             @Override
@@ -764,7 +760,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private void renderCurrentFrame() {
         TuiViewModel view = reducer.view();
         syncInputLoopToolState(view);
-        frameSink.render(tuiRenderer.renderFrame(view, screen, layout, currentDraft(), currentCursor(), List.of()));
+        frameSink.render(tuiRenderer.renderFrame(view, screen, layout, currentDraft(), currentCursor()));
     }
 
     private void refreshDiffAfterToolEnd(AgentEvent event) {
