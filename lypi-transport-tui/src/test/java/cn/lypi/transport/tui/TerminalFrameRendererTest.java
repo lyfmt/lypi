@@ -127,11 +127,20 @@ class TerminalFrameRendererTest {
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
-        renderer.render(List.of("one", "two", "> |CURSOR|", "status"));
+        renderer.render(new TuiRenderFrame(List.of("one", "two", "> |CURSOR|", "status"), 2));
         io.output.setLength(0);
-        renderer.render(List.of("one", "two", "three", "> |CURSOR|", "status"));
+        renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "> |CURSOR|", "status"), 2));
 
-        assertEquals("\033[?2026h\033[3;1H\033[2Kthree\r\n\033[2K> \r\n\033[2Kstatus\033[3;3H\033[?2026l", io.output.toString());
+        assertEquals(
+            "\033[?2026h"
+                + "\033[3;1H\033[2Kthree"
+                + "\033[4;1H\n"
+                + "\033[3;1H\033[2K> "
+                + "\033[4;1H\033[2Kstatus"
+                + "\033[3;3H"
+                + "\033[?2026l",
+            io.output.toString()
+        );
     }
 
     @Test
@@ -140,11 +149,82 @@ class TerminalFrameRendererTest {
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
-        renderer.render(List.of("one", "two", "three", "> |CURSOR|", "status"));
+        renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "> |CURSOR|", "status"), 2));
         io.output.setLength(0);
-        renderer.render(List.of("one", "two", "three", "four", "> |CURSOR|", "status"));
+        renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "four", "> |CURSOR|", "status"), 2));
 
-        assertEquals("\033[?2026h\033[3;1H\033[2Kfour\r\n\033[2K> \r\n\033[2Kstatus\033[3;3H\033[?2026l", io.output.toString());
+        assertEquals(
+            "\033[?2026h"
+                + "\033[3;1H\033[2Kfour"
+                + "\033[4;1H\n"
+                + "\033[3;1H\033[2K> "
+                + "\033[4;1H\033[2Kstatus"
+                + "\033[3;3H"
+                + "\033[?2026l",
+            io.output.toString()
+        );
+    }
+
+    @Test
+    void toolProgressAppendAfterOverflowDoesNotAppendInputAndStatusToScrollback() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 5;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(new TuiRenderFrame(List.of(
+            "tool running bash: test",
+            "  old detail",
+            "──",
+            "> |CURSOR|",
+            "status"
+        ), 3));
+        io.output.setLength(0);
+        renderer.render(new TuiRenderFrame(List.of(
+            "tool running bash: test",
+            "  old detail",
+            "  new detail",
+            "──",
+            "> |CURSOR|",
+            "status"
+        ), 3));
+
+        String output = io.output.toString();
+        assertTrue(output.contains("new detail"));
+        assertFalse(output.contains("\r\n\033[2K──\r\n"));
+        assertFalse(output.contains("\r\n\033[2K> "));
+        assertFalse(output.contains("\r\n\033[2Kstatus"));
+    }
+
+    @Test
+    void chromeGrowthWithoutTranscriptAppendDoesNotScrollTerminal() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 5;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(new TuiRenderFrame(List.of(
+            "line1",
+            "line2",
+            "line3",
+            "line4",
+            "> |CURSOR|",
+            "status"
+        ), 2));
+        io.output.setLength(0);
+        renderer.render(new TuiRenderFrame(List.of(
+            "line1",
+            "line2",
+            "line3",
+            "line4",
+            "> wrapped input",
+            "continuation|CURSOR|",
+            "status"
+        ), 3));
+
+        String output = io.output.toString();
+        assertFalse(output.contains("\n"));
+        assertTrue(output.contains("\033[3;1H\033[2K> wrapped input"));
+        assertTrue(output.contains("\033[4;1H\033[2Kcontinuation"));
+        assertTrue(output.contains("\033[5;1H\033[2Kstatus"));
     }
 
     @Test

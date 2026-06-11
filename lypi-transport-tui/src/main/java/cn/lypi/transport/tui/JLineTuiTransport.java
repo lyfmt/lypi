@@ -506,11 +506,23 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             }
         });
         TerminalFrameRenderer frameRenderer = new TerminalFrameRenderer(io, session::updateRenderedRows);
-        FrameSink frameSink = lines -> {
-            try {
-                frameRenderer.render(lines);
-            } catch (IOException exception) {
-                throw new UncheckedIOException(exception);
+        FrameSink frameSink = new FrameSink() {
+            @Override
+            public void render(List<String> lines) {
+                try {
+                    frameRenderer.render(lines);
+                } catch (IOException exception) {
+                    throw new UncheckedIOException(exception);
+                }
+            }
+
+            @Override
+            public void render(TuiRenderFrame frame) {
+                try {
+                    frameRenderer.render(frame);
+                } catch (IOException exception) {
+                    throw new UncheckedIOException(exception);
+                }
             }
         };
         JLineTuiTransport transport = new JLineTuiTransport(
@@ -752,7 +764,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private void renderCurrentFrame() {
         TuiViewModel view = reducer.view();
         syncInputLoopToolState(view);
-        frameSink.render(tuiRenderer.render(view, screen, layout, currentDraft(), currentCursor()));
+        frameSink.render(tuiRenderer.renderFrame(view, screen, layout, currentDraft(), currentCursor(), List.of()));
     }
 
     private void refreshDiffAfterToolEnd(AgentEvent event) {
