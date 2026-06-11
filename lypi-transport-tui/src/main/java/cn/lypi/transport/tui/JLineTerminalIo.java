@@ -42,4 +42,10 @@ final class JLineTerminalIo implements TerminalIo {
         Terminal.SignalHandler previous = terminal.handle(Terminal.Signal.WINCH, signal -> callback.run());
         return () -> terminal.handle(Terminal.Signal.WINCH, previous);
     }
+
+    @Override
+    public AutoCloseable onInterrupt(Runnable callback) {
+        Terminal.SignalHandler previous = terminal.handle(Terminal.Signal.INT, signal -> callback.run());
+        return () -> terminal.handle(Terminal.Signal.INT, previous);
+    }
 }

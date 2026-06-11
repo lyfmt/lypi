@@ -76,7 +76,9 @@ final class TerminalFrameRenderer {
             return;
         }
 
-        boolean appendOnly = newLines.size() > previousLines.size() && firstChanged == previousLines.size();
+        boolean appendOnly = newLines.size() > previousLines.size()
+            && firstChanged == previousLines.size()
+            && viewportTop == previousViewportTop;
         if (appendOnly) {
             StringBuilder buffer = new StringBuilder();
             for (int i = firstChanged; i < newLines.size(); i++) {
@@ -113,7 +115,7 @@ final class TerminalFrameRenderer {
             io.write(SYNC_START);
             io.write(FULL_CLEAR);
         }
-        io.write(String.join("\n", lines));
+        io.write(String.join("\n", visibleLines(lines, viewportTop, height)));
         hardwareCursorRow = physicalBottomRow(lines, viewportTop, height);
         moveCursor(cursor, viewportTop, height);
         if (clear) {
@@ -132,6 +134,9 @@ final class TerminalFrameRenderer {
     ) throws IOException {
         io.write(SYNC_START);
         for (int i = firstChanged; i <= Math.min(lastChanged, lines.size() - 1); i++) {
+            if (!visibleLogicalRow(i + 1, viewportTop, height)) {
+                continue;
+            }
             int physicalRow = physicalRow(i + 1, viewportTop, height);
             io.write("\033[" + physicalRow + ";1H");
             io.write("\033[2K");
@@ -221,6 +226,23 @@ final class TerminalFrameRenderer {
     private int physicalRow(int logicalRow, int viewportTop, int height) {
         int physicalRow = logicalRow - viewportTop;
         return Math.max(1, Math.min(Math.max(1, height), physicalRow));
+    }
+
+    private boolean visibleLogicalRow(int logicalRow, int viewportTop, int height) {
+        int physicalRow = logicalRow - viewportTop;
+        return physicalRow >= 1 && physicalRow <= Math.max(1, height);
+    }
+
+    private List<String> visibleLines(List<String> lines, int viewportTop, int height) {
+        if (lines.isEmpty()) {
+            return List.of();
+        }
+        int start = Math.max(0, viewportTop);
+        int end = Math.min(lines.size(), start + Math.max(1, height));
+        if (start >= end) {
+            return List.of();
+        }
+        return lines.subList(start, end);
     }
 
     private void logFullRedraw(String reason) {

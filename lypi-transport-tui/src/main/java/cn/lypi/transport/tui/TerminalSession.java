@@ -9,21 +9,21 @@ public final class TerminalSession implements AutoCloseable {
     static final String DISABLE_BRACKETED_PASTE = "\033[?2004l";
     static final String HIDE_CURSOR = "\033[?25l";
     static final String SHOW_CURSOR = "\033[?25h";
-    static final String ENABLE_KITTY_KEYBOARD = "\033[?u";
-    static final String DISABLE_KITTY_KEYBOARD = "\033[?u";
     static final String ENABLE_MODIFY_OTHER_KEYS = "\033[>4;2m";
     static final String DISABLE_MODIFY_OTHER_KEYS = "\033[>4m";
 
     private final TerminalIo io;
     private final AutoCloseable rawMode;
     private final AutoCloseable resizeHandler;
+    private final AutoCloseable interruptHandler;
     private boolean closed;
     private int renderedRows;
 
-    private TerminalSession(TerminalIo io, AutoCloseable rawMode, AutoCloseable resizeHandler) {
+    private TerminalSession(TerminalIo io, AutoCloseable rawMode, AutoCloseable resizeHandler, AutoCloseable interruptHandler) {
         this.io = io;
         this.rawMode = rawMode;
         this.resizeHandler = resizeHandler;
+        this.interruptHandler = interruptHandler;
     }
 
     /**
@@ -50,19 +50,25 @@ public final class TerminalSession implements AutoCloseable {
     }
 
     static TerminalSession open(TerminalIo io, Runnable resizeCallback) throws IOException {
+        return open(io, resizeCallback, () -> {
+        });
+    }
+
+    static TerminalSession open(TerminalIo io, Runnable resizeCallback, Runnable interruptCallback) throws IOException {
         AutoCloseable rawMode = null;
         AutoCloseable resizeHandler = null;
+        AutoCloseable interruptHandler = null;
         try {
             rawMode = io.enterRawMode();
             resizeHandler = io.onResize(resizeCallback);
+            interruptHandler = io.onInterrupt(interruptCallback);
             io.write(ENABLE_BRACKETED_PASTE);
             io.write(HIDE_CURSOR);
-            io.write(ENABLE_KITTY_KEYBOARD);
             io.write(ENABLE_MODIFY_OTHER_KEYS);
             io.flush();
-            return new TerminalSession(io, rawMode, resizeHandler);
+            return new TerminalSession(io, rawMode, resizeHandler, interruptHandler);
         } catch (IOException | RuntimeException exception) {
-            restoreAfterOpenFailure(resizeHandler, rawMode);
+            restoreAfterOpenFailure(interruptHandler, resizeHandler, rawMode);
             throw exception;
         }
     }
@@ -79,7 +85,6 @@ public final class TerminalSession implements AutoCloseable {
         closed = true;
         try {
             io.write(DISABLE_MODIFY_OTHER_KEYS);
-            io.write(DISABLE_KITTY_KEYBOARD);
             io.write(SHOW_CURSOR);
             io.write(DISABLE_BRACKETED_PASTE);
             if (renderedRows > 0) {
@@ -88,6 +93,7 @@ public final class TerminalSession implements AutoCloseable {
             io.write("\n");
             io.flush();
         } finally {
+            closeQuietly(interruptHandler);
             closeQuietly(resizeHandler);
             rawMode.close();
         }
@@ -101,7 +107,12 @@ public final class TerminalSession implements AutoCloseable {
         }
     }
 
-    private static void restoreAfterOpenFailure(AutoCloseable resizeHandler, AutoCloseable rawMode) {
+    private static void restoreAfterOpenFailure(
+        AutoCloseable interruptHandler,
+        AutoCloseable resizeHandler,
+        AutoCloseable rawMode
+    ) {
+        closeStaticQuietly(interruptHandler);
         closeStaticQuietly(resizeHandler);
         closeStaticQuietly(rawMode);
     }

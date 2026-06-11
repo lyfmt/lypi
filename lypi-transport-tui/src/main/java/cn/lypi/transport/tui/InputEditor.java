@@ -6,11 +6,15 @@ import java.util.Deque;
 import java.util.List;
 
 final class InputEditor {
+    private static final int INPUT_PREFIX_WIDTH = 2;
+    private static final int INPUT_CURSOR_WIDTH = 1;
+
     private final StringBuilder text = new StringBuilder();
     private final Deque<EditorSnapshot> undo = new ArrayDeque<>();
     private final List<String> killRing = new ArrayList<>();
     private final HistoryRing history = new HistoryRing();
     private int cursor;
+    private int preferredColumn = -1;
     private int killCursor = -1;
     private int lastYankLength;
     private int yankIndex = -1;
@@ -30,6 +34,7 @@ final class InputEditor {
         saveUndo();
         text.insert(cursor, value);
         cursor += value.length();
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
@@ -43,28 +48,66 @@ final class InputEditor {
         saveUndo();
         text.insert(cursor, paste);
         cursor += paste.length();
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
 
     void moveLeft() {
         cursor = Math.max(0, cursor - 1);
+        preferredColumn = -1;
         clearYankState();
     }
 
     void moveRight() {
         cursor = Math.min(text.length(), cursor + 1);
+        preferredColumn = -1;
         clearYankState();
     }
 
     void moveWordLeft() {
         cursor = previousWordStart(cursor);
+        preferredColumn = -1;
         clearYankState();
     }
 
     void moveWordRight() {
         cursor = nextWordEnd(cursor);
+        preferredColumn = -1;
         clearYankState();
+    }
+
+    void moveUp() {
+        moveVertical(-1);
+    }
+
+    void moveDown() {
+        moveVertical(1);
+    }
+
+    void moveVisualUp(int width) {
+        moveVisualVertical(width, -1);
+    }
+
+    void moveVisualDown(int width) {
+        moveVisualVertical(width, 1);
+    }
+
+    boolean canMoveUp() {
+        return lineStart(cursor) > 0;
+    }
+
+    boolean canMoveDown() {
+        return lineEnd(cursor) < text.length();
+    }
+
+    boolean canMoveVisualUp(int width) {
+        return visualLineIndex(width) > 0;
+    }
+
+    boolean canMoveVisualDown(int width) {
+        List<VisualLine> lines = visualLines(width);
+        return visualLineIndex(lines) < lines.size() - 1;
     }
 
     void deletePreviousCharacter() {
@@ -74,6 +117,7 @@ final class InputEditor {
         saveUndo();
         text.delete(cursor - 1, cursor);
         cursor--;
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
@@ -132,6 +176,7 @@ final class InputEditor {
         text.setLength(0);
         text.append(snapshot.text());
         cursor = snapshot.cursor();
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
@@ -140,6 +185,7 @@ final class InputEditor {
         saveUndo();
         text.setLength(0);
         cursor = 0;
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation("");
     }
@@ -150,6 +196,7 @@ final class InputEditor {
         saveUndo();
         text.replace(0, end, replacement);
         cursor = replacement.length();
+        preferredColumn = -1;
         clearYankState();
         history.resetNavigation(text());
     }
@@ -159,10 +206,16 @@ final class InputEditor {
     }
 
     void previousHistory() {
+        if (!text.isEmpty() && !history.navigating()) {
+            return;
+        }
         history.previous(text()).ifPresent(this::replaceDraftWithoutUndo);
     }
 
     void nextHistory() {
+        if (!history.navigating()) {
+            return;
+        }
         history.next().ifPresent(this::replaceDraftWithoutUndo);
     }
 
@@ -174,6 +227,7 @@ final class InputEditor {
         String killed = text.substring(start, end).stripTrailing();
         text.delete(start, end);
         cursor = start;
+        preferredColumn = -1;
         killRing.add(killed);
         killCursor = cursor;
         lastYankLength = 0;
@@ -185,6 +239,7 @@ final class InputEditor {
         saveUndo();
         text.insert(cursor, value);
         cursor += value.length();
+        preferredColumn = -1;
         lastYankLength = value.length();
         killCursor = cursor;
         history.resetNavigation(text());
@@ -212,6 +267,127 @@ final class InputEditor {
         return index;
     }
 
+    private void moveVertical(int delta) {
+        int currentStart = lineStart(cursor);
+        int currentColumn = preferredColumn >= 0 ? preferredColumn : cursor - currentStart;
+        int targetStart;
+        if (delta < 0) {
+            if (currentStart == 0) {
+                return;
+            }
+            targetStart = lineStart(currentStart - 1);
+        } else {
+            int currentEnd = lineEnd(cursor);
+            if (currentEnd >= text.length()) {
+                return;
+            }
+            targetStart = currentEnd + 1;
+        }
+        int targetEnd = lineEnd(targetStart);
+        cursor = Math.min(targetStart + currentColumn, targetEnd);
+        preferredColumn = currentColumn;
+        clearYankState();
+    }
+
+    private void moveVisualVertical(int width, int delta) {
+        List<VisualLine> lines = visualLines(width);
+        int currentLine = visualLineIndex(lines);
+        int targetLine = currentLine + delta;
+        if (targetLine < 0 || targetLine >= lines.size()) {
+            return;
+        }
+        int currentColumn = preferredColumn >= 0 ? preferredColumn : cursorColumn(lines.get(currentLine), cursor);
+        VisualLine target = lines.get(targetLine);
+        cursor = cursorAtColumn(target, currentColumn);
+        preferredColumn = currentColumn;
+        clearYankState();
+    }
+
+    private int visualLineIndex(int width) {
+        return visualLineIndex(visualLines(width));
+    }
+
+    private int visualLineIndex(List<VisualLine> lines) {
+        for (int index = 0; index < lines.size(); index++) {
+            VisualLine line = lines.get(index);
+            if (cursor >= line.start() && cursor <= line.end()) {
+                return index;
+            }
+        }
+        return Math.max(0, lines.size() - 1);
+    }
+
+    private List<VisualLine> visualLines(int width) {
+        List<VisualLine> lines = new ArrayList<>();
+        int firstContentWidth = Math.max(1, width - INPUT_PREFIX_WIDTH - INPUT_CURSOR_WIDTH);
+        int otherContentWidth = Math.max(1, width - INPUT_CURSOR_WIDTH);
+        int lineStart = 0;
+        int lineWidth = 0;
+        boolean firstLine = true;
+
+        for (int index = 0; index < text.length();) {
+            int codePoint = text.codePointAt(index);
+            if (codePoint == '\n') {
+                lines.add(new VisualLine(lineStart, index));
+                index += Character.charCount(codePoint);
+                lineStart = index;
+                lineWidth = 0;
+                firstLine = false;
+                continue;
+            }
+
+            String chunk = new String(Character.toChars(codePoint));
+            int chunkWidth = AnsiWidth.displayWidth(chunk);
+            int availableWidth = firstLine ? firstContentWidth : otherContentWidth;
+            if (lineWidth > 0 && lineWidth + chunkWidth > availableWidth) {
+                lines.add(new VisualLine(lineStart, index));
+                lineStart = index;
+                lineWidth = 0;
+                firstLine = false;
+                availableWidth = otherContentWidth;
+            }
+            lineWidth += chunkWidth;
+            index += Character.charCount(codePoint);
+        }
+
+        lines.add(new VisualLine(lineStart, text.length()));
+        return lines;
+    }
+
+    private int cursorColumn(VisualLine line, int position) {
+        int column = 0;
+        int end = Math.min(Math.max(position, line.start()), line.end());
+        for (int index = line.start(); index < end;) {
+            int codePoint = text.codePointAt(index);
+            column += AnsiWidth.displayWidth(new String(Character.toChars(codePoint)));
+            index += Character.charCount(codePoint);
+        }
+        return column;
+    }
+
+    private int cursorAtColumn(VisualLine line, int column) {
+        int width = 0;
+        for (int index = line.start(); index < line.end();) {
+            int codePoint = text.codePointAt(index);
+            int codePointWidth = AnsiWidth.displayWidth(new String(Character.toChars(codePoint)));
+            if (width + codePointWidth > column) {
+                return index;
+            }
+            width += codePointWidth;
+            index += Character.charCount(codePoint);
+        }
+        return line.end();
+    }
+
+    private int lineStart(int from) {
+        return text.lastIndexOf("\n", Math.max(0, Math.min(from, text.length()) - 1)) + 1;
+    }
+
+    private int lineEnd(int from) {
+        int newline = text.indexOf("\n", Math.max(0, Math.min(from, text.length())));
+        return newline < 0 ? text.length() : newline;
+    }
+
     private boolean isWordChar(char value) {
         return Character.isLetterOrDigit(value) || value == '_' || value == '/' || value == '-' || value == '.';
     }
@@ -224,6 +400,7 @@ final class InputEditor {
         text.setLength(0);
         text.append(value);
         cursor = text.length();
+        preferredColumn = -1;
         clearYankState();
     }
 
@@ -244,5 +421,8 @@ final class InputEditor {
     }
 
     private record EditorSnapshot(String text, int cursor) {
+    }
+
+    private record VisualLine(int start, int end) {
     }
 }
