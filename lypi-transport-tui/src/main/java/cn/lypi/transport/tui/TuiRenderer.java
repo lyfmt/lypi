@@ -67,11 +67,14 @@ final class TuiRenderer {
         List<String> overlayLines,
         boolean toolOutputExpanded
     ) {
-        List<String> transcript = transcriptLines(view, layout.width(), toolOutputExpanded);
         InputBlock inputBlock = layoutInput(input, cursor, layout);
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
             .map(line -> AnsiWidth.truncate(line, layout.width()))
             .toList();
+        int chromeLineCount = inputBlock.lines().size() + overlay.size() + 1;
+        int transcriptLineBudget = Math.max(0, layout.height() - chromeLineCount);
+        int effectiveTranscriptBudget = toolOutputExpanded ? transcriptLineBudget : Integer.MAX_VALUE;
+        List<String> transcript = transcriptLines(view, layout.width(), toolOutputExpanded, effectiveTranscriptBudget);
         screen.setTranscript(transcript);
 
         List<String> lines = new ArrayList<>();
@@ -79,12 +82,19 @@ final class TuiRenderer {
         lines.addAll(inputBlock.lines());
         lines.addAll(overlay);
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
-        return TuiRenderFrame.transcriptOnly(lines);
+        return new TuiRenderFrame(lines, chromeLineCount);
     }
 
     private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded) {
+        return transcriptLines(blocks, width, toolOutputExpanded, Integer.MAX_VALUE);
+    }
+
+    private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded, int lineBudget) {
         List<String> lines = new ArrayList<>();
         for (int index = 0; index < blocks.size(); index++) {
+            if (lines.size() >= lineBudget) {
+                break;
+            }
             TuiBlock block = blocks.get(index);
             if (block instanceof TuiToolBlock tool
                 && !toolOutputExpanded
@@ -97,7 +107,7 @@ final class TuiRenderer {
                     group.add(nextTool);
                     index++;
                 }
-                lines.addAll(readLikeToolSummaryLines(group, width));
+                appendWithinBudget(lines, readLikeToolSummaryLines(group, width), lineBudget);
                 continue;
             }
             String text = switch (block) {
@@ -108,17 +118,17 @@ final class TuiRenderer {
             };
             if (block instanceof TuiMessageBlock message) {
                 if ("user".equalsIgnoreCase(message.role())) {
-                    lines.addAll(styledLines(prefixedLines("user: ", message.content(), width), USER_MESSAGE));
+                    appendWithinBudget(lines, styledLines(prefixedLines("user: ", message.content(), width), USER_MESSAGE), lineBudget);
                 } else {
-                    lines.addAll(markdownRenderer.render(message.content(), width));
+                    appendWithinBudget(lines, markdownRenderer.render(message.content(), width), lineBudget);
                 }
             } else if (block instanceof TuiToolBlock tool) {
-                lines.addAll(toolLines(tool, width, toolOutputExpanded));
+                appendWithinBudget(lines, toolLines(tool, width, toolOutputExpanded, remainingBudget(lines, lineBudget)), lineBudget);
             } else if (block instanceof TuiThinkingBlock thinking) {
                 String content = thinking.collapsed() ? "collapsed" : thinking.content();
-                lines.addAll(styledLines(prefixedLines("thinking: ", content, width), THINKING_MESSAGE));
+                appendWithinBudget(lines, styledLines(prefixedLines("thinking: ", content, width), THINKING_MESSAGE), lineBudget);
             } else {
-                lines.addAll(wrap(text, width));
+                appendWithinBudget(lines, wrap(text, width), lineBudget);
             }
         }
         return lines;
@@ -135,23 +145,23 @@ final class TuiRenderer {
         return wrap("tools: " + summary + " (Ctrl+O details)", width);
     }
 
-    private List<String> transcriptLines(TuiViewModel view, int width, boolean toolOutputExpanded) {
-        List<String> lines = transcriptLines(view.blocks(), width, toolOutputExpanded);
+    private List<String> transcriptLines(TuiViewModel view, int width, boolean toolOutputExpanded, int lineBudget) {
+        List<String> lines = transcriptLines(view.blocks(), width, toolOutputExpanded, lineBudget);
         view.permissionPrompt().ifPresent(prompt -> {
-            lines.addAll(wrap("permission " + prompt.toolUseId() + ": " + prompt.reason(), width));
+            appendWithinBudget(lines, wrap("permission " + prompt.toolUseId() + ": " + prompt.reason(), width), lineBudget);
             if (!prompt.rule().isBlank()) {
-                lines.addAll(wrap("rule: " + prompt.rule(), width));
+                appendWithinBudget(lines, wrap("rule: " + prompt.rule(), width), lineBudget);
             }
             for (PermissionOption option : prompt.options()) {
                 String prefix = option.optionId().equals(prompt.selectedOptionId()) ? "> " : "  ";
-                lines.addAll(wrap(prefix + optionLabel(option), width));
+                appendWithinBudget(lines, wrap(prefix + optionLabel(option), width), lineBudget);
             }
         });
         view.diffView().ifPresent(diff -> new DiffOverlay(diff)
             .lines()
-            .forEach(line -> lines.addAll(wrap(line, width))));
+            .forEach(line -> appendWithinBudget(lines, wrap(line, width), lineBudget)));
         if (view.runtimeLine() != null && !view.runtimeLine().isBlank()) {
-            lines.addAll(wrap("· " + view.runtimeLine(), width));
+            appendWithinBudget(lines, wrap("· " + view.runtimeLine(), width), lineBudget);
         }
         return lines;
     }
@@ -162,18 +172,35 @@ final class TuiRenderer {
     }
 
     private List<String> toolLines(TuiToolBlock tool, int width, boolean toolOutputExpanded) {
+        return toolLines(tool, width, toolOutputExpanded, Integer.MAX_VALUE);
+    }
+
+    private List<String> toolLines(TuiToolBlock tool, int width, boolean toolOutputExpanded, int lineBudget) {
         List<String> lines = new ArrayList<>();
-        ToolDisplayModel model = toolDisplayRenderers.render(tool, toolOutputExpanded);
-        lines.addAll(wrap(model.title(), width));
+        int detailLineLimit = Math.max(0, lineBudget - 1);
+        ToolDisplayModel model = toolDisplayRenderers.render(tool, toolOutputExpanded, detailLineLimit);
+        appendWithinBudget(lines, wrap(model.title(), width), lineBudget);
         for (String summaryLine : model.summaryLines()) {
             if (!summaryLine.isBlank()) {
-                lines.addAll(wrap("  " + summaryLine, width));
+                appendWithinBudget(lines, wrap("  " + summaryLine, width), lineBudget);
             }
         }
         for (String detailLine : model.previewLines()) {
-            lines.addAll(wrap("  " + detailLine, width));
+            appendWithinBudget(lines, wrap("  " + detailLine, width), lineBudget);
         }
         return lines;
+    }
+
+    private int remainingBudget(List<String> lines, int lineBudget) {
+        return Math.max(0, lineBudget - lines.size());
+    }
+
+    private void appendWithinBudget(List<String> target, List<String> source, int lineBudget) {
+        if (target.size() >= lineBudget) {
+            return;
+        }
+        int remaining = lineBudget - target.size();
+        target.addAll(source.subList(0, Math.min(remaining, source.size())));
     }
 
     private List<String> prefixedLines(String prefix, String content, int width) {

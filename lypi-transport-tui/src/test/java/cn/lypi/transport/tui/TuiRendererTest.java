@@ -662,6 +662,46 @@ class TuiRendererTest {
     }
 
     @Test
+    void expandedToolOutputIsBoundedByAvailableTerminalRows() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(12);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:bash",
+                "msg_1",
+                "toolu_bash",
+                "bash",
+                TuiToolState.DONE,
+                "mvn test",
+                String.join("\n", java.util.stream.IntStream.rangeClosed(1, 60)
+                    .mapToObj(index -> "stdout: line " + index)
+                    .toList()),
+                false
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.renderFrame(
+            view,
+            screen,
+            new TuiLayout(80, 12),
+            "draft",
+            5,
+            List.of("> /model", "  /resume"),
+            true
+        ).lines();
+
+        assertTrue(lines.size() <= 12, "expanded tool output should not exceed terminal height");
+        assertTrue(lines.stream().anyMatch(line -> line.contains("more lines") || line.contains("earlier lines")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("> draft")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("> /model")));
+        assertTrue(lines.getLast().contains("ses_1"));
+    }
+
+    @Test
     void slashOverlayRendersBelowInputBlock() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(2);
