@@ -157,6 +157,14 @@ public final class BashTool extends AbstractFileTool {
         if (result.metadata() != null && !result.metadata().executorName().isBlank()) {
             builder.append("\nexecutor=").append(result.metadata().executorName());
             builder.append("\nsandboxed=").append(result.metadata().sandboxed());
+            if (result.metadata().sandboxDenied()) {
+                builder.append("\nsandboxDenied=true");
+            }
+            if (result.metadata().sandboxUnavailable()) {
+                builder.append("\nsandboxUnavailable=true");
+            }
+            result.metadata().retryWith().ifPresent(retryWith -> builder.append("\nretryWith=").append(retryWith));
+            result.metadata().retryHint().ifPresent(retryHint -> builder.append("\nretryHint=").append(retryHint));
             result.metadata().diagnostic().ifPresent(diagnostic -> builder.append("\ndiagnostic=").append(diagnostic));
         }
         if (result.stdout() != null && !result.stdout().isBlank()) {

@@ -9,6 +9,7 @@ import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
+import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -42,6 +43,22 @@ class ExecutorRegistryTest {
         ExecutionResult result = registry.execute(request(policy()), progress -> {
         }, () -> false);
 
+        assertEquals(0, host.calls);
+        assertEquals(0, sandbox.calls);
+        assertEquals("executor-registry", result.metadata().executorName());
+        assertEquals(true, result.metadata().sandboxUnavailable());
+        assertEquals("sandboxPermissions=requireEscalated", result.metadata().retryWith().orElseThrow());
+    }
+
+    @Test
+    void routesApprovedEscalatedRequestsToHostExecutor() {
+        RecordingExecutor host = new RecordingExecutor("host");
+        RecordingExecutor sandbox = new RecordingExecutor("bubblewrap");
+        ExecutorRegistry registry = new ExecutorRegistry(host, sandbox, true);
+
+        ExecutionResult result = registry.execute(escalatedRequest(policy()), progress -> {
+        }, () -> false);
+
         assertEquals(1, host.calls);
         assertEquals(0, sandbox.calls);
         assertEquals("host", result.metadata().executorName());
@@ -54,6 +71,18 @@ class ExecutorRegistryTest {
             Map.of(),
             Duration.ofSeconds(1),
             policy
+        );
+    }
+
+    private ExecutionRequest escalatedRequest(SandboxRuntimePolicy policy) {
+        return new ExecutionRequest(
+            List.of("bash", "-lc", "true"),
+            Path.of("."),
+            Map.of(),
+            Duration.ofSeconds(1),
+            policy,
+            SandboxPermissions.REQUIRE_ESCALATED,
+            Optional.of("Need host execution.")
         );
     }
 

@@ -44,7 +44,7 @@ import java.util.function.Supplier;
 /**
  * 使用系统 Bubblewrap 执行命令。
  *
- * NOTE: 第一版依赖系统 bwrap；默认不可用或启动失败时回退宿主执行器，策略要求时拒绝执行。
+ * NOTE: 第一版依赖系统 bwrap；默认不可用或启动失败时返回失败，模型可显式请求沙箱提权重试。
  */
 public final class BubblewrapExecutor implements Executor {
     private static final int POLICY_VIOLATION_EXIT_CODE = 1;
@@ -111,7 +111,7 @@ public final class BubblewrapExecutor implements Executor {
                 new BubblewrapCommandBuilder.Options(mountProc)
             );
         } catch (IllegalArgumentException exception) {
-            return policyRejected(exception);
+            return policyRejected(exception.getMessage());
         }
         java.util.ArrayList<String> executableArgv = new java.util.ArrayList<>(buildResult.argv());
         executableArgv.set(0, bwrapPath.orElseThrow().toString());
@@ -120,7 +120,9 @@ public final class BubblewrapExecutor implements Executor {
             request.cwd(),
             request.env(),
             timeout(request),
-            request.sandboxPolicy()
+            request.sandboxPolicy(),
+            request.sandboxPermissions(),
+            request.justification()
         );
         ProtectedCreateLease protectedCreateLease = PROTECTED_CREATE_COORDINATOR.acquire(buildResult.protectedCreateTargets());
         ProtectedCreateMonitor protectedCreateMonitor = startProtectedCreateMonitor(protectedCreateLease.paths());
@@ -148,15 +150,15 @@ public final class BubblewrapExecutor implements Executor {
             .withMetadata(ExecutionMetadata.sandboxed(name()));
     }
 
-    private ExecutionResult policyRejected(IllegalArgumentException exception) {
-        String diagnostic = "bubblewrap policy rejected: " + exception.getMessage();
+    private ExecutionResult policyRejected(String message) {
+        String diagnostic = "bubblewrap policy rejected: " + message;
         return new ExecutionResult(
             POLICY_REJECTED_EXIT_CODE,
             "",
             diagnostic,
             false,
             Optional.empty(),
-            ExecutionMetadata.unsandboxed(name(), diagnostic)
+            ExecutionMetadata.sandboxDenied(name(), diagnostic)
         );
     }
 
@@ -493,11 +495,7 @@ public final class BubblewrapExecutor implements Executor {
     }
 
     private ExecutionResult handleUnavailable(ExecutionRequest request, ProgressSink progress, AbortSignal signal, String diagnostic) {
-        if (failIfUnavailable(request)) {
-            return sandboxUnavailableFailure(diagnostic);
-        }
-        return hostExecutor.execute(request, progress, signal)
-            .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), diagnostic + "; fell back to host"));
+        return sandboxUnavailableFailure(diagnostic);
     }
 
     private ExecutionResult handleExecutionFailure(
@@ -512,16 +510,7 @@ public final class BubblewrapExecutor implements Executor {
         if (result.timedOut()) {
             return result.withMetadata(ExecutionMetadata.unsandboxed(name(), "bubblewrap execution timed out"));
         }
-        if (failIfUnavailable(request)) {
-            return sandboxUnavailableFailure(executionFailureDiagnostic(result));
-        }
-        return hostExecutor.execute(request, progress, signal)
-            .withMetadata(ExecutionMetadata.unsandboxed(hostExecutor.name(), executionFailureDiagnostic(result) + "; fell back to host"));
-    }
-
-    private boolean failIfUnavailable(ExecutionRequest request) {
-        SandboxRuntimePolicy policy = request.sandboxPolicy();
-        return policy != null && policy.failIfUnavailable();
+        return sandboxUnavailableFailure(executionFailureDiagnostic(result));
     }
 
     private ExecutionResult sandboxUnavailableFailure(String diagnostic) {
@@ -531,7 +520,7 @@ public final class BubblewrapExecutor implements Executor {
             diagnostic,
             false,
             Optional.empty(),
-            ExecutionMetadata.unsandboxed(name(), diagnostic)
+            ExecutionMetadata.sandboxUnavailable(name(), diagnostic)
         );
     }
 
@@ -659,7 +648,15 @@ public final class BubblewrapExecutor implements Executor {
         command.add("lypi-bwrap-wrapper");
         command.add(sentinel);
         command.addAll(request.command());
-        return new ExecutionRequest(List.copyOf(command), request.cwd(), request.env(), request.timeout(), request.sandboxPolicy());
+        return new ExecutionRequest(
+            List.copyOf(command),
+            request.cwd(),
+            request.env(),
+            request.timeout(),
+            request.sandboxPolicy(),
+            request.sandboxPermissions(),
+            request.justification()
+        );
     }
 
     private boolean sandboxStarted(ExecutionResult result, String sentinel) {

@@ -9,6 +9,7 @@ import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
+import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
@@ -102,6 +103,23 @@ class BashToolTest {
             Optional.of("Need host access to inspect local process state."),
             executor.request.get().justification()
         );
+    }
+
+    @Test
+    void rendersSandboxRetryHintFromExecutionMetadata() {
+        ExecutionMetadata metadata = ExecutionMetadata.sandboxUnavailable(
+            "bubblewrap",
+            "bubblewrap unavailable"
+        );
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(126, "", "denied", false, Optional.empty(), metadata));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+
+        ToolResult<String> result = tool.execute(Map.of("command", "id"), context(Map.of()), message -> {
+        });
+
+        assertTrue(result.output().contains("sandboxUnavailable=true"));
+        assertTrue(result.output().contains("retryWith=sandboxPermissions=requireEscalated"));
+        assertTrue(result.output().contains("retryHint="));
     }
 
     @Test
