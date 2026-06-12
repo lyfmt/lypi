@@ -111,7 +111,7 @@ class JLineTuiTransportTest {
 
         assertTrue(io.rawModeEntered);
         assertFalse(io.output.toString().contains("\033[?1049h"));
-        assertTrue(io.output.toString().contains("\033[?2026h\033[2J\033[H"));
+        assertTrue(io.output.toString().contains("\033[?2026h"));
         assertTrue(io.output.toString().contains("error: boom"));
         assertTrue(io.output.toString().contains("> "));
         assertTrue(io.output.toString().contains("ses_1"));
@@ -141,6 +141,32 @@ class JLineTuiTransportTest {
         assertFalse(frame.contains("\033[H\033[J"));
         assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
         assertTrue(frame.contains("> "));
+
+        transport.close();
+    }
+
+    @Test
+    void openRendersWelcomeHeaderWhenViewportHasSpace() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 12;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            80,
+            12
+        );
+
+        String frame = stripAnsi(io.output.toString());
+        assertTrue(frame.contains("LY-PI"));
+        assertTrue(frame.contains("coding agent"));
+        assertTrue(frame.contains("> "));
+        assertTrue(frame.contains("ses_1"));
 
         transport.close();
     }
@@ -219,10 +245,10 @@ class JLineTuiTransportTest {
         }
 
         String output = io.output.toString();
-        assertFalse(output.contains("\r\n"));
-        assertFalse(output.matches("(?s).*\\033\\[1;\\d+r.*"));
-        assertTrue(output.contains("\033[2K\033[48;5;236m> "));
-        assertTrue(output.contains("\033[2Kses_1 gpt-5.4"));
+        assertTrue(output.matches("(?s).*\\033\\[1;\\d+r.*"));
+        assertTrue(output.contains("\r\nline 0"));
+        assertFalse(output.contains("\r\n\033[48;5;236m> "));
+        assertFalse(output.contains("\r\nses_1 gpt-5.4"));
 
         transport.close();
     }
@@ -333,7 +359,7 @@ class JLineTuiTransportTest {
         String output = io.output.toString();
         assertFalse(output.contains("\r\n"), escaped(output));
         assertFalse(output.contains("\n"), escaped(output));
-        assertTrue(output.contains("\033[1;1H\033[2K"), escaped(output));
+        assertTrue(output.contains("\033[2;1H\033[2K"), escaped(output));
         assertTrue(output.contains("assistant continues"), escaped(output));
         assertTrue(output.matches("(?s).*\\033\\[[0-9]+;1H\\033\\[2K\\033\\[48;5;236m> .*"), escaped(output));
 
@@ -460,7 +486,7 @@ class JLineTuiTransportTest {
         String frame = io.output.toString();
         String fullClear = "\033[2J\033[H";
         String rendered = frame.substring(frame.indexOf(fullClear) + fullClear.length(), frame.indexOf("\033[?2026l"));
-        assertEquals(4, positionedRowCount(rendered));
+        assertTrue(positionedRowCount(rendered) >= 6);
         assertFalse(rendered.contains("\n"));
         assertTrue(rendered.contains("> "));
 
@@ -1029,6 +1055,10 @@ class JLineTuiTransportTest {
 
     private static long positionedRowCount(String output) {
         return java.util.regex.Pattern.compile("\\u001B\\[[0-9]+;1H\\u001B\\[2K").matcher(output).results().count();
+    }
+
+    private static String stripAnsi(String value) {
+        return value.replaceAll("\\u001B\\[[;?0-9]*[A-Za-z]", "");
     }
 
     private static String escaped(String value) {

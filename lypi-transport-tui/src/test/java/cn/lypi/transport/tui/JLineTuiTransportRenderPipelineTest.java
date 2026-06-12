@@ -623,6 +623,139 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
+    void finalizedMessageCommitsToScrollbackAndLeavesLiveViewport() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            TestRuntimeStates.basic("ses_1"),
+            events,
+            io,
+            new QueueInputSource(),
+            submit,
+            40,
+            5
+        );
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "final assistant text",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+
+        String output = io.output.toString();
+        assertTrue(output.contains("\033[1;"));
+        assertTrue(output.contains("\r\nfinal assistant text"));
+        assertFalse(output.contains("\033[1;1H\033[2Kfinal assistant text"));
+        assertFalse(output.contains("\033[2;1H\033[2Kfinal assistant text"));
+        assertFalse(output.contains("\033[3;1H\033[2Kfinal assistant text"));
+        assertFalse(output.contains("\033[4;1H\033[2Kfinal assistant text"));
+        assertFalse(output.contains("\033[5;1H\033[2Kfinal assistant text"));
+        transport.close();
+    }
+
+    @Test
+    void finalizedUserMessageCommitsToScrollbackAndLeavesLiveViewport() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            TestRuntimeStates.basic("ses_1"),
+            events,
+            io,
+            new QueueInputSource(),
+            submit,
+            40,
+            8
+        );
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            "block_user",
+            ContentBlockKind.TEXT,
+            "show files",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+
+        String output = io.output.toString();
+        assertTrue(output.contains("\033[1;"));
+        assertTrue(output.contains("\r\n"));
+        assertTrue(stripAnsi(output).contains("user: show files"));
+        assertFalse(output.contains("\033[1;1H\033[2K\033[38;5;81muser: show files"));
+        assertFalse(output.contains("\033[2;1H\033[2K\033[38;5;81muser: show files"));
+        assertFalse(output.contains("\033[3;1H\033[2K\033[38;5;81muser: show files"));
+        assertFalse(output.contains("\033[4;1H\033[2K\033[38;5;81muser: show files"));
+        assertFalse(output.contains("\033[5;1H\033[2K\033[38;5;81muser: show files"));
+        assertFalse(output.contains("\033[6;1H\033[2K\033[38;5;81muser: show files"));
+        assertFalse(output.contains("\033[7;1H\033[2K\033[38;5;81muser: show files"));
+        assertFalse(output.contains("\033[8;1H\033[2K\033[38;5;81muser: show files"));
+        transport.close();
+    }
+
+    @Test
+    void viewportMovedByHistoryInsertIsReusedByNextLiveRender() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            TestRuntimeStates.basic("ses_1"),
+            events,
+            io,
+            new QueueInputSource(),
+            submit,
+            40,
+            8
+        );
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "final assistant text",
+            true,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_2",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_2",
+            ContentBlockKind.TEXT,
+            "streaming",
+            false,
+            java.util.Map.of(),
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+
+        String output = io.output.toString();
+        assertTrue(output.contains("\033[4;1H\033[2Kstreaming"), output);
+        assertFalse(output.contains("\033[5;1H\033[2Kstreaming"), output);
+        transport.close();
+    }
+
+    @Test
     void interruptSignalInterruptsRunningToolWhenDraftIsEmpty() throws Exception {
         RecordingEventBus events = new RecordingEventBus();
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
@@ -778,5 +911,9 @@ class JLineTuiTransportRenderPipelineTest {
         void triggerInterrupt() {
             interruptCallback.run();
         }
+    }
+
+    private static String stripAnsi(String value) {
+        return value.replaceAll("\\u001B\\[[;?0-9]*[A-Za-z]", "");
     }
 }

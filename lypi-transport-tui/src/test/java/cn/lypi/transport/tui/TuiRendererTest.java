@@ -28,6 +28,20 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class TuiRendererTest {
+    @Test
+    void renderTranscriptBlocksDoesNotIncludeBottomUi() {
+        TuiRenderer renderer = new TuiRenderer();
+
+        List<String> lines = renderer.renderTranscriptBlocks(
+            List.of(new TuiMessageBlock("a1", "m1", "assistant", "hello", false)),
+            80,
+            false,
+            Integer.MAX_VALUE
+        );
+
+        assertEquals(List.of("hello"), lines);
+    }
+
     private static final String INPUT_BACKGROUND = "\033[48;5;236m";
     private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
     private static final String ANSI_RESET = "\033[0m";

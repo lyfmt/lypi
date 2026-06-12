@@ -16,12 +16,15 @@ import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
+import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import org.jline.terminal.Terminal;
 
@@ -42,6 +45,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final TerminalInputPump inputPump;
     private final TuiInputLoop inputLoop;
     private final TuiRenderOptions renderOptions;
+    private final TuiBlockPartitioner blockPartitioner;
+    private final TerminalHistoryWriter historyWriter;
+    private final Set<String> committedHistoryBlockIds = new LinkedHashSet<>();
+    private TuiViewportArea viewportArea;
     private final TerminalSession terminalSession;
     private final DiffViewProvider diffViewProvider;
     private SessionRuntimeState runtimeState;
@@ -61,6 +68,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputPump = null;
         this.inputLoop = null;
         this.renderOptions = new TuiRenderOptions();
+        this.blockPartitioner = new TuiBlockPartitioner();
+        this.historyWriter = null;
+        this.viewportArea = null;
         this.terminalSession = null;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.runtimeState = null;
@@ -82,6 +92,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputPump = null;
         this.inputLoop = null;
         this.renderOptions = new TuiRenderOptions();
+        this.blockPartitioner = new TuiBlockPartitioner();
+        this.historyWriter = null;
+        this.viewportArea = null;
         this.terminalSession = terminalSession;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.runtimeState = null;
@@ -100,6 +113,36 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         ResumeSessionController resumeController,
         Supplier<SkillIndex> skillIndexSupplier
     ) {
+        this(
+            frameSink,
+            width,
+            height,
+            state,
+            inputSource,
+            submitHandler,
+            terminalSession,
+            null,
+            slashPickerSupplier,
+            diffViewProvider,
+            resumeController,
+            skillIndexSupplier
+        );
+    }
+
+    private JLineTuiTransport(
+        FrameSink frameSink,
+        int width,
+        int height,
+        SessionRuntimeState state,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        TerminalSession terminalSession,
+        TerminalHistoryWriter historyWriter,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
+        Supplier<SkillIndex> skillIndexSupplier
+    ) {
         this.renderer = null;
         this.reducer = TuiEventReducer.fromRuntimeState(state);
         this.tuiRenderer = new TuiRenderer();
@@ -109,13 +152,16 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.layout = new TuiLayout(safeWidth, safeHeight);
         this.frameSink = frameSink;
         this.renderOptions = new TuiRenderOptions();
+        this.blockPartitioner = new TuiBlockPartitioner();
+        this.historyWriter = historyWriter;
+        this.viewportArea = TuiViewportArea.bottomAligned(this.layout.height(), 1);
         this.inputLoop = new TuiInputLoop(
             submitHandler,
             frameSink,
             tuiRenderer,
             screen,
             layout,
-            reducer::view,
+            this::liveView,
             slashPickerSupplier,
             resumeController,
             this::resumeRuntimeState,
@@ -615,6 +661,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             }
         });
         TerminalFrameRenderer frameRenderer = TerminalFrameRenderer.withStartupPadding(io, session::updateRenderedRows);
+        TerminalHistoryWriter historyWriter = new TerminalHistoryWriter(io);
         FrameSink frameSink = new FrameSink() {
             @Override
             public void render(List<String> lines) {
@@ -624,7 +671,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             @Override
             public void render(TuiRenderFrame frame) {
                 try {
-                    frameRenderer.render(frame);
+                    TuiViewportArea viewportArea = holder[0] == null
+                        ? TuiViewportArea.bottomAligned(io.height(), frame.lines().size())
+                        : holder[0].viewportAreaForFrame(frame.lines().size());
+                    frameRenderer.renderInArea(frame, viewportArea.topRow(), viewportArea.height());
                 } catch (IOException exception) {
                     throw new UncheckedIOException(exception);
                 }
@@ -638,6 +688,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             inputSource,
             submitHandler,
             session,
+            historyWriter,
             slashPickerSupplier,
             diffViewProvider,
             resumeController,
@@ -851,6 +902,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             int safeHeight = safeHeight(height);
             screen = new TuiScreen(Math.max(1, safeHeight - 2));
             layout = new TuiLayout(safeWidth, safeHeight);
+            viewportArea = null;
             if (inputLoop != null) {
                 inputLoop.updateViewport(screen, layout);
             }
@@ -870,15 +922,117 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private void renderCurrentFrame() {
         TuiViewModel view = reducer.view();
         syncInputLoopToolState(view);
-        frameSink.render(tuiRenderer.renderFrame(
-            view,
+        TuiBlockPartition partition = historyWriter == null ? null : blockPartitioner.partition(view.blocks());
+        boolean hasNewFinalizedHistory = partition != null && hasNewFinalizedHistory(partition.finalizedBlocks());
+        TuiViewModel preCommitFrameView = partition == null ? view : liveView(view, partition);
+        TuiRenderFrame preCommitFrame = tuiRenderer.renderFrame(
+            preCommitFrameView,
             screen,
             layout,
             currentDraft(),
             currentCursor(),
             List.of(),
             renderOptions.toolOutputExpanded()
+        );
+        TuiRenderFrame frame = tuiRenderer.renderFrame(
+            committedFilteredView(view),
+            screen,
+            layout,
+            currentDraft(),
+            currentCursor(),
+            List.of(),
+            renderOptions.toolOutputExpanded()
+        );
+        if (partition != null) {
+            boolean reserveHistoryRegion = !committedHistoryBlockIds.isEmpty() || hasNewFinalizedHistory;
+            TuiViewportArea area = viewportAreaForFrame(preCommitFrame.lines().size(), reserveHistoryRegion);
+            commitNewFinalizedHistory(partition.finalizedBlocks(), area);
+            frame = tuiRenderer.renderFrame(
+                committedFilteredView(view),
+                screen,
+                layout,
+                currentDraft(),
+                currentCursor(),
+                List.of(),
+                renderOptions.toolOutputExpanded()
+            );
+        }
+        frameSink.render(frame);
+    }
+
+    private TuiViewportArea viewportAreaForFrame(int frameLineCount) {
+        return viewportAreaForFrame(frameLineCount, historyWriter != null && !committedHistoryBlockIds.isEmpty());
+    }
+
+    private TuiViewportArea viewportAreaForFrame(int frameLineCount, boolean reserveHistoryRegion) {
+        TuiViewportArea computed = reserveHistoryRegion
+            ? TuiViewportArea.bottomAligned(layout.height(), frameLineCount, true)
+            : TuiViewportArea.fullScreen(layout.height());
+        if (viewportArea == null || computed.height() != viewportArea.height() || computed.bottomRow() != viewportArea.bottomRow()) {
+            viewportArea = computed;
+        }
+        return viewportArea;
+    }
+
+    private TuiViewModel liveView() {
+        return liveView(reducer.view());
+    }
+
+    private TuiViewModel liveView(TuiViewModel view) {
+        if (historyWriter == null) {
+            return view;
+        }
+        TuiBlockPartition partition = blockPartitioner.partition(view.blocks());
+        return liveView(view, partition);
+    }
+
+    private TuiViewModel liveView(TuiViewModel view, TuiBlockPartition partition) {
+        return committedFilteredView(new TuiViewModel(
+            partition.liveBlocks(),
+            view.statusBar(),
+            view.runtimeLine(),
+            view.files(),
+            view.permissionPrompt(),
+            view.diffView()
         ));
+    }
+
+    private TuiViewModel committedFilteredView(TuiViewModel view) {
+        if (committedHistoryBlockIds.isEmpty()) {
+            return view;
+        }
+        return new TuiViewModel(
+            view.blocks().stream()
+                .filter(block -> !committedHistoryBlockIds.contains(block.blockId()))
+                .toList(),
+            view.statusBar(),
+            view.runtimeLine(),
+            view.files(),
+            view.permissionPrompt(),
+            view.diffView()
+        );
+    }
+
+    private boolean hasNewFinalizedHistory(List<TuiBlock> finalizedBlocks) {
+        return finalizedBlocks.stream().anyMatch(block -> !committedHistoryBlockIds.contains(block.blockId()));
+    }
+
+    private void commitNewFinalizedHistory(List<TuiBlock> finalizedBlocks, TuiViewportArea viewportArea) {
+        List<TuiBlock> newBlocks = finalizedBlocks.stream()
+            .filter(block -> !committedHistoryBlockIds.contains(block.blockId()))
+            .toList();
+        if (newBlocks.isEmpty()) {
+            return;
+        }
+        List<String> lines = tuiRenderer.renderTranscriptBlocks(newBlocks, layout.width(), false, Integer.MAX_VALUE);
+        if (!lines.isEmpty()) {
+            try {
+                this.viewportArea = historyWriter.insertAboveViewport(lines, viewportArea);
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+        }
+        newBlocks.forEach(block -> committedHistoryBlockIds.add(block.blockId()));
     }
 
     private void refreshDiffAfterToolEnd(AgentEvent event) {

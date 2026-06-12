@@ -24,6 +24,8 @@ final class TerminalFrameRenderer {
     private List<String> previousLines = List.of();
     private int previousWidth;
     private int previousHeight;
+    private int previousTopRow = 1;
+    private int previousAreaHeight;
     private int maxLinesRendered;
     private int previousViewportTop;
     private int hardwareCursorRow;
@@ -52,63 +54,69 @@ final class TerminalFrameRenderer {
     }
 
     void render(TuiRenderFrame renderFrame) throws IOException {
+        renderInArea(renderFrame, 1, io.height());
+    }
+
+    void renderInArea(TuiRenderFrame renderFrame, int topRow, int areaHeight) throws IOException {
         int width = io.width();
-        int height = io.height();
+        int height = Math.max(1, areaHeight);
+        int boundedTopRow = Math.max(1, Math.min(Math.max(1, io.height()), topRow));
         List<String> rawLines = renderFrame.lines();
-        if (startupPaddingEnabled && startupPaddingLineCount < 0) {
+        if (startupPaddingEnabled && (startupPaddingLineCount < 0 || previousAreaHeight != 0 && previousAreaHeight != height)) {
             startupPaddingLineCount = Math.max(0, height - rawLines.size());
         }
         CursorFrame frame = stripCursor(withStartupPadding(rawLines));
         List<String> newLines = frame.lines();
         boolean widthChanged = previousWidth != 0 && previousWidth != width;
         boolean heightChanged = previousHeight != 0 && previousHeight != height;
+        boolean areaChanged = previousTopRow != boundedTopRow || previousAreaHeight != 0 && previousAreaHeight != height;
         int viewportTop = viewportTopFor(newLines, height);
 
-        if (previousLines.isEmpty() && !widthChanged && !heightChanged) {
-            writeFullFrame(newLines, frame.cursor(), startupPaddingEnabled, viewportTop, height);
-            updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height));
+        if (previousLines.isEmpty() && !widthChanged && !heightChanged && !areaChanged) {
+            writeFullFrame(newLines, frame.cursor(), startupPaddingEnabled, viewportTop, height, boundedTopRow);
+            updateState(newLines, width, height, boundedTopRow, viewportTop, physicalBottomRow(newLines, viewportTop, height, boundedTopRow));
             return;
         }
 
-        if (widthChanged || heightChanged) {
+        if (widthChanged || heightChanged || areaChanged) {
             logFullRedraw("terminal size changed");
-            writeFullFrame(newLines, frame.cursor(), true, viewportTop, height);
-            updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height));
+            writeFullFrame(newLines, frame.cursor(), true, viewportTop, height, boundedTopRow);
+            updateState(newLines, width, height, boundedTopRow, viewportTop, physicalBottomRow(newLines, viewportTop, height, boundedTopRow));
             return;
         }
 
         if (newLines.size() < previousLines.size()) {
             viewportTop = Math.max(0, newLines.size() - height);
-            writeShrinkPatch(newLines, frame.cursor(), viewportTop, height);
-            updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height));
+            writeShrinkPatch(newLines, frame.cursor(), viewportTop, height, boundedTopRow);
+            updateState(newLines, width, height, boundedTopRow, viewportTop, physicalBottomRow(newLines, viewportTop, height, boundedTopRow));
             io.flush();
             return;
         }
 
         int firstChanged = firstChangedLine(newLines);
         if (firstChanged < 0) {
-            moveCursor(frame.cursor(), previousViewportTop, height);
-            updateState(newLines, width, height, previousViewportTop, hardwareCursorRow);
+            moveCursor(frame.cursor(), previousViewportTop, height, boundedTopRow);
+            updateState(newLines, width, height, boundedTopRow, previousViewportTop, hardwareCursorRow);
             return;
         }
 
         int previousContentViewportTop = Math.max(0, previousLines.size() - height);
         if (firstChanged < previousContentViewportTop) {
             logFullRedraw("first changed line above previous viewport");
-            writeFullFrame(newLines, frame.cursor(), true, viewportTop, height);
-            updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height));
+            writeFullFrame(newLines, frame.cursor(), true, viewportTop, height, boundedTopRow);
+            updateState(newLines, width, height, boundedTopRow, viewportTop, physicalBottomRow(newLines, viewportTop, height, boundedTopRow));
             return;
         }
 
         if (viewportTop != previousViewportTop) {
-            writeShrinkPatch(newLines, frame.cursor(), viewportTop, height);
-            updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height));
+            writeShrinkPatch(newLines, frame.cursor(), viewportTop, height, boundedTopRow);
+            updateState(newLines, width, height, boundedTopRow, viewportTop, physicalBottomRow(newLines, viewportTop, height, boundedTopRow));
             io.flush();
             return;
         }
 
-        writePatch(newLines, frame.cursor(), firstChanged, lastChangedLine(newLines), previousViewportTop, height);
-        updateState(newLines, width, height, previousViewportTop, hardwareCursorRow);
+        writePatch(newLines, frame.cursor(), firstChanged, lastChangedLine(newLines), previousViewportTop, height, boundedTopRow);
+        updateState(newLines, width, height, boundedTopRow, previousViewportTop, hardwareCursorRow);
         io.flush();
     }
 
@@ -117,15 +125,16 @@ final class TerminalFrameRenderer {
         java.util.Optional<CursorPosition> cursor,
         boolean clear,
         int viewportTop,
-        int height
+        int height,
+        int topRow
     ) throws IOException {
         if (clear) {
             io.write(SYNC_START);
-            io.write(FULL_CLEAR);
+            clearArea(topRow, height);
         }
-        writeVisibleRows(visibleLines(lines, viewportTop, height));
-        hardwareCursorRow = physicalBottomRow(lines, viewportTop, height);
-        moveCursor(cursor, viewportTop, height);
+        writeVisibleRows(visibleLines(lines, viewportTop, height), topRow);
+        hardwareCursorRow = physicalBottomRow(lines, viewportTop, height, topRow);
+        moveCursor(cursor, viewportTop, height, topRow);
         if (clear) {
             io.write(SYNC_END);
         }
@@ -138,20 +147,21 @@ final class TerminalFrameRenderer {
         int firstChanged,
         int lastChanged,
         int viewportTop,
-        int height
+        int height,
+        int topRow
     ) throws IOException {
         io.write(SYNC_START);
         for (int i = firstChanged; i <= Math.min(lastChanged, lines.size() - 1); i++) {
             if (!visibleLogicalRow(i + 1, viewportTop, height)) {
                 continue;
             }
-            int physicalRow = physicalRow(i + 1, viewportTop, height);
+            int physicalRow = physicalRow(i + 1, viewportTop, height, topRow);
             io.write("\033[" + physicalRow + ";1H");
             io.write("\033[2K");
             writeLine(lines.get(i));
             hardwareCursorRow = physicalRow;
         }
-        moveCursor(cursor, viewportTop, height);
+        moveCursor(cursor, viewportTop, height, topRow);
         io.write(SYNC_END);
     }
 
@@ -159,13 +169,14 @@ final class TerminalFrameRenderer {
         List<String> lines,
         java.util.Optional<CursorPosition> cursor,
         int viewportTop,
-        int height
+        int height,
+        int topRow
     ) throws IOException {
         io.write(SYNC_START);
         List<String> visible = visibleLines(lines, viewportTop, height);
         for (int row = 0; row < Math.max(previousHeight, height); row++) {
-            int physicalRow = row + 1;
-            if (physicalRow > Math.max(1, height)) {
+            int physicalRow = topRow + row;
+            if (row >= Math.max(1, height)) {
                 break;
             }
             io.write("\033[" + physicalRow + ";1H");
@@ -175,7 +186,7 @@ final class TerminalFrameRenderer {
                 hardwareCursorRow = physicalRow;
             }
         }
-        moveCursor(cursor, viewportTop, height);
+        moveCursor(cursor, viewportTop, height, topRow);
         io.write(SYNC_END);
     }
 
@@ -204,11 +215,15 @@ final class TerminalFrameRenderer {
     }
 
     private void moveCursor(java.util.Optional<CursorPosition> cursor, int viewportTop, int height) throws IOException {
+        moveCursor(cursor, viewportTop, height, 1);
+    }
+
+    private void moveCursor(java.util.Optional<CursorPosition> cursor, int viewportTop, int height, int topRow) throws IOException {
         if (cursor.isEmpty()) {
             return;
         }
         CursorPosition position = cursor.orElseThrow();
-        int physicalRow = physicalRow(position.row(), viewportTop, height);
+        int physicalRow = physicalRow(position.row(), viewportTop, height, topRow);
         io.write("\033[" + physicalRow + ";" + position.column() + "H");
         hardwareCursorRow = physicalRow;
     }
@@ -217,16 +232,19 @@ final class TerminalFrameRenderer {
         List<String> lines,
         int width,
         int height,
+        int topRow,
         int viewportTop,
         int currentCursorRow
     ) {
         previousLines = List.copyOf(lines);
         previousWidth = width;
         previousHeight = height;
+        previousTopRow = topRow;
+        previousAreaHeight = height;
         maxLinesRendered = Math.max(maxLinesRendered, lines.size());
         previousViewportTop = Math.max(0, viewportTop);
         hardwareCursorRow = Math.max(1, currentCursorRow);
-        renderedRows.accept(physicalBottomRow(lines, previousViewportTop, height));
+        renderedRows.accept(physicalBottomRow(lines, previousViewportTop, height, topRow));
     }
 
     private int viewportTopFor(List<String> lines, int height) {
@@ -234,12 +252,21 @@ final class TerminalFrameRenderer {
     }
 
     private int physicalBottomRow(List<String> lines, int viewportTop, int height) {
-        return physicalRow(Math.max(1, lines.size()), viewportTop, height);
+        return physicalBottomRow(lines, viewportTop, height, 1);
+    }
+
+    private int physicalBottomRow(List<String> lines, int viewportTop, int height, int topRow) {
+        return physicalRow(Math.max(1, lines.size()), viewportTop, height, topRow);
     }
 
     private int physicalRow(int logicalRow, int viewportTop, int height) {
-        int physicalRow = logicalRow - viewportTop;
-        return Math.max(1, Math.min(Math.max(1, height), physicalRow));
+        return physicalRow(logicalRow, viewportTop, height, 1);
+    }
+
+    private int physicalRow(int logicalRow, int viewportTop, int height, int topRow) {
+        int physicalRow = topRow + logicalRow - viewportTop - 1;
+        int bottomRow = topRow + Math.max(1, height) - 1;
+        return Math.max(topRow, Math.min(bottomRow, physicalRow));
     }
 
     private boolean visibleLogicalRow(int logicalRow, int viewportTop, int height) {
@@ -319,9 +346,20 @@ final class TerminalFrameRenderer {
         return " ".repeat((width - lineWidth) / 2) + line;
     }
 
-    private void writeVisibleRows(List<String> lines) throws IOException {
+    private void clearArea(int topRow, int height) throws IOException {
+        if (topRow == 1 && height >= io.height()) {
+            io.write(FULL_CLEAR);
+            return;
+        }
+        for (int row = 0; row < height; row++) {
+            io.write("\033[" + (topRow + row) + ";1H");
+            io.write("\033[2K");
+        }
+    }
+
+    private void writeVisibleRows(List<String> lines, int topRow) throws IOException {
         for (int index = 0; index < lines.size(); index++) {
-            io.write("\033[" + (index + 1) + ";1H");
+            io.write("\033[" + (topRow + index) + ";1H");
             io.write("\033[2K");
             writeLine(lines.get(index));
         }

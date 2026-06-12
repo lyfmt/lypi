@@ -89,6 +89,10 @@ final class TuiRenderer {
         return transcriptLines(blocks, width, toolOutputExpanded, Integer.MAX_VALUE);
     }
 
+    List<String> renderTranscriptBlocks(List<TuiBlock> blocks, int width, boolean toolOutputExpanded, int lineBudget) {
+        return transcriptLines(blocks, width, toolOutputExpanded, lineBudget);
+    }
+
     private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded, int lineBudget) {
         List<String> lines = new ArrayList<>();
         for (int index = 0; index < blocks.size(); index++) {
