@@ -335,6 +335,96 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void bypassPermissionModeAllowsExplicitSandboxEscalationWithoutPrompt() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("should not ask");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "text", "done",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host access."
+            ), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+    }
+
+    @Test
+    void defaultExecuteAsksForExplicitSandboxEscalationWithUserJustification() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            requestedDecision.set(decision);
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "text", "done",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host access."
+            ), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+        assertTrue(requestedDecision.get().message().contains("沙箱提权执行"));
+        assertTrue(requestedDecision.get().message().contains("Need host access."));
+    }
+
+    @Test
+    void acceptEditsAsksForExplicitSandboxEscalation() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            requestedDecision.set(decision);
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "text", "done",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host access."
+            ), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ACCEPT_EDITS)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+    }
+
+    @Test
+    void sandboxEscalationDeniedByUserReturnsPermissionError() {
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.deny("user denied escalation");
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "text", "done",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host access."
+            ), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("user denied escalation"));
+    }
+
+    @Test
     void permissionGateDenyPreventsToolExecutionForToolAskDecision() {
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.deny("user denied");

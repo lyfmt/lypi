@@ -61,6 +61,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final SecurityRuntimePort securityRuntime;
     private final PermissionGate permissionGate;
     private final ToolExecutionEventPublisher eventPublisher;
+    private final SandboxEscalationPolicy sandboxEscalationPolicy;
     private final int maxConcurrency;
 
     public DefaultToolRuntime(SecurityRuntimePort securityRuntime) {
@@ -266,6 +267,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.securityRuntime = Objects.requireNonNull(securityRuntime, "securityRuntime must not be null");
         this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
         this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
+        this.sandboxEscalationPolicy = new SandboxEscalationPolicy();
         this.maxConcurrency = normalizedOptions.maxConcurrency();
     }
 
@@ -495,6 +497,10 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
             PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
             PermissionDecision effectiveDecision = effectiveDecision(toolDecision, securityDecision);
+            Optional<PermissionDecision> sandboxEscalationDecision = sandboxEscalationPolicy.decide(request, toolContext);
+            if (sandboxEscalationDecision.isPresent()) {
+                effectiveDecision = effectiveDecision(sandboxEscalationDecision.get(), effectiveDecision);
+            }
             if (isDeny(effectiveDecision)) {
                 finalResult = permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(effectiveDecision)));
                 return finalResult;
