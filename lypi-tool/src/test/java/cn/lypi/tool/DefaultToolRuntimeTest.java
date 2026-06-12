@@ -313,10 +313,10 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void defaultSandboxBashRiskAskSkipsUserApprovalAndExecutesInSandboxPath() {
+    void defaultSandboxBashNonDangerousRiskAskSkipsUserApprovalAndExecutesInSandboxPath() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
-        SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.DESTRUCTIVE, "rm -f 洗车店.md");
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.HIGH, "git push");
         PermissionGate gate = (request, tool, context, decision) -> {
             gateCalls.incrementAndGet();
             return PermissionGateResult.deny("should not ask before sandbox");
@@ -331,6 +331,160 @@ class DefaultToolRuntimeTest {
 
         assertFalse(result.isError());
         assertEquals(0, gateCalls.get());
+        assertEquals(1, executeCalls.get());
+    }
+
+    @Test
+    void defaultExecuteDeniesDangerousDefaultBashBeforeGateAndExecutor() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.DESTRUCTIVE, "rm -f 洗车店.md");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertSandboxRetryHint(result);
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, executeCalls.get());
+    }
+
+    @Test
+    void defaultExecuteDeniesSudoDangerousDefaultBashBeforeGateAndExecutor() {
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.HIGH, "sudo rm -f 洗车店.md");
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertSandboxRetryHint(result);
+        assertEquals(0, executeCalls.get());
+    }
+
+    @Test
+    void defaultExecuteDeniesShellLcDangerousDefaultBashBeforeGateAndExecutor() {
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(
+            BashRiskLevel.UNKNOWN,
+            "bash -lc \"echo hi && rm -rf target\""
+        );
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertSandboxRetryHint(result);
+        assertEquals(0, executeCalls.get());
+    }
+
+    @Test
+    void defaultExecuteDoesNotDenyNonCodexDangerousDefaultBash() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.DESTRUCTIVE, "rm 洗车店.md");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("should not ask before sandbox");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "sandbox"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executeCalls.get());
+    }
+
+    @Test
+    void acceptEditsDeniesDefaultBashBeforeGateAndExecutor() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ACCEPT_EDITS)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertSandboxRetryHint(result);
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, executeCalls.get());
+    }
+
+    @Test
+    void bypassDoesNotApplyDefaultBashRiskPolicy() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.DESTRUCTIVE, "rm -f 洗车店.md");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("should not ask");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "bypass"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executeCalls.get());
+    }
+
+    @Test
+    void requireEscalatedBashSkipsDefaultBashRiskPolicyAndAsksUser() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.DESTRUCTIVE, "rm -f 洗车店.md");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            requestedDecision.set(decision);
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "text", "host",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "用户明确要求删除当前目录下的文件。"
+            ), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+        assertTrue(requestedDecision.get().message().contains("沙箱提权执行"));
+        assertTrue(requestedDecision.get().message().contains("用户明确要求删除当前目录下的文件。"));
         assertEquals(1, executeCalls.get());
     }
 
@@ -1230,6 +1384,13 @@ class DefaultToolRuntimeTest {
 
     private BashRiskAnalysis bashRisk(PermissionDecision decision) {
         return (BashRiskAnalysis) decision.metadata().get("bashRisk");
+    }
+
+    private void assertSandboxRetryHint(ToolResult<?> result) {
+        String text = result.newMessages().getFirst().content().getFirst().text();
+        assertTrue(text.contains("sandboxDenied=true"));
+        assertTrue(text.contains("retryWith=sandboxPermissions=requireEscalated"));
+        assertTrue(text.contains("retryHint=provide a user-facing justification"));
     }
 
     private List<AgentEvent> lifecycleEvents(RecordingEventBus events) {

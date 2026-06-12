@@ -64,6 +64,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final PermissionGate permissionGate;
     private final ToolExecutionEventPublisher eventPublisher;
     private final SandboxEscalationPolicy sandboxEscalationPolicy;
+    private final BashSandboxRiskPolicy bashSandboxRiskPolicy;
     private final int maxConcurrency;
 
     public DefaultToolRuntime(SecurityRuntimePort securityRuntime) {
@@ -270,6 +271,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
         this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
         this.sandboxEscalationPolicy = new SandboxEscalationPolicy();
+        this.bashSandboxRiskPolicy = new BashSandboxRiskPolicy();
         this.maxConcurrency = normalizedOptions.maxConcurrency();
     }
 
@@ -508,7 +510,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             }
             Optional<PermissionDecision> sandboxEscalationDecision = sandboxEscalationPolicy.decide(request, toolContext);
             if (sandboxEscalationDecision.isPresent()) {
-                effectiveDecision = effectiveDecision(sandboxEscalationDecision.get(), effectiveDecision);
+                effectiveDecision = effectiveDecision(isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"), sandboxEscalationDecision.get());
+            } else {
+                Optional<PermissionDecision> bashSandboxRiskDecision = bashSandboxRiskPolicy.decide(request, toolContext, securityDecision);
+                if (bashSandboxRiskDecision.isPresent()) {
+                    effectiveDecision = bashSandboxRiskDecision.get();
+                }
             }
             if (isDeny(effectiveDecision)) {
                 finalResult = permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(effectiveDecision)));
