@@ -540,6 +540,39 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(events).singleElement().isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
     }
 
+    @Test
+    void disablesPreviousResponseIdAfterProviderReportsWebSocketV2Only() throws Exception {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.fail(
+            "Provider HTTP 400: previous_response_id is only supported on Responses WebSocket v2"
+        );
+        RecordingTransport chat = RecordingTransport.events(
+            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"fallback\"}}]}",
+            "[DONE]"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS),
+            websocket,
+            sse,
+            chat
+        );
+        AiStreamOptions options = new AiStreamOptions("ses_main");
+
+        collect(adapter.stream(contextWithProviderConversationState(), descriptor(), AiProviderRuntimePort.emptyTools(), options, () -> false));
+        collect(adapter.stream(contextWithProviderConversationState(), descriptor(), AiProviderRuntimePort.emptyTools(), options, () -> false));
+
+        assertThat(sse.requests).hasSize(2);
+        JsonNode firstRequest = OBJECT_MAPPER.readTree(sse.requests.get(0).body());
+        JsonNode secondRequest = OBJECT_MAPPER.readTree(sse.requests.get(1).body());
+        assertThat(firstRequest.get("previous_response_id").asText()).isEqualTo("resp-123");
+        assertThat(firstRequest.get("input")).hasSize(1);
+        assertThat(secondRequest.get("previous_response_id")).isNull();
+        assertThat(secondRequest.get("prompt_cache_key").asText()).isEqualTo("ses_main");
+        assertThat(secondRequest.get("input")).hasSize(3);
+        assertThat(secondRequest.at("/input/0/content/0/text").asText()).isEqualTo("first");
+        assertThat(secondRequest.at("/input/2/content/0/text").asText()).isEqualTo("follow up");
+    }
+
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {
         return config(transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS);
     }
@@ -608,6 +641,53 @@ class OpenAiCompatibleProviderAdapterTest {
                 Optional.empty(),
                 Optional.empty()
             )),
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
+        );
+    }
+
+    private static ContextSnapshot contextWithProviderConversationState() {
+        return new ContextSnapshot(
+            new SystemPrompt("system", List.of("test"), "hash"),
+            List.of(
+                new AgentMessage(
+                    "msg-user-1",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("first")),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                new AgentMessage(
+                    "msg-assistant-1",
+                    MessageRole.ASSISTANT,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock(
+                        "answer",
+                        Map.of("providerConversationState", Map.of(
+                            "provider", "openai",
+                            "style", "responses",
+                            "previousResponseId", "resp-123"
+                        ))
+                    )),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                new AgentMessage(
+                    "msg-user-2",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("follow up")),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                )
+            ),
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,

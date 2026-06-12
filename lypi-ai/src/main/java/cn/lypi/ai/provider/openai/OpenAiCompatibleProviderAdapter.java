@@ -24,9 +24,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, ApiProvider {
     private final OpenAiProviderConfig config;
@@ -36,6 +38,7 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
     private final ProviderFallbackDecider fallbackDecider;
     private final OpenAiResponsesRequestBuilder responsesRequestBuilder;
     private final OpenAiChatCompletionsRequestBuilder chatCompletionsRequestBuilder;
+    private final AtomicBoolean responsesSsePreviousStateEnabled = new AtomicBoolean(true);
 
     public OpenAiCompatibleProviderAdapter(
         OpenAiProviderConfig config,
@@ -186,7 +189,12 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
             }
             if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
-                attempts.add(new OpenAiStreamAttempt(responsesSseTransport, responsesSseRequest(request), normalizer));
+                attempts.add(new OpenAiStreamAttempt(
+                    responsesSseTransport,
+                    responsesSseRequest(request),
+                    normalizer,
+                    this::observeResponsesSseFailure
+                ));
             }
             return;
         }
@@ -204,8 +212,17 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
     }
 
     private ProviderRequest responsesSseRequest(LypiModelRequest request) {
-        ObjectNode body = responsesRequestBuilder.build(request, config);
+        OpenAiResponsesRequestOptions options = OpenAiResponsesRequestOptions
+            .withPreviousResponseState(responsesSsePreviousStateEnabled.get());
+        ObjectNode body = responsesRequestBuilder.build(request, config, options);
         return new ProviderRequest(endpoint("responses"), headers(), body.toString(), java.util.Optional.of(config.timeout()));
+    }
+
+    private void observeResponsesSseFailure(RuntimeException exception) {
+        String message = exception.getMessage() == null ? "" : exception.getMessage().toLowerCase(Locale.ROOT);
+        if (message.contains("previous_response_id") && message.contains("responses websocket v2")) {
+            responsesSsePreviousStateEnabled.set(false);
+        }
     }
 
     private ProviderRequest chatCompletionsRequest(LypiModelRequest request) {

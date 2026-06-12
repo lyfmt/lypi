@@ -227,6 +227,9 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
 
     private void handleAttemptFailure(RuntimeException exception) {
         closeCurrentProviderStream();
+        if (attemptIndex < attempts.size()) {
+            currentAttempt().observeFailure(exception);
+        }
         if (signal.aborted()) {
             aborted = true;
             return;
