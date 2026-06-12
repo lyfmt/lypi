@@ -8,6 +8,8 @@
 # 5. 不要把真实 API Key、访问令牌、私有 URL 写入仓库；敏感值统一通过环境变量注入。
 #
 # NOTE: 运行 cwd 由启动请求和运行时默认值决定，不建议写入 application.yml。
+# NOTE: 本地项目状态统一放在 <cwd>/.ly-pi；其中 sessions/ 保存会话 JSONL，
+# mailbox/ 保存 subagent mailbox JSONL，资源配置也使用 .ly-pi 下的目录和文件。
 
 # lypi:
 #   runtime:

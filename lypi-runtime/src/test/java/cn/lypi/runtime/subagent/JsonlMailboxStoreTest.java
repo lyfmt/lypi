@@ -43,7 +43,7 @@ class JsonlMailboxStoreTest {
         assertThat(store.read("ses_parent", Set.of(MailboxStatus.STASHED)))
             .containsExactly(stashed);
         assertThat(store.read("ses_parent", Set.of(MailboxStatus.PENDING))).isEmpty();
-        assertThat(Files.readAllLines(tempDir.resolve(".lypi").resolve("mailbox").resolve("ses_parent.jsonl")))
+        assertThat(Files.readAllLines(tempDir.resolve(".ly-pi").resolve("mailbox").resolve("ses_parent.jsonl")))
             .hasSize(2);
     }
 

@@ -23,7 +23,7 @@ public final class JsonlMailboxStore {
     private final ObjectMapper objectMapper;
 
     public JsonlMailboxStore(Path cwd) {
-        this.mailboxDir = cwd.resolve(".lypi").resolve("mailbox").toAbsolutePath().normalize();
+        this.mailboxDir = cwd.resolve(".ly-pi").resolve("mailbox").toAbsolutePath().normalize();
         objectMapper = new ObjectMapper();
         objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);

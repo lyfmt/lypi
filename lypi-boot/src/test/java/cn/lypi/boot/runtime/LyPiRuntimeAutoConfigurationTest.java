@@ -370,7 +370,7 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(core.request.get().userInput()).isEqualTo("hello");
                 assertThat(core.request.get().abortSignal().aborted()).isFalse();
                 assertThat(core.request.get().maxToolRounds()).isEqualTo(TurnRequest.DEFAULT_MAX_TOOL_ROUNDS);
-                assertThat(tempDir.resolve(".lypi/sessions/session-app-entry.jsonl")).exists();
+                assertThat(tempDir.resolve(".ly-pi/sessions/session-app-entry.jsonl")).exists();
             });
     }
 
@@ -436,7 +436,7 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(launcher.state.get().sessionId()).matches("session_[0-9a-f]{32}");
                 assertThat(launcher.state.get().sessionId()).isNotEqualTo("default");
                 assertThat(core.request.get()).isNull();
-                assertThat(tempDir.resolve(".lypi/sessions")).doesNotExist();
+                assertThat(tempDir.resolve(".ly-pi/sessions")).doesNotExist();
             });
     }
 
@@ -455,7 +455,7 @@ class LyPiRuntimeAutoConfigurationTest {
                 SessionRuntimeState state = context.getBean(SessionRuntimeState.class);
 
                 assertThat(state.sessionId()).isEqualTo("default");
-                assertThat(tempDir.resolve(".lypi/sessions/default.jsonl")).exists();
+                assertThat(tempDir.resolve(".ly-pi/sessions/default.jsonl")).exists();
             });
     }
 
