@@ -92,7 +92,7 @@ class TerminalFrameRendererTest {
     }
 
     @Test
-    void appendsTailLinesWithoutHomeAndClear() throws Exception {
+    void tailGrowthPatchesByAbsoluteRowsWithoutNaturalNewline() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
@@ -100,7 +100,7 @@ class TerminalFrameRendererTest {
         io.output.setLength(0);
         renderer.render(List.of("hello", "new line"));
 
-        assertEquals("\nnew line", io.output.toString());
+        assertEquals("\033[?2026h\033[2;1H\033[2Knew line\033[?2026l", io.output.toString());
         assertFalse(io.output.toString().contains("\033[H\033[J"));
     }
 

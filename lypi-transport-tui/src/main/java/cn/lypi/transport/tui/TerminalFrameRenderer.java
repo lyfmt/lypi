@@ -100,21 +100,6 @@ final class TerminalFrameRenderer {
             return;
         }
 
-        boolean appendOnly = newLines.size() > previousLines.size()
-            && firstChanged == previousLines.size()
-            && viewportTop == previousViewportTop;
-        if (appendOnly) {
-            for (int i = firstChanged; i < newLines.size(); i++) {
-                io.write("\n");
-                writeLine(newLines.get(i));
-            }
-            hardwareCursorRow = physicalBottomRow(newLines, viewportTop, height);
-            moveCursor(frame.cursor(), viewportTop, height);
-            updateState(newLines, width, height, viewportTop, hardwareCursorRow);
-            io.flush();
-            return;
-        }
-
         if (viewportTop != previousViewportTop) {
             writeShrinkPatch(newLines, frame.cursor(), viewportTop, height);
             updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height));

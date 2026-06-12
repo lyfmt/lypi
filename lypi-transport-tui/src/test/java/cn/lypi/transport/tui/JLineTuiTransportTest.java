@@ -225,6 +225,57 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void openPipelinePatchesStreamingGrowthWithoutNaturalNewlineAfterCursorMove() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 8;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            80,
+            8
+        );
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            cn.lypi.contracts.context.MessageRole.ASSISTANT,
+            cn.lypi.contracts.context.MessageKind.TEXT,
+            "block_1",
+            cn.lypi.contracts.context.ContentBlockKind.TEXT,
+            "line 1",
+            false,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        io.output.setLength(0);
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            cn.lypi.contracts.context.MessageRole.ASSISTANT,
+            cn.lypi.contracts.context.MessageKind.TEXT,
+            "block_1",
+            cn.lypi.contracts.context.ContentBlockKind.TEXT,
+            "\nline 2",
+            false,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+
+        String output = io.output.toString();
+        assertFalse(output.startsWith("\n"), escaped(output));
+        assertFalse(output.contains("\nline 2"), escaped(output));
+        assertTrue(output.matches("(?s).*\\033\\[[0-9]+;1H\\033\\[2Kline 2.*"), escaped(output));
+
+        transport.close();
+    }
+
+    @Test
     void closeAfterOverflowMovesPromptBelowPhysicalViewport() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 3;
@@ -908,5 +959,9 @@ class JLineTuiTransportTest {
         public int height() {
             return 4;
         }
+    }
+
+    private static String escaped(String value) {
+        return value.replace("\033", "\\e").replace("\r", "\\r").replace("\n", "\\n");
     }
 }
