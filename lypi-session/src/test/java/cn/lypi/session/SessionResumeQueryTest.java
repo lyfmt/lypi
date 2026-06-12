@@ -13,6 +13,7 @@ import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.tui.SessionResumeInfo;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -163,6 +164,26 @@ class SessionResumeQueryTest {
             .orElseThrow();
         assertThat(child.parentSessionPath())
             .contains(tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_parent.jsonl").toAbsolutePath().normalize());
+    }
+
+    @Test
+    void sessionsSkipUnreadableSessionFiles() throws Exception {
+        SessionManager good = new SessionManagerImpl(tempDir);
+        good.openOrCreate("ses_good");
+        good.append(new MessageEntry("entry_good", null, message("msg_good", MessageRole.USER, "good", NEWER), NEWER));
+        Path badFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_bad.jsonl");
+        Files.createDirectories(badFile.getParent());
+        Files.writeString(
+            badFile,
+            """
+            {"type":"session","version":1,"id":"ses_bad","cwd":"%s","parentSessionId":null,"parentSpawnEntryId":null,"depth":0,"agentName":null,"agentRole":null,"timestamp":"2026-06-10T00:00:00Z","initialModel":null,"initialThinkingLevel":null,"initialAgentMode":null,"initialPermissionMode":null}
+            {"type":"mode_change","id":"bad_mode","parentId":null,"agentMode":"BYPASS","reason":"/mode bypass","timestamp":"2026-06-10T00:00:01Z"}
+            """.formatted(tempDir.toString().replace("\\", "\\\\"))
+        );
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).extracting(SessionResumeInfo::sessionId).containsExactly("ses_good");
     }
 
     private AgentMessage message(String id, MessageRole role, String text, Instant timestamp) {
