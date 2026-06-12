@@ -18,6 +18,7 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantEventStream;
@@ -594,7 +595,7 @@ class OpenAiCompatibleProviderAdapterTest {
         );
 
         List<AssistantStreamEvent> events = collect(adapter.stream(
-            contextWithPendingToolResult(),
+            contextWithProviderConversationState(),
             descriptor(),
             AiProviderRuntimePort.emptyTools(),
             new AiStreamOptions("ses_main"),
@@ -606,12 +607,48 @@ class OpenAiCompatibleProviderAdapterTest {
         JsonNode firstRequest = OBJECT_MAPPER.readTree(sse.requests.get(0).body());
         JsonNode secondRequest = OBJECT_MAPPER.readTree(sse.requests.get(1).body());
         assertThat(firstRequest.get("previous_response_id").asText()).isEqualTo("resp-123");
-        assertThat(firstRequest.at("/input/0/type").asText()).isEqualTo("function_call_output");
+        assertThat(firstRequest.at("/input/0/content/0/text").asText()).isEqualTo("follow up");
         assertThat(secondRequest.get("previous_response_id")).isNull();
         assertThat(secondRequest.get("prompt_cache_key").asText()).isEqualTo("ses_main");
-        assertThat(secondRequest.findValuesAsText("type")).doesNotContain("function_call_output");
-        assertThat(secondRequest.findValuesAsText("text")).contains("inspect project", "tool call", "contents");
+        assertThat(secondRequest.findValuesAsText("text")).contains("first", "answer", "follow up");
         assertThat(chat.requests).isEmpty();
+    }
+
+    @Test
+    void fallsBackToChatCompletionsWhenResponsesSseRejectsPreviousStateForPendingToolResult() throws Exception {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.fail(
+            "Provider HTTP 400: previous_response_id is only supported on Responses WebSocket v2"
+        );
+        RecordingTransport chat = RecordingTransport.events(
+            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"done\"}}]}",
+            "[DONE]"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS),
+            websocket,
+            sse,
+            chat
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(
+            contextWithPendingToolResult(),
+            descriptor(),
+            AiProviderRuntimePort.emptyTools(),
+            new AiStreamOptions("ses_main"),
+            () -> false
+        ));
+
+        assertThat(events).contains(new TextDelta("done"), new AssistantDone(Optional.empty(), Optional.of("stop")));
+        assertThat(sse.requests).hasSize(1);
+        assertThat(chat.requests).hasSize(1);
+        JsonNode chatRequest = OBJECT_MAPPER.readTree(chat.requests.getFirst().body());
+        assertThat(chatRequest.at("/messages/2/role").asText()).isEqualTo("assistant");
+        assertThat(chatRequest.at("/messages/2/tool_calls/0/id").asText()).isEqualTo("call-1");
+        assertThat(chatRequest.at("/messages/3/role").asText()).isEqualTo("tool");
+        assertThat(chatRequest.at("/messages/3/tool_call_id").asText()).isEqualTo("call-1");
+        assertThat(chatRequest.at("/messages/3/content").asText()).isEqualTo("contents");
+        assertThat(chatRequest.get("prompt_cache_key").asText()).isEqualTo("ses_main");
     }
 
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {
@@ -754,13 +791,18 @@ class OpenAiCompatibleProviderAdapterTest {
                     "msg-assistant-1",
                     MessageRole.ASSISTANT,
                     MessageKind.TOOL_CALL,
-                    List.of(new TextContentBlock(
-                        "tool call",
-                        Map.of("providerConversationState", Map.of(
-                            "provider", "openai",
-                            "style", "responses",
-                            "previousResponseId", "resp-123"
-                        ))
+                    List.of(new ToolCallContentBlock(
+                        "call-1",
+                        "read",
+                        "",
+                        Map.of(
+                            "input", Map.of("path", "AGENTS.md"),
+                            "providerConversationState", Map.of(
+                                "provider", "openai",
+                                "style", "responses",
+                                "previousResponseId", "resp-123"
+                            )
+                        )
                     )),
                     Instant.EPOCH,
                     Optional.empty(),
