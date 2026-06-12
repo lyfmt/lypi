@@ -2,7 +2,7 @@ package cn.lypi.ai.provider.openai;
 
 record OpenAiResponsesRequestOptions(
     boolean previousResponseStateEnabled,
-    boolean replayToolInteractionsAsText
+    boolean replayToolInteractionsAsProtocolItems
 ) {
     static OpenAiResponsesRequestOptions defaults() {
         return withPreviousResponseState(true);

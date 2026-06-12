@@ -615,15 +615,14 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     @Test
-    void fallsBackToChatCompletionsWhenResponsesSseRejectsPreviousStateForPendingToolResult() throws Exception {
+    void retriesResponsesSseWithProtocolToolItemsWhenPreviousStateRejectedForPendingToolResult() throws Exception {
         RecordingTransport websocket = RecordingTransport.events();
-        RecordingTransport sse = RecordingTransport.fail(
-            "Provider HTTP 400: previous_response_id is only supported on Responses WebSocket v2"
+        RecordingTransport sse = RecordingTransport.failOnceThenEvents(
+            "Provider HTTP 400: previous_response_id is only supported on Responses WebSocket v2",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"done\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-2\"}}"
         );
-        RecordingTransport chat = RecordingTransport.events(
-            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"done\"}}]}",
-            "[DONE]"
-        );
+        RecordingTransport chat = RecordingTransport.events();
         OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
             config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS),
             websocket,
@@ -640,27 +639,26 @@ class OpenAiCompatibleProviderAdapterTest {
         ));
 
         assertThat(events).contains(new TextDelta("done"), new AssistantDone(Optional.empty(), Optional.of("stop")));
-        assertThat(sse.requests).hasSize(1);
-        assertThat(chat.requests).hasSize(1);
-        JsonNode chatRequest = OBJECT_MAPPER.readTree(chat.requests.getFirst().body());
-        assertThat(chatRequest.at("/messages/2/role").asText()).isEqualTo("assistant");
-        assertThat(chatRequest.at("/messages/2/tool_calls/0/id").asText()).isEqualTo("call-1");
-        assertThat(chatRequest.at("/messages/3/role").asText()).isEqualTo("tool");
-        assertThat(chatRequest.at("/messages/3/tool_call_id").asText()).isEqualTo("call-1");
-        assertThat(chatRequest.at("/messages/3/content").asText()).isEqualTo("contents");
-        assertThat(chatRequest.get("prompt_cache_key").asText()).isEqualTo("ses_main");
+        assertThat(sse.requests).hasSize(2);
+        assertThat(chat.requests).isEmpty();
+        JsonNode retryRequest = OBJECT_MAPPER.readTree(sse.requests.get(1).body());
+        assertThat(retryRequest.get("previous_response_id")).isNull();
+        assertThat(retryRequest.at("/input/1/type").asText()).isEqualTo("function_call");
+        assertThat(retryRequest.at("/input/1/call_id").asText()).isEqualTo("call-1");
+        assertThat(retryRequest.at("/input/2/type").asText()).isEqualTo("function_call_output");
+        assertThat(retryRequest.at("/input/2/call_id").asText()).isEqualTo("call-1");
+        assertThat(retryRequest.at("/input/2/output").asText()).isEqualTo("contents");
     }
 
     @Test
-    void appendsChatFallbackForPendingToolResultWhenConfiguredFallbackStyleIsResponses() throws Exception {
+    void retriesResponsesSseWithProtocolToolItemsWhenConfiguredFallbackStyleIsResponses() throws Exception {
         RecordingTransport websocket = RecordingTransport.events();
-        RecordingTransport sse = RecordingTransport.fail(
-            "Provider HTTP 400: previous_response_id is only supported on Responses WebSocket v2"
+        RecordingTransport sse = RecordingTransport.failOnceThenEvents(
+            "Provider HTTP 400: previous_response_id is only supported on Responses WebSocket v2",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"done\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-2\"}}"
         );
-        RecordingTransport chat = RecordingTransport.events(
-            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"done\"}}]}",
-            "[DONE]"
-        );
+        RecordingTransport chat = RecordingTransport.events();
         OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
             config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.RESPONSES),
             websocket,
@@ -677,12 +675,13 @@ class OpenAiCompatibleProviderAdapterTest {
         ));
 
         assertThat(events).contains(new TextDelta("done"), new AssistantDone(Optional.empty(), Optional.of("stop")));
-        assertThat(sse.requests).hasSize(1);
-        assertThat(chat.requests).hasSize(1);
-        JsonNode chatRequest = OBJECT_MAPPER.readTree(chat.requests.getFirst().body());
-        assertThat(chatRequest.at("/messages/2/tool_calls/0/id").asText()).isEqualTo("call-1");
-        assertThat(chatRequest.at("/messages/3/role").asText()).isEqualTo("tool");
-        assertThat(chatRequest.at("/messages/3/tool_call_id").asText()).isEqualTo("call-1");
+        assertThat(sse.requests).hasSize(2);
+        assertThat(chat.requests).isEmpty();
+        JsonNode retryRequest = OBJECT_MAPPER.readTree(sse.requests.get(1).body());
+        assertThat(retryRequest.get("previous_response_id")).isNull();
+        assertThat(retryRequest.at("/input/1/type").asText()).isEqualTo("function_call");
+        assertThat(retryRequest.at("/input/2/type").asText()).isEqualTo("function_call_output");
+        assertThat(retryRequest.at("/input/2/output").asText()).isEqualTo("contents");
     }
 
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {

@@ -406,7 +406,7 @@ class OpenAiResponsesRequestBuilderTest {
     }
 
     @Test
-    void serializesPendingToolResultAsPlainTextWhenPreviousStateIsDisabled() {
+    void serializesToolInteractionsAsResponsesItemsWhenPreviousStateIsDisabled() {
         LypiModelRequest request = new LypiModelRequest(
             "req-tool-cache-disabled",
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
@@ -415,7 +415,12 @@ class OpenAiResponsesRequestBuilderTest {
             List.of(
                 new LypiMessage(
                     LypiRole.ASSISTANT,
-                    List.of(new LypiTextBlock("tool call", Map.of())),
+                    List.of(new LypiToolCallBlock(
+                        "call-1",
+                        "read",
+                        "",
+                        Map.of("input", Map.of("path", "AGENTS.md"))
+                    )),
                     Map.of("messageId", "msg-assistant-1")
                 ),
                 new LypiMessage(
@@ -441,8 +446,14 @@ class OpenAiResponsesRequestBuilderTest {
             .build(request, config(), OpenAiResponsesRequestOptions.fallbackWithoutPreviousResponseState());
 
         assertThat(body.get("previous_response_id")).isNull();
-        assertThat(body.findValuesAsText("type")).doesNotContain("function_call_output");
-        assertThat(body.findValuesAsText("text")).contains("tool call", "tool output");
+        assertThat(body.get("input")).hasSize(2);
+        assertThat(body.at("/input/0/type").asText()).isEqualTo("function_call");
+        assertThat(body.at("/input/0/call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/input/0/name").asText()).isEqualTo("read");
+        assertThat(body.at("/input/0/arguments").asText()).isEqualTo("{\"path\":\"AGENTS.md\"}");
+        assertThat(body.at("/input/1/type").asText()).isEqualTo("function_call_output");
+        assertThat(body.at("/input/1/call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/input/1/output").asText()).isEqualTo("tool output");
     }
 
     @Test

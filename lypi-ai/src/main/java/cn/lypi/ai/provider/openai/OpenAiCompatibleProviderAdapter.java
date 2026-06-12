@@ -8,7 +8,6 @@ import cn.lypi.ai.provider.ProviderTransport;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.ai.spec.ContextSnapshotRequestFactory;
 import cn.lypi.ai.spec.LypiModelRequest;
-import cn.lypi.ai.spec.LypiToolResultBlock;
 import cn.lypi.ai.spec.LypiToolSpec;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.ContextSnapshot;
@@ -179,15 +178,6 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         if (config.fallbackRequestStyle() != config.requestStyle()) {
             addAttemptsForStyle(attempts, request, config.fallbackRequestStyle());
         }
-        if (
-            config.requestStyle() == cn.lypi.ai.provider.RequestStyle.RESPONSES
-                && config.fallbackRequestStyle() == cn.lypi.ai.provider.RequestStyle.RESPONSES
-                && (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE)
-                && previousResponseStateCandidate(request)
-                && hasPendingToolOutput(request)
-        ) {
-            addChatCompletionsSseAttempt(attempts, request);
-        }
         return attempts;
     }
 
@@ -211,7 +201,6 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
                 if (
                     responsesSsePreviousStateEnabled.get()
                         && previousResponseStateCandidate(request)
-                        && !hasPendingToolOutput(request)
                 ) {
                     OpenAiResponsesStreamNormalizer fallbackNormalizer = new OpenAiResponsesStreamNormalizer();
                     attempts.add(new OpenAiStreamAttempt(
@@ -258,14 +247,6 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         }
         String previousResponseId = String.valueOf(stateMap.get("previousResponseId"));
         return !previousResponseId.isBlank() && !"null".equals(previousResponseId);
-    }
-
-    private boolean hasPendingToolOutput(LypiModelRequest request) {
-        return request.messages().stream()
-            .flatMap(message -> message.content().stream())
-            .filter(LypiToolResultBlock.class::isInstance)
-            .map(LypiToolResultBlock.class::cast)
-            .anyMatch(toolResult -> Boolean.TRUE.equals(toolResult.metadata().get("openaiPendingToolOutput")));
     }
 
     private void observeResponsesSseFailure(RuntimeException exception) {
