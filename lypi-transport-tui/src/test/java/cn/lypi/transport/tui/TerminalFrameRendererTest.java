@@ -29,7 +29,31 @@ class TerminalFrameRendererTest {
 
         renderer.render(List.of("hello", "world|CURSOR|"));
 
-        assertEquals("\033[?2026h\033[2J\033[H\n\nhello\nworld\033[4;6H\033[?2026l", io.output.toString());
+        String output = io.output.toString();
+        assertTrue(output.startsWith("\033[?2026h\033[2J\033[H"));
+        assertTrue(output.endsWith("hello\nworld\033[4;6H\033[?2026l"));
+    }
+
+    @Test
+    void firstFrameWithStartupPaddingRendersWelcomeScreen() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 46;
+        io.height = 11;
+        TerminalFrameRenderer renderer = TerminalFrameRenderer.withStartupPadding(io, rows -> {
+        });
+
+        renderer.render(List.of("hello", "> |CURSOR|", "status"));
+
+        String plainOutput = stripAnsi(io.output.toString());
+        assertTrue(plainOutput.contains("LY-PI"));
+        assertTrue(plainOutput.contains("coding agent"));
+        assertTrue(plainOutput.contains("local-first"));
+        assertTrue(plainOutput.endsWith("hello\n> \nstatus"));
+        assertTrue(io.output.toString().endsWith("\033[10;3H\033[?2026l"));
+
+        for (String line : plainOutput.split("\n", -1)) {
+            assertTrue(AnsiWidth.displayWidth(line) <= io.width, () -> "line exceeds terminal width: " + line);
+        }
     }
 
     @Test
@@ -535,5 +559,9 @@ class TerminalFrameRendererTest {
             return () -> {
             };
         }
+    }
+
+    private static String stripAnsi(String value) {
+        return value.replaceAll("\\u001B\\[[0-9;?]*[A-Za-z]", "");
     }
 }

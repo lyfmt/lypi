@@ -10,6 +10,11 @@ final class TerminalFrameRenderer {
     private static final String SYNC_START = "\033[?2026h";
     private static final String SYNC_END = "\033[?2026l";
     private static final String FULL_CLEAR = "\033[2J\033[H";
+    private static final String ANSI_RESET = "\033[0m";
+    private static final String WELCOME_PRIMARY = "\033[38;5;81m";
+    private static final String WELCOME_ACCENT = "\033[38;5;213m";
+    private static final String WELCOME_DIM = "\033[38;5;244m";
+    private static final String WELCOME_BOLD = "\033[1m";
     private static final IntConsumer NOOP_RENDERED_ROWS = rows -> {
     };
 
@@ -346,11 +351,60 @@ final class TerminalFrameRenderer {
             return lines;
         }
         List<String> padded = new ArrayList<>(startupPaddingLineCount + lines.size());
-        for (int i = 0; i < startupPaddingLineCount; i++) {
-            padded.add("");
-        }
+        padded.addAll(startupWelcomeLines(startupPaddingLineCount, io.width()));
         padded.addAll(lines);
         return padded;
+    }
+
+    private List<String> startupWelcomeLines(int lineCount, int width) {
+        if (lineCount <= 0) {
+            return List.of();
+        }
+        List<String> content = width >= 46 ? fullWelcomeLines(width) : compactWelcomeLines(width);
+        List<String> result = new ArrayList<>(lineCount);
+        int topPadding = Math.max(0, (lineCount - content.size()) / 2);
+        for (int i = 0; i < topPadding && result.size() < lineCount; i++) {
+            result.add("");
+        }
+        for (String line : content) {
+            if (result.size() >= lineCount) {
+                break;
+            }
+            result.add(line);
+        }
+        while (result.size() < lineCount) {
+            result.add("");
+        }
+        return result;
+    }
+
+    private List<String> fullWelcomeLines(int width) {
+        return List.of(
+            center(WELCOME_DIM + "╭────────────────────────────────────╮" + ANSI_RESET, width),
+            center(WELCOME_PRIMARY + WELCOME_BOLD + "██╗     ██╗   ██╗       ██████╗ ██╗" + ANSI_RESET, width),
+            center(WELCOME_PRIMARY + WELCOME_BOLD + "██║     ╚██╗ ██╔╝       ██╔══██╗██║" + ANSI_RESET, width),
+            center(WELCOME_ACCENT + WELCOME_BOLD + "██║      ╚████╔╝  █████╗██████╔╝██║" + ANSI_RESET, width),
+            center(WELCOME_PRIMARY + WELCOME_BOLD + "███████╗   ██║          ██║     ██║" + ANSI_RESET, width),
+            center(WELCOME_PRIMARY + WELCOME_BOLD + "LY-PI" + ANSI_RESET, width),
+            center(WELCOME_ACCENT + "coding agent cockpit" + ANSI_RESET, width),
+            center(WELCOME_DIM + "local-first tools · session-aware runtime" + ANSI_RESET, width)
+        );
+    }
+
+    private List<String> compactWelcomeLines(int width) {
+        return List.of(
+            center(WELCOME_PRIMARY + WELCOME_BOLD + "LY-PI" + ANSI_RESET, width),
+            center(WELCOME_ACCENT + "coding agent" + ANSI_RESET, width),
+            center(WELCOME_DIM + "local-first runtime" + ANSI_RESET, width)
+        );
+    }
+
+    private String center(String line, int width) {
+        int lineWidth = AnsiWidth.displayWidth(line);
+        if (lineWidth >= width) {
+            return line;
+        }
+        return " ".repeat((width - lineWidth) / 2) + line;
     }
 
     private void writeLines(List<String> lines) throws IOException {
