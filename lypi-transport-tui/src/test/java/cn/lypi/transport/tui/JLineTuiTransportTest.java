@@ -457,6 +457,47 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void newCommandRebindsEventSubscriptionToNewSession() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 12;
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingCore core = new RecordingCore();
+        RecordingSessionManager session = new RecordingSessionManager();
+        SessionRuntimeState newState = runtimeStateWithTranscript("ses_new", "leaf_new", "new session context");
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            core,
+            events,
+            io,
+            new QueueInputSource("/new", "\r", "\r"),
+            List.of(),
+            session,
+            emptyResources(),
+            null,
+            NOOP_DIFF_PROVIDER,
+            null,
+            () -> newState,
+            80,
+            8
+        );
+        io.output.setLength(0);
+
+        transport.drainInputForTest();
+        transport.renderCurrentFrameUnderUiLock();
+        events.emit(new ErrorEvent("ses_1", "err_old", "old", Instant.parse("2026-06-09T00:00:00Z")));
+        events.emit(new ErrorEvent("ses_new", "err_new", "new", Instant.parse("2026-06-09T00:00:00Z")));
+
+        assertEquals(Optional.of("ses_new"), events.filter.sessionId());
+        assertEquals(0, core.requests.size());
+        assertFalse(io.output.toString().contains("error: old"));
+        assertTrue(io.output.toString().contains("new session context"));
+
+        transport.close();
+    }
+
+    @Test
     void resizeFallsBackWhenTerminalSizeUnavailable() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         RecordingEventBus events = new RecordingEventBus();

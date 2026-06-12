@@ -17,6 +17,7 @@ import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -36,6 +37,7 @@ final class SlashCommandRouter {
         "/compact",
         "/mode",
         "/model",
+        "/new",
         "/permission-mode",
         "/thinking"
     );
@@ -44,6 +46,7 @@ final class SlashCommandRouter {
     private final SessionManagerPort sessionManager;
     private final ResourceRuntimePort resourceRuntime;
     private final CompactionRuntimePort compactionRuntime;
+    private final NewSessionController newSessionController;
     private final List<SlashCommand> slashCommands;
 
     SlashCommandRouter(
@@ -52,7 +55,7 @@ final class SlashCommandRouter {
         SessionManagerPort sessionManager,
         ResourceRuntimePort resourceRuntime
     ) {
-        this(sessionId, cwd, sessionManager, resourceRuntime, null, List.of());
+        this(sessionId, cwd, sessionManager, resourceRuntime, null, null, List.of());
     }
 
     SlashCommandRouter(
@@ -62,7 +65,7 @@ final class SlashCommandRouter {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) {
-        this(sessionId, cwd, sessionManager, resourceRuntime, compactionRuntime, List.of());
+        this(sessionId, cwd, sessionManager, resourceRuntime, compactionRuntime, null, List.of());
     }
 
     SlashCommandRouter(
@@ -73,11 +76,24 @@ final class SlashCommandRouter {
         CompactionRuntimePort compactionRuntime,
         List<SlashCommand> slashCommands
     ) {
+        this(sessionId, cwd, sessionManager, resourceRuntime, compactionRuntime, null, slashCommands);
+    }
+
+    SlashCommandRouter(
+        String sessionId,
+        Path cwd,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        NewSessionController newSessionController,
+        List<SlashCommand> slashCommands
+    ) {
         this.sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
         this.cwd = cwd == null ? Path.of(".") : cwd;
         this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
         this.resourceRuntime = Objects.requireNonNull(resourceRuntime, "resourceRuntime must not be null");
         this.compactionRuntime = compactionRuntime;
+        this.newSessionController = newSessionController;
         this.slashCommands = safeSlashCommands(slashCommands);
     }
 
@@ -87,6 +103,7 @@ final class SlashCommandRouter {
         this.sessionManager = null;
         this.resourceRuntime = null;
         this.compactionRuntime = null;
+        this.newSessionController = null;
         this.slashCommands = safeSlashCommands(slashCommands);
     }
 
@@ -109,6 +126,7 @@ final class SlashCommandRouter {
             case "/mode" -> routeMode(arguments, input);
             case "/permission-mode" -> routePermissionMode(arguments, input);
             case "/compact" -> routeCompact(arguments);
+            case "/new" -> routeNew(arguments);
             default -> routeExternalOrPromptTemplate(match.command().orElseThrow(), arguments);
         };
     }
@@ -201,6 +219,20 @@ final class SlashCommandRouter {
             return SlashCommandResult.error("compact: " + result.message());
         } catch (RuntimeException exception) {
             return SlashCommandResult.error("compact: " + errorMessage(exception));
+        }
+    }
+
+    private SlashCommandResult routeNew(SlashCommandArguments arguments) {
+        if (!arguments.positionals().isEmpty() || !arguments.named().isEmpty()) {
+            return SlashCommandResult.error("usage: /new");
+        }
+        if (newSessionController == null) {
+            return SlashCommandResult.error("new: new session controller is unavailable");
+        }
+        try {
+            return SlashCommandResult.newSession(newSessionController.createNewSession());
+        } catch (RuntimeException exception) {
+            return SlashCommandResult.error("new: " + errorMessage(exception));
         }
     }
 

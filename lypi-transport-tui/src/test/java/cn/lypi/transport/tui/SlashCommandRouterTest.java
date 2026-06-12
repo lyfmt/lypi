@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
@@ -28,6 +29,9 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.tui.NewSessionController;
+import cn.lypi.contracts.tui.SessionRuntimeState;
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -224,6 +228,63 @@ class SlashCommandRouterTest {
     }
 
     @Test
+    void newCommandCreatesNewSessionRuntimeStateWithoutAppendingEntry() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SessionRuntimeState newState = runtimeState("ses_new", "leaf_new");
+        RecordingNewSessionController newSession = new RecordingNewSessionController(newState);
+        SlashCommandRouter router = new SlashCommandRouter(
+            "ses_1",
+            Path.of("."),
+            session,
+            emptyResources(),
+            null,
+            newSession,
+            List.of()
+        );
+
+        SlashCommandResult result = router.route("/new");
+
+        assertTrue(result.matched());
+        assertTrue(result.consumed());
+        assertEquals(1, newSession.calls);
+        assertEquals(Optional.of(newState), result.runtimeState());
+        assertEquals("new session: ses_new", result.notice().orElseThrow());
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void newCommandRejectsArguments() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        RecordingNewSessionController newSession = new RecordingNewSessionController(runtimeState("ses_new", "leaf_new"));
+        SlashCommandRouter router = new SlashCommandRouter(
+            "ses_1",
+            Path.of("."),
+            session,
+            emptyResources(),
+            null,
+            newSession,
+            List.of()
+        );
+
+        SlashCommandResult result = router.route("/new named");
+
+        assertTrue(result.matched());
+        assertTrue(result.consumed());
+        assertTrue(result.message().orElseThrow().contains("usage: /new"));
+        assertEquals(0, newSession.calls);
+    }
+
+    @Test
     void uniqueCommandPrefixExecutesMatchedBuiltInCommand() {
         RecordingSessionManager session = new RecordingSessionManager(context(
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
@@ -376,6 +437,38 @@ class SlashCommandRouterTest {
             "Review {{scope}}.",
             "sha256:review"
         );
+    }
+
+    private static SessionRuntimeState runtimeState(String sessionId, String leafId) {
+        return new SessionRuntimeState(
+            sessionId,
+            Path.of("."),
+            leafId,
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0, 0, BigDecimal.ZERO),
+            false,
+            false,
+            false,
+            false
+        );
+    }
+
+    private static final class RecordingNewSessionController implements NewSessionController {
+        private final SessionRuntimeState state;
+        private int calls;
+
+        private RecordingNewSessionController(SessionRuntimeState state) {
+            this.state = state;
+        }
+
+        @Override
+        public SessionRuntimeState createNewSession() {
+            calls++;
+            return state;
+        }
     }
 
     private static final class RecordingSessionManager implements SessionManagerPort {

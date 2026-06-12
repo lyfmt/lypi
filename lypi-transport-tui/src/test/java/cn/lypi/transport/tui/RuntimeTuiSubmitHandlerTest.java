@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
@@ -42,8 +43,10 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.SlashCommandHandler;
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -323,6 +326,40 @@ class RuntimeTuiSubmitHandlerTest {
         assertInstanceOf(MessageEndEvent.class, events.published.get(2));
     }
 
+    @Test
+    void newSlashCommandSwitchesNextTurnSessionIdWithoutSubmittingTurn() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        SessionRuntimeState newState = runtimeState("ses_new", "leaf_new");
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("."),
+                session,
+                emptyResources(),
+                null,
+                () -> newState,
+                List.of()
+            )
+        );
+
+        handler.submitUserInput("/new");
+        handler.submitUserInput("hello");
+
+        assertEquals(1, core.requests.size());
+        TurnRequest request = core.requests.getFirst();
+        assertEquals("ses_new", request.sessionId());
+        assertEquals("hello", request.userInput());
+        MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
+        assertEquals("ses_new", delta.sessionId());
+        assertEquals("new session: ses_new", delta.delta());
+    }
+
     private static final class RecordingCore implements AgentCorePort {
         private final List<TurnRequest> requests = new ArrayList<>();
 
@@ -413,6 +450,23 @@ class RuntimeTuiSubmitHandlerTest {
                 return null;
             }
         };
+    }
+
+    private static SessionRuntimeState runtimeState(String sessionId, String leafId) {
+        return new SessionRuntimeState(
+            sessionId,
+            Path.of("."),
+            leafId,
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0, 0, BigDecimal.ZERO),
+            false,
+            false,
+            false,
+            false
+        );
     }
 
     private static final class RecordingSessionManager implements SessionManagerPort {
