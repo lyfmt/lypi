@@ -9,8 +9,9 @@ import cn.lypi.contracts.tui.TuiThinkingBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
 
 final class TuiRenderer {
     private static final String INPUT_BACKGROUND = "\033[48;5;236m";
@@ -21,6 +22,7 @@ final class TuiRenderer {
     private static final String ANSI_RESET = "\033[0m";
     private static final String INPUT_PREFIX = "> ";
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
+    private final ToolDisplayRendererRegistry toolDisplayRenderers = ToolDisplayRendererRegistry.defaults();
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input) {
         return renderFrame(view, screen, layout, input, -1).lines();
@@ -53,29 +55,51 @@ final class TuiRenderer {
         int cursor,
         List<String> overlayLines
     ) {
-        List<String> transcript = transcriptLines(view, layout.width());
+        return renderFrame(view, screen, layout, input, cursor, overlayLines, false);
+    }
+
+    TuiRenderFrame renderFrame(
+        TuiViewModel view,
+        TuiScreen screen,
+        TuiLayout layout,
+        String input,
+        int cursor,
+        List<String> overlayLines,
+        boolean toolOutputExpanded
+    ) {
+        List<String> transcript = transcriptLines(view, layout.width(), toolOutputExpanded);
         InputBlock inputBlock = layoutInput(input, cursor, layout);
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
             .map(line -> AnsiWidth.truncate(line, layout.width()))
             .toList();
-        int inputAndOverlayHeight = inputBlock.height() + overlay.size();
-        int transcriptHeight = layout.transcriptHeight(inputAndOverlayHeight);
-        screen.updateViewportHeight(transcriptHeight);
         screen.setTranscript(transcript);
-        List<String> visibleTranscript = screen.visibleTranscript();
 
         List<String> lines = new ArrayList<>();
-        lines.addAll(blankLines(transcriptHeight - visibleTranscript.size()));
-        lines.addAll(visibleTranscript);
+        lines.addAll(transcript);
         lines.addAll(inputBlock.lines());
         lines.addAll(overlay);
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
-        return new TuiRenderFrame(lines, inputBlock.height() + overlay.size() + 1);
+        return TuiRenderFrame.transcriptOnly(lines);
     }
 
-    private List<String> transcriptLines(List<TuiBlock> blocks, int width) {
+    private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded) {
         List<String> lines = new ArrayList<>();
-        for (TuiBlock block : blocks) {
+        for (int index = 0; index < blocks.size(); index++) {
+            TuiBlock block = blocks.get(index);
+            if (block instanceof TuiToolBlock tool
+                && !toolOutputExpanded
+                && toolDisplayRenderers.isReadLikeTool(tool)) {
+                List<TuiToolBlock> group = new ArrayList<>();
+                group.add(tool);
+                while (index + 1 < blocks.size()
+                    && blocks.get(index + 1) instanceof TuiToolBlock nextTool
+                    && toolDisplayRenderers.isReadLikeTool(nextTool)) {
+                    group.add(nextTool);
+                    index++;
+                }
+                lines.addAll(readLikeToolSummaryLines(group, width));
+                continue;
+            }
             String text = switch (block) {
                 case TuiMessageBlock message -> null;
                 case TuiThinkingBlock thinking -> null;
@@ -89,7 +113,7 @@ final class TuiRenderer {
                     lines.addAll(markdownRenderer.render(message.content(), width));
                 }
             } else if (block instanceof TuiToolBlock tool) {
-                lines.addAll(toolLines(tool, width));
+                lines.addAll(toolLines(tool, width, toolOutputExpanded));
             } else if (block instanceof TuiThinkingBlock thinking) {
                 String content = thinking.collapsed() ? "collapsed" : thinking.content();
                 lines.addAll(styledLines(prefixedLines("thinking: ", content, width), THINKING_MESSAGE));
@@ -100,8 +124,19 @@ final class TuiRenderer {
         return lines;
     }
 
-    private List<String> transcriptLines(TuiViewModel view, int width) {
-        List<String> lines = transcriptLines(view.blocks(), width);
+    private List<String> readLikeToolSummaryLines(List<TuiToolBlock> tools, int width) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (TuiToolBlock tool : tools) {
+            counts.merge(tool.toolName(), 1, Integer::sum);
+        }
+        String summary = counts.entrySet().stream()
+            .map(entry -> entry.getKey() + " x" + entry.getValue())
+            .collect(java.util.stream.Collectors.joining(", "));
+        return wrap("tools: " + summary + " (Ctrl+O details)", width);
+    }
+
+    private List<String> transcriptLines(TuiViewModel view, int width, boolean toolOutputExpanded) {
+        List<String> lines = transcriptLines(view.blocks(), width, toolOutputExpanded);
         view.permissionPrompt().ifPresent(prompt -> {
             lines.addAll(wrap("permission " + prompt.toolUseId() + ": " + prompt.reason(), width));
             if (!prompt.rule().isBlank()) {
@@ -126,16 +161,16 @@ final class TuiRenderer {
         return option.description().isBlank() ? label : label + " - " + option.description();
     }
 
-    private List<String> toolLines(TuiToolBlock tool, int width) {
+    private List<String> toolLines(TuiToolBlock tool, int width, boolean toolOutputExpanded) {
         List<String> lines = new ArrayList<>();
-        lines.addAll(wrap("tool " + tool.state().name().toLowerCase(Locale.ROOT) + " " + tool.toolName() + ": " + tool.label(), width));
-        if (tool.details() == null || tool.details().isBlank()) {
-            return lines;
-        }
-        for (String detailLine : tool.details().split("\\R", -1)) {
-            if (detailLine.isBlank()) {
-                continue;
+        ToolDisplayModel model = toolDisplayRenderers.render(tool, toolOutputExpanded);
+        lines.addAll(wrap(model.title(), width));
+        for (String summaryLine : model.summaryLines()) {
+            if (!summaryLine.isBlank()) {
+                lines.addAll(wrap("  " + summaryLine, width));
             }
+        }
+        for (String detailLine : model.previewLines()) {
             lines.addAll(wrap("  " + detailLine, width));
         }
         return lines;

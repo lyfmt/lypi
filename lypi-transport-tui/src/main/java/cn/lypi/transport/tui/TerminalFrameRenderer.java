@@ -15,6 +15,7 @@ final class TerminalFrameRenderer {
 
     private final TerminalIo io;
     private final IntConsumer renderedRows;
+    private final boolean startupPaddingEnabled;
     private List<String> previousLines = List.of();
     private int previousWidth;
     private int previousHeight;
@@ -22,14 +23,24 @@ final class TerminalFrameRenderer {
     private int previousViewportTop;
     private int previousTranscriptLineCount;
     private int hardwareCursorRow;
+    private int startupPaddingLineCount = -1;
 
     TerminalFrameRenderer(TerminalIo io) {
-        this(io, NOOP_RENDERED_ROWS);
+        this(io, NOOP_RENDERED_ROWS, false);
     }
 
     TerminalFrameRenderer(TerminalIo io, IntConsumer renderedRows) {
+        this(io, renderedRows, false);
+    }
+
+    static TerminalFrameRenderer withStartupPadding(TerminalIo io, IntConsumer renderedRows) {
+        return new TerminalFrameRenderer(io, renderedRows, true);
+    }
+
+    private TerminalFrameRenderer(TerminalIo io, IntConsumer renderedRows, boolean startupPaddingEnabled) {
         this.io = io;
         this.renderedRows = renderedRows == null ? NOOP_RENDERED_ROWS : renderedRows;
+        this.startupPaddingEnabled = startupPaddingEnabled;
     }
 
     void render(List<String> lines) throws IOException {
@@ -37,17 +48,21 @@ final class TerminalFrameRenderer {
     }
 
     void render(TuiRenderFrame renderFrame) throws IOException {
-        CursorFrame frame = stripCursor(renderFrame.lines());
-        List<String> newLines = frame.lines();
-        int chromeLineCount = renderFrame.chromeLineCount();
         int width = io.width();
         int height = io.height();
+        List<String> rawLines = renderFrame.lines();
+        if (startupPaddingEnabled && startupPaddingLineCount < 0) {
+            startupPaddingLineCount = Math.max(0, height - rawLines.size());
+        }
+        CursorFrame frame = stripCursor(withStartupPadding(rawLines));
+        List<String> newLines = frame.lines();
+        int chromeLineCount = renderFrame.chromeLineCount();
         boolean widthChanged = previousWidth != 0 && previousWidth != width;
         boolean heightChanged = previousHeight != 0 && previousHeight != height;
         int viewportTop = viewportTopFor(newLines, height);
 
         if (previousLines.isEmpty() && !widthChanged && !heightChanged) {
-            writeFullFrame(newLines, frame.cursor(), false, viewportTop, height);
+            writeFullFrame(newLines, frame.cursor(), startupPaddingEnabled, viewportTop, height);
             updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height), renderFrame.transcriptLineCount());
             return;
         }
@@ -86,11 +101,10 @@ final class TerminalFrameRenderer {
             && firstChanged == previousLines.size()
             && viewportTop == previousViewportTop;
         if (appendOnly) {
-            StringBuilder buffer = new StringBuilder();
             for (int i = firstChanged; i < newLines.size(); i++) {
-                buffer.append("\n").append(newLines.get(i));
+                io.write("\n");
+                writeLine(newLines.get(i));
             }
-            io.write(buffer.toString());
             hardwareCursorRow = physicalBottomRow(newLines, viewportTop, height);
             moveCursor(frame.cursor(), viewportTop, height);
             updateState(newLines, width, height, viewportTop, hardwareCursorRow, renderFrame.transcriptLineCount());
@@ -129,7 +143,7 @@ final class TerminalFrameRenderer {
             io.write(SYNC_START);
             io.write(FULL_CLEAR);
         }
-        io.write(String.join("\n", visibleLines(lines, viewportTop, height)));
+        writeLines(visibleLines(lines, viewportTop, height));
         hardwareCursorRow = physicalBottomRow(lines, viewportTop, height);
         moveCursor(cursor, viewportTop, height);
         if (clear) {
@@ -154,7 +168,7 @@ final class TerminalFrameRenderer {
             int physicalRow = physicalRow(i + 1, viewportTop, height);
             io.write("\033[" + physicalRow + ";1H");
             io.write("\033[2K");
-            io.write(lines.get(i));
+            writeLine(lines.get(i));
             hardwareCursorRow = physicalRow;
         }
         moveCursor(cursor, viewportTop, height);
@@ -177,7 +191,7 @@ final class TerminalFrameRenderer {
             io.write("\033[" + physicalRow + ";1H");
             io.write("\033[2K");
             if (row < visible.size()) {
-                io.write(visible.get(row));
+                writeLine(visible.get(row));
                 hardwareCursorRow = physicalRow;
             }
         }
@@ -207,7 +221,7 @@ final class TerminalFrameRenderer {
                     io.write("\r\n");
                 }
                 io.write("\033[2K");
-                io.write(lines.get(i));
+                writeLine(lines.get(i));
                 hardwareCursorRow = physicalRow(i + 1, viewportTop, height);
             }
         } else {
@@ -216,7 +230,7 @@ final class TerminalFrameRenderer {
                 int physicalRow = physicalRow(i + 1, previousViewportTop, height);
                 io.write("\033[" + physicalRow + ";1H");
                 io.write("\033[2K");
-                io.write(lines.get(i));
+                writeLine(lines.get(i));
                 hardwareCursorRow = physicalRow;
                 bottomContainsTranscript = physicalRow == Math.max(1, height);
             }
@@ -237,7 +251,7 @@ final class TerminalFrameRenderer {
                 int physicalRow = physicalRow(i + 1, viewportTop, height);
                 io.write("\033[" + physicalRow + ";1H");
                 io.write("\033[2K");
-                io.write(lines.get(i));
+                writeLine(lines.get(i));
                 hardwareCursorRow = physicalRow;
             }
         }
@@ -325,6 +339,31 @@ final class TerminalFrameRenderer {
             return List.of();
         }
         return lines.subList(start, end);
+    }
+
+    private List<String> withStartupPadding(List<String> lines) {
+        if (startupPaddingLineCount <= 0) {
+            return lines;
+        }
+        List<String> padded = new ArrayList<>(startupPaddingLineCount + lines.size());
+        for (int i = 0; i < startupPaddingLineCount; i++) {
+            padded.add("");
+        }
+        padded.addAll(lines);
+        return padded;
+    }
+
+    private void writeLines(List<String> lines) throws IOException {
+        for (int index = 0; index < lines.size(); index++) {
+            if (index > 0) {
+                io.write("\n");
+            }
+            writeLine(lines.get(index));
+        }
+    }
+
+    private void writeLine(String line) throws IOException {
+        io.write(AnsiWidth.truncate(line, io.width()));
     }
 
     private void logFullRedraw(String reason) {

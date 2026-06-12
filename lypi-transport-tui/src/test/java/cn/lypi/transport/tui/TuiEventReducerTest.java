@@ -271,6 +271,45 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void toolLifecyclePreservesInputSummaryMetadataPreviewAndResultSummary() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new ToolStartEvent(
+            "ses_1",
+            "toolu_1",
+            "msg_1",
+            "turn_1",
+            "read",
+            "Read",
+            "src/App.java:1-80",
+            Map.of("preview", "1 | class App {}", "path", "src/App.java"),
+            NOW,
+            NOW
+        ));
+        reducer.reduce(new ToolEndEvent(
+            "ses_1",
+            "toolu_1",
+            ToolExecutionStatus.SUCCEEDED,
+            null,
+            new ToolResultSummary("read succeeded", "1 line", false, 0, false, 18L, Map.of("preview", "2 | end")),
+            null,
+            NOW,
+            NOW.plusMillis(4),
+            4L,
+            Map.of(),
+            NOW.plusMillis(4)
+        ));
+
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().getFirst());
+        assertEquals("read", tool.toolName());
+        assertEquals("src/App.java:1-80", tool.label());
+        assertEquals(TuiToolState.DONE, tool.state());
+        assertTrue(tool.details().contains("1 | class App {}"));
+        assertTrue(tool.details().contains("1 line"));
+        assertTrue(tool.details().contains("2 | end"));
+    }
+
+    @Test
     void toolEndUsesOutputRefPreviewBeforeSummaryMetadataPreview() {
         TuiEventReducer reducer = new TuiEventReducer();
 
@@ -670,7 +709,7 @@ class TuiEventReducerTest {
         TuiToolBlock toolAfterStart = assertInstanceOf(TuiToolBlock.class, afterStart.blocks().get(2));
         assertEquals("toolu_1", toolAfterStart.toolUseId());
         assertEquals("bash", toolAfterStart.toolName());
-        assertEquals("Bash", toolAfterStart.label());
+        assertEquals("echo hello", toolAfterStart.label());
         assertEquals(TuiToolState.RUNNING, toolAfterStart.state());
         assertTrue(toolAfterStart.active());
 
@@ -680,7 +719,7 @@ class TuiEventReducerTest {
         assertFalse(tool.active());
 
         assertEquals(3, blocks.size(), "tool progress must not append transcript lines");
-        assertEquals("Bash", tool.label(), "tool end must not replace label with result summary");
+        assertEquals("echo hello", tool.label(), "tool end must not replace label with result summary");
     }
 
     @Test
@@ -847,7 +886,7 @@ class TuiEventReducerTest {
         assertEquals(1, runningBlocks.size());
         TuiToolBlock running = assertInstanceOf(TuiToolBlock.class, runningBlocks.getFirst());
         assertEquals(TuiToolState.RUNNING, running.state());
-        assertEquals("Read", running.label());
+        assertEquals("pom.xml", running.label());
         assertTrue(running.active());
     }
 

@@ -122,7 +122,7 @@ class TuiContractEndToEndTest {
         assertFalse(thinking.collapsed());
         assertEquals("toolu_bash", tool.toolUseId());
         assertEquals("bash", tool.toolName());
-        assertEquals("Run shell", tool.label());
+        assertEquals("printf output", tool.label());
         assertEquals(TuiToolState.DONE, tool.state());
         assertFalse(tool.active());
         assertEquals(3, blocks.size(), "stdout/stderr progress stays structured and does not become guessed transcript text");

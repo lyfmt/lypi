@@ -108,7 +108,10 @@ class JLineTuiTransportTest {
 
         assertTrue(io.rawModeEntered);
         assertFalse(io.output.toString().contains("\033[?1049h"));
-        assertTrue(io.output.toString().contains("\033[?2026h\033[1;1H\033[2Kerror: boom"));
+        assertTrue(io.output.toString().contains("\033[?2026h\033[2J\033[H"));
+        assertTrue(io.output.toString().contains("error: boom"));
+        assertTrue(io.output.toString().contains("> "));
+        assertTrue(io.output.toString().contains("ses_1"));
 
         transport.close();
 
@@ -213,10 +216,10 @@ class JLineTuiTransportTest {
         }
 
         String output = io.output.toString();
-        assertTrue(output.contains("line 3"));
-        assertFalse(output.contains("\r\n\033[2K\033[38;5;240m"));
-        assertFalse(output.contains("\r\n\033[2K\033[48;5;236m> "));
-        assertFalse(output.contains("\r\n\033[2Kses_1 gpt-5.4"));
+        assertTrue(output.contains("\r\n"));
+        assertFalse(output.matches("(?s).*\\033\\[1;\\d+r.*"));
+        assertTrue(output.contains("\033[2K\033[48;5;236m> "));
+        assertTrue(output.contains("\033[2Kses_1 gpt-5.4"));
 
         transport.close();
     }
@@ -341,7 +344,7 @@ class JLineTuiTransportTest {
         String frame = io.output.toString();
         String fullClear = "\033[2J\033[H";
         String rendered = frame.substring(frame.indexOf(fullClear) + fullClear.length(), frame.indexOf("\033[?2026l"));
-        assertEquals(6, rendered.split("\n", -1).length);
+        assertEquals(4, rendered.split("\n", -1).length);
         assertTrue(rendered.contains("> "));
 
         transport.close();

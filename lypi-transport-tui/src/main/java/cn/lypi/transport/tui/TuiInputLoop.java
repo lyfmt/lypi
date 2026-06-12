@@ -43,6 +43,7 @@ final class TuiInputLoop {
     private boolean slashOverlayClosed;
     private boolean interruptibleRunning;
     private boolean exitRequested;
+    private boolean toolOutputExpanded;
     private String permissionRequestId = "";
     private String selectedPermissionOptionId = "";
 
@@ -267,6 +268,7 @@ final class TuiInputLoop {
             case MOVE_WORD_RIGHT -> editor.moveWordRight();
             case PREVIOUS_HISTORY -> editor.previousHistory();
             case NEXT_HISTORY -> editor.nextHistory();
+            case TOGGLE_TOOL_OUTPUT_EXPANDED, EXPAND_TOOLS -> toolOutputExpanded = !toolOutputExpanded;
             default -> {
             }
         }
@@ -363,7 +365,8 @@ final class TuiInputLoop {
             layout,
             editor.text(),
             editor.cursor(),
-            overlayLines()
+            overlayLines(),
+            toolOutputExpanded
         ));
     }
 
