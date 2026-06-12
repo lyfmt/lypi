@@ -45,6 +45,7 @@ class BashToolTest {
 
         assertEquals(List.of("useDefault", "requireEscalated"), sandboxPermissions.get("enum"));
         assertEquals(Map.of("type", "string"), properties.get("justification"));
+        assertEquals(Map.of("type", "array", "items", Map.of("type", "string")), properties.get("prefixRule"));
     }
 
     @Test

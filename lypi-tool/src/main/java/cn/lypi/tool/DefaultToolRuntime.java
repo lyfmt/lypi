@@ -14,6 +14,7 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.BashRiskAnalysis;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -65,6 +66,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final ToolExecutionEventPublisher eventPublisher;
     private final SandboxEscalationPolicy sandboxEscalationPolicy;
     private final BashSandboxRiskPolicy bashSandboxRiskPolicy;
+    private final RuntimeBashPrefixAllowlist runtimeBashPrefixAllowlist;
     private final int maxConcurrency;
 
     public DefaultToolRuntime(SecurityRuntimePort securityRuntime) {
@@ -272,6 +274,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
         this.sandboxEscalationPolicy = new SandboxEscalationPolicy();
         this.bashSandboxRiskPolicy = new BashSandboxRiskPolicy();
+        this.runtimeBashPrefixAllowlist = new RuntimeBashPrefixAllowlist();
         this.maxConcurrency = normalizedOptions.maxConcurrency();
     }
 
@@ -500,7 +503,10 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
             PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
             PermissionDecision effectiveDecision;
-            if (isDefaultSandboxBashRequest(request)) {
+            boolean runtimeBashPrefixAllowed = runtimeBashPrefixAllowed(request, securityDecision);
+            if (runtimeBashPrefixAllowed) {
+                effectiveDecision = allowDecision("运行期 Bash 前缀白名单允许工具调用。");
+            } else if (isDefaultSandboxBashRequest(request)) {
                 effectiveDecision = isDeny(securityDecision)
                     ? securityDecision
                     : allowDecision("默认 Bash 请求先进入沙箱执行。");
@@ -508,13 +514,22 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
                 effectiveDecision = effectiveDecision(toolDecision, securityDecision);
             }
-            Optional<PermissionDecision> sandboxEscalationDecision = sandboxEscalationPolicy.decide(request, toolContext);
-            if (sandboxEscalationDecision.isPresent()) {
-                effectiveDecision = effectiveDecision(isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"), sandboxEscalationDecision.get());
-            } else if (!isDeny(effectiveDecision)) {
-                Optional<PermissionDecision> bashSandboxRiskDecision = bashSandboxRiskPolicy.decide(request, toolContext, securityDecision);
-                if (bashSandboxRiskDecision.isPresent()) {
-                    effectiveDecision = bashSandboxRiskDecision.get();
+            if (!runtimeBashPrefixAllowed) {
+                Optional<PermissionDecision> sandboxEscalationDecision = sandboxEscalationPolicy.decide(request, toolContext);
+                if (sandboxEscalationDecision.isPresent()) {
+                    PermissionDecision escalationDecision = inheritSuggestedUpdate(
+                        sandboxEscalationDecision.get(),
+                        securityDecision
+                    );
+                    effectiveDecision = effectiveDecision(
+                        isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"),
+                        escalationDecision
+                    );
+                } else if (!isDeny(effectiveDecision)) {
+                    Optional<PermissionDecision> bashSandboxRiskDecision = bashSandboxRiskPolicy.decide(request, toolContext, securityDecision);
+                    if (bashSandboxRiskDecision.isPresent()) {
+                        effectiveDecision = bashSandboxRiskDecision.get();
+                    }
                 }
             }
             if (isDeny(effectiveDecision)) {
@@ -527,6 +542,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 finalResult = permissionGateError(request.toolUseId(), permissionResult);
                 return finalResult;
             }
+            rememberRuntimeBashPrefix(permissionResult);
             ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
             if (beforeResult != null && beforeResult.blocked()) {
                 finalResult = errorResult(request.toolUseId(), beforeResult.message());
@@ -844,6 +860,32 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             && SandboxPermissions.fromToolValue(stringInput(request.input(), "sandboxPermissions")) == SandboxPermissions.USE_DEFAULT;
     }
 
+    private boolean runtimeBashPrefixAllowed(ToolUseRequest request, PermissionDecision securityDecision) {
+        return request != null
+            && "bash".equals(request.toolName())
+            && !isDeny(securityDecision)
+            && bashRiskIsSafeForRuntimePrefix(securityDecision)
+            && runtimeBashPrefixAllowlist.matches(request);
+    }
+
+    private boolean bashRiskIsSafeForRuntimePrefix(PermissionDecision securityDecision) {
+        if (securityDecision == null) {
+            return false;
+        }
+        Object value = securityDecision.metadata().get("bashRisk");
+        if (!(value instanceof BashRiskAnalysis bashRisk)) {
+            return false;
+        }
+        return bashRisk.staticallyKnown() && bashRisk.redirectTargets().isEmpty();
+    }
+
+    private void rememberRuntimeBashPrefix(PermissionGateResult permissionResult) {
+        if (permissionResult == null || permissionResult.status() != PermissionGateResult.Status.ALLOW) {
+            return;
+        }
+        permissionResult.permissionUpdate().ifPresent(runtimeBashPrefixAllowlist::rememberForRuntime);
+    }
+
     private String stringInput(Map<String, Object> input, String key) {
         Object value = input == null ? null : input.get(key);
         return value == null ? "" : value.toString();
@@ -896,6 +938,22 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             message,
             Optional.empty(),
             Map.of()
+        );
+    }
+
+    private PermissionDecision inheritSuggestedUpdate(PermissionDecision decision, PermissionDecision source) {
+        if (decision == null
+            || decision.suggestedUpdate().isPresent()
+            || source == null
+            || source.suggestedUpdate().isEmpty()) {
+            return decision;
+        }
+        return new PermissionDecision(
+            decision.behavior(),
+            decision.reason(),
+            decision.message(),
+            source.suggestedUpdate(),
+            decision.metadata()
         );
     }
 

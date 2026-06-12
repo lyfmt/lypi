@@ -62,7 +62,11 @@ public final class BashTool extends AbstractFileTool {
                     "type", "string",
                     "enum", List.of("useDefault", "requireEscalated")
                 ),
-                INPUT_JUSTIFICATION, Map.of("type", "string")
+                INPUT_JUSTIFICATION, Map.of("type", "string"),
+                "prefixRule", Map.of(
+                    "type", "array",
+                    "items", Map.of("type", "string")
+                )
             )
         ));
     }

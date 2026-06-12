@@ -7,6 +7,8 @@ import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -24,6 +26,7 @@ import java.util.regex.Pattern;
 public final class DefaultPolicyEngine implements PolicyEngine {
     private static final String METADATA_PERMISSION_MODE = "permissionMode";
     private static final String METADATA_PERMISSION_RULES = "permissionRules";
+    private static final String INPUT_PREFIX_RULE = "prefixRule";
 
     private final List<PermissionRule> rules;
     private final BashRiskAnalyzer bashRiskAnalyzer;
@@ -71,12 +74,12 @@ public final class DefaultPolicyEngine implements PolicyEngine {
 
         Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, permissionMode(context), bashRisk);
         if (bashRiskDecision.isPresent()) {
-            return bashRiskDecision.get();
+            return withBashPrefixUpdate(request, bashRiskDecision.get(), bashRisk);
         }
 
         Optional<PermissionDecision> explicitAsk = explicitDecision(request, effectiveRules, PermissionBehavior.ASK, bashRisk);
         if (explicitAsk.isPresent()) {
-            return explicitAsk.get();
+            return withBashPrefixUpdate(request, explicitAsk.get(), bashRisk);
         }
 
         Optional<PermissionDecision> explicitAllow = explicitDecision(request, effectiveRules, PermissionBehavior.ALLOW, bashRisk);
@@ -92,7 +95,107 @@ public final class DefaultPolicyEngine implements PolicyEngine {
                 "当前权限模式允许工具调用。",
                 Map.of()
             );
+            default -> decision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.MODE_DEFAULT,
+                "当前权限模式允许工具调用。",
+                Map.of()
+            );
         };
+    }
+
+    private PermissionDecision withBashPrefixUpdate(
+        ToolUseRequest request,
+        PermissionDecision decision,
+        BashRiskAnalysis bashRisk
+    ) {
+        if (!isBashTool(request.toolName())
+            || decision == null
+            || decision.behavior() != PermissionBehavior.ASK
+            || decision.suggestedUpdate().isPresent()) {
+            return decision;
+        }
+        Optional<List<String>> prefix = prefixRule(request);
+        if (prefix.isEmpty() || !prefixCoversAllSegments(prefix.get(), bashRisk)) {
+            return decision;
+        }
+        PermissionUpdate update = new PermissionUpdate(
+            PermissionRuleSource.SESSION,
+            new PermissionRule(
+                PermissionRuleSource.SESSION,
+                PermissionBehavior.ALLOW,
+                new PermissionRuleValue("bash", prefixPattern(prefix.get())),
+                "运行期 Bash 前缀白名单"
+            )
+        );
+        return new PermissionDecision(
+            decision.behavior(),
+            decision.reason(),
+            decision.message(),
+            Optional.of(update),
+            decision.metadata()
+        );
+    }
+
+    private Optional<List<String>> prefixRule(ToolUseRequest request) {
+        Object rawPrefix = request.input().get(INPUT_PREFIX_RULE);
+        if (!(rawPrefix instanceof Iterable<?> iterable)) {
+            return Optional.empty();
+        }
+        List<String> tokens = new ArrayList<>();
+        for (Object value : iterable) {
+            if (!(value instanceof String token) || token.isBlank() || unsafePrefixToken(token)) {
+                return Optional.empty();
+            }
+            tokens.add(token.trim());
+        }
+        if (tokens.size() < 2) {
+            return Optional.empty();
+        }
+        return Optional.of(List.copyOf(tokens));
+    }
+
+    private boolean unsafePrefixToken(String token) {
+        return token.matches(".*[;&|()<>`$\\\\\\n\\r].*");
+    }
+
+    private boolean prefixCoversAllSegments(List<String> prefix, BashRiskAnalysis bashRisk) {
+        if (bashRisk == null
+            || !bashRisk.staticallyKnown()
+            || !bashRisk.redirectTargets().isEmpty()
+            || bashRisk.parsedCommands().isEmpty()) {
+            return false;
+        }
+        for (String segment : bashRisk.parsedCommands()) {
+            if (!startsWithPrefix(segment, prefix)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean startsWithPrefix(String segment, List<String> prefix) {
+        List<String> words = words(segment);
+        if (words.size() < prefix.size()) {
+            return false;
+        }
+        for (int index = 0; index < prefix.size(); index++) {
+            if (!words.get(index).equals(prefix.get(index))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private List<String> words(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return List.of(value.trim().split("\\s+"));
+    }
+
+    private String prefixPattern(List<String> prefix) {
+        return String.join(" ", prefix) + " *";
     }
 
     private Optional<PermissionDecision> explicitDecision(

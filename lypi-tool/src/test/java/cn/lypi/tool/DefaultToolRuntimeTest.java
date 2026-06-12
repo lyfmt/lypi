@@ -34,6 +34,9 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.InterruptBehavior;
@@ -280,6 +283,189 @@ class DefaultToolRuntimeTest {
         assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
         assertEquals("security ask", requestedDecision.get().message());
         assertEquals("done", result.newMessages().getFirst().content().getFirst().text());
+    }
+
+    @Test
+    void bashAllowAndRememberStoresRuntimePrefixAndSkipsLaterGate() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionUpdate update = bashPrefixUpdate("go test *");
+        SecurityRuntimePort security = (request, context) -> askWithUpdate(update);
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow(decision.suggestedUpdate());
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ASK, executeCalls));
+
+        ToolResult<?> first = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", bashInput("first", "go test ./..."), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+        ToolResult<?> second = runtime.execute(
+            List.of(new ToolUseRequest("toolu_2", "bash", bashInput("second", "go test ./module"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(first.isError());
+        assertFalse(second.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(2, executeCalls.get());
+    }
+
+    @Test
+    void bashAllowOnceDoesNotStoreRuntimePrefix() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionUpdate update = bashPrefixUpdate("go test *");
+        SecurityRuntimePort security = (request, context) -> askWithUpdate(update);
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ASK, executeCalls));
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", bashInput("first", "go test ./..."), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        );
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_2", "bash", bashInput("second", "go test ./module"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertEquals(2, gateCalls.get());
+        assertEquals(2, executeCalls.get());
+    }
+
+    @Test
+    void rememberedBashPrefixMustCoverEveryRuntimeCommandSegment() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionUpdate update = bashPrefixUpdate("go test *");
+        AtomicReference<Boolean> remember = new AtomicReference<>(true);
+        SecurityRuntimePort security = (request, context) -> askWithUpdate(update);
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            if (Boolean.TRUE.equals(remember.get())) {
+                remember.set(false);
+                return PermissionGateResult.allow(decision.suggestedUpdate());
+            }
+            return PermissionGateResult.deny("compound command still needs approval");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ASK, executeCalls));
+
+        ToolResult<?> first = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", bashInput("first", "go test ./..."), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+        ToolResult<?> compound = runtime.execute(
+            List.of(new ToolUseRequest("toolu_2", "bash", bashInput("compound", "go test ./... && go env"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(first.isError());
+        assertTrue(compound.isError());
+        assertEquals(2, gateCalls.get());
+        assertEquals(1, executeCalls.get());
+    }
+
+    @Test
+    void runtimePrefixAllowlistOnlyAppliesToBashAndDoesNotBypassSecurityDeny() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger bashExecuteCalls = new AtomicInteger();
+        AtomicInteger writeExecuteCalls = new AtomicInteger();
+        PermissionUpdate update = bashPrefixUpdate("go test *");
+        AtomicReference<PermissionBehavior> nextBashBehavior = new AtomicReference<>(PermissionBehavior.ASK);
+        SecurityRuntimePort security = (request, context) -> {
+            if ("bash".equals(request.toolName())) {
+                PermissionBehavior behavior = nextBashBehavior.get();
+                if (behavior == PermissionBehavior.DENY) {
+                    return TestTools.decision(PermissionBehavior.DENY, "hard deny");
+                }
+                return askWithUpdate(update);
+            }
+            return askWithUpdate(update);
+        };
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow(decision.suggestedUpdate());
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ASK, bashExecuteCalls));
+        runtime.register(TestTools.permissionCountingTool("write", PermissionBehavior.ASK, writeExecuteCalls));
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", bashInput("first", "go test ./..."), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        );
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_2", "write", Map.of("text", "write"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        );
+        nextBashBehavior.set(PermissionBehavior.DENY);
+        ToolResult<?> denied = runtime.execute(
+            List.of(new ToolUseRequest("toolu_3", "bash", bashInput("denied", "go test ./..."), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(denied.isError());
+        assertEquals(2, gateCalls.get());
+        assertEquals(1, bashExecuteCalls.get());
+        assertEquals(1, writeExecuteCalls.get());
+    }
+
+    @Test
+    void runtimePrefixAllowlistDoesNotBypassUnknownBashRisk() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionUpdate update = bashPrefixUpdate("go test *");
+        AtomicReference<Boolean> remembered = new AtomicReference<>(false);
+        SecurityRuntimePort security = (request, context) -> {
+            if (Boolean.TRUE.equals(remembered.get())) {
+                return new PermissionDecision(
+                    PermissionBehavior.ASK,
+                    PermissionDecisionReason.BASH_RISK,
+                    "unknown bash",
+                    Optional.empty(),
+                    Map.of("bashRisk", new BashRiskAnalysis(
+                        "go test ./... $(rm -rf target)",
+                        List.of("go test ./... $(rm -rf target)"),
+                        List.of(),
+                        BashRiskLevel.UNKNOWN,
+                        List.of("dynamic shell"),
+                        false
+                    ))
+                );
+            }
+            return askWithUpdate(update);
+        };
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            if (Boolean.FALSE.equals(remembered.get())) {
+                remembered.set(true);
+                return PermissionGateResult.allow(decision.suggestedUpdate());
+            }
+            return PermissionGateResult.deny("unknown command still needs approval");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ASK, executeCalls));
+
+        ToolResult<?> first = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", bashInput("first", "go test ./..."), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+        ToolResult<?> unknown = runtime.execute(
+            List.of(new ToolUseRequest("toolu_2", "bash", bashInput("unknown", "go test ./... $(rm -rf target)"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(first.isError());
+        assertTrue(unknown.isError());
+        assertEquals(2, gateCalls.get());
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
@@ -1431,6 +1617,44 @@ class DefaultToolRuntimeTest {
                 List.of("test risk"),
                 riskLevel != BashRiskLevel.UNKNOWN
             ))
+        );
+    }
+
+    private PermissionDecision askWithUpdate(PermissionUpdate update) {
+        return new PermissionDecision(
+            PermissionBehavior.ASK,
+            PermissionDecisionReason.BASH_RISK,
+            "bash risk",
+            Optional.of(update),
+            Map.of("bashRisk", new BashRiskAnalysis(
+                "go test ./...",
+                List.of("go test ./..."),
+                List.of(),
+                BashRiskLevel.MEDIUM,
+                List.of("test risk"),
+                true
+            ))
+        );
+    }
+
+    private PermissionUpdate bashPrefixUpdate(String pattern) {
+        return new PermissionUpdate(
+            PermissionRuleSource.SESSION,
+            new PermissionRule(
+                PermissionRuleSource.SESSION,
+                PermissionBehavior.ALLOW,
+                new PermissionRuleValue("bash", pattern),
+                "运行期 Bash 前缀白名单"
+            )
+        );
+    }
+
+    private Map<String, Object> bashInput(String text, String command) {
+        return Map.of(
+            "text", text,
+            "command", command,
+            "sandboxPermissions", "requireEscalated",
+            "justification", "Need host access."
         );
     }
 

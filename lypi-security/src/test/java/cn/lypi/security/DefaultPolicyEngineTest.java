@@ -9,6 +9,7 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
@@ -250,6 +251,101 @@ class DefaultPolicyEngineTest {
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
         assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+    }
+
+    @Test
+    void decideSuggestsRuntimePrefixUpdateForMatchingBashPrefixRule() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of(
+                "command", "go test ./...",
+                "prefixRule", List.of("go", "test")
+            )),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        PermissionUpdate update = decision.suggestedUpdate().orElseThrow();
+        assertThat(update.targetSource()).isEqualTo(PermissionRuleSource.SESSION);
+        assertThat(update.rule().behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(update.rule().value().toolName()).isEqualTo("bash");
+        assertThat(update.rule().value().pattern()).isEqualTo("go test *");
+    }
+
+    @Test
+    void decideDoesNotSuggestRuntimePrefixUpdateWithoutPrefixRule() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "go test ./...")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.suggestedUpdate()).isEmpty();
+    }
+
+    @Test
+    void decideSuggestsRuntimePrefixUpdateForExplicitBashAskRule() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
+            rule(PermissionBehavior.ASK, "bash", "go test *", "confirm tests")
+        ));
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of(
+                "command", "go test ./...",
+                "prefixRule", List.of("go", "test")
+            )),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.EXPLICIT_RULE);
+        assertThat(decision.suggestedUpdate()).isPresent();
+    }
+
+    @Test
+    void decideDoesNotSuggestRuntimePrefixUpdateWhenPrefixMissesCompoundSegment() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of(
+                "command", "go test ./... && go env",
+                "prefixRule", List.of("go", "test")
+            )),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.suggestedUpdate()).isEmpty();
+    }
+
+    @Test
+    void decideDoesNotSuggestRuntimePrefixUpdateForHardDeny() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
+            rule(PermissionBehavior.DENY, "bash", "go test *", "blocked")
+        ));
+
+        PermissionDecision explicitDeny = engine.decide(
+            request("bash", Map.of(
+                "command", "go test ./...",
+                "prefixRule", List.of("go", "test")
+            )),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+        PermissionDecision redirectDeny = engine.decide(
+            request("bash", Map.of(
+                "command", "go test ./... > out.txt",
+                "prefixRule", List.of("go", "test")
+            )),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(explicitDeny.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(explicitDeny.suggestedUpdate()).isEmpty();
+        assertThat(redirectDeny.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(redirectDeny.suggestedUpdate()).isEmpty();
     }
 
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
