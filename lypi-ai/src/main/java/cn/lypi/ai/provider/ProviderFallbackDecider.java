@@ -23,6 +23,7 @@ public final class ProviderFallbackDecider {
             || message.contains("404")
             || message.contains("405")
             || message.contains("handshake failed")
+            || message.contains("previous_response_id")
             || message.contains("without assistantdone");
     }
 }

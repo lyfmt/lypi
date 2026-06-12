@@ -65,7 +65,7 @@ public final class OpenAiResponsesRequestBuilder {
             ? previousResponseState(request)
             : Optional.empty();
         previousResponseState.ifPresent(state -> body.put("previous_response_id", state.previousResponseId()));
-        body.set("input", input(request, previousResponseState));
+        body.set("input", input(request, previousResponseState, options.replayToolInteractionsAsText()));
         if (!request.tools().isEmpty()) {
             body.set("tools", tools(request));
         }
@@ -87,14 +87,18 @@ public final class OpenAiResponsesRequestBuilder {
         return event;
     }
 
-    private ArrayNode input(LypiModelRequest request, Optional<PreviousResponseState> previousResponseState) {
+    private ArrayNode input(
+        LypiModelRequest request,
+        Optional<PreviousResponseState> previousResponseState,
+        boolean replayToolInteractionsAsText
+    ) {
         ArrayNode input = objectMapper.createArrayNode();
         List<LypiMessage> messages = request.messages();
         int startIndex = previousResponseState
             .flatMap(state -> indexAfterMessage(messages, state.messageId()))
             .orElse(0);
         for (LypiMessage message : messages.subList(startIndex, messages.size())) {
-            appendMessage(input, message, previousResponseState.isPresent());
+            appendMessage(input, message, previousResponseState.isPresent(), replayToolInteractionsAsText);
         }
         return input;
     }
@@ -112,15 +116,24 @@ public final class OpenAiResponsesRequestBuilder {
         return Optional.empty();
     }
 
-    private void appendMessage(ArrayNode input, LypiMessage message, boolean allowProtocolToolItems) {
+    private void appendMessage(
+        ArrayNode input,
+        LypiMessage message,
+        boolean allowProtocolToolItems,
+        boolean replayToolInteractionsAsText
+    ) {
         for (LypiContentBlock block : message.content()) {
             if (block instanceof LypiToolCallBlock toolCall) {
                 if (allowProtocolToolItems && pendingToolCall(toolCall)) {
                     input.add(functionCall(toolCall));
+                } else if (replayToolInteractionsAsText) {
+                    input.add(message(message, block));
                 }
             } else if (block instanceof LypiToolResultBlock toolResult) {
                 if (allowProtocolToolItems && pendingToolOutput(toolResult)) {
                     input.add(functionCallOutput(toolResult));
+                } else if (replayToolInteractionsAsText) {
+                    input.add(message(message, block));
                 }
             } else {
                 input.add(message(message, block));

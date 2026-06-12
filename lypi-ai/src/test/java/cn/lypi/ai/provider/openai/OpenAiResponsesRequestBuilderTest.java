@@ -406,6 +406,46 @@ class OpenAiResponsesRequestBuilderTest {
     }
 
     @Test
+    void serializesPendingToolResultAsPlainTextWhenPreviousStateIsDisabled() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-tool-cache-disabled",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "You are concise.",
+            List.of(
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiTextBlock("tool call", Map.of())),
+                    Map.of("messageId", "msg-assistant-1")
+                ),
+                new LypiMessage(
+                    LypiRole.TOOL_RESULT,
+                    List.of(new LypiToolResultBlock("call-1", "tool output", false, Map.of("openaiPendingToolOutput", true))),
+                    Map.of("messageId", "msg-tool-1")
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of(
+                "promptCacheKey", "ses_main",
+                "providerConversationState", Map.of(
+                    "provider", "openai",
+                    "style", "responses",
+                    "previousResponseId", "resp-123",
+                    "messageId", "msg-assistant-1"
+                )
+            )
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder()
+            .build(request, config(), OpenAiResponsesRequestOptions.fallbackWithoutPreviousResponseState());
+
+        assertThat(body.get("previous_response_id")).isNull();
+        assertThat(body.findValuesAsText("type")).doesNotContain("function_call_output");
+        assertThat(body.findValuesAsText("text")).contains("tool call", "tool output");
+    }
+
+    @Test
     void sendsOnlyPendingToolResultWithPreviousResponseIdWhenToolResultsFollowCachedAssistant() {
         LypiModelRequest request = new LypiModelRequest(
             "req-tool-cache",

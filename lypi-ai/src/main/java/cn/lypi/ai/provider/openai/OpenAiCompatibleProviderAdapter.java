@@ -191,10 +191,21 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
                 attempts.add(new OpenAiStreamAttempt(
                     responsesSseTransport,
-                    responsesSseRequest(request),
+                    responsesSseRequest(
+                        request,
+                        OpenAiResponsesRequestOptions.withPreviousResponseState(responsesSsePreviousStateEnabled.get())
+                    ),
                     normalizer,
                     this::observeResponsesSseFailure
                 ));
+                if (responsesSsePreviousStateEnabled.get() && previousResponseStateCandidate(request)) {
+                    OpenAiResponsesStreamNormalizer fallbackNormalizer = new OpenAiResponsesStreamNormalizer();
+                    attempts.add(new OpenAiStreamAttempt(
+                        responsesSseTransport,
+                        responsesSseRequest(request, OpenAiResponsesRequestOptions.fallbackWithoutPreviousResponseState()),
+                        fallbackNormalizer
+                    ));
+                }
             }
             return;
         }
@@ -211,11 +222,24 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         return new ProviderRequest(uri, headers(), body.toString(), java.util.Optional.of(config.timeout()));
     }
 
-    private ProviderRequest responsesSseRequest(LypiModelRequest request) {
-        OpenAiResponsesRequestOptions options = OpenAiResponsesRequestOptions
-            .withPreviousResponseState(responsesSsePreviousStateEnabled.get());
+    private ProviderRequest responsesSseRequest(LypiModelRequest request, OpenAiResponsesRequestOptions options) {
         ObjectNode body = responsesRequestBuilder.build(request, config, options);
         return new ProviderRequest(endpoint("responses"), headers(), body.toString(), java.util.Optional.of(config.timeout()));
+    }
+
+    private boolean previousResponseStateCandidate(LypiModelRequest request) {
+        Object state = request.metadata().get("providerConversationState");
+        if (!(state instanceof Map<?, ?> stateMap)) {
+            return false;
+        }
+        if (!"openai".equals(String.valueOf(stateMap.get("provider")))) {
+            return false;
+        }
+        if (!"responses".equals(String.valueOf(stateMap.get("style")))) {
+            return false;
+        }
+        String previousResponseId = String.valueOf(stateMap.get("previousResponseId"));
+        return !previousResponseId.isBlank() && !"null".equals(previousResponseId);
     }
 
     private void observeResponsesSseFailure(RuntimeException exception) {
