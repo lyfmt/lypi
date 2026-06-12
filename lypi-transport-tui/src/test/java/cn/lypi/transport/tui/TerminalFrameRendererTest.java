@@ -122,7 +122,7 @@ class TerminalFrameRendererTest {
     }
 
     @Test
-    void transcriptAppendThatOverflowsTerminalScrollsThenPatchesBottomChrome() throws Exception {
+    void transcriptAppendThatOverflowsTerminalRepaintsChromeWithoutTerminalScroll() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
@@ -133,18 +133,19 @@ class TerminalFrameRendererTest {
 
         assertEquals(
             "\033[?2026h"
-                + "\033[3;1H\033[2Kthree"
-                + "\033[4;1H\033[2K\r\n"
+                + "\033[1;1H\033[2Ktwo"
+                + "\033[2;1H\033[2Kthree"
                 + "\033[3;1H\033[2K> "
                 + "\033[4;1H\033[2Kstatus"
                 + "\033[3;3H"
                 + "\033[?2026l",
             io.output.toString()
         );
+        assertFalse(io.output.toString().contains("\r\n"));
     }
 
     @Test
-    void transcriptAppendAfterOverflowScrollsOneLineAndKeepsInputAndStatusVisible() throws Exception {
+    void transcriptAppendAfterOverflowRepaintsChromeWithoutTerminalScroll() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
@@ -155,14 +156,51 @@ class TerminalFrameRendererTest {
 
         assertEquals(
             "\033[?2026h"
-                + "\033[3;1H\033[2Kfour"
-                + "\033[4;1H\033[2K\r\n"
+                + "\033[1;1H\033[2Kthree"
+                + "\033[2;1H\033[2Kfour"
                 + "\033[3;1H\033[2K> "
                 + "\033[4;1H\033[2Kstatus"
                 + "\033[3;3H"
                 + "\033[?2026l",
             io.output.toString()
         );
+        assertFalse(io.output.toString().contains("\r\n"));
+    }
+
+    @Test
+    void transcriptAppendWithChromeRepaintsVisibleViewportWithoutTerminalScroll() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 6;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(new TuiRenderFrame(List.of(
+            "assistant old",
+            "tools: read x1 (Ctrl+O details)",
+            "──",
+            "> |CURSOR|",
+            "──",
+            "session PLAN"
+        ), 3));
+        io.output.setLength(0);
+        renderer.render(new TuiRenderFrame(List.of(
+            "assistant old",
+            "tools: read x1 (Ctrl+O details)",
+            "done write write {content=问题：50米洗车店我该开车去还是走路去",
+            "  writing",
+            "  written bytes 洗车店.md",
+            "assistant done",
+            "──",
+            "> |CURSOR|",
+            "──",
+            "session PLAN"
+        ), 3));
+
+        String output = io.output.toString();
+        assertFalse(output.contains("\r\n"), "chrome frames must not scroll old input/status into scrollback");
+        assertTrue(output.contains("\033[1;1H\033[2K  written bytes 洗车店.md"));
+        assertTrue(output.contains("\033[2;1H\033[2Kassistant done"));
+        assertTrue(output.contains("\033[4;1H\033[2K> "));
+        assertTrue(output.contains("\033[6;1H\033[2Ksession PLAN"));
     }
 
     @Test
