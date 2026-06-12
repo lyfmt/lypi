@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
@@ -22,6 +23,8 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.ToolProgressEvent;
+import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -276,6 +279,68 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void ctrlOExpansionDuringStreamingKeepsSubsequentOutputOnAbsoluteRows() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 6;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            new QueueInputSource("\u000f"),
+            new RecordingSubmitHandler(),
+            80,
+            6
+        );
+        io.output.setLength(0);
+
+        events.emit(new ToolStartEvent(
+            "ses_1",
+            "toolu_read",
+            "msg_1",
+            "turn_1",
+            "read",
+            "Read",
+            "AGENTS.md:1-200",
+            Map.of("path", "AGENTS.md"),
+            Instant.parse("2026-06-09T00:00:00Z"),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        events.emit(new ToolProgressEvent(
+            "ses_1",
+            "toolu_read",
+            ToolProgress.output("stdout", "line 1\nline 2\nline 3\nline 4\n"),
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+        transport.drainInputForTest();
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_assistant",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            cn.lypi.contracts.context.ContentBlockKind.TEXT,
+            "assistant continues",
+            false,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:02Z")
+        ));
+
+        String output = io.output.toString();
+        assertFalse(output.contains("\r\n"), escaped(output));
+        assertFalse(output.contains("\n"), escaped(output));
+        assertTrue(output.contains("\033[1;1H\033[2K"), escaped(output));
+        assertTrue(output.contains("assistant continues"), escaped(output));
+        assertTrue(output.matches("(?s).*\\033\\[[0-9]+;1H\\033\\[2K\\033\\[48;5;236m> .*"), escaped(output));
+
+        transport.close();
+    }
+
+    @Test
     void closeAfterOverflowMovesPromptBelowPhysicalViewport() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 3;
@@ -395,7 +460,8 @@ class JLineTuiTransportTest {
         String frame = io.output.toString();
         String fullClear = "\033[2J\033[H";
         String rendered = frame.substring(frame.indexOf(fullClear) + fullClear.length(), frame.indexOf("\033[?2026l"));
-        assertEquals(4, rendered.split("\n", -1).length);
+        assertEquals(4, positionedRowCount(rendered));
+        assertFalse(rendered.contains("\n"));
         assertTrue(rendered.contains("> "));
 
         transport.close();
@@ -959,6 +1025,10 @@ class JLineTuiTransportTest {
         public int height() {
             return 4;
         }
+    }
+
+    private static long positionedRowCount(String output) {
+        return java.util.regex.Pattern.compile("\\u001B\\[[0-9]+;1H\\u001B\\[2K").matcher(output).results().count();
     }
 
     private static String escaped(String value) {

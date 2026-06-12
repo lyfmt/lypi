@@ -123,7 +123,7 @@ final class TerminalFrameRenderer {
             io.write(SYNC_START);
             io.write(FULL_CLEAR);
         }
-        writeLines(visibleLines(lines, viewportTop, height));
+        writeVisibleRows(visibleLines(lines, viewportTop, height));
         hardwareCursorRow = physicalBottomRow(lines, viewportTop, height);
         moveCursor(cursor, viewportTop, height);
         if (clear) {
@@ -319,11 +319,10 @@ final class TerminalFrameRenderer {
         return " ".repeat((width - lineWidth) / 2) + line;
     }
 
-    private void writeLines(List<String> lines) throws IOException {
+    private void writeVisibleRows(List<String> lines) throws IOException {
         for (int index = 0; index < lines.size(); index++) {
-            if (index > 0) {
-                io.write("\n");
-            }
+            io.write("\033[" + (index + 1) + ";1H");
+            io.write("\033[2K");
             writeLine(lines.get(index));
         }
     }

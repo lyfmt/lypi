@@ -16,7 +16,8 @@ class TerminalFrameRendererTest {
 
         renderer.render(List.of("hello", "world|CURSOR|"));
 
-        assertEquals("hello\nworld\033[2;6H", io.output.toString());
+        assertEquals("\033[1;1H\033[2Khello\033[2;1H\033[2Kworld\033[2;6H", io.output.toString());
+        assertFalse(io.output.toString().contains("\n"));
         assertFalse(io.output.toString().contains("\033[H\033[J"));
     }
 
@@ -31,7 +32,8 @@ class TerminalFrameRendererTest {
 
         String output = io.output.toString();
         assertTrue(output.startsWith("\033[?2026h\033[2J\033[H"));
-        assertTrue(output.endsWith("hello\nworld\033[4;6H\033[?2026l"));
+        assertTrue(output.endsWith("\033[3;1H\033[2Khello\033[4;1H\033[2Kworld\033[4;6H\033[?2026l"));
+        assertFalse(output.contains("\n"));
     }
 
     @Test
@@ -51,10 +53,13 @@ class TerminalFrameRendererTest {
         assertTrue(plainOutput.contains("██████╗ "));
         assertTrue(plainOutput.contains("██╔══██╗"));
         assertTrue(plainOutput.contains("██████╔╝"));
-        assertTrue(plainOutput.endsWith("hello\n> \nstatus"));
+        assertTrue(plainOutput.contains("hello"));
+        assertTrue(plainOutput.contains("> "));
+        assertTrue(plainOutput.contains("status"));
         assertTrue(io.output.toString().endsWith("\033[10;3H\033[?2026l"));
+        assertFalse(io.output.toString().contains("\n"));
 
-        for (String line : plainOutput.split("\n", -1)) {
+        for (String line : positionedPlainRows(io.output.toString())) {
             assertTrue(AnsiWidth.displayWidth(line) <= io.width, () -> "line exceeds terminal width: " + line);
         }
     }
@@ -575,7 +580,8 @@ class TerminalFrameRendererTest {
         io.width = 100;
         renderer.render(List.of("one"));
 
-        assertEquals("\033[?2026h\033[2J\033[Hone\033[?2026l", io.output.toString());
+        assertEquals("\033[?2026h\033[2J\033[H\033[1;1H\033[2Kone\033[?2026l", io.output.toString());
+        assertFalse(io.output.toString().contains("\n"));
     }
 
     @Test
@@ -588,7 +594,14 @@ class TerminalFrameRendererTest {
         io.output.setLength(0);
         renderer.render(List.of("ONE", "two", "three"));
 
-        assertEquals("\033[?2026h\033[2J\033[Htwo\nthree\033[?2026l", io.output.toString());
+        assertEquals(
+            "\033[?2026h\033[2J\033[H"
+                + "\033[1;1H\033[2Ktwo"
+                + "\033[2;1H\033[2Kthree"
+                + "\033[?2026l",
+            io.output.toString()
+        );
+        assertFalse(io.output.toString().contains("\n"));
     }
 
     @Test
@@ -599,7 +612,14 @@ class TerminalFrameRendererTest {
 
         renderer.render(List.of("one", "two", "three", "four|CURSOR|"));
 
-        assertEquals("two\nthree\nfour\033[3;5H", io.output.toString());
+        assertEquals(
+            "\033[1;1H\033[2Ktwo"
+                + "\033[2;1H\033[2Kthree"
+                + "\033[3;1H\033[2Kfour"
+                + "\033[3;5H",
+            io.output.toString()
+        );
+        assertFalse(io.output.toString().contains("\n"));
     }
 
     private static final class RecordingTerminalIo implements TerminalIo {
@@ -651,5 +671,16 @@ class TerminalFrameRendererTest {
 
     private static String escaped(String value) {
         return value.replace("\033", "\\e").replace("\r", "\\r").replace("\n", "\\n");
+    }
+
+    private static List<String> positionedPlainRows(String output) {
+        List<String> rows = new java.util.ArrayList<>();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+            .compile("\\u001B\\[[0-9]+;1H\\u001B\\[2K([^\\u001B]*)")
+            .matcher(output);
+        while (matcher.find()) {
+            rows.add(stripAnsi(matcher.group(1)));
+        }
+        return rows;
     }
 }
