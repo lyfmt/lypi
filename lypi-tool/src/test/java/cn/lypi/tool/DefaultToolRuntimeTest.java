@@ -265,10 +265,10 @@ class DefaultToolRuntimeTest {
             return PermissionGateResult.allow();
         };
         DefaultToolRuntime runtime = runtimeWithGate(gate, security);
-        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+        runtime.register(TestTools.echo("write", List.of(), false, false, true));
 
         ToolResult<?> result = runtime.execute(
-            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "done"), "msg_1")),
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
             TestTools.context(PermissionMode.DEFAULT_EXECUTE)
         ).getFirst();
 
@@ -276,6 +276,36 @@ class DefaultToolRuntimeTest {
         assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
         assertEquals("security ask", requestedDecision.get().message());
         assertEquals("done", result.newMessages().getFirst().content().getFirst().text());
+    }
+
+    @Test
+    void defaultSandboxBashSkipsUserApprovalAndExecutesInSandboxPath() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger permissionCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("should not ask before sandbox");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionAndExecutionCountingTool(
+            "bash",
+            PermissionBehavior.ASK,
+            permissionCalls,
+            executeCalls
+        ));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "sandbox"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals("sandbox", result.newMessages().getFirst().content().getFirst().text());
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, permissionCalls.get());
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
@@ -494,10 +524,10 @@ class DefaultToolRuntimeTest {
         SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
         PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.deny("user denied");
         DefaultToolRuntime runtime = runtimeWithGate(gate, security);
-        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+        runtime.register(TestTools.echo("write", List.of(), false, false, true));
 
         ToolResult<?> result = runtime.execute(
-            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "nope"), "msg_1")),
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "nope"), "msg_1")),
             TestTools.context(PermissionMode.DEFAULT_EXECUTE)
         ).getFirst();
 
