@@ -505,6 +505,8 @@ class DefaultTurnExecutorTest {
             .containsExactly("msg-user", "msg-tool-call", "msg-tool-result", "msg-final");
         assertThat(session.messages()).extracting(AgentMessage::role)
             .containsExactly(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL_RESULT, MessageRole.ASSISTANT);
+        ToolResultContentBlock toolResult = toolResultBlock(session.messages(), "toolu-1");
+        assertThat(toolResult.metadata()).containsEntry("openaiPendingToolOutput", true);
         MessageStartEvent toolCallStart = eventBus.events.stream()
             .filter(MessageStartEvent.class::isInstance)
             .map(MessageStartEvent.class::cast)

@@ -67,6 +67,21 @@ class GlobToolTest {
     }
 
     @Test
+    void ignoresSessionJsonlFilesByDefault() throws Exception {
+        Files.createDirectories(tempDir.resolve(".lypi/sessions"));
+        Files.writeString(tempDir.resolve(".lypi/sessions/session_1.jsonl"), "session");
+        Files.writeString(tempDir.resolve("source.txt"), "source");
+        GlobTool tool = new GlobTool();
+
+        ToolResult<String> result = tool.execute(Map.of("pattern", "**/*"), context(), message -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("source.txt"));
+        assertFalse(result.output().contains(".lypi/sessions/session_1.jsonl"));
+    }
+
+    @Test
     void isReadOnlyAndConcurrencySafe() {
         GlobTool tool = new GlobTool();
 

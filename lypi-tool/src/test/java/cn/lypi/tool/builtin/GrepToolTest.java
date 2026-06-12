@@ -65,6 +65,21 @@ class GrepToolTest {
     }
 
     @Test
+    void ignoresSessionJsonlFilesByDefault() throws Exception {
+        Files.createDirectories(tempDir.resolve(".lypi/sessions"));
+        Files.writeString(tempDir.resolve(".lypi/sessions/session_1.jsonl"), "needle tool_call\n");
+        Files.writeString(tempDir.resolve("source.txt"), "needle source\n");
+        GrepTool tool = new GrepTool();
+
+        ToolResult<String> result = tool.execute(Map.of("pattern", "needle"), context(), message -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("source.txt:1:needle source"));
+        assertFalse(result.output().contains(".lypi/sessions/session_1.jsonl"));
+    }
+
+    @Test
     void isReadOnlyAndConcurrencySafe() {
         GrepTool tool = new GrepTool();
 
