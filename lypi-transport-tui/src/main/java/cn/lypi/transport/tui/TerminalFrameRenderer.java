@@ -317,7 +317,7 @@ final class TerminalFrameRenderer {
     }
 
     private int viewportTopFor(List<String> lines, int height) {
-        return Math.max(0, Math.max(maxLinesRendered, lines.size()) - height);
+        return Math.max(0, lines.size() - height);
     }
 
     private int physicalBottomRow(List<String> lines, int viewportTop, int height) {

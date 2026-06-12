@@ -485,6 +485,40 @@ class TerminalFrameRendererTest {
     }
 
     @Test
+    void shrinkAfterLargeExpandedFrameUsesCurrentTailViewport() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 5;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of(
+            "tool header",
+            "  line 1",
+            "  line 2",
+            "  line 3",
+            "  line 4",
+            "  line 5",
+            "  line 6",
+            "──",
+            "> |CURSOR|",
+            "status"
+        ));
+        io.output.setLength(0);
+        renderer.render(List.of(
+            "tools: bash x1 (Ctrl+O details)",
+            "──",
+            "> |CURSOR|",
+            "status"
+        ));
+
+        String output = io.output.toString();
+        assertTrue(output.contains("\033[1;1H\033[2Ktools: bash x1 (Ctrl+O details)"));
+        assertTrue(output.contains("\033[2;1H\033[2K──"));
+        assertTrue(output.contains("\033[3;1H\033[2K> "));
+        assertTrue(output.contains("\033[4;1H\033[2Kstatus"));
+        assertFalse(output.contains("line 6"));
+    }
+
+    @Test
     void widthOrHeightChangeUsesFullRenderWithoutClearingTerminalScrollback() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);

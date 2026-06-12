@@ -37,6 +37,10 @@ final class ToolDisplayRendererRegistry {
         return renderers.getOrDefault(normalize(block.toolName()), fallback).render(block, expanded);
     }
 
+    ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
+        return renderers.getOrDefault(normalize(block.toolName()), fallback).render(block, expanded, detailLineLimit);
+    }
+
     boolean isReadLikeTool(TuiToolBlock block) {
         String toolName = normalize(block.toolName());
         return "read".equals(toolName) || "grep".equals(toolName) || "glob".equals(toolName);
@@ -64,6 +68,7 @@ final class ToolDisplayRendererRegistry {
     }
 
     private static List<String> firstLines(List<String> lines, int limit) {
+        limit = Math.max(0, limit);
         if (lines.size() <= limit) {
             return lines;
         }
@@ -73,6 +78,7 @@ final class ToolDisplayRendererRegistry {
     }
 
     private static List<String> tailLines(List<String> lines, int limit) {
+        limit = Math.max(0, limit);
         if (lines.size() <= limit) {
             return lines;
         }
@@ -85,10 +91,15 @@ final class ToolDisplayRendererRegistry {
     private static final class BashToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
         public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
+            return render(block, expanded, expanded ? 80 : 5);
+        }
+
+        @Override
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " $ " + label(block),
                 List.of(),
-                tailLines(detailLines(block), expanded ? 80 : 5)
+                tailLines(detailLines(block), expanded ? detailLineLimit : 5)
             );
         }
     }
@@ -107,10 +118,15 @@ final class ToolDisplayRendererRegistry {
     private static final class WriteToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
         public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
+            return render(block, expanded, expanded ? 120 : 10);
+        }
+
+        @Override
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " " + block.toolName() + " " + label(block),
                 List.of(),
-                firstLines(detailLines(block), expanded ? 120 : 10)
+                firstLines(detailLines(block), expanded ? detailLineLimit : 10)
             );
         }
     }
@@ -118,6 +134,11 @@ final class ToolDisplayRendererRegistry {
     private static final class EditToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
         public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
+            return render(block, expanded, expanded ? 120 : 12);
+        }
+
+        @Override
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
             List<String> lines = detailLines(block);
             int added = 0;
             int removed = 0;
@@ -132,7 +153,7 @@ final class ToolDisplayRendererRegistry {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " edit " + label(block) + summary,
                 List.of(),
-                firstLines(lines, expanded ? 120 : 12)
+                firstLines(lines, expanded ? detailLineLimit : 12)
             );
         }
     }
@@ -151,10 +172,15 @@ final class ToolDisplayRendererRegistry {
     private static final class FallbackToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
         public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
+            return render(block, expanded, expanded ? 120 : 10);
+        }
+
+        @Override
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " " + block.toolName() + " " + label(block),
                 List.of(),
-                firstLines(detailLines(block), expanded ? 120 : 10)
+                firstLines(detailLines(block), expanded ? detailLineLimit : 10)
             );
         }
     }
