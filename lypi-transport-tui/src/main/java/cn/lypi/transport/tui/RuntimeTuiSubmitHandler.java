@@ -15,6 +15,8 @@ import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.skill.SkillIndex;
+import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.time.Instant;
@@ -23,6 +25,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private String currentSessionId;
@@ -31,6 +34,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private final Executor executor;
     private final SlashCommandRouter slashCommandRouter;
     private final Consumer<SessionRuntimeState> runtimeStateConsumer;
+    private final Supplier<SkillIndex> skillIndexSupplier;
     private MutableAbortSignal activeSignal;
 
     RuntimeTuiSubmitHandler(String sessionId, AgentCorePort core, EventBus events) {
@@ -87,16 +91,36 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         SlashCommandRouter slashCommandRouter,
         Consumer<SessionRuntimeState> runtimeStateConsumer
     ) {
+        this(sessionId, core, events, executor, slashCommandRouter, runtimeStateConsumer, () -> new SkillIndex(List.of(), List.of()));
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        SlashCommandRouter slashCommandRouter,
+        Consumer<SessionRuntimeState> runtimeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier
+    ) {
         this.currentSessionId = sessionId;
         this.core = core;
         this.events = events;
         this.executor = executor;
         this.slashCommandRouter = slashCommandRouter;
         this.runtimeStateConsumer = runtimeStateConsumer;
+        this.skillIndexSupplier = skillIndexSupplier == null
+            ? () -> new SkillIndex(List.of(), List.of())
+            : skillIndexSupplier;
     }
 
     @Override
     public void submitUserInput(String input) {
+        submitUserInput(input, List.of());
+    }
+
+    @Override
+    public void submitUserInput(String input, List<SkillMention> skillMentions) {
         String routedInput = input == null ? "" : input;
         if (slashCommandRouter != null) {
             SlashCommandResult result = slashCommandRouter.route(routedInput);
@@ -114,6 +138,9 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
                 routedInput = result.prompt().orElseThrow();
             }
         }
+        List<SkillMention> resolvedSkillMentions = skillMentions == null || skillMentions.isEmpty()
+            ? new SkillMentionParser(skillIndexSupplier.get().skills()).explicitMentions(routedInput, List.of(), null)
+            : List.copyOf(skillMentions);
         MutableAbortSignal signal = new MutableAbortSignal();
         activeSignal = signal;
         String sessionId = currentSessionId;
@@ -121,7 +148,9 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             sessionId,
             routedInput,
             Optional.empty(),
-            signal
+            signal,
+            TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+            resolvedSkillMentions
         );
         executor.execute(() -> core.execute(request));
     }

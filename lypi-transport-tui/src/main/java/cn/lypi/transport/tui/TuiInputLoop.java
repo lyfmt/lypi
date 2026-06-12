@@ -10,6 +10,9 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.skill.SkillDescriptor;
+import cn.lypi.contracts.skill.SkillIndex;
+import cn.lypi.contracts.skill.SkillMention;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -26,9 +29,14 @@ final class TuiInputLoop {
     private final KeyBindingRegistry bindings = KeyBindingRegistry.defaults();
     private final TerminalInputPolicy inputPolicy = new TerminalInputPolicy();
     private final Supplier<SlashCommandPicker> slashPickerSupplier;
+    private final Supplier<SkillIndex> skillIndexSupplier;
     private final ResumeSessionController resumeController;
     private final Consumer<SessionRuntimeState> resumeStateConsumer;
     private SlashCommandPicker slashPicker;
+    private SkillMentionToken skillToken;
+    private int skillSelectedIndex;
+    private final List<SkillMentionBinding> skillBindings = new java.util.ArrayList<>();
+    private final SkillMentionSuppressions skillSuppressions = new SkillMentionSuppressions();
     private ResumeSessionSelector resumeSessionSelector;
     private ResumeBranchTreeSelector resumeBranchTreeSelector;
     private String resumeSessionId;
@@ -95,6 +103,21 @@ final class TuiInputLoop {
         ResumeSessionController resumeController,
         Consumer<SessionRuntimeState> resumeStateConsumer
     ) {
+        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, resumeController, resumeStateConsumer, null);
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        FrameSink frameSink,
+        TuiRenderer renderer,
+        TuiScreen screen,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier
+    ) {
         this.submitHandler = submitHandler;
         this.frameSink = frameSink;
         this.renderer = renderer;
@@ -104,6 +127,7 @@ final class TuiInputLoop {
         this.slashPickerSupplier = slashPickerSupplier == null
             ? () -> SlashCommandPicker.withTemplates(List.of())
             : slashPickerSupplier;
+        this.skillIndexSupplier = skillIndexSupplier == null ? () -> new SkillIndex(List.of(), List.of()) : skillIndexSupplier;
         this.resumeController = resumeController;
         this.resumeStateConsumer = resumeStateConsumer;
     }
@@ -111,12 +135,14 @@ final class TuiInputLoop {
     void acceptText(String text) {
         editor.insert(text);
         slashOverlayClosed = false;
+        skillToken = null;
         render();
     }
 
     void acceptPaste(String text) {
         editor.insertPaste(text);
         slashOverlayClosed = false;
+        skillToken = null;
         render();
     }
 
@@ -181,6 +207,28 @@ final class TuiInputLoop {
             }
             if (key == TerminalKey.DOWN) {
                 slashPicker().moveDown();
+                render();
+                return;
+            }
+        }
+        if (skillOverlayOpen() && !skillMatches().isEmpty()) {
+            if (key == TerminalKey.ENTER || key == TerminalKey.TAB) {
+                acceptSkillSelection();
+                return;
+            }
+            if (key == TerminalKey.ESC) {
+                skillSuppressions.suppress(skillToken);
+                skillToken = null;
+                render();
+                return;
+            }
+            if (key == TerminalKey.UP) {
+                moveSkillSelection(-1);
+                render();
+                return;
+            }
+            if (key == TerminalKey.DOWN) {
+                moveSkillSelection(1);
                 render();
                 return;
             }
@@ -265,8 +313,12 @@ final class TuiInputLoop {
         }
         editor.acceptHistoryEntry();
         slashOverlayClosed = true;
-        submitHandler.submitUserInput(draft);
+        List<SkillMention> mentions = new SkillMentionParser(skillIndexSupplier.get().skills())
+            .explicitMentions(draft, skillBindings, skillSuppressions);
+        submitHandler.submitUserInput(draft, mentions);
         editor.clear();
+        skillBindings.clear();
+        skillSuppressions.clear();
         render();
     }
 
@@ -274,6 +326,8 @@ final class TuiInputLoop {
         if (!editor.text().isBlank()) {
             editor.clear();
             slashOverlayClosed = true;
+            skillBindings.clear();
+            skillSuppressions.clear();
             render();
             return;
         }
@@ -452,6 +506,10 @@ final class TuiInputLoop {
         if (resumeSessionSelector != null) {
             return resumeSessionSelector.render(layout.width());
         }
+        List<String> skillLines = skillOverlayLines();
+        if (!skillLines.isEmpty()) {
+            return skillLines;
+        }
         return slashOverlayLines();
     }
 
@@ -575,6 +633,76 @@ final class TuiInputLoop {
     private void acceptSlashSelection() {
         slashPicker().accept().ifPresent(command -> editor.replaceFirstToken(command + " "));
         slashOverlayClosed = true;
+        render();
+    }
+
+    private boolean skillOverlayOpen() {
+        if (viewSupplier.get().permissionPrompt().isPresent() || resumeOverlayOpen() || slashOverlayOpen()) {
+            return false;
+        }
+        SkillMentionParser parser = new SkillMentionParser(skillIndexSupplier.get().skills());
+        Optional<SkillMentionToken> token = parser.activeToken(editor.text(), editor.cursor());
+        if (token.isEmpty() || skillSuppressions.suppressed(token.orElseThrow())) {
+            skillToken = null;
+            return false;
+        }
+        skillToken = token.orElseThrow();
+        return !parser.matches(skillToken.prefix()).isEmpty();
+    }
+
+    private List<SkillDescriptor> skillMatches() {
+        if (skillToken == null) {
+            return List.of();
+        }
+        return new SkillMentionParser(skillIndexSupplier.get().skills()).matches(skillToken.prefix());
+    }
+
+    private List<String> skillOverlayLines() {
+        if (!skillOverlayOpen()) {
+            return List.of();
+        }
+        List<SkillDescriptor> matches = skillMatches();
+        int selected = Math.max(0, Math.min(skillSelectedIndex, Math.max(0, matches.size() - 1)));
+        int limit = Math.min(5, matches.size());
+        int start = Math.max(0, selected - limit + 1);
+        List<String> lines = new java.util.ArrayList<>();
+        for (int index = start; index < start + limit; index++) {
+            SkillDescriptor skill = matches.get(index);
+            lines.add((index == selected ? "> $" : "  $") + skill.name() + "  " + skill.description());
+        }
+        return lines;
+    }
+
+    private void moveSkillSelection(int delta) {
+        List<SkillDescriptor> matches = skillMatches();
+        if (matches.isEmpty()) {
+            return;
+        }
+        skillSelectedIndex = Math.max(0, Math.min(matches.size() - 1, skillSelectedIndex + delta));
+    }
+
+    private void acceptSkillSelection() {
+        if (skillToken == null) {
+            render();
+            return;
+        }
+        List<SkillDescriptor> matches = skillMatches();
+        if (matches.isEmpty()) {
+            render();
+            return;
+        }
+        SkillDescriptor skill = matches.get(Math.max(0, Math.min(skillSelectedIndex, matches.size() - 1)));
+        String replacement = "$" + skill.name();
+        editor.replaceRange(skillToken.start(), skillToken.end(), replacement);
+        skillBindings.add(new SkillMentionBinding(
+            skillToken.start(),
+            skillToken.start() + replacement.length(),
+            skill.name(),
+            skill.skillFile()
+        ));
+        skillSuppressions.suppress(new SkillMentionToken(skillToken.start(), skillToken.start() + replacement.length(), skill.name()));
+        skillToken = null;
+        skillSelectedIndex = 0;
         render();
     }
 

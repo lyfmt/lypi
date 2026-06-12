@@ -43,6 +43,10 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.skill.SkillDescriptor;
+import cn.lypi.contracts.skill.SkillIndex;
+import cn.lypi.contracts.skill.SkillMention;
+import cn.lypi.contracts.skill.SkillSource;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.SlashCommandHandler;
@@ -88,6 +92,57 @@ class RuntimeTuiSubmitHandlerTest {
         TurnRequest request = core.requests.getFirst();
         assertEquals("ses_old", request.sessionId());
         assertEquals("hello", request.userInput());
+    }
+
+    @Test
+    void submitCarriesExplicitSkillMentionBindings() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, Runnable::run);
+
+        handler.submitUserInput("use $doc", List.of(new SkillMention("doc", Path.of("/tmp/doc/SKILL.md"))));
+
+        TurnRequest request = core.requests.getFirst();
+        assertEquals("use $doc", request.userInput());
+        assertEquals(List.of(new SkillMention("doc", Path.of("/tmp/doc/SKILL.md"))), request.skillMentions());
+    }
+
+    @Test
+    void submitResolvesUniqueBareSkillTokenWhenNoBindingExists() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            null,
+            null,
+            skills("doc")
+        );
+
+        handler.submitUserInput("use $doc");
+
+        assertEquals(List.of(new SkillMention("doc", Path.of("/tmp/doc/SKILL.md"))), core.requests.getFirst().skillMentions());
+    }
+
+    @Test
+    void submitDoesNotResolveAmbiguousBareSkillToken() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            null,
+            null,
+            skills("doc", "doc")
+        );
+
+        handler.submitUserInput("use $doc");
+
+        assertTrue(core.requests.getFirst().skillMentions().isEmpty());
     }
 
     @Test
@@ -450,6 +505,23 @@ class RuntimeTuiSubmitHandlerTest {
                 return null;
             }
         };
+    }
+
+    private static java.util.function.Supplier<SkillIndex> skills(String... names) {
+        List<SkillDescriptor> descriptors = new ArrayList<>();
+        for (int index = 0; index < names.length; index++) {
+            String name = names[index];
+            descriptors.add(new SkillDescriptor(
+                name,
+                "Skill " + name,
+                SkillSource.PROJECT,
+                Path.of("/tmp/" + name + (index == 0 ? "" : index) + "/SKILL.md"),
+                List.of(),
+                List.of(),
+                "sha256:" + name + index
+            ));
+        }
+        return () -> new SkillIndex(descriptors, List.of());
     }
 
     private static SessionRuntimeState runtimeState(String sessionId, String leafId) {

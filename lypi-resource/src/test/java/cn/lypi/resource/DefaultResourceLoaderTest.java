@@ -137,6 +137,30 @@ class DefaultResourceLoaderTest {
     }
 
     @Test
+    void loadDiscoversDotLyPiDirectorySkillsFromCurrentWorkingDirectory() throws Exception {
+        Path root = Files.createDirectories(tempDir.resolve("repo"));
+        Path module = Files.createDirectories(root.resolve("module"));
+        Files.writeString(root.resolve(".git"), "gitdir: /tmp/repo.git");
+        Path skillDir = Files.createDirectories(module.resolve(".ly-pi/skills/doc"));
+        Files.writeString(skillDir.resolve("SKILL.md"), """
+            ---
+            name: doc
+            description: Document workflow
+            ---
+            Body should not enter the resource index.
+            """);
+
+        ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(), List.of()).load(module);
+
+        assertThat(snapshot.skillIndex().skills()).singleElement().satisfies(skill -> {
+            assertThat(skill.name()).isEqualTo("doc");
+            assertThat(skill.description()).isEqualTo("Document workflow");
+            assertThat(skill.source()).isEqualTo(SkillSource.NESTED_PROJECT);
+            assertThat(skill.skillFile()).isEqualTo(skillDir.resolve("SKILL.md").toAbsolutePath().normalize());
+        });
+    }
+
+    @Test
     void loadReportsDiagnosticsForInvalidResourcesWithoutFailingSnapshot() throws Exception {
         Path root = Files.createDirectories(tempDir.resolve("repo"));
         Files.writeString(root.resolve(".git"), "gitdir: /tmp/repo.git");
