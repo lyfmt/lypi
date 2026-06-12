@@ -174,6 +174,46 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void messageEndSnapshotWithDifferentTextBlockIdReplacesSameMessageDelta() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "delta_text_1",
+            ContentBlockKind.TEXT,
+            "“特斯太”这个词不是一个常见的标准中文词",
+            false,
+            Map.of(),
+            NOW
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot(
+                "snapshot_text_1",
+                ContentBlockKind.TEXT,
+                "“特斯太”这个词不是一个常见的标准中文词",
+                Map.of()
+            )),
+            Optional.empty(),
+            Optional.of("stop"),
+            Map.of(),
+            NOW
+        ));
+
+        assertEquals(1, reducer.view().blocks().size());
+        TuiMessageBlock message = assertInstanceOf(TuiMessageBlock.class, reducer.view().blocks().getFirst());
+        assertEquals("snapshot_text_1", message.blockId());
+        assertEquals("“特斯太”这个词不是一个常见的标准中文词", message.content());
+        assertFalse(message.streaming());
+    }
+
+    @Test
     void messageEndSnapshotReplacesEmptyStartPlaceholderWhenBlockIdDiffers() {
         TuiEventReducer reducer = new TuiEventReducer();
 

@@ -362,9 +362,21 @@ public final class TuiEventReducer {
             return existing.orElseThrow();
         }
         if (snapshot.blockKind() == ContentBlockKind.TEXT) {
-            return emptyStreamingTextPlaceholderIndex(event.messageId()).orElse(-1);
+            return textBlockIndex(event.messageId()).orElse(-1);
         }
         return -1;
+    }
+
+    private java.util.Optional<Integer> textBlockIndex(String messageId) {
+        return emptyStreamingTextPlaceholderIndex(messageId).or(() -> {
+            for (int index = 0; index < state.blocks().size(); index++) {
+                if (state.blocks().get(index) instanceof TuiMessageBlock block
+                    && messageId.equals(block.messageId())) {
+                    return java.util.Optional.of(index);
+                }
+            }
+            return java.util.Optional.empty();
+        });
     }
 
     private void putOrAdd(int index, TuiBlock block) {
