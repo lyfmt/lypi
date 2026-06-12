@@ -11,6 +11,7 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.ThinkingContentBlock;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
@@ -81,6 +82,16 @@ final class AgentCoreTestFixtures {
     }
 
     static AgentMessage assistantToolCallMessage(String id, String toolUseId, String toolName, Map<String, Object> input) {
+        return assistantToolCallMessage(id, toolUseId, toolName, input, Optional.of("tool_calls"));
+    }
+
+    static AgentMessage assistantToolCallMessage(
+        String id,
+        String toolUseId,
+        String toolName,
+        Map<String, Object> input,
+        Optional<String> stopReason
+    ) {
         return new AgentMessage(
             id,
             MessageRole.ASSISTANT,
@@ -93,11 +104,22 @@ final class AgentCoreTestFixtures {
             )),
             NOW,
             Optional.empty(),
-            Optional.of("tool_calls")
+            stopReason
         );
     }
 
     static AgentMessage assistantTextAndToolCallMessage(String id, String text, String toolUseId, String toolName, Map<String, Object> input) {
+        return assistantTextAndToolCallMessage(id, text, toolUseId, toolName, input, Optional.of("tool_calls"));
+    }
+
+    static AgentMessage assistantTextAndToolCallMessage(
+        String id,
+        String text,
+        String toolUseId,
+        String toolName,
+        Map<String, Object> input,
+        Optional<String> stopReason
+    ) {
         return new AgentMessage(
             id,
             MessageRole.ASSISTANT,
@@ -113,7 +135,23 @@ final class AgentCoreTestFixtures {
             ),
             NOW,
             Optional.empty(),
-            Optional.of("tool_calls")
+            stopReason
+        );
+    }
+
+    static AgentMessage assistantThinkingMessage(String id, String text) {
+        return assistantThinkingMessage(id, text, Optional.of("aborted"));
+    }
+
+    static AgentMessage assistantThinkingMessage(String id, String text, Optional<String> stopReason) {
+        return new AgentMessage(
+            id,
+            MessageRole.ASSISTANT,
+            MessageKind.THINKING,
+            List.of(new ThinkingContentBlock(text)),
+            NOW,
+            Optional.empty(),
+            stopReason
         );
     }
 

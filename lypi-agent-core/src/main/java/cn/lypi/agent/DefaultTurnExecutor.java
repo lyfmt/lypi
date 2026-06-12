@@ -56,6 +56,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private final ToolCallMapper toolCallMapper;
     private final AgentCoreExceptionHandler exceptionHandler;
     private final ContextBudgetEstimator budgetEstimator;
+    private final ContinuationRepairer continuationRepairer;
 
     public DefaultTurnExecutor(AgentCoreRuntimePorts ports, TurnIds ids, Clock clock) {
         this.ports = ports;
@@ -65,6 +66,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         this.toolCallMapper = new ToolCallMapper();
         this.exceptionHandler = new AgentCoreExceptionHandler(ports.eventBus(), messageFactory, clock);
         this.budgetEstimator = new ContextBudgetEstimator();
+        this.continuationRepairer = new ContinuationRepairer(messageFactory);
     }
 
     @Override
@@ -74,11 +76,16 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ports.sessionManager().openOrCreate(request.sessionId());
         request.parentEntryId().ifPresent(parentEntryId -> ports.sessionManager().switchLeaf(parentEntryId));
         ports.eventBus().publish(new TurnStartEvent(request.sessionId(), turnId, clock.instant()));
-        Optional<String> unsafeReason = unsafeContinuationReason(currentLeafId());
-        if (unsafeReason.isPresent()) {
+        String contextLeafId = currentLeafId();
+        Optional<AgentMessage> repair = continuationRepair(contextLeafId);
+        if (repair.isPresent()) {
+            AgentMessage repairMessage = repair.orElseThrow();
+            contextLeafId = appendNewMessage(request.sessionId(), repairMessage);
+            newMessages.add(repairMessage);
+        } else if (unsafeContinuationWithoutRepair(contextLeafId)) {
             ports.eventBus().publish(new ErrorEvent(
                 request.sessionId(),
-                unsafeReason.orElseThrow(),
+                ContinuationRepairer.TOOL_CALL_UNSAFE_REASON,
                 "当前分支停在 assistant 工具调用消息上，不能直接追加用户消息。请选择上一条用户消息或工具结果之后继续。",
                 clock.instant()
             ));
@@ -86,7 +93,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         }
 
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
-        String contextLeafId = appendNewMessage(request.sessionId(), user);
+        contextLeafId = appendNewMessage(request.sessionId(), user);
         newMessages.add(user);
 
         ContextSnapshot context = null;
@@ -188,7 +195,15 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             .anyMatch(toolCall -> !Boolean.TRUE.equals(toolCall.metadata().get("complete")));
     }
 
-    private Optional<String> unsafeContinuationReason(String leafId) {
+    private Optional<AgentMessage> continuationRepair(String leafId) {
+        return leafMessage(leafId).flatMap(message -> continuationRepairer.repairMessage(message, ids::newMessageId));
+    }
+
+    private boolean unsafeContinuationWithoutRepair(String leafId) {
+        return leafMessage(leafId).map(continuationRepairer::isUnsafeWithoutRepair).orElse(false);
+    }
+
+    private Optional<AgentMessage> leafMessage(String leafId) {
         if (leafId == null || leafId.isBlank()) {
             return Optional.empty();
         }
@@ -200,25 +215,11 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         if (!(last instanceof MessageEntry messageEntry) || messageEntry.message() == null) {
             return Optional.empty();
         }
-        AgentMessage message = messageEntry.message();
-        if (isToolCallAssistant(message)) {
-            return Optional.of("cannot-continue-from-tool-call-assistant");
-        }
-        return Optional.empty();
+        return Optional.of(messageEntry.message());
     }
 
     private String currentLeafId() {
         return ports.sessionManager().currentView().leafId();
-    }
-
-    private boolean isToolCallAssistant(AgentMessage message) {
-        if (message.role() != MessageRole.ASSISTANT || message.content() == null || message.content().isEmpty()) {
-            return false;
-        }
-        if (message.kind() == MessageKind.ERROR) {
-            return false;
-        }
-        return message.content().stream().anyMatch(block -> block.kind() == ContentBlockKind.TOOL_CALL);
     }
 
     private TurnState failedState(

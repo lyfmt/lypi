@@ -61,6 +61,22 @@ public final class AgentMessageFactory {
         );
     }
 
+    public AgentMessage toolResultMessage(
+        String messageId,
+        List<ToolResultContentBlock> blocks,
+        Optional<String> stopReason
+    ) {
+        return new AgentMessage(
+            messageId,
+            MessageRole.TOOL_RESULT,
+            MessageKind.TOOL_RESULT,
+            List.copyOf(blocks),
+            clock.instant(),
+            Optional.empty(),
+            stopReason
+        );
+    }
+
     public AgentMessage errorMessage(String messageId, String errorId, String text) {
         return new AgentMessage(
             messageId,

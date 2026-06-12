@@ -12,6 +12,8 @@ import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ThinkingContentBlock;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
@@ -332,7 +334,7 @@ class DefaultTurnExecutorTest {
                 new NoopCompactionCoordinator(),
                 new NoopMemoryExtractionWorker()
             ),
-            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            TurnIds.fixed("turn-1", "msg-user", "msg-error"),
             clock
         );
 
@@ -2164,7 +2166,229 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
-    void rejectsTurnWhenRequestedParentIsToolOnlyAssistant() {
+    void repairsInterruptedToolCallParentBeforeAppendingUserMessage() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
+        session.appendMessage(AgentCoreTestFixtures.assistantToolCallMessage(
+            "msg-tool-call",
+            "toolu-1",
+            "read",
+            Map.of("path", "README.md"),
+            Optional.of("aborted")
+        ));
+        String unsafeParent = session.leafId();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        List<Optional<String>> requestedLeafEntryIds = new ArrayList<>();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("继续"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> {
+                    requestedLeafEntryIds.add(request.leafEntryId());
+                    return new ContextAssembly(
+                        AgentCoreTestFixtures.minimalContext(session.transcript(request.leafEntryId().orElseThrow())),
+                        AgentCoreTestFixtures.emptyResources(),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        false
+                    );
+                },
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-repair", "msg-user", "msg-fallback", "msg-error"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(unsafeParent), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(provider.contexts).hasSize(1);
+        assertThat(tools.requests).isEmpty();
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-root", "msg-tool-call", "msg-repair", "msg-user", "msg-final");
+        assertThat(requestedLeafEntryIds).containsExactly(Optional.of("entry-msg-user"));
+        MessageEntry repairEntry = (MessageEntry) session.entry("entry-msg-repair");
+        MessageEntry userEntry = (MessageEntry) session.entry("entry-msg-user");
+        MessageEntry finalEntry = (MessageEntry) session.entry("entry-msg-final");
+        assertThat(repairEntry.parentId()).isEqualTo("entry-msg-tool-call");
+        assertThat(userEntry.parentId()).isEqualTo("entry-msg-repair");
+        assertThat(finalEntry.parentId()).isEqualTo("entry-msg-user");
+        assertThat(session.messages()).extracting(AgentMessage::role)
+            .containsExactly(
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.TOOL_RESULT,
+                MessageRole.USER,
+                MessageRole.ASSISTANT
+            );
+        AgentMessage repair = session.messages().get(2);
+        assertThat(repair.role()).isEqualTo(MessageRole.TOOL_RESULT);
+        assertThat(repair.kind()).isEqualTo(MessageKind.TOOL_RESULT);
+        ToolResultContentBlock block = (ToolResultContentBlock) repair.content().getFirst();
+        assertThat(block.toolUseId()).isEqualTo("toolu-1");
+        assertThat(block.error()).isTrue();
+        assertThat(block.text()).isEqualTo("用户中断，工具未执行。");
+        assertThat(block.metadata())
+            .containsEntry("syntheticInterrupted", true)
+            .containsEntry("openaiPendingToolOutput", true);
+        assertThat(state.newMessages()).extracting(AgentMessage::role)
+            .containsExactly(MessageRole.TOOL_RESULT, MessageRole.USER, MessageRole.ASSISTANT);
+    }
+
+    @Test
+    void repairsAssistantContainingTextAndToolCallBeforeContinuation() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
+        session.appendMessage(AgentCoreTestFixtures.assistantTextAndToolCallMessage(
+            "msg-tool-call",
+            "I will edit it",
+            "toolu-1",
+            "edit",
+            Map.of("path", "main.c"),
+            Optional.of("aborted")
+        ));
+        String unsafeParent = session.leafId();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("已恢复"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> new ContextAssembly(
+                    AgentCoreTestFixtures.minimalContext(session.messages()),
+                    AgentCoreTestFixtures.emptyResources(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    false
+                ),
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed(
+                "turn-1",
+                "msg-repair",
+                "msg-user",
+                "msg-fallback",
+                "msg-error",
+                "msg-error-2",
+                "msg-error-3",
+                "msg-error-4"
+            ),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(unsafeParent), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        AgentMessage repair = session.messages().get(2);
+        assertThat(repair.role()).isEqualTo(MessageRole.TOOL_RESULT);
+        ToolResultContentBlock block = (ToolResultContentBlock) repair.content().getFirst();
+        assertThat(block.toolUseId()).isEqualTo("toolu-1");
+        assertThat(block.text()).isEqualTo("用户中断，工具未执行。");
+        assertThat(block.metadata()).containsEntry("syntheticInterrupted", true);
+    }
+
+    @Test
+    void repairCreatesOneToolResultBlockForEachInterruptedToolCall() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
+        session.appendMessage(new AgentMessage(
+            "msg-tool-call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(
+                new ToolCallContentBlock("toolu-1", "read", "", Map.of("input", Map.of("path", "a.md"), "complete", true)),
+                new ToolCallContentBlock("toolu-2", "grep", "", Map.of("input", Map.of("pattern", "x"), "complete", true))
+            ),
+            NOW,
+            Optional.empty(),
+            Optional.of("aborted")
+        ));
+        String unsafeParent = session.leafId();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("done"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        List<Optional<String>> requestedLeafEntryIds = new ArrayList<>();
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> {
+                    requestedLeafEntryIds.add(request.leafEntryId());
+                    return new ContextAssembly(
+                        AgentCoreTestFixtures.minimalContext(session.transcript(request.leafEntryId().orElseThrow())),
+                        AgentCoreTestFixtures.emptyResources(),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        false
+                    );
+                },
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed(
+                "turn-1",
+                "msg-repair",
+                "msg-user",
+                "msg-fallback",
+                "msg-error",
+                "msg-error-2",
+                "msg-error-3",
+                "msg-error-4"
+            ),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(unsafeParent), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        AgentMessage repair = session.messages().get(2);
+        assertThat(repair.content()).hasSize(2);
+        assertThat(repair.content()).extracting(block -> ((ToolResultContentBlock) block).toolUseId())
+            .containsExactly("toolu-1", "toolu-2");
+        assertThat(repair.content()).allSatisfy(block -> {
+            ToolResultContentBlock toolResult = (ToolResultContentBlock) block;
+            assertThat(toolResult.error()).isTrue();
+            assertThat(toolResult.text()).isEqualTo("用户中断，工具未执行。");
+            assertThat(toolResult.metadata()).containsEntry("openaiPendingToolOutput", true);
+        });
+    }
+
+    @Test
+    void rejectsNonAbortedToolCallParentWithoutSyntheticInterruptRepair() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         session.openOrCreate("session-1");
         session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
@@ -2210,26 +2434,99 @@ class DefaultTurnExecutorTest {
             .containsExactly(TurnStartEvent.class, ErrorEvent.class, TurnEndEvent.class);
         ErrorEvent error = (ErrorEvent) eventBus.events.get(1);
         assertThat(error.errorId()).isEqualTo("cannot-continue-from-tool-call-assistant");
-        assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
     }
 
     @Test
-    void rejectsTurnWhenRequestedParentAssistantContainsTextAndToolCall() {
+    void repairsInterruptedThinkingParentBeforeAppendingUserMessage() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         session.openOrCreate("session-1");
         session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
-        session.appendMessage(AgentCoreTestFixtures.assistantTextAndToolCallMessage(
-            "msg-tool-call",
-            "I will edit it",
-            "toolu-1",
-            "edit",
-            Map.of("path", "main.c")
-        ));
+        session.appendMessage(AgentCoreTestFixtures.assistantThinkingMessage("msg-thinking", "需要再想一下"));
         String unsafeParent = session.leafId();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("恢复完成"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
         AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
-        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        List<Optional<String>> requestedLeafEntryIds = new ArrayList<>();
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> {
+                    requestedLeafEntryIds.add(request.leafEntryId());
+                    return new ContextAssembly(
+                        AgentCoreTestFixtures.minimalContext(session.transcript(request.leafEntryId().orElseThrow())),
+                        AgentCoreTestFixtures.emptyResources(),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        false
+                    );
+                },
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed(
+                "turn-1",
+                "msg-repair",
+                "msg-user",
+                "msg-fallback",
+                "msg-error",
+                "msg-error-2",
+                "msg-error-3",
+                "msg-error-4"
+            ),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(unsafeParent), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(session.messages()).extracting(AgentMessage::role)
+            .containsExactly(
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.ASSISTANT,
+                MessageRole.USER,
+                MessageRole.ASSISTANT
+            );
+        AgentMessage repair = session.messages().get(2);
+        assertThat(repair.id()).isEqualTo("msg-repair");
+        assertThat(repair.role()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(repair.kind()).isEqualTo(MessageKind.ERROR);
+        assertThat(repair.content().getFirst().text()).isEqualTo("用户中断，上一轮未完成。");
+        assertThat(repair.content().getFirst().metadata()).containsEntry("syntheticInterrupted", true);
+        assertThat(requestedLeafEntryIds).containsExactly(Optional.of("entry-msg-user"));
+        MessageEntry repairEntry = (MessageEntry) session.entry("entry-msg-repair");
+        MessageEntry userEntry = (MessageEntry) session.entry("entry-msg-user");
+        MessageEntry finalEntry = (MessageEntry) session.entry("entry-msg-final");
+        assertThat(repairEntry.parentId()).isEqualTo("entry-msg-thinking");
+        assertThat(userEntry.parentId()).isEqualTo("entry-msg-repair");
+        assertThat(finalEntry.parentId()).isEqualTo("entry-msg-user");
+        assertThat(tools.requests).isEmpty();
+    }
+
+    @Test
+    void doesNotRepairPlainAssistantTextParent() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
+        session.appendMessage(AgentCoreTestFixtures.assistantMessage("msg-assistant", "plain text"));
+        String parent = session.leafId();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("继续"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
         DefaultTurnExecutor executor = new DefaultTurnExecutor(
             AgentCoreTestFixtures.ports(
                 session,
@@ -2247,18 +2544,122 @@ class DefaultTurnExecutorTest {
                 new NoopCompactionCoordinator(),
                 new NoopMemoryExtractionWorker()
             ),
-            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
-            clock
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback", "msg-error"),
+            Clock.fixed(NOW, ZoneOffset.UTC)
         );
 
-        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(unsafeParent), () -> false));
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(parent), () -> false));
 
-        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
-        assertThat(provider.contexts).isEmpty();
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
         assertThat(session.messages()).extracting(AgentMessage::id)
-            .containsExactly("msg-root", "msg-tool-call");
-        ErrorEvent error = (ErrorEvent) eventBus.events.get(1);
-        assertThat(error.errorId()).isEqualTo("cannot-continue-from-tool-call-assistant");
+            .containsExactly("msg-root", "msg-assistant", "msg-user", "msg-final");
+        assertThat(state.newMessages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-final");
+    }
+
+    @Test
+    void doesNotRepairThinkingKindWhenAssistantContainsText() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
+        session.appendMessage(new AgentMessage(
+            "msg-mixed-thinking",
+            MessageRole.ASSISTANT,
+            MessageKind.THINKING,
+            List.of(
+                new ThinkingContentBlock("thinking"),
+                new TextContentBlock("visible answer")
+            ),
+            NOW,
+            Optional.empty(),
+            Optional.of("aborted")
+        ));
+        String parent = session.leafId();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("继续"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> new ContextAssembly(
+                    AgentCoreTestFixtures.minimalContext(session.messages()),
+                    AgentCoreTestFixtures.emptyResources(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    false
+                ),
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback", "msg-error"),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(parent), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-root", "msg-mixed-thinking", "msg-user", "msg-final");
+        assertThat(state.newMessages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-final");
+    }
+
+    @Test
+    void doesNotRepairCompletedThinkingOnlyParent() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("session-1");
+        session.appendMessage(AgentCoreTestFixtures.userMessage("msg-root", "root"));
+        session.appendMessage(AgentCoreTestFixtures.assistantThinkingMessage(
+            "msg-thinking",
+            "final reasoning",
+            Optional.of("end_turn")
+        ));
+        String parent = session.leafId();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("继续"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> new ContextAssembly(
+                    AgentCoreTestFixtures.minimalContext(session.messages()),
+                    AgentCoreTestFixtures.emptyResources(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    false
+                ),
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback", "msg-error"),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.of(parent), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-root", "msg-thinking", "msg-user", "msg-final");
+        assertThat(state.newMessages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-final");
     }
 
     @Test
