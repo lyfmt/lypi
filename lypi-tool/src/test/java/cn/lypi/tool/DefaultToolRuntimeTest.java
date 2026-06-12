@@ -395,6 +395,58 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void defaultExecuteDeniesSudoShellLcDangerousDefaultBashBeforeGateAndExecutor() {
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(
+            BashRiskLevel.HIGH,
+            "sudo bash -lc \"rm -rf target\""
+        );
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertSandboxRetryHint(result);
+        assertEquals(0, executeCalls.get());
+    }
+
+    @Test
+    void defaultBashSandboxRiskDoesNotOverrideSecurityDeny() {
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> new PermissionDecision(
+            PermissionBehavior.DENY,
+            PermissionDecisionReason.PATH_SAFETY,
+            "hard security deny",
+            Optional.<PermissionUpdate>empty(),
+            Map.of("bashRisk", new BashRiskAnalysis(
+                "rm -f 洗车店.md",
+                List.of("rm -f 洗车店.md"),
+                List.of(),
+                BashRiskLevel.DESTRUCTIVE,
+                List.of("test risk"),
+                true
+            ))
+        );
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        String text = result.newMessages().getFirst().content().getFirst().text();
+        assertTrue(result.isError());
+        assertTrue(text.contains("hard security deny"));
+        assertFalse(text.contains("retryWith=sandboxPermissions=requireEscalated"));
+        assertEquals(0, executeCalls.get());
+    }
+
+    @Test
     void defaultExecuteDoesNotDenyNonCodexDangerousDefaultBash() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();

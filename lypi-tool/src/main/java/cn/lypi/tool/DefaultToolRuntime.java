@@ -511,7 +511,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             Optional<PermissionDecision> sandboxEscalationDecision = sandboxEscalationPolicy.decide(request, toolContext);
             if (sandboxEscalationDecision.isPresent()) {
                 effectiveDecision = effectiveDecision(isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"), sandboxEscalationDecision.get());
-            } else {
+            } else if (!isDeny(effectiveDecision)) {
                 Optional<PermissionDecision> bashSandboxRiskDecision = bashSandboxRiskPolicy.decide(request, toolContext, securityDecision);
                 if (bashSandboxRiskDecision.isPresent()) {
                     effectiveDecision = bashSandboxRiskDecision.get();

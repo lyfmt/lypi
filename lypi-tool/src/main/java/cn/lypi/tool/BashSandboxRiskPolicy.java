@@ -87,7 +87,20 @@ final class BashSandboxRiskPolicy {
             return shellScriptIsDangerous(command.substring(command.indexOf(words.get(2))));
         }
         if ("sudo".equals(words.getFirst())) {
-            return isDangerousWords(words.subList(1, words.size()));
+            return isDangerousSegment(words.subList(1, words.size()));
+        }
+        return isDangerousWords(words);
+    }
+
+    private boolean isDangerousSegment(List<String> words) {
+        if (words.isEmpty()) {
+            return false;
+        }
+        if (isShell(words.getFirst()) && words.size() >= 3 && ("-lc".equals(words.get(1)) || "-c".equals(words.get(1)))) {
+            return shellScriptIsDangerous(String.join(" ", words.subList(2, words.size())));
+        }
+        if ("sudo".equals(words.getFirst())) {
+            return isDangerousSegment(words.subList(1, words.size()));
         }
         return isDangerousWords(words);
     }
