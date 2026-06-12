@@ -473,6 +473,28 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void skillOverlayOpensWhenOnlyDollarIsTyped() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(6),
+            new TuiLayout(60, 9),
+            null,
+            () -> new SlashCommandPicker(List.of()),
+            null,
+            null,
+            () -> skills("doc", "Document workflow")
+        );
+
+        loop.acceptText("$");
+
+        assertTrue(frames.getLast().contains("> $doc"));
+    }
+
+    @Test
     void escapeClosesSkillOverlayAndSuppressesCurrentTokenBinding() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(

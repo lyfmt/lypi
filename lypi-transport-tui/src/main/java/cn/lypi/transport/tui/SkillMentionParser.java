@@ -44,7 +44,7 @@ final class SkillMentionParser {
             return Optional.empty();
         }
         String prefix = text.substring(start + 1, safeCursor);
-        if (prefix.isEmpty() || ENVIRONMENT_VARIABLES.contains(prefix)) {
+        if (ENVIRONMENT_VARIABLES.contains(prefix)) {
             return Optional.empty();
         }
         return Optional.of(new SkillMentionToken(start, safeCursor, prefix));

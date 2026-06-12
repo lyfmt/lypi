@@ -23,6 +23,13 @@ class SkillMentionParserTest {
     }
 
     @Test
+    void emptyPrefixTokenAtLineStartIsRecognizedForPickerOpen() {
+        SkillMentionToken token = parser.activeToken("$", 1).orElseThrow();
+        assertEquals("", token.prefix());
+        assertEquals(0, token.start());
+    }
+
+    @Test
     void tokenAfterWhitespaceIsRecognized() {
         assertEquals("doc", parser.activeToken("use $doc", 8).orElseThrow().prefix());
     }
