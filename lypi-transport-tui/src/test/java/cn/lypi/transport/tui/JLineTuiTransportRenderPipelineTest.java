@@ -16,6 +16,7 @@ import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -482,6 +483,28 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
+    void escapeInterruptsRunningTurnBeforeToolStartEvent() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            ignored -> {
+            },
+            40,
+            5,
+            new QueueInputSource("\033"),
+            submit
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new TurnStartEvent("ses_1", "turn_1", Instant.parse("2026-06-09T00:00:00Z")));
+        transport.drainInputForTest();
+
+        assertEquals(1, submit.interrupts);
+        assertEquals(List.of("esc"), submit.interruptReasons);
+        assertEquals(false, transport.exitRequestedForTest());
+    }
+
+    @Test
     void ctrlCRequestsExitAfterToolEndEvent() throws Exception {
         RecordingEventBus events = new RecordingEventBus();
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
@@ -642,6 +665,7 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
+        private final List<String> interruptReasons = new ArrayList<>();
         private int interrupts;
         private int exits;
 
@@ -652,6 +676,7 @@ class JLineTuiTransportRenderPipelineTest {
         @Override
         public void requestInterrupt(String reason) {
             interrupts++;
+            interruptReasons.add(reason);
         }
 
         @Override
