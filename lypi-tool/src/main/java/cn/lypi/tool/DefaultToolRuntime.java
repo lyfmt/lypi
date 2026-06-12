@@ -17,6 +17,8 @@ import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -38,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -62,6 +65,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final ToolExecutionInterceptor interceptor;
     private final SecurityRuntimePort securityRuntime;
     private final PermissionGate permissionGate;
+    private final PermissionUpdateStore permissionUpdateStore;
+    private final List<PermissionRule> runtimePermissionRules = new CopyOnWriteArrayList<>();
     private final ToolExecutionEventPublisher eventPublisher;
     private final SandboxEscalationPolicy sandboxEscalationPolicy;
     private final BashSandboxRiskPolicy bashSandboxRiskPolicy;
@@ -158,6 +163,33 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolExecutionInterceptor interceptor,
         SecurityRuntimePort securityRuntime,
         PermissionResponseGate permissionResponseGate,
+        EventBus eventBus,
+        PermissionUpdateStore permissionUpdateStore
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionResponseGate),
+            lifecyclePublisher(eventBus),
+            ToolRuntimeOptions.defaults(),
+            permissionUpdateStore
+        );
+    }
+
+    public DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionResponseGate permissionResponseGate,
         EventBus eventBus
     ) {
         this(
@@ -223,6 +255,33 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         );
     }
 
+    public DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        EventBus eventBus,
+        PermissionUpdateStore permissionUpdateStore
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionGate),
+            lifecyclePublisher(eventBus),
+            ToolRuntimeOptions.defaults(),
+            permissionUpdateStore
+        );
+    }
+
     DefaultToolRuntime(
         ToolRegistry registry,
         ToolSchemaValidator schemaValidator,
@@ -244,7 +303,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             securityRuntime,
             permissionGate,
             eventPublisher,
-            ToolRuntimeOptions.defaults()
+            ToolRuntimeOptions.defaults(),
+            PermissionUpdateStore.noop()
         );
     }
 
@@ -260,6 +320,61 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolExecutionEventPublisher eventPublisher,
         ToolRuntimeOptions options
     ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            permissionGate,
+            eventPublisher,
+            options,
+            PermissionUpdateStore.noop()
+        );
+    }
+
+    DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        ToolExecutionEventPublisher eventPublisher,
+        PermissionUpdateStore permissionUpdateStore
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            permissionGate,
+            eventPublisher,
+            ToolRuntimeOptions.defaults(),
+            permissionUpdateStore
+        );
+    }
+
+    private DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        ToolExecutionEventPublisher eventPublisher,
+        ToolRuntimeOptions options,
+        PermissionUpdateStore permissionUpdateStore
+    ) {
         ToolRuntimeOptions normalizedOptions = normalizeOptions(options);
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
         this.schemaValidator = Objects.requireNonNull(schemaValidator, "schemaValidator must not be null");
@@ -269,6 +384,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.interceptor = interceptor == null ? ToolExecutionInterceptors.noop() : interceptor;
         this.securityRuntime = Objects.requireNonNull(securityRuntime, "securityRuntime must not be null");
         this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
+        this.permissionUpdateStore = permissionUpdateStore == null ? PermissionUpdateStore.noop() : permissionUpdateStore;
         this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
         this.sandboxEscalationPolicy = new SandboxEscalationPolicy();
         this.bashSandboxRiskPolicy = new BashSandboxRiskPolicy();
@@ -527,6 +643,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 finalResult = permissionGateError(request.toolUseId(), permissionResult);
                 return finalResult;
             }
+            permissionResult.permissionUpdate().ifPresent(this::applyPermissionUpdate);
             ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
             if (beforeResult != null && beforeResult.blocked()) {
                 finalResult = errorResult(request.toolUseId(), beforeResult.message());
@@ -788,6 +905,19 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     ) {
         Map<String, Object> metadata = new LinkedHashMap<>(context.metadata());
         metadata.put(METADATA_TOOL_USE_ID, toolUseId);
+        if (!runtimePermissionRules.isEmpty()) {
+            List<PermissionRule> effectiveRules = new ArrayList<>();
+            Object metadataRules = metadata.get("permissionRules");
+            if (metadataRules instanceof Iterable<?> iterable) {
+                for (Object candidate : iterable) {
+                    if (candidate instanceof PermissionRule rule) {
+                        effectiveRules.add(rule);
+                    }
+                }
+            }
+            effectiveRules.addAll(runtimePermissionRules);
+            metadata.put("permissionRules", List.copyOf(effectiveRules));
+        }
         if (!Objects.equals(originalToolName, canonicalToolName)) {
             metadata.put(METADATA_ORIGINAL_TOOL_NAME, originalToolName);
         }
@@ -801,6 +931,13 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
     private static ToolRuntimeOptions normalizeOptions(ToolRuntimeOptions options) {
         return options == null ? ToolRuntimeOptions.defaults() : options;
+    }
+
+    private void applyPermissionUpdate(PermissionUpdate update) {
+        permissionUpdateStore.append(update);
+        if (update != null && update.rule() != null) {
+            runtimePermissionRules.add(update.rule());
+        }
     }
 
     private static PermissionGate eventPublishingPermissionGate(EventBus eventBus, PermissionGate permissionGate) {
@@ -841,7 +978,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private boolean isDefaultSandboxBashRequest(ToolUseRequest request) {
         return request != null
             && "bash".equals(request.toolName())
+            && !hasPrefixRule(request.input())
             && SandboxPermissions.fromToolValue(stringInput(request.input(), "sandboxPermissions")) == SandboxPermissions.USE_DEFAULT;
+    }
+
+    private boolean hasPrefixRule(Map<String, Object> input) {
+        return input != null && input.containsKey("prefix_rule");
     }
 
     private String stringInput(Map<String, Object> input, String key) {

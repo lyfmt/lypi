@@ -163,7 +163,7 @@ class TuiContractEndToEndTest {
         List<PermissionOption> options = List.of(
             new PermissionOption("allow_once", PermissionOptionKind.ALLOW_ONCE, "允许一次", "", Optional.empty(), Map.of()),
             new PermissionOption("remember", PermissionOptionKind.ALLOW_AND_REMEMBER, "允许并记住", "", Optional.of(update), Map.of()),
-            new PermissionOption("escape_cancel", PermissionOptionKind.CANCEL, "取消", "", Optional.empty(), Map.of())
+            new PermissionOption("deny", PermissionOptionKind.DENY, "拒绝", "", Optional.empty(), Map.of())
         );
 
         reducer.reduce(new PermissionRequestEvent(
@@ -189,7 +189,7 @@ class TuiContractEndToEndTest {
         assertEquals("bash:npm test", prompt.rule());
         assertEquals("remember", prompt.defaultOptionId());
         assertEquals("escape_cancel", prompt.cancelOptionId());
-        assertEquals(List.of("allow_once", "remember", "escape_cancel"),
+        assertEquals(List.of("allow_once", "remember", "deny"),
             prompt.options().stream().map(PermissionOption::optionId).toList());
         assertEquals("remember", prompt.selectedOptionId());
 

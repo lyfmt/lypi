@@ -21,9 +21,9 @@ class PermissionOptionPolicyTest {
         PermissionOptionPolicy.Options options = PermissionOptionPolicy.fromDecision(decision(Map.of("riskLevel", "LOW")));
 
         assertThat(options.defaultOptionId()).isEqualTo("allow_once");
-        assertThat(options.cancelOptionId()).isEqualTo("cancel");
+        assertThat(options.cancelOptionId()).isEqualTo("deny");
         assertThat(options.options()).extracting("kind")
-            .containsExactly(PermissionOptionKind.ALLOW_ONCE, PermissionOptionKind.DENY, PermissionOptionKind.CANCEL);
+            .containsExactly(PermissionOptionKind.ALLOW_ONCE, PermissionOptionKind.DENY);
     }
 
     @Test
@@ -31,7 +31,7 @@ class PermissionOptionPolicyTest {
         PermissionOptionPolicy.Options options = PermissionOptionPolicy.fromDecision(decision(Map.of("riskLevel", "DESTRUCTIVE")));
 
         assertThat(options.defaultOptionId()).isEqualTo("deny");
-        assertThat(options.cancelOptionId()).isEqualTo("cancel");
+        assertThat(options.cancelOptionId()).isEqualTo("deny");
     }
 
     @Test

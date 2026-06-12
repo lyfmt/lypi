@@ -73,7 +73,7 @@ public final class EventPublishingPermissionGate implements PermissionGate {
             request.toolUseId(),
             tool.name(),
             renderedToolUse,
-            selection.selectedOption().optionId(),
+            selection.selectedOptionId(),
             decisionFromResult(selection.result(), selection.selectedOption(), decision),
             Optional.empty(),
             decisionMetadata(selection.selectedOption(), selection.responseMatches()),
@@ -108,7 +108,9 @@ public final class EventPublishingPermissionGate implements PermissionGate {
             response = fallbackDenyResponse(requestEvent);
         }
         PermissionOption selectedOption = selectedOption(requestEvent, response);
+        String selectedOptionId = response.fromKeyboardCancel() ? requestEvent.cancelOptionId() : selectedOption.optionId();
         return new PermissionSelection(
+            selectedOptionId,
             selectedOption,
             resultFromOption(selectedOption, response, message),
             responseMatches
@@ -136,7 +138,7 @@ public final class EventPublishingPermissionGate implements PermissionGate {
                 .filter(option -> option.kind() == PermissionOptionKind.DENY)
                 .findFirst()
                 .orElse(requestEvent.options().getFirst()));
-        return new PermissionSelection(selectedOption, result, true);
+        return new PermissionSelection(optionId, selectedOption, result, true);
     }
 
     private PermissionResponse fallbackDenyResponse(PermissionRequestEvent requestEvent) {
@@ -240,6 +242,7 @@ public final class EventPublishingPermissionGate implements PermissionGate {
     }
 
     private record PermissionSelection(
+        String selectedOptionId,
         PermissionOption selectedOption,
         PermissionGateResult result,
         boolean responseMatches

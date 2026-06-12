@@ -54,6 +54,7 @@ import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.security.DefaultPolicyEngine;
+import cn.lypi.security.ExecPolicyRuleFileReader;
 import cn.lypi.session.ChildSessionService;
 import cn.lypi.session.ChildSessionView;
 import cn.lypi.session.DefaultSessionManagerFactory;
@@ -99,8 +100,9 @@ public class LyPiRuntimeAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(SecurityRuntimePort.class)
-    public SecurityRuntimePort securityRuntime() {
-        return new DefaultPolicyEngine();
+    public SecurityRuntimePort securityRuntime(LyPiRuntimeProperties properties) {
+        Path rulesFile = properties.getCwd().resolve("rules").resolve("default.rules");
+        return new DefaultPolicyEngine(new ExecPolicyRuleFileReader().read(rulesFile));
     }
 
     /**

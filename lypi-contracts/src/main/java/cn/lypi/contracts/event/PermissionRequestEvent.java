@@ -42,7 +42,6 @@ public record PermissionRequestEvent(
         defaultOptionId = blankToDefault(defaultOptionId, defaultOption(options).optionId());
         cancelOptionId = blankToDefault(cancelOptionId, cancelOption(options).optionId());
         validateOptionId("defaultOptionId", defaultOptionId, options);
-        validateOptionId("cancelOptionId", cancelOptionId, options);
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
     }
 

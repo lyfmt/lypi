@@ -48,6 +48,21 @@ class BashToolTest {
     }
 
     @Test
+    void inputSchemaExposesSnakeCasePrefixRuleForBashOnly() {
+        BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> prefixRule = (Map<String, Object>) properties.get("prefix_rule");
+
+        assertEquals("array", prefixRule.get("type"));
+        assertEquals(1, prefixRule.get("minItems"));
+        assertEquals(Map.of("type", "string"), prefixRule.get("items"));
+        assertFalse(properties.containsKey("prefixRule"));
+    }
+
+    @Test
     void mapsCommandToExecutionRequestAndResult() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(7, "out", "err", false, Optional.empty()));
         RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());

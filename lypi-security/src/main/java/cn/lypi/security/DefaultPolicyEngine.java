@@ -29,6 +29,7 @@ public final class DefaultPolicyEngine implements PolicyEngine {
     private final BashRiskAnalyzer bashRiskAnalyzer;
     private final PathSafetyChecker pathSafetyChecker;
     private final BashRuleMatcher bashRuleMatcher;
+    private final BashPrefixPolicy bashPrefixPolicy;
 
     public DefaultPolicyEngine() {
         this(List.of(), new DefaultBashRiskAnalyzer());
@@ -42,7 +43,9 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         this.rules = List.copyOf(rules);
         this.bashRiskAnalyzer = bashRiskAnalyzer;
         this.pathSafetyChecker = new PathSafetyChecker();
-        this.bashRuleMatcher = new BashRuleMatcher(new BashCommandNormalizer());
+        BashCommandNormalizer normalizer = new BashCommandNormalizer();
+        this.bashRuleMatcher = new BashRuleMatcher(normalizer);
+        this.bashPrefixPolicy = new BashPrefixPolicy(normalizer);
     }
 
     /**
@@ -69,6 +72,11 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             return bashRedirectDecision.get();
         }
 
+        Optional<PermissionDecision> prefixAllow = prefixAllowDecision(request, effectiveRules, bashRisk);
+        if (prefixAllow.isPresent()) {
+            return prefixAllow.get();
+        }
+
         Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, permissionMode(context), bashRisk);
         if (bashRiskDecision.isPresent()) {
             return bashRiskDecision.get();
@@ -92,6 +100,12 @@ public final class DefaultPolicyEngine implements PolicyEngine {
                 "当前权限模式允许工具调用。",
                 Map.of()
             );
+            default -> decision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.MODE_DEFAULT,
+                "当前权限模式允许工具调用。",
+                Map.of()
+            );
         };
     }
 
@@ -107,6 +121,27 @@ public final class DefaultPolicyEngine implements PolicyEngine {
                     behavior,
                     PermissionDecisionReason.EXPLICIT_RULE,
                     "命中权限规则: " + rule.reason(),
+                    Map.of("rule", rule)
+                ));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<PermissionDecision> prefixAllowDecision(
+        ToolUseRequest request,
+        List<PermissionRule> effectiveRules,
+        BashRiskAnalysis bashRisk
+    ) {
+        if (!isBashTool(request.toolName()) || bashRisk == null) {
+            return Optional.empty();
+        }
+        for (PermissionRule rule : effectiveRules) {
+            if (rule.behavior() == PermissionBehavior.ALLOW && bashPrefixPolicy.matchesPrefixRule(rule, bashRisk)) {
+                return Optional.of(decision(
+                    PermissionBehavior.ALLOW,
+                    PermissionDecisionReason.EXPLICIT_RULE,
+                    "命中 Bash prefix 规则: " + rule.reason(),
                     Map.of("rule", rule)
                 ));
             }
@@ -140,27 +175,30 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             return Optional.empty();
         }
         if (!bashRisk.staticallyKnown() || bashRisk.riskLevel() == BashRiskLevel.UNKNOWN) {
-            return Optional.of(decision(
+            return Optional.of(decisionWithSuggestedUpdate(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.BASH_RISK,
                 "Bash 命令无法静态确认风险，需要用户确认。",
-                Map.of("bashRisk", bashRisk)
+                Map.of("bashRisk", bashRisk),
+                Optional.empty()
             ));
         }
         if (bashRisk.riskLevel() == BashRiskLevel.DESTRUCTIVE) {
-            return Optional.of(decision(
+            return Optional.of(decisionWithSuggestedUpdate(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.BASH_RISK,
                 "Bash 命令包含破坏性操作，需要用户确认。",
-                Map.of("bashRisk", bashRisk)
+                Map.of("bashRisk", bashRisk),
+                Optional.empty()
             ));
         }
         if (mode == PermissionMode.DEFAULT_EXECUTE && bashRisk.riskLevel() != BashRiskLevel.LOW) {
-            return Optional.of(decision(
+            return Optional.of(decisionWithSuggestedUpdate(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.BASH_RISK,
                 "默认执行模式下 Bash 写入、网络或远端变更需要用户确认。",
-                Map.of("bashRisk", bashRisk)
+                Map.of("bashRisk", bashRisk),
+                bashPrefixPolicy.suggestedUpdate(request, bashRisk)
             ));
         }
         return Optional.empty();
@@ -188,6 +226,9 @@ public final class DefaultPolicyEngine implements PolicyEngine {
 
     private boolean matches(PermissionRule rule, ToolUseRequest request, BashRiskAnalysis bashRisk) {
         if (isBashTool(request.toolName())) {
+            if (rule.behavior() == PermissionBehavior.ALLOW && bashPrefixPolicy.isPrefixRule(rule)) {
+                return false;
+            }
             return bashRuleMatcher.matches(rule, request, bashRisk);
         }
         String ruleToolName = rule.value().toolName();
@@ -260,6 +301,22 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             reason,
             message,
             Optional.<PermissionUpdate>empty(),
+            Map.copyOf(metadata)
+        );
+    }
+
+    private PermissionDecision decisionWithSuggestedUpdate(
+        PermissionBehavior behavior,
+        PermissionDecisionReason reason,
+        String message,
+        Map<String, Object> metadata,
+        Optional<PermissionUpdate> suggestedUpdate
+    ) {
+        return new PermissionDecision(
+            behavior,
+            reason,
+            message,
+            suggestedUpdate == null ? Optional.empty() : suggestedUpdate,
             Map.copyOf(metadata)
         );
     }

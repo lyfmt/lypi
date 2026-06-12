@@ -19,8 +19,8 @@ public final class PermissionOptionPolicy {
     public static Options fromDecision(PermissionDecision decision) {
         Optional<PermissionUpdate> update = allowedUpdate(decision == null ? Optional.empty() : decision.suggestedUpdate());
         List<PermissionOption> options = update
-            .map(permissionUpdate -> List.of(allowOnce(), remember(permissionUpdate), deny(), cancel()))
-            .orElseGet(() -> List.of(allowOnce(), deny(), cancel()));
+            .map(permissionUpdate -> List.of(allowOnce(), remember(permissionUpdate), deny()))
+            .orElseGet(() -> List.of(allowOnce(), deny()));
         return new Options(
             options,
             optionIdOrFallback(defaultOptionId(decision), options, "allow_once"),
@@ -111,17 +111,6 @@ public final class PermissionOptionPolicy {
             PermissionOptionKind.DENY,
             "拒绝",
             "拒绝当前工具调用。",
-            Optional.empty(),
-            Map.of()
-        );
-    }
-
-    private static PermissionOption cancel() {
-        return new PermissionOption(
-            "cancel",
-            PermissionOptionKind.CANCEL,
-            "取消",
-            "取消权限请求。",
             Optional.empty(),
             Map.of()
         );
