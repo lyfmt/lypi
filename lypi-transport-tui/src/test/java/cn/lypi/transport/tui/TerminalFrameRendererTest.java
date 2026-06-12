@@ -21,6 +21,19 @@ class TerminalFrameRendererTest {
     }
 
     @Test
+    void terminalWritesTruncateLongPhysicalLinesToTerminalWidth() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 10;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(List.of("0123456789abcdef", "> |CURSOR|"));
+
+        String output = io.output.toString();
+        assertFalse(output.contains("0123456789abcdef"));
+        assertTrue(output.contains("012345678…"));
+    }
+
+    @Test
     void appendsTailLinesWithoutHomeAndClear() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
@@ -122,7 +135,7 @@ class TerminalFrameRendererTest {
     }
 
     @Test
-    void transcriptAppendThatOverflowsTerminalScrollsTranscriptRegionOnly() throws Exception {
+    void transcriptAppendThatOverflowsTerminalRepaintsChromeViewport() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
@@ -132,19 +145,48 @@ class TerminalFrameRendererTest {
         renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "> |CURSOR|", "status"), 2));
 
         String output = io.output.toString();
-        assertTrue(output.startsWith("\033[?2026h\033[1;2r"));
-        assertTrue(output.contains("\033[2;1H\033[2Kthree\r\n"));
-        assertTrue(output.contains("\033[r"));
+        assertFalse(output.contains("\r\n"));
+        assertFalse(output.contains("\033[1;2r"));
         assertTrue(output.contains("\033[1;1H\033[2Ktwo"));
         assertTrue(output.contains("\033[2;1H\033[2Kthree"));
         assertTrue(output.contains("\033[3;1H\033[2K> "));
         assertTrue(output.contains("\033[4;1H\033[2Kstatus"));
         assertTrue(output.endsWith("\033[3;3H\033[?2026l"));
-        assertFalse(output.contains("\r\n\033[3;1H"));
     }
 
     @Test
-    void transcriptAppendAfterOverflowScrollsTranscriptRegionOnly() throws Exception {
+    void transcriptAppendWithChromeBeforeOverflowUsesPositionedPatch() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 8;
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(new TuiRenderFrame(List.of(
+            "assistant old",
+            "──",
+            "> draft|CURSOR|",
+            "──",
+            "session PLAN"
+        ), 3));
+        io.output.setLength(0);
+        renderer.render(new TuiRenderFrame(List.of(
+            "assistant old",
+            "tool running read",
+            "──",
+            "> draft|CURSOR|",
+            "──",
+            "session PLAN"
+        ), 3));
+
+        String output = io.output.toString();
+        assertFalse(output.contains("\n"));
+        assertFalse(output.contains("\r\n"));
+        assertTrue(output.contains("\033[2;1H\033[2Ktool running read"));
+        assertTrue(output.contains("\033[4;1H\033[2K> draft"));
+        assertTrue(output.endsWith("\033[4;8H\033[?2026l"));
+    }
+
+    @Test
+    void transcriptAppendAfterOverflowRepaintsChromeViewport() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
@@ -154,19 +196,17 @@ class TerminalFrameRendererTest {
         renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "four", "> |CURSOR|", "status"), 2));
 
         String output = io.output.toString();
-        assertTrue(output.startsWith("\033[?2026h\033[1;2r"));
-        assertTrue(output.contains("\033[2;1H\033[2Kfour\r\n"));
-        assertTrue(output.contains("\033[r"));
+        assertFalse(output.contains("\r\n"));
+        assertFalse(output.contains("\033[1;2r"));
         assertTrue(output.contains("\033[1;1H\033[2Kthree"));
         assertTrue(output.contains("\033[2;1H\033[2Kfour"));
         assertTrue(output.contains("\033[3;1H\033[2K> "));
         assertTrue(output.contains("\033[4;1H\033[2Kstatus"));
         assertTrue(output.endsWith("\033[3;3H\033[?2026l"));
-        assertFalse(output.contains("\r\n\033[3;1H"));
     }
 
     @Test
-    void transcriptAppendWithChromeScrollsTranscriptRegionWithoutScrollingChrome() throws Exception {
+    void transcriptAppendWithChromeRepaintsViewportWithoutTerminalScroll() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 6;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
@@ -194,13 +234,11 @@ class TerminalFrameRendererTest {
         ), 3));
 
         String output = io.output.toString();
-        assertTrue(output.contains("\033[1;3r"));
-        assertTrue(output.contains("\033[3;1H\033[2K  written bytes 洗车店.md\r\n"));
-        assertTrue(output.contains("\033[3;1H\033[2Kassistant done\r\n"));
-        assertTrue(output.contains("\033[r"));
+        assertFalse(output.contains("\r\n"));
+        assertFalse(output.contains("\033[1;3r"));
+        assertTrue(output.contains("\033[2K"));
         assertTrue(output.contains("\033[4;1H\033[2K> "));
         assertTrue(output.contains("\033[6;1H\033[2Ksession PLAN"));
-        assertFalse(output.contains("\r\n\033[4;1H"), "chrome rows must be repainted, not scrolled");
     }
 
     @Test

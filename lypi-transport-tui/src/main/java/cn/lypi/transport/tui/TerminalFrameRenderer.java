@@ -84,13 +84,13 @@ final class TerminalFrameRenderer {
 
         boolean appendOnly = newLines.size() > previousLines.size()
             && firstChanged == previousLines.size()
-            && viewportTop == previousViewportTop;
+            && viewportTop == previousViewportTop
+            && chromeLineCount == 0;
         if (appendOnly) {
-            StringBuilder buffer = new StringBuilder();
             for (int i = firstChanged; i < newLines.size(); i++) {
-                buffer.append("\n").append(newLines.get(i));
+                io.write("\n");
+                writeLine(newLines.get(i));
             }
-            io.write(buffer.toString());
             hardwareCursorRow = physicalBottomRow(newLines, viewportTop, height);
             moveCursor(frame.cursor(), viewportTop, height);
             updateState(newLines, width, height, viewportTop, hardwareCursorRow, renderFrame.transcriptLineCount());
@@ -101,8 +101,8 @@ final class TerminalFrameRenderer {
         boolean transcriptGrew = renderFrame.transcriptLineCount() > previousTranscriptLineCount;
         if (transcriptGrew && viewportTop > previousViewportTop && newLines.size() > previousLines.size()) {
             if (chromeLineCount > 0) {
-                writeTranscriptRegionTail(newLines, frame.cursor(), firstChanged, previousViewportTop, viewportTop, height, chromeLineCount);
-                updateState(newLines, width, height, viewportTop, hardwareCursorRow, renderFrame.transcriptLineCount());
+                writeShrinkPatch(newLines, frame.cursor(), viewportTop, height);
+                updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height), renderFrame.transcriptLineCount());
                 io.flush();
                 return;
             }
@@ -135,7 +135,7 @@ final class TerminalFrameRenderer {
             io.write(SYNC_START);
             io.write(FULL_CLEAR);
         }
-        io.write(String.join("\n", visibleLines(lines, viewportTop, height)));
+        writeLines(visibleLines(lines, viewportTop, height));
         hardwareCursorRow = physicalBottomRow(lines, viewportTop, height);
         moveCursor(cursor, viewportTop, height);
         if (clear) {
@@ -160,7 +160,7 @@ final class TerminalFrameRenderer {
             int physicalRow = physicalRow(i + 1, viewportTop, height);
             io.write("\033[" + physicalRow + ";1H");
             io.write("\033[2K");
-            io.write(lines.get(i));
+            writeLine(lines.get(i));
             hardwareCursorRow = physicalRow;
         }
         moveCursor(cursor, viewportTop, height);
@@ -183,61 +183,9 @@ final class TerminalFrameRenderer {
             io.write("\033[" + physicalRow + ";1H");
             io.write("\033[2K");
             if (row < visible.size()) {
-                io.write(visible.get(row));
+                writeLine(visible.get(row));
                 hardwareCursorRow = physicalRow;
             }
-        }
-        moveCursor(cursor, viewportTop, height);
-        io.write(SYNC_END);
-    }
-
-    private void writeTranscriptRegionTail(
-        List<String> lines,
-        java.util.Optional<CursorPosition> cursor,
-        int firstChanged,
-        int previousViewportTop,
-        int viewportTop,
-        int height,
-        int chromeLineCount
-    ) throws IOException {
-        io.write(SYNC_START);
-        int transcriptBottom = Math.max(1, height - chromeLineCount);
-        io.write("\033[1;" + transcriptBottom + "r");
-        int firstChromeLine = Math.max(0, lines.size() - chromeLineCount);
-        int flowingEnd = Math.min(lines.size(), firstChromeLine);
-        int firstVisibleChange = Math.max(firstChanged, previousViewportTop);
-        for (int i = firstVisibleChange; i < flowingEnd; i++) {
-            if (!visibleLogicalRow(i + 1, previousViewportTop, height)) {
-                continue;
-            }
-            int physicalRow = physicalRow(i + 1, previousViewportTop, height);
-            io.write("\033[" + Math.min(physicalRow, transcriptBottom) + ";1H");
-            io.write("\033[2K");
-            io.write(lines.get(i));
-            io.write("\r\n");
-            hardwareCursorRow = Math.min(physicalRow, transcriptBottom);
-        }
-        io.write("\033[r");
-        List<String> visible = visibleLines(lines, viewportTop, height);
-        for (int row = 0; row < Math.max(0, height - chromeLineCount); row++) {
-            int physicalRow = row + 1;
-            io.write("\033[" + physicalRow + ";1H");
-            io.write("\033[2K");
-            if (row < visible.size()) {
-                io.write(visible.get(row));
-                hardwareCursorRow = physicalRow;
-            }
-        }
-        int firstVisibleChromeLine = Math.max(firstChromeLine, viewportTop);
-        for (int i = firstVisibleChromeLine; i < lines.size(); i++) {
-            if (!visibleLogicalRow(i + 1, viewportTop, height)) {
-                continue;
-            }
-            int physicalRow = physicalRow(i + 1, viewportTop, height);
-            io.write("\033[" + physicalRow + ";1H");
-            io.write("\033[2K");
-            io.write(lines.get(i));
-            hardwareCursorRow = physicalRow;
         }
         moveCursor(cursor, viewportTop, height);
         io.write(SYNC_END);
@@ -265,7 +213,7 @@ final class TerminalFrameRenderer {
                     io.write("\r\n");
                 }
                 io.write("\033[2K");
-                io.write(lines.get(i));
+                writeLine(lines.get(i));
                 hardwareCursorRow = physicalRow(i + 1, viewportTop, height);
             }
         } else {
@@ -274,7 +222,7 @@ final class TerminalFrameRenderer {
                 int physicalRow = physicalRow(i + 1, previousViewportTop, height);
                 io.write("\033[" + physicalRow + ";1H");
                 io.write("\033[2K");
-                io.write(lines.get(i));
+                writeLine(lines.get(i));
                 hardwareCursorRow = physicalRow;
                 bottomContainsTranscript = physicalRow == Math.max(1, height);
             }
@@ -295,7 +243,7 @@ final class TerminalFrameRenderer {
                 int physicalRow = physicalRow(i + 1, viewportTop, height);
                 io.write("\033[" + physicalRow + ";1H");
                 io.write("\033[2K");
-                io.write(lines.get(i));
+                writeLine(lines.get(i));
                 hardwareCursorRow = physicalRow;
             }
         }
@@ -383,6 +331,19 @@ final class TerminalFrameRenderer {
             return List.of();
         }
         return lines.subList(start, end);
+    }
+
+    private void writeLines(List<String> lines) throws IOException {
+        for (int index = 0; index < lines.size(); index++) {
+            if (index > 0) {
+                io.write("\n");
+            }
+            writeLine(lines.get(index));
+        }
+    }
+
+    private void writeLine(String line) throws IOException {
+        io.write(AnsiWidth.truncate(line, io.width()));
     }
 
     private void logFullRedraw(String reason) {

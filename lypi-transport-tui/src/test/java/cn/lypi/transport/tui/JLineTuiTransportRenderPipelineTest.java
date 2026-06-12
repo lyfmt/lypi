@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.context.ContentBlockKind;
@@ -58,7 +59,7 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void rendererFrameKeepsInputBlockAfterFullTranscriptForTerminalScrollback() {
+    void rendererFrameKeepsInputBlockAfterVisibleTranscriptViewport() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
         JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 40, 7);
@@ -80,8 +81,9 @@ class JLineTuiTransportRenderPipelineTest {
         }
 
         List<String> latest = frames.getLast();
-        assertEquals(10, latest.size());
-        assertTrue(latest.contains("line 0"));
+        assertEquals(7, latest.size());
+        assertFalse(latest.contains("line 0"));
+        assertFalse(latest.contains("line 2"));
         assertTrue(latest.contains("line 3"));
         assertTrue(latest.contains("line 5"));
         assertEquals(inputContent("> "), inputLine(latest));
@@ -118,7 +120,7 @@ class JLineTuiTransportRenderPipelineTest {
     void eventPipelineRendersUserAndThinkingAsDistinctLines() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
-        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 80, 5);
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 80, 7);
 
         transport.attach(events, TestRuntimeStates.basic("ses_1"));
         events.emit(new MessageDeltaEvent(

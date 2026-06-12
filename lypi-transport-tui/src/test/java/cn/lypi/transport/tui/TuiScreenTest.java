@@ -7,28 +7,33 @@ import org.junit.jupiter.api.Test;
 
 class TuiScreenTest {
     @Test
-    void visibleTranscriptReturnsFullTranscriptForTerminalScrollback() {
+    void visibleTranscriptReturnsOnlyViewportTailByDefault() {
         TuiScreen screen = new TuiScreen(2);
 
         screen.setTranscript(List.of("a", "b"));
         screen.setTranscript(List.of("a", "b", "c"));
 
-        assertEquals(List.of("a", "b", "c"), screen.visibleTranscript());
+        assertEquals(List.of("b", "c"), screen.visibleTranscript());
         assertEquals(0, screen.linesBelow());
     }
 
     @Test
-    void applicationScrollMethodsDoNotHideTranscriptLines() {
+    void scrollUpShowsOlderTranscriptAndNewTranscriptPreservesOffset() {
         TuiScreen screen = new TuiScreen(2);
         screen.setTranscript(List.of("a", "b", "c", "d"));
         screen.scrollUp(1);
 
-        assertEquals(List.of("a", "b", "c", "d"), screen.visibleTranscript());
+        assertEquals(List.of("b", "c"), screen.visibleTranscript());
+        assertEquals(1, screen.linesBelow());
 
         screen.setTranscript(List.of("a", "b", "c", "d", "e"));
+
+        assertEquals(List.of("c", "d"), screen.visibleTranscript());
+        assertEquals(1, screen.linesBelow());
+
         screen.scrollDown(1);
 
-        assertEquals(List.of("a", "b", "c", "d", "e"), screen.visibleTranscript());
+        assertEquals(List.of("d", "e"), screen.visibleTranscript());
         assertEquals(0, screen.linesBelow());
     }
 }

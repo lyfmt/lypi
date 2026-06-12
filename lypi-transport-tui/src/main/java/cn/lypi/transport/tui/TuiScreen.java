@@ -5,6 +5,7 @@ import java.util.List;
 final class TuiScreen {
     private int viewportHeight;
     private List<String> transcript = List.of();
+    private int linesBelow;
 
     TuiScreen(int viewportHeight) {
         if (viewportHeight <= 0) {
@@ -21,20 +22,36 @@ final class TuiScreen {
     }
 
     void setTranscript(List<String> transcript) {
+        int previousMaxLinesBelow = maxLinesBelow();
         this.transcript = List.copyOf(transcript);
+        linesBelow = Math.min(linesBelow, maxLinesBelow());
+        if (linesBelow == 0 && previousMaxLinesBelow == 0) {
+            linesBelow = 0;
+        }
     }
 
     void scrollUp(int lines) {
+        linesBelow = Math.min(maxLinesBelow(), linesBelow + Math.max(0, lines));
     }
 
     void scrollDown(int lines) {
+        linesBelow = Math.max(0, linesBelow - Math.max(0, lines));
     }
 
     List<String> visibleTranscript() {
-        return List.copyOf(transcript);
+        if (transcript.isEmpty() || viewportHeight == 0) {
+            return List.of();
+        }
+        int end = Math.max(0, transcript.size() - linesBelow);
+        int start = Math.max(0, end - viewportHeight);
+        return List.copyOf(transcript.subList(start, end));
     }
 
     int linesBelow() {
-        return 0;
+        return linesBelow;
+    }
+
+    private int maxLinesBelow() {
+        return Math.max(0, transcript.size() - viewportHeight);
     }
 }

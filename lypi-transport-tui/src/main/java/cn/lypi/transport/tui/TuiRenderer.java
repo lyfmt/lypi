@@ -72,8 +72,8 @@ final class TuiRenderer {
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
             .map(line -> AnsiWidth.truncate(line, layout.width()))
             .toList();
-        int inputAndOverlayHeight = inputBlock.height() + overlay.size();
-        int transcriptHeight = layout.transcriptHeight(inputAndOverlayHeight);
+        int renderedChromeHeight = inputBlock.lines().size() + overlay.size() + 1;
+        int transcriptHeight = Math.max(0, layout.height() - renderedChromeHeight);
         screen.updateViewportHeight(transcriptHeight);
         screen.setTranscript(transcript);
         List<String> visibleTranscript = screen.visibleTranscript();

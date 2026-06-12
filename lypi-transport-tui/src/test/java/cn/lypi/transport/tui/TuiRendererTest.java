@@ -33,7 +33,7 @@ class TuiRendererTest {
     private static final String ANSI_RESET = "\033[0m";
 
     @Test
-    void rendersFullTranscriptStatusAndInputForScrollback() {
+    void rendersVisibleTranscriptStatusAndInput() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(2);
         TuiViewModel view = new TuiViewModel(
@@ -156,7 +156,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 5), "");
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 7), "");
 
         assertEquals("\033[38;5;81muser: 请修复 TUI\033[0m", lines.get(0));
         assertEquals("\033[38;5;244mthinking: 分析路径\033[0m", lines.get(1));
@@ -175,7 +175,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 4), "");
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 6), "");
 
         assertEquals("\033[38;5;244mthinking: 第一行\033[0m", lines.get(0));
         assertEquals("\033[38;5;244m          第二行\033[0m", lines.get(1));
@@ -261,7 +261,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void longInputSoftWrapsInsideBottomInputBlockWithFullTranscript() {
+    void longInputSoftWrapsInsideBottomInputBlockWithVisibleTranscript() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -279,11 +279,9 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(8, 6), "abcdefghij", 10);
 
-        assertEquals(9, lines.size());
-        assertEquals("line1", lines.get(0));
-        assertEquals("line2", lines.get(1));
-        assertEquals("line3", lines.get(2));
-        assertEquals("line4", lines.get(3));
+        assertEquals(6, lines.size());
+        assertEquals("line4", lines.get(0));
+        assertFalse(lines.contains("line1"));
         assertInputBorder(lines.get(lines.size() - 5), 8);
         assertEquals("\033[48;5;236m> abcde\033[0m", lines.get(lines.size() - 4));
         assertEquals("\033[48;5;236mfghij|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 3));
@@ -314,7 +312,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void inputViewportShowsLatestRowsWhileKeepingTranscriptForScrollback() {
+    void inputViewportShowsLatestRowsWhileKeepingTranscriptViewportFixed() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -327,8 +325,8 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 6), "one\ntwo\nthree\nfour", 18);
 
-        assertEquals(7, lines.size());
-        assertTrue(lines.contains("history"));
+        assertEquals(6, lines.size());
+        assertFalse(lines.contains("history"));
         assertInputBorder(lines.get(lines.size() - 6), 10);
         assertEquals("\033[48;5;236mtwo\033[0m", lines.get(lines.size() - 5));
         assertEquals("\033[48;5;236mthree\033[0m", lines.get(lines.size() - 4));
@@ -337,7 +335,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void inputBlockNeverExceedsTerminalHeightWhenDraftHasManyRows() {
+    void inputBlockCanUseFullTerminalHeightWhenDraftHasManyRows() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -350,8 +348,8 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "one\ntwo\nthree\nfour", 18);
 
-        assertEquals(4, lines.size());
-        assertTrue(lines.contains("history"));
+        assertEquals(3, lines.size());
+        assertFalse(lines.contains("history"));
         assertInputBorder(lines.get(lines.size() - 3), 10);
         assertEquals("\033[48;5;236mfour|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 2));
         assertTrue(lines.getLast().contains("ses_1"));
