@@ -24,11 +24,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, ApiProvider {
     private final OpenAiProviderConfig config;
@@ -38,7 +36,6 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
     private final ProviderFallbackDecider fallbackDecider;
     private final OpenAiResponsesRequestBuilder responsesRequestBuilder;
     private final OpenAiChatCompletionsRequestBuilder chatCompletionsRequestBuilder;
-    private final AtomicBoolean responsesSsePreviousStateEnabled = new AtomicBoolean(true);
 
     public OpenAiCompatibleProviderAdapter(
         OpenAiProviderConfig config,
@@ -191,24 +188,9 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
                 attempts.add(new OpenAiStreamAttempt(
                     responsesSseTransport,
-                    responsesSseRequest(
-                        request,
-                        OpenAiResponsesRequestOptions.withPreviousResponseState(responsesSsePreviousStateEnabled.get())
-                    ),
-                    normalizer,
-                    this::observeResponsesSseFailure
+                    responsesSseRequest(request, OpenAiResponsesRequestOptions.fallbackWithoutPreviousResponseState()),
+                    normalizer
                 ));
-                if (
-                    responsesSsePreviousStateEnabled.get()
-                        && previousResponseStateCandidate(request)
-                ) {
-                    OpenAiResponsesStreamNormalizer fallbackNormalizer = new OpenAiResponsesStreamNormalizer();
-                    attempts.add(new OpenAiStreamAttempt(
-                        responsesSseTransport,
-                        responsesSseRequest(request, OpenAiResponsesRequestOptions.fallbackWithoutPreviousResponseState()),
-                        fallbackNormalizer
-                    ));
-                }
             }
             return;
         }
@@ -232,28 +214,6 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
     private ProviderRequest responsesSseRequest(LypiModelRequest request, OpenAiResponsesRequestOptions options) {
         ObjectNode body = responsesRequestBuilder.build(request, config, options);
         return new ProviderRequest(endpoint("responses"), headers(), body.toString(), java.util.Optional.of(config.timeout()));
-    }
-
-    private boolean previousResponseStateCandidate(LypiModelRequest request) {
-        Object state = request.metadata().get("providerConversationState");
-        if (!(state instanceof Map<?, ?> stateMap)) {
-            return false;
-        }
-        if (!"openai".equals(String.valueOf(stateMap.get("provider")))) {
-            return false;
-        }
-        if (!"responses".equals(String.valueOf(stateMap.get("style")))) {
-            return false;
-        }
-        String previousResponseId = String.valueOf(stateMap.get("previousResponseId"));
-        return !previousResponseId.isBlank() && !"null".equals(previousResponseId);
-    }
-
-    private void observeResponsesSseFailure(RuntimeException exception) {
-        String message = exception.getMessage() == null ? "" : exception.getMessage().toLowerCase(Locale.ROOT);
-        if (message.contains("previous_response_id") && message.contains("responses websocket v2")) {
-            responsesSsePreviousStateEnabled.set(false);
-        }
     }
 
     private ProviderRequest chatCompletionsRequest(LypiModelRequest request) {
