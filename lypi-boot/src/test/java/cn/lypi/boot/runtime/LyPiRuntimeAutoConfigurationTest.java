@@ -230,6 +230,27 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void defaultSecurityRuntimeLoadsExecPolicyPrefixRulesFromRuntimeCwd() throws Exception {
+        java.nio.file.Files.createDirectories(tempDir.resolve("rules"));
+        java.nio.file.Files.writeString(
+            tempDir.resolve("rules/default.rules"),
+            "prefix_rule(pattern=[\"go\", \"test\"], decision=\"allow\")\n"
+        );
+
+        runtimeConfiguration()
+            .run(context -> {
+                SecurityRuntimePort security = context.getBean(SecurityRuntimePort.class);
+
+                PermissionDecision decision = security.decide(
+                    new ToolUseRequest("toolu_1", "bash", Map.of("command", "go test ./..."), "msg_1"),
+                    new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.DEFAULT_EXECUTE))
+                );
+
+                assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+            });
+    }
+
+    @Test
     void compactionRuntimeUsesManualPlannerIndependentOfAutoThreshold() {
         runtimeAutoConfigurations()
             .withPropertyValues(

@@ -223,6 +223,127 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
+    void decideSuggestsRequestedPrefixRuleWhenItCoversAllParsedCommands() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "go test ./...", "prefix_rule", List.of("go", "test"))),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.suggestedUpdate()).isPresent();
+        PermissionRule rule = decision.suggestedUpdate().orElseThrow().rule();
+        assertThat(rule.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(rule.value().toolName()).isEqualTo("bash");
+        assertThat(rule.value().pattern()).isEqualTo("prefix:go test");
+    }
+
+    @Test
+    void decideSuggestsRequestedPrefixRuleForStaticBashLoginCommand() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of(
+                "command", "bash -lc \"mvn -pl lypi-security test\"",
+                "prefix_rule", List.of("mvn", "-pl")
+            )),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.message()).contains("默认执行模式");
+        assertThat(decision.suggestedUpdate()).isPresent();
+        assertThat(decision.suggestedUpdate().orElseThrow().rule().value().pattern()).isEqualTo("prefix:mvn -pl");
+    }
+
+    @Test
+    void decideRejectsBannedRequestedPrefixRule() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "python3 script.py", "prefix_rule", List.of("python3"))),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.suggestedUpdate()).isEmpty();
+    }
+
+    @Test
+    void decideRejectsTooBroadRequestedPrefixRule() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "go test ./...", "prefix_rule", List.of("go"))),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.suggestedUpdate()).isEmpty();
+    }
+
+    @Test
+    void decideDerivesPrefixRuleWhenNoRequestedPrefixIsValid() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "cargo build")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.suggestedUpdate()).isPresent();
+        assertThat(decision.suggestedUpdate().orElseThrow().rule().value().pattern()).isEqualTo("prefix:cargo build");
+    }
+
+    @Test
+    void decideDoesNotSuggestRequestedPrefixWhenItDoesNotCoverEverySegment() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of(
+                "command", "go test ./... && echo ok",
+                "prefix_rule", List.of("go", "test")
+            )),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.suggestedUpdate()).isEmpty();
+    }
+
+    @Test
+    void decideAllowsBashWhenStoredPrefixRuleMatches() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
+            rule(PermissionBehavior.ALLOW, "bash", "prefix:go test", "remember go test")
+        ));
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "go test ./...")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.EXPLICIT_RULE);
+    }
+
+    @Test
+    void decideDoesNotLetStoredPrefixRuleBypassUnknownBashRisk() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
+            rule(PermissionBehavior.ALLOW, "bash", "prefix:go test", "remember go test")
+        ));
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "go test \"$(cat args)\"")),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+    }
+
+    @Test
     void decideAppliesDenyRuleToBashSubcommandsBeforeRiskAsk() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
             rule(PermissionBehavior.DENY, "bash", "rm -rf *", "protect delete")

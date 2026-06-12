@@ -31,10 +31,10 @@ class PermissionOverlayTest {
     }
 
     @Test
-    void escapeAndCtrlCCancelWithCancelOption() {
+    void escapeAndCtrlCCancelUsesEmptyCancelWhenNoCancelOptionIsRendered() {
         PermissionOverlay overlay = new PermissionOverlay(options(), 3);
 
-        assertEquals("cancel", overlay.cancel().orElseThrow());
+        assertTrue(overlay.cancel().isEmpty());
     }
 
     @Test
@@ -53,8 +53,7 @@ class PermissionOverlayTest {
         return List.of(
             option("allow_once"),
             option("remember"),
-            option("deny"),
-            option("cancel")
+            option("deny")
         );
     }
 

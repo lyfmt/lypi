@@ -66,7 +66,7 @@ class EventPublishingPermissionGateTest {
         assertEquals(PermissionBehavior.ASK, requestEvent.decision().behavior());
         assertEquals(PermissionBehavior.ASK, requestEvent.policyDecision().behavior());
         assertEquals("allow_once", requestEvent.defaultOptionId());
-        assertEquals("cancel", requestEvent.cancelOptionId());
+        assertEquals("deny", requestEvent.cancelOptionId());
         assertEquals(PermissionOptionKind.ALLOW_ONCE, requestEvent.options().getFirst().kind());
 
         PermissionDecisionEvent decisionEvent = assertInstanceOf(PermissionDecisionEvent.class, events.events.get(1));
@@ -157,7 +157,7 @@ class EventPublishingPermissionGateTest {
 
         assertEquals(PermissionGateResult.Status.ABORT, result.status());
         PermissionDecisionEvent decisionEvent = assertInstanceOf(PermissionDecisionEvent.class, events.events.get(1));
-        assertEquals("cancel", decisionEvent.selectedOptionId());
+        assertEquals("deny", decisionEvent.selectedOptionId());
         assertEquals(PermissionBehavior.DENY, decisionEvent.decision().behavior());
     }
 

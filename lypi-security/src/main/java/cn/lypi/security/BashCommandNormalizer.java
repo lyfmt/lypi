@@ -19,7 +19,8 @@ final class BashCommandNormalizer {
     String normalizeRaw(String rawCommand) {
         String normalized = rawCommand == null ? "" : rawCommand.trim();
         normalized = normalized.replaceAll("[ \\t\\x0B\\f\\r]+", " ");
-        return stripLeadingEnvironmentAssignments(normalized);
+        normalized = stripLeadingEnvironmentAssignments(normalized);
+        return lowerStaticBashCommand(normalized);
     }
 
     String stripLeadingEnvironmentAssignments(String command) {
@@ -162,6 +163,59 @@ final class BashCommandNormalizer {
             next++;
         }
         return next < words.size() ? next : index;
+    }
+
+    private String lowerStaticBashCommand(String command) {
+        String lowered = lowerStaticBashCommand(command, "bash");
+        return lowered == null ? command : lowered;
+    }
+
+    private String lowerStaticBashCommand(String command, String shell) {
+        if (!command.startsWith(shell + " ")) {
+            return null;
+        }
+        String rest = command.substring(shell.length()).trim();
+        if (rest.startsWith("-lc ")) {
+            return unquoteStaticShellArgument(rest.substring(4).trim());
+        }
+        if (rest.startsWith("-c ")) {
+            return unquoteStaticShellArgument(rest.substring(3).trim());
+        }
+        return null;
+    }
+
+    private String unquoteStaticShellArgument(String argument) {
+        if (argument.length() < 2) {
+            return null;
+        }
+        char quote = argument.charAt(0);
+        if ((quote != '"' && quote != '\'') || argument.charAt(argument.length() - 1) != quote) {
+            return null;
+        }
+        String body = argument.substring(1, argument.length() - 1);
+        if (quote == '\'') {
+            return body.contains("'") ? null : body;
+        }
+        StringBuilder builder = new StringBuilder();
+        boolean escaped = false;
+        for (char character : body.toCharArray()) {
+            if (escaped) {
+                if (character == '"' || character == '\\' || character == '$' || character == '`') {
+                    builder.append(character);
+                } else {
+                    builder.append('\\').append(character);
+                }
+                escaped = false;
+            } else if (character == '\\') {
+                escaped = true;
+            } else {
+                builder.append(character);
+            }
+        }
+        if (escaped) {
+            builder.append('\\');
+        }
+        return builder.toString();
     }
 
     private List<String> words(String command) {

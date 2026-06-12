@@ -35,6 +35,9 @@ import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionResponse;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
@@ -42,6 +45,7 @@ import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.tool.builtin.BashTool;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -280,6 +284,144 @@ class DefaultToolRuntimeTest {
         assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
         assertEquals("security ask", requestedDecision.get().message());
         assertEquals("done", result.newMessages().getFirst().content().getFirst().text());
+    }
+
+    @Test
+    void allowAndRememberAppendsExecPolicyRuleAndUpdatesRuntimeMemory() throws Exception {
+        AtomicInteger gateCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow(decision.suggestedUpdate());
+        };
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            ToolExecutionInterceptors.noop(),
+            prefixMemorySecurity(),
+            gate,
+            ToolExecutionEventPublisher.noop(),
+            new FilePermissionUpdateStore(tempDir)
+        );
+        AtomicInteger executeCalls = new AtomicInteger();
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolUseRequest first = new ToolUseRequest(
+            "toolu_1",
+            "bash",
+            Map.of("command", "go test ./...", "text", "first", "prefix_rule", List.of("go", "test")),
+            "msg_1"
+        );
+        ToolUseRequest second = new ToolUseRequest(
+            "toolu_2",
+            "bash",
+            Map.of("command", "go test ./...", "text", "second"),
+            "msg_1"
+        );
+
+        ToolResult<?> firstResult = runtime.execute(List.of(first), TestTools.context(PermissionMode.DEFAULT_EXECUTE)).getFirst();
+        ToolResult<?> secondResult = runtime.execute(List.of(second), TestTools.context(PermissionMode.DEFAULT_EXECUTE)).getFirst();
+
+        assertFalse(firstResult.isError());
+        assertFalse(secondResult.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(2, executeCalls.get());
+        String rules = Files.readString(tempDir.resolve("rules/default.rules"));
+        assertTrue(rules.contains("prefix_rule(pattern=[\"go\", \"test\"], decision=\"allow\")"));
+    }
+
+    @Test
+    void rememberedPrefixAllowSkipsBashToolAskForRepeatedPrefixRuleRequest() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("should not ask");
+        };
+        SecurityRuntimePort security = (request, context) -> new PermissionDecision(
+            PermissionBehavior.ALLOW,
+            PermissionDecisionReason.EXPLICIT_RULE,
+            "命中 Bash prefix 规则",
+            Optional.empty(),
+            Map.of()
+        );
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(tempDir),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate,
+            ToolExecutionEventPublisher.noop(),
+            new FilePermissionUpdateStore(tempDir)
+        );
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "done", "", false, Optional.empty()));
+        runtime.register(new BashTool(executor, (workspace, cwd) -> policy));
+
+        ToolUseRequest request = new ToolUseRequest(
+            "toolu_1",
+            "bash",
+            Map.of(
+                "command", "bash -lc \"mvn -pl lypi-security test\"",
+                "text", "done",
+                "prefix_rule", List.of("mvn", "-pl"),
+                "sandboxPermissions", "useDefault"
+            ),
+            "msg_1"
+        );
+
+        ToolResult<?> result = runtime.execute(List.of(request), TestTools.context(PermissionMode.DEFAULT_EXECUTE)).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executor.calls.get());
+    }
+
+    @Test
+    void allowOnceDoesNotPersistExecPolicyRule() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            ToolExecutionInterceptors.noop(),
+            prefixMemorySecurity(),
+            gate,
+            ToolExecutionEventPublisher.noop(),
+            new FilePermissionUpdateStore(tempDir)
+        );
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, new AtomicInteger()));
+
+        ToolUseRequest request = new ToolUseRequest(
+            "toolu_1",
+            "bash",
+            Map.of("command", "go test ./...", "text", "once", "prefix_rule", List.of("go", "test")),
+            "msg_1"
+        );
+
+        ToolResult<?> result = runtime.execute(List.of(request), TestTools.context(PermissionMode.DEFAULT_EXECUTE)).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(1, gateCalls.get());
+        assertFalse(Files.exists(tempDir.resolve("rules/default.rules")));
     }
 
     @Test
@@ -642,6 +784,58 @@ class DefaultToolRuntimeTest {
         assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
         assertTrue(requestedDecision.get().message().contains("沙箱提权执行"));
         assertTrue(requestedDecision.get().message().contains("Need host access."));
+    }
+
+    @Test
+    void explicitSandboxEscalationKeepsSecuritySuggestedUpdate() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            requestedDecision.set(decision);
+            return PermissionGateResult.allow(decision.suggestedUpdate());
+        };
+        PermissionUpdate update = prefixUpdate("mvn -pl");
+        SecurityRuntimePort security = (request, context) -> new PermissionDecision(
+            PermissionBehavior.ASK,
+            PermissionDecisionReason.BASH_RISK,
+            "默认执行模式下 Bash 写入、网络或远端变更需要用户确认。",
+            Optional.of(update),
+            Map.of("bashRisk", new BashRiskAnalysis(
+                "mvn -pl lypi-security test",
+                List.of("mvn -pl lypi-security test"),
+                List.of(),
+                BashRiskLevel.MEDIUM,
+                List.of("包含未登记命令"),
+                true
+            ))
+        );
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate,
+            ToolExecutionEventPublisher.noop(),
+            new FilePermissionUpdateStore(tempDir)
+        );
+        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "text", "done",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host access."
+            ), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+        assertTrue(requestedDecision.get().message().contains("沙箱提权执行"));
+        assertTrue(requestedDecision.get().suggestedUpdate().isPresent());
+        assertEquals(update, requestedDecision.get().suggestedUpdate().orElseThrow());
     }
 
     @Test
@@ -1415,6 +1609,48 @@ class DefaultToolRuntimeTest {
 
     private SecurityRuntimePort allowAllSecurity() {
         return (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+    }
+
+    private SecurityRuntimePort prefixMemorySecurity() {
+        return (request, context) -> {
+            Object rules = context.metadata().get("permissionRules");
+            if (rules instanceof Iterable<?> iterable) {
+                for (Object candidate : iterable) {
+                    if (candidate instanceof PermissionRule rule
+                        && rule.behavior() == PermissionBehavior.ALLOW
+                        && "bash".equals(rule.value().toolName())
+                        && "prefix:go test".equals(rule.value().pattern())) {
+                        return TestTools.decision(PermissionBehavior.ALLOW, "remembered prefix");
+                    }
+                }
+            }
+            return new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.BASH_RISK,
+                "bash risk",
+                Optional.of(prefixUpdate("go test")),
+                Map.of("bashRisk", new BashRiskAnalysis(
+                    "go test ./...",
+                    List.of("go test ./..."),
+                    List.of(),
+                    BashRiskLevel.MEDIUM,
+                    List.of("test risk"),
+                    true
+                ))
+            );
+        };
+    }
+
+    private PermissionUpdate prefixUpdate(String prefix) {
+        return new PermissionUpdate(
+            PermissionRuleSource.USER,
+            new PermissionRule(
+                PermissionRuleSource.USER,
+                PermissionBehavior.ALLOW,
+                new PermissionRuleValue("bash", "prefix:" + prefix),
+                "允许 Bash prefix: " + prefix
+            )
+        );
     }
 
     private PermissionDecision bashRiskDecision(BashRiskLevel riskLevel, String command) {

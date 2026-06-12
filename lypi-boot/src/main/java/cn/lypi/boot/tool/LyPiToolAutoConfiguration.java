@@ -11,6 +11,7 @@ import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.tool.BlockingPermissionGate;
 import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.EventPublishingPermissionGate;
+import cn.lypi.tool.FilePermissionUpdateStore;
 import cn.lypi.tool.PermissionGate;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.PermissionResponseGate;
@@ -122,7 +123,8 @@ public class LyPiToolAutoConfiguration {
                 cn.lypi.tool.ToolExecutionInterceptors.noop(),
                 securityRuntime,
                 responseGate.getIfAvailable(),
-                promptPort.getIfAvailable()
+                promptPort.getIfAvailable(),
+                new FilePermissionUpdateStore(runtimeCwd)
             );
             BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
             AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
@@ -191,7 +193,8 @@ public class LyPiToolAutoConfiguration {
         cn.lypi.tool.ToolExecutionInterceptor interceptor,
         SecurityRuntimePort securityRuntime,
         PermissionResponseGate responseGate,
-        PermissionPromptPort promptPort
+        PermissionPromptPort promptPort,
+        FilePermissionUpdateStore permissionUpdateStore
     ) {
         if (eventBus != null && responseGate != null) {
             return new DefaultToolRuntime(
@@ -203,7 +206,8 @@ public class LyPiToolAutoConfiguration {
                 interceptor,
                 securityRuntime,
                 responseGate,
-                eventBus
+                eventBus,
+                permissionUpdateStore
             );
         }
         return new DefaultToolRuntime(
@@ -215,7 +219,8 @@ public class LyPiToolAutoConfiguration {
             interceptor,
             securityRuntime,
             permissionGate(eventBus, promptPort),
-            eventBus
+            eventBus,
+            permissionUpdateStore
         );
     }
 
