@@ -118,7 +118,7 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void eventPipelineRendersUserAndThinkingAsDistinctLines() {
+    void eventPipelineRendersStreamingThinkingAsRuntimeLine() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
         JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 80, 7);
@@ -144,7 +144,7 @@ class JLineTuiTransportRenderPipelineTest {
             "block_thinking",
             ContentBlockKind.THINKING,
             "分析路径",
-            true,
+            false,
             java.util.Map.of(),
             Instant.parse("2026-06-09T00:00:01Z")
         ));
@@ -163,7 +163,8 @@ class JLineTuiTransportRenderPipelineTest {
 
         List<String> latest = frames.getLast();
         assertTrue(latest.contains("\033[38;5;81muser: 请修复 TUI\033[0m"));
-        assertTrue(latest.contains("\033[38;5;244mthinking: 分析路径\033[0m"));
+        assertFalse(latest.contains("\033[38;5;244mthinking: 分析路径\033[0m"));
+        assertTrue(latest.contains("· thinking: 分析路径"));
         assertTrue(latest.contains("已处理"));
     }
 

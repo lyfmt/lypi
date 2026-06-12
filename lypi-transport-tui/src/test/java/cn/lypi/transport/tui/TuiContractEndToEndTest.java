@@ -54,7 +54,7 @@ class TuiContractEndToEndTest {
 
         reducer.reduce(new MessageStartEvent("ses_1", "msg_1", MessageRole.ASSISTANT, MessageKind.TEXT, Map.of(), NOW));
         reducer.reduce(delta("msg_1", "text_1", ContentBlockKind.TEXT, "hello ", false));
-        reducer.reduce(delta("msg_1", "thinking_1", ContentBlockKind.THINKING, "private chain", false));
+        reducer.reduce(delta("msg_1", "thinking_1", ContentBlockKind.THINKING, "private chain", true));
         reducer.reduce(delta("msg_1", "text_1", ContentBlockKind.TEXT, "world", true));
         reducer.reduce(new MessageEndEvent(
             "ses_1",

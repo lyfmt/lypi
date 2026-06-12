@@ -40,6 +40,7 @@ import cn.lypi.contracts.tui.TuiViewModel;
 
 public final class TuiEventReducer {
     private final TuiRenderState state;
+    private final java.util.Map<String, String> streamingThinkingContent = new java.util.HashMap<>();
 
     public TuiEventReducer() {
         this(new TuiRenderState());
@@ -219,6 +220,12 @@ public final class TuiEventReducer {
     }
 
     private void upsertThinkingBlock(MessageDeltaEvent event) {
+        if (!event.isFinal()) {
+            String content = streamingThinkingContent.merge(event.blockId(), event.delta(), String::concat);
+            state.thinkingStreaming(content);
+            return;
+        }
+        streamingThinkingContent.remove(event.blockId());
         int index = state.blockIndex(event.blockId()).orElse(-1);
         if (index < 0) {
             state.addBlock(new TuiThinkingBlock(

@@ -41,6 +41,7 @@ final class TuiRenderState {
     private String retryLine;
     private String compactLine;
     private String interruptLine;
+    private String thinkingLine;
 
     TuiRenderState() {
     }
@@ -257,6 +258,7 @@ final class TuiRenderState {
         retryLine = "";
         compactLine = "";
         interruptLine = "";
+        thinkingLine = "";
         statusBar = withMode(currentMode());
     }
 
@@ -288,8 +290,15 @@ final class TuiRenderState {
         retryLine = "";
         compactLine = "";
         activeTurnId = "";
+        thinkingLine = "";
         interruptLine = "interrupted" + suffix(reason);
         statusBar = withMode(agentMode);
+    }
+
+    void thinkingStreaming(String content) {
+        String summary = firstLine(content);
+        thinkingLine = summary.isBlank() ? "thinking" : "thinking: " + summary;
+        statusBar = withMode("running");
     }
 
     TuiViewModel view() {
@@ -330,6 +339,9 @@ final class TuiRenderState {
         if (interruptLine != null && !interruptLine.isBlank()) {
             return interruptLine;
         }
+        if (thinkingLine != null && !thinkingLine.isBlank()) {
+            return thinkingLine;
+        }
         if (activeTurnId != null && !activeTurnId.isBlank()) {
             return "turn running " + activeTurnId;
         }
@@ -341,6 +353,14 @@ final class TuiRenderState {
         retryLine = "";
         compactLine = "";
         interruptLine = "";
+        thinkingLine = "";
+    }
+
+    private String firstLine(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        return value.strip().lines().findFirst().orElse("");
     }
 
     private String modelLabel(SessionRuntimeState runtimeState) {

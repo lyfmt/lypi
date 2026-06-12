@@ -367,6 +367,179 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void ctrlOExpansionDoesNotRewriteCommittedUserHistoryOrDuplicateLiveTail() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 8;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            new QueueInputSource("\u000f"),
+            new RecordingSubmitHandler(),
+            80,
+            8
+        );
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            "block_user",
+            cn.lypi.contracts.context.ContentBlockKind.TEXT,
+            "给我展示下当前项目有什么文件",
+            true,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_thinking",
+            MessageRole.ASSISTANT,
+            MessageKind.THINKING,
+            "block_thinking",
+            cn.lypi.contracts.context.ContentBlockKind.THINKING,
+            "Finding project files",
+            false,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+        events.emit(new ToolStartEvent(
+            "ses_1",
+            "toolu_glob",
+            "msg_tool",
+            "turn_1",
+            "glob",
+            "Glob",
+            "**/*",
+            Map.of("pattern", "**/*"),
+            Instant.parse("2026-06-09T00:00:02Z"),
+            Instant.parse("2026-06-09T00:00:02Z")
+        ));
+        events.emit(new ToolProgressEvent(
+            "ses_1",
+            "toolu_glob",
+            ToolProgress.output("stdout", "AGENTS.md\nHelloWorldBanner.java\nSolution.java\nmain.c\n"),
+            Instant.parse("2026-06-09T00:00:03Z")
+        ));
+        transport.drainInputForTest();
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_thinking",
+            MessageRole.ASSISTANT,
+            MessageKind.THINKING,
+            "block_thinking",
+            cn.lypi.contracts.context.ContentBlockKind.THINKING,
+            "\nEvaluating project files",
+            false,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:04Z")
+        ));
+
+        String output = io.output.toString();
+        String plain = stripAnsi(output);
+        assertFalse(output.contains("\r\nuser: 给我展示下当前项目有什么文件"), escaped(output));
+        assertFalse(output.matches("(?s).*\\033\\[[0-9]+;1H\\033\\[2K.*user: 给我展示下当前项目有什么文件.*"), escaped(output));
+        assertFalse(plain.contains("thinking: Finding project files"), escaped(output));
+        assertFalse(plain.contains("thinking: Evaluating project files"), escaped(output));
+
+        transport.close();
+    }
+
+    @Test
+    void historyCommitAndCtrlORenderUseSameViewportArea() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 8;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            new QueueInputSource("\u000f"),
+            new RecordingSubmitHandler(),
+            80,
+            8
+        );
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            "block_user",
+            cn.lypi.contracts.context.ContentBlockKind.TEXT,
+            "给我展示下当前项目有什么文件",
+            true,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        events.emit(new ToolStartEvent(
+            "ses_1",
+            "toolu_glob",
+            "msg_tool",
+            "turn_1",
+            "glob",
+            "Glob",
+            "**/*",
+            Map.of("pattern", "**/*"),
+            Instant.parse("2026-06-09T00:00:01Z"),
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+        events.emit(new ToolProgressEvent(
+            "ses_1",
+            "toolu_glob",
+            ToolProgress.output("stdout", String.join("\n",
+                "AGENTS.md",
+                "HelloWorldBanner.java",
+                "Solution.java",
+                "application.yml",
+                "main.c",
+                "systeminfo.py",
+                "test.txt"
+            )),
+            Instant.parse("2026-06-09T00:00:02Z")
+        ));
+        transport.drainInputForTest();
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_assistant",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_answer",
+            cn.lypi.contracts.context.ContentBlockKind.TEXT,
+            "当前项目根目录下的文件有这些：",
+            false,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:03Z")
+        ));
+
+        String output = io.output.toString();
+        String plain = stripAnsi(output);
+        assertFalse(output.contains("\r\n"), escaped(output));
+        assertFalse(plain.contains("user: 给我展示下当前项目有什么文件"), escaped(output));
+        assertTrue(output.contains("\033[3;1H\033[2K"), escaped(output));
+        assertTrue(output.contains("当前项目根目录下的文件有这些："), escaped(output));
+        assertTrue(output.matches("(?s).*\\033\\[6;1H\\033\\[2K\\033\\[48;5;236m> .*"), escaped(output));
+        assertTrue(output.matches("(?s).*\\033\\[7;1H\\033\\[2K\\033\\[38;5;240m.*"), escaped(output));
+        assertTrue(output.matches("(?s).*\\033\\[8;1H\\033\\[2Kses_1.*"), escaped(output));
+
+        transport.close();
+    }
+
+    @Test
     void closeAfterOverflowMovesPromptBelowPhysicalViewport() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 3;
@@ -1064,4 +1237,5 @@ class JLineTuiTransportTest {
     private static String escaped(String value) {
         return value.replace("\033", "\\e").replace("\r", "\\r").replace("\n", "\\n");
     }
+
 }

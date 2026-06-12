@@ -700,25 +700,21 @@ class TuiEventReducerTest {
         assertEquals("hello world", message.content());
         assertFalse(message.streaming());
 
-        TuiThinkingBlock thinking = assertInstanceOf(TuiThinkingBlock.class, blocks.get(1));
-        assertEquals(TuiBlockKind.THINKING, thinking.kind());
-        assertEquals("thinking", thinking.content());
-        assertTrue(thinking.streaming());
-        assertFalse(thinking.collapsed());
+        assertEquals("thinking: thinking", reducer.view().runtimeLine());
 
-        TuiToolBlock toolAfterStart = assertInstanceOf(TuiToolBlock.class, afterStart.blocks().get(2));
+        TuiToolBlock toolAfterStart = assertInstanceOf(TuiToolBlock.class, afterStart.blocks().get(1));
         assertEquals("toolu_1", toolAfterStart.toolUseId());
         assertEquals("bash", toolAfterStart.toolName());
         assertEquals("echo hello", toolAfterStart.label());
         assertEquals(TuiToolState.RUNNING, toolAfterStart.state());
         assertTrue(toolAfterStart.active());
 
-        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, blocks.get(2));
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, blocks.get(1));
         assertEquals(TuiBlockKind.TOOL, tool.kind());
         assertEquals(TuiToolState.DONE, tool.state());
         assertFalse(tool.active());
 
-        assertEquals(3, blocks.size(), "tool progress must not append transcript lines");
+        assertEquals(2, blocks.size(), "tool progress must not append transcript lines");
         assertEquals("echo hello", tool.label(), "tool end must not replace label with result summary");
     }
 
@@ -1005,6 +1001,39 @@ class TuiEventReducerTest {
         assertTrue(reducer.view().blocks().isEmpty());
         assertTrue(reducer.view().files().isEmpty());
         assertTrue(reducer.view().permissionPrompt().isEmpty());
+    }
+
+    @Test
+    void streamingThinkingUpdatesRuntimeLineWithoutCreatingTranscriptBlocks() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.THINKING,
+            "block-thinking",
+            ContentBlockKind.THINKING,
+            "Finding project",
+            false,
+            Map.of(),
+            NOW
+        ));
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.THINKING,
+            "block-thinking",
+            ContentBlockKind.THINKING,
+            " files\nextra detail",
+            false,
+            Map.of(),
+            NOW
+        ));
+
+        assertTrue(reducer.view().blocks().isEmpty());
+        assertEquals("thinking: Finding project files", reducer.view().runtimeLine());
     }
 
     @Test

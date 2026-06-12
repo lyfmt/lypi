@@ -120,6 +120,16 @@ final class TerminalFrameRenderer {
         io.flush();
     }
 
+    void invalidateViewport() {
+        previousLines = List.of();
+        previousWidth = 0;
+        previousHeight = 0;
+        previousTopRow = 1;
+        previousAreaHeight = 0;
+        previousViewportTop = 0;
+        hardwareCursorRow = 0;
+    }
+
     private void writeFullFrame(
         List<String> lines,
         java.util.Optional<CursorPosition> cursor,

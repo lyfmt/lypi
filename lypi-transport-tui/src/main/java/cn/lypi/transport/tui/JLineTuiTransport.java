@@ -47,6 +47,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final TuiRenderOptions renderOptions;
     private final TuiBlockPartitioner blockPartitioner;
     private final TerminalHistoryWriter historyWriter;
+    private final Runnable viewportInvalidator;
     private final Set<String> committedHistoryBlockIds = new LinkedHashSet<>();
     private TuiViewportArea viewportArea;
     private final TerminalSession terminalSession;
@@ -70,6 +71,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.renderOptions = new TuiRenderOptions();
         this.blockPartitioner = new TuiBlockPartitioner();
         this.historyWriter = null;
+        this.viewportInvalidator = () -> {
+        };
         this.viewportArea = null;
         this.terminalSession = null;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
@@ -94,6 +97,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.renderOptions = new TuiRenderOptions();
         this.blockPartitioner = new TuiBlockPartitioner();
         this.historyWriter = null;
+        this.viewportInvalidator = () -> {
+        };
         this.viewportArea = null;
         this.terminalSession = terminalSession;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
@@ -122,6 +127,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             submitHandler,
             terminalSession,
             null,
+            null,
             slashPickerSupplier,
             diffViewProvider,
             resumeController,
@@ -138,6 +144,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TuiSubmitHandler submitHandler,
         TerminalSession terminalSession,
         TerminalHistoryWriter historyWriter,
+        Runnable viewportInvalidator,
         Supplier<SlashCommandPicker> slashPickerSupplier,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
@@ -154,6 +161,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.renderOptions = new TuiRenderOptions();
         this.blockPartitioner = new TuiBlockPartitioner();
         this.historyWriter = historyWriter;
+        this.viewportInvalidator = viewportInvalidator == null ? () -> {
+        } : viewportInvalidator;
         this.viewportArea = TuiViewportArea.bottomAligned(this.layout.height(), 1);
         this.inputLoop = new TuiInputLoop(
             submitHandler,
@@ -679,6 +688,18 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                     throw new UncheckedIOException(exception);
                 }
             }
+
+            @Override
+            public void render(TuiRenderFrame frame, TuiViewportArea area) {
+                try {
+                    TuiViewportArea viewportArea = area == null
+                        ? TuiViewportArea.bottomAligned(io.height(), frame.lines().size())
+                        : area;
+                    frameRenderer.renderInArea(frame, viewportArea.topRow(), viewportArea.height());
+                } catch (IOException exception) {
+                    throw new UncheckedIOException(exception);
+                }
+            }
         };
         JLineTuiTransport transport = new JLineTuiTransport(
             frameSink,
@@ -689,6 +710,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             submitHandler,
             session,
             historyWriter,
+            frameRenderer::invalidateViewport,
             slashPickerSupplier,
             diffViewProvider,
             resumeController,
@@ -924,18 +946,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         syncInputLoopToolState(view);
         TuiBlockPartition partition = historyWriter == null ? null : blockPartitioner.partition(view.blocks());
         boolean hasNewFinalizedHistory = partition != null && hasNewFinalizedHistory(partition.finalizedBlocks());
-        TuiViewModel preCommitFrameView = partition == null ? view : liveView(view, partition);
-        TuiRenderFrame preCommitFrame = tuiRenderer.renderFrame(
-            preCommitFrameView,
-            screen,
-            layout,
-            currentDraft(),
-            currentCursor(),
-            List.of(),
-            renderOptions.toolOutputExpanded()
-        );
         TuiRenderFrame frame = tuiRenderer.renderFrame(
-            committedFilteredView(view),
+            partition == null ? view : liveView(view, partition),
             screen,
             layout,
             currentDraft(),
@@ -943,9 +955,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             List.of(),
             renderOptions.toolOutputExpanded()
         );
+        TuiViewportArea renderArea = null;
         if (partition != null) {
             boolean reserveHistoryRegion = !committedHistoryBlockIds.isEmpty() || hasNewFinalizedHistory;
-            TuiViewportArea area = viewportAreaForFrame(preCommitFrame.lines().size(), reserveHistoryRegion);
+            TuiViewportArea area = viewportAreaForFrame(frame.lines().size(), reserveHistoryRegion);
             commitNewFinalizedHistory(partition.finalizedBlocks(), area);
             frame = tuiRenderer.renderFrame(
                 committedFilteredView(view),
@@ -956,8 +969,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 List.of(),
                 renderOptions.toolOutputExpanded()
             );
+            renderArea = viewportArea;
         }
-        frameSink.render(frame);
+        frameSink.render(frame, renderArea);
     }
 
     private TuiViewportArea viewportAreaForFrame(int frameLineCount) {
@@ -1028,6 +1042,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         if (!lines.isEmpty()) {
             try {
                 this.viewportArea = historyWriter.insertAboveViewport(lines, viewportArea);
+                viewportInvalidator.run();
             } catch (IOException exception) {
                 throw new UncheckedIOException(exception);
             }
