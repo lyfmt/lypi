@@ -110,10 +110,20 @@ public final class GlobTool extends AbstractFileTool {
     }
 
     private boolean ignored(Path path) {
+        boolean insideLypi = false;
         for (Path part : path) {
-            if ("target".equals(part.toString())) {
+            String value = part.toString();
+            if ("target".equals(value)) {
                 return true;
             }
+            if (".lypi".equals(value)) {
+                insideLypi = true;
+                continue;
+            }
+            if (insideLypi && "sessions".equals(value)) {
+                return true;
+            }
+            insideLypi = false;
         }
         return false;
     }

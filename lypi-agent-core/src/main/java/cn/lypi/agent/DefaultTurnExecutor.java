@@ -15,6 +15,7 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
@@ -134,8 +135,9 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 );
                 for (ToolResult<?> toolResult : toolResults) {
                     for (AgentMessage toolMessage : toolResult.newMessages()) {
-                        contextLeafId = appendNewMessage(request.sessionId(), toolMessage);
-                        newMessages.add(toolMessage);
+                        AgentMessage pendingToolMessage = markPendingToolOutput(toolMessage);
+                        contextLeafId = appendNewMessage(request.sessionId(), pendingToolMessage);
+                        newMessages.add(pendingToolMessage);
                     }
                 }
                 context = buildContext(request, Optional.of(contextLeafId));
@@ -462,6 +464,38 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private String appendNewMessage(String sessionId, AgentMessage message) {
         publishMessageStart(sessionId, message);
         return appendStartedMessage(sessionId, message);
+    }
+
+    private AgentMessage markPendingToolOutput(AgentMessage message) {
+        if (message.role() != MessageRole.TOOL_RESULT) {
+            return message;
+        }
+        List<ContentBlock> content = message.content().stream()
+            .map(this::markPendingToolOutput)
+            .toList();
+        return new AgentMessage(
+            message.id(),
+            message.role(),
+            message.kind(),
+            content,
+            message.timestamp(),
+            message.usage(),
+            message.stopReason()
+        );
+    }
+
+    private ContentBlock markPendingToolOutput(ContentBlock block) {
+        if (!(block instanceof ToolResultContentBlock toolResult)) {
+            return block;
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>(toolResult.metadata());
+        metadata.put("openaiPendingToolOutput", true);
+        return new ToolResultContentBlock(
+            toolResult.toolUseId(),
+            toolResult.text(),
+            toolResult.error(),
+            Map.copyOf(metadata)
+        );
     }
 
     private String appendStartedMessage(String sessionId, AgentMessage message) {

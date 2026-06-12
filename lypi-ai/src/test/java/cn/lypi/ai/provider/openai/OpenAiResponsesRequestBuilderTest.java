@@ -86,13 +86,68 @@ class OpenAiResponsesRequestBuilderTest {
     }
 
     @Test
-    void serializesToolCallAndResultHistoryAsResponsesItems() {
+    void serializesOnlyExplicitPendingToolResultsAsResponsesItems() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-pending-tool-result",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiToolCallBlock(
+                        "call-1",
+                        "read_file",
+                        "",
+                        Map.of("input", Map.of("path", "pom.xml"))
+                    )),
+                    Map.of(
+                        "messageId", "msg-assistant-1",
+                        "providerConversationState", Map.of(
+                            "provider", "openai",
+                            "style", "responses",
+                            "previousResponseId", "resp-123"
+                        )
+                    )
+                ),
+                new LypiMessage(
+                    LypiRole.TOOL_RESULT,
+                    List.of(new LypiToolResultBlock("call-1", "contents", false, Map.of("openaiPendingToolOutput", true))),
+                    Map.of()
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of("providerConversationState", Map.of(
+                "provider", "openai",
+                "style", "responses",
+                "previousResponseId", "resp-123",
+                "messageId", "msg-assistant-1"
+            ))
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
+
+        assertThat(body.get("previous_response_id").asText()).isEqualTo("resp-123");
+        assertThat(body.get("input")).hasSize(1);
+        assertThat(body.at("/input/0/type").asText()).isEqualTo("function_call_output");
+        assertThat(body.at("/input/0/call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/input/0/output").asText()).isEqualTo("contents");
+    }
+
+    @Test
+    void doesNotReplayHistoricalToolInteractionsAsResponsesItems() {
         LypiModelRequest request = new LypiModelRequest(
             "req-tool-history",
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
             ThinkingLevel.OFF,
             "",
             List.of(
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("inspect project", Map.of())),
+                    Map.of()
+                ),
                 new LypiMessage(
                     LypiRole.ASSISTANT,
                     List.of(new LypiToolCallBlock(
@@ -107,6 +162,11 @@ class OpenAiResponsesRequestBuilderTest {
                     LypiRole.TOOL_RESULT,
                     List.of(new LypiToolResultBlock("call-1", "contents", false, Map.of())),
                     Map.of()
+                ),
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("continue", Map.of())),
+                    Map.of()
                 )
             ),
             List.of(),
@@ -116,13 +176,44 @@ class OpenAiResponsesRequestBuilderTest {
 
         JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
 
-        assertThat(body.at("/input/0/type").asText()).isEqualTo("function_call");
-        assertThat(body.at("/input/0/call_id").asText()).isEqualTo("call-1");
-        assertThat(body.at("/input/0/name").asText()).isEqualTo("read_file");
-        assertThat(body.at("/input/0/arguments").asText()).isEqualTo("{\"path\":\"pom.xml\"}");
-        assertThat(body.at("/input/1/type").asText()).isEqualTo("function_call_output");
-        assertThat(body.at("/input/1/call_id").asText()).isEqualTo("call-1");
-        assertThat(body.at("/input/1/output").asText()).isEqualTo("contents");
+        assertThat(body.get("input")).hasSize(2);
+        assertThat(body.at("/input/0/role").asText()).isEqualTo("user");
+        assertThat(body.at("/input/0/content/0/text").asText()).isEqualTo("inspect project");
+        assertThat(body.at("/input/1/role").asText()).isEqualTo("user");
+        assertThat(body.at("/input/1/content/0/text").asText()).isEqualTo("continue");
+        assertThat(body.findValuesAsText("type")).doesNotContain("function_call", "function_call_output");
+    }
+
+    @Test
+    void doesNotSerializePendingToolOutputWithoutPreviousResponseState() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-pending-output-without-state",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("inspect project", Map.of())),
+                    Map.of()
+                ),
+                new LypiMessage(
+                    LypiRole.TOOL_RESULT,
+                    List.of(new LypiToolResultBlock("call-1", "contents", false, Map.of("openaiPendingToolOutput", true))),
+                    Map.of()
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of()
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
+
+        assertThat(body.get("previous_response_id")).isNull();
+        assertThat(body.get("input")).hasSize(1);
+        assertThat(body.at("/input/0/role").asText()).isEqualTo("user");
+        assertThat(body.findValuesAsText("type")).doesNotContain("function_call_output");
     }
 
     @Test
@@ -217,7 +308,7 @@ class OpenAiResponsesRequestBuilderTest {
     }
 
     @Test
-    void keepsFullInputWhenPromptCacheKeyIsPresentEvenWithPreviousResponseState() {
+    void usesPreviousResponseIdWhenPromptCacheKeyIsPresentWithPreviousResponseState() {
         LypiModelRequest request = new LypiModelRequest(
             "req-prompt-cache-with-state",
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
@@ -261,15 +352,14 @@ class OpenAiResponsesRequestBuilderTest {
 
         JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
 
-        assertThat(body.get("previous_response_id")).isNull();
-        assertThat(body.get("input")).hasSize(3);
-        assertThat(body.at("/input/0/content/0/text").asText()).isEqualTo("first");
-        assertThat(body.at("/input/2/content/0/text").asText()).isEqualTo("follow up");
+        assertThat(body.get("previous_response_id").asText()).isEqualTo("resp-123");
+        assertThat(body.get("input")).hasSize(1);
+        assertThat(body.at("/input/0/content/0/text").asText()).isEqualTo("follow up");
         assertThat(body.get("prompt_cache_key").asText()).isEqualTo("ses_main");
     }
 
     @Test
-    void keepsFullInputWithoutPreviousResponseIdWhenToolResultsFollowCachedAssistant() {
+    void sendsOnlyPendingToolResultWithPreviousResponseIdWhenToolResultsFollowCachedAssistant() {
         LypiModelRequest request = new LypiModelRequest(
             "req-tool-cache",
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
@@ -290,7 +380,7 @@ class OpenAiResponsesRequestBuilderTest {
                 ),
                 new LypiMessage(
                     LypiRole.TOOL_RESULT,
-                    List.of(new LypiTextBlock("tool output", Map.of())),
+                    List.of(new LypiToolResultBlock("call-1", "tool output", false, Map.of("openaiPendingToolOutput", true))),
                     Map.of("messageId", "msg-tool-1")
                 )
             ),
@@ -306,8 +396,11 @@ class OpenAiResponsesRequestBuilderTest {
 
         JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
 
-        assertThat(body.get("previous_response_id")).isNull();
-        assertThat(body.get("input")).hasSize(2);
+        assertThat(body.get("previous_response_id").asText()).isEqualTo("resp-123");
+        assertThat(body.get("input")).hasSize(1);
+        assertThat(body.at("/input/0/type").asText()).isEqualTo("function_call_output");
+        assertThat(body.at("/input/0/call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/input/0/output").asText()).isEqualTo("tool output");
     }
 
     private static OpenAiProviderConfig config() {

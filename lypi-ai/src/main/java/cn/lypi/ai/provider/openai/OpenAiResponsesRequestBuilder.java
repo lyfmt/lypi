@@ -51,9 +51,7 @@ public final class OpenAiResponsesRequestBuilder {
         request.options().temperature().ifPresent(temperature -> body.put("temperature", temperature));
         Optional<String> promptCacheKey = promptCacheKey(request);
         promptCacheKey.ifPresent(key -> body.put("prompt_cache_key", key));
-        Optional<PreviousResponseState> previousResponseState = promptCacheKey.isPresent()
-            ? Optional.empty()
-            : previousResponseState(request);
+        Optional<PreviousResponseState> previousResponseState = previousResponseState(request);
         previousResponseState.ifPresent(state -> body.put("previous_response_id", state.previousResponseId()));
         body.set("input", input(request, previousResponseState));
         if (!request.tools().isEmpty()) {
@@ -84,7 +82,7 @@ public final class OpenAiResponsesRequestBuilder {
             .flatMap(state -> indexAfterMessage(messages, state.messageId()))
             .orElse(0);
         for (LypiMessage message : messages.subList(startIndex, messages.size())) {
-            appendMessage(input, message);
+            appendMessage(input, message, previousResponseState.isPresent());
         }
         return input;
     }
@@ -102,12 +100,16 @@ public final class OpenAiResponsesRequestBuilder {
         return Optional.empty();
     }
 
-    private void appendMessage(ArrayNode input, LypiMessage message) {
+    private void appendMessage(ArrayNode input, LypiMessage message, boolean allowProtocolToolItems) {
         for (LypiContentBlock block : message.content()) {
             if (block instanceof LypiToolCallBlock toolCall) {
-                input.add(functionCall(toolCall));
+                if (allowProtocolToolItems && pendingToolCall(toolCall)) {
+                    input.add(functionCall(toolCall));
+                }
             } else if (block instanceof LypiToolResultBlock toolResult) {
-                input.add(functionCallOutput(toolResult));
+                if (allowProtocolToolItems && pendingToolOutput(toolResult)) {
+                    input.add(functionCallOutput(toolResult));
+                }
             } else {
                 input.add(message(message, block));
             }
@@ -176,6 +178,14 @@ public final class OpenAiResponsesRequestBuilder {
         return text == null || text.isBlank() ? "{}" : text;
     }
 
+    private boolean pendingToolCall(LypiToolCallBlock toolCall) {
+        return Boolean.TRUE.equals(toolCall.metadata().get("openaiPendingToolCall"));
+    }
+
+    private boolean pendingToolOutput(LypiToolResultBlock toolResult) {
+        return Boolean.TRUE.equals(toolResult.metadata().get("openaiPendingToolOutput"));
+    }
+
     private ArrayNode tools(LypiModelRequest request) {
         ArrayNode tools = objectMapper.createArrayNode();
         for (LypiToolSpec tool : request.tools()) {
@@ -227,14 +237,20 @@ public final class OpenAiResponsesRequestBuilder {
         }
         String messageId = String.valueOf(stateMap.get("messageId"));
         Optional<Integer> startIndex = indexAfterMessage(request.messages(), messageId);
-        if (startIndex.isEmpty() || hasToolResult(request.messages().subList(startIndex.get(), request.messages().size()))) {
+        if (startIndex.isEmpty() || hasHistoricalToolResult(request.messages().subList(startIndex.get(), request.messages().size()))) {
             return Optional.empty();
         }
         return Optional.of(new PreviousResponseState(previousResponseId, messageId));
     }
 
-    private boolean hasToolResult(List<LypiMessage> messages) {
-        return messages.stream().anyMatch(message -> message.role() == LypiRole.TOOL_RESULT);
+    private boolean hasHistoricalToolResult(List<LypiMessage> messages) {
+        return messages.stream().anyMatch(message ->
+            message.role() == LypiRole.TOOL_RESULT
+                && message.content().stream()
+                    .filter(LypiToolResultBlock.class::isInstance)
+                    .map(LypiToolResultBlock.class::cast)
+                    .noneMatch(this::pendingToolOutput)
+        );
     }
 
     private record PreviousResponseState(String previousResponseId, String messageId) {
