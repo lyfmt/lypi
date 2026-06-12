@@ -37,11 +37,11 @@ class ToolRuntimeContextFactoryTest {
     void usesSafeDefaultsWhenOptionsAreEmpty() {
         ToolUseContext context = new ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()).create(
             new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
-            TestTools.context(PermissionMode.PLAN)
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
         );
 
         assertEquals("session_unknown", context.sessionId());
-        assertEquals(PermissionMode.PLAN, context.metadata().get("permissionMode"));
+        assertEquals(PermissionMode.DEFAULT_EXECUTE, context.metadata().get("permissionMode"));
         assertTrue(context.cwd().isAbsolute());
     }
 

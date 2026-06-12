@@ -503,7 +503,7 @@ class SessionManagerImplTest {
             sourceModel,
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.PLAN
+            PermissionMode.DEFAULT_EXECUTE
         );
         sourceEngine.openOrCreate("ses_main");
         sourceEngine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
@@ -535,7 +535,7 @@ class SessionManagerImplTest {
             sourceModel,
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.PLAN
+            PermissionMode.DEFAULT_EXECUTE
         );
         sourceEngine.openOrCreate("ses_main");
         sourceEngine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
@@ -563,8 +563,8 @@ class SessionManagerImplTest {
         sourceEngine.append(new PermissionModeChangeEntry(
             "permission_change",
             "mode_change",
-            PermissionMode.PLAN,
-            "/permission-mode plan",
+            PermissionMode.ACCEPT_EDITS,
+            "/permission-mode accept-edits",
             Instant.parse("2026-06-01T00:04:00Z")
         ));
         Path targetCwd = tempDir.resolve("fork-cwd");
@@ -583,7 +583,7 @@ class SessionManagerImplTest {
         assertThat(context.model()).isEqualTo(sourceModel);
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.PLAN);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
     }
 
     @Test

@@ -27,7 +27,7 @@ class HeadlessSubagentJsonCodecTest {
               "prompt": "请审查代码",
               "cwd": "/tmp/project",
               "allowedTools": ["read", "grep"],
-              "permissionMode": "PLAN",
+              "permissionMode": "DEFAULT_EXECUTE",
               "timeoutSeconds": 30
             }
             """;
@@ -39,7 +39,7 @@ class HeadlessSubagentJsonCodecTest {
         assertThat(input.parentSpawnEntryId()).isEqualTo("entry_spawn");
         assertThat(input.cwd()).isEqualTo(Path.of("/tmp/project"));
         assertThat(input.allowedTools()).containsExactly("read", "grep");
-        assertThat(input.permissionMode()).isEqualTo(PermissionMode.PLAN);
+        assertThat(input.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
         assertThat(input.timeoutSeconds()).isEqualTo(30);
     }
 

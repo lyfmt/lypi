@@ -523,13 +523,13 @@ class TuiEventReducerTest {
             new ModelSelection("anthropic", "claude-sonnet", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.PLAN,
+            PermissionMode.DEFAULT_EXECUTE,
             NOW
         ));
 
         assertEquals("claude-sonnet", reducer.view().statusBar().model());
         assertEquals("PLAN", reducer.view().statusBar().mode());
-        assertEquals("PLAN", reducer.view().statusBar().permissionMode());
+        assertEquals("DEFAULT_EXECUTE", reducer.view().statusBar().permissionMode());
         assertEquals("leaf_2", reducer.view().statusBar().branchLeafId());
     }
 
