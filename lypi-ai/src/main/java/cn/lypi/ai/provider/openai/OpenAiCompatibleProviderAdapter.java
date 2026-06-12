@@ -179,6 +179,15 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         if (config.fallbackRequestStyle() != config.requestStyle()) {
             addAttemptsForStyle(attempts, request, config.fallbackRequestStyle());
         }
+        if (
+            config.requestStyle() == cn.lypi.ai.provider.RequestStyle.RESPONSES
+                && config.fallbackRequestStyle() == cn.lypi.ai.provider.RequestStyle.RESPONSES
+                && (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE)
+                && previousResponseStateCandidate(request)
+                && hasPendingToolOutput(request)
+        ) {
+            addChatCompletionsSseAttempt(attempts, request);
+        }
         return attempts;
     }
 
@@ -215,9 +224,13 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
             return;
         }
         if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
-            OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
-            attempts.add(new OpenAiStreamAttempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer));
+            addChatCompletionsSseAttempt(attempts, request);
         }
+    }
+
+    private void addChatCompletionsSseAttempt(List<OpenAiStreamAttempt> attempts, LypiModelRequest request) {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+        attempts.add(new OpenAiStreamAttempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer));
     }
 
     private ProviderRequest responsesWebSocketRequest(LypiModelRequest request) {

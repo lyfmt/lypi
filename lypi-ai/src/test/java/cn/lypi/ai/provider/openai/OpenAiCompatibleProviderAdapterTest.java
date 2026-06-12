@@ -651,6 +651,40 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(chatRequest.get("prompt_cache_key").asText()).isEqualTo("ses_main");
     }
 
+    @Test
+    void appendsChatFallbackForPendingToolResultWhenConfiguredFallbackStyleIsResponses() throws Exception {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.fail(
+            "Provider HTTP 400: previous_response_id is only supported on Responses WebSocket v2"
+        );
+        RecordingTransport chat = RecordingTransport.events(
+            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"done\"}}]}",
+            "[DONE]"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.RESPONSES),
+            websocket,
+            sse,
+            chat
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(
+            contextWithPendingToolResult(),
+            descriptor(),
+            AiProviderRuntimePort.emptyTools(),
+            new AiStreamOptions("ses_main"),
+            () -> false
+        ));
+
+        assertThat(events).contains(new TextDelta("done"), new AssistantDone(Optional.empty(), Optional.of("stop")));
+        assertThat(sse.requests).hasSize(1);
+        assertThat(chat.requests).hasSize(1);
+        JsonNode chatRequest = OBJECT_MAPPER.readTree(chat.requests.getFirst().body());
+        assertThat(chatRequest.at("/messages/2/tool_calls/0/id").asText()).isEqualTo("call-1");
+        assertThat(chatRequest.at("/messages/3/role").asText()).isEqualTo("tool");
+        assertThat(chatRequest.at("/messages/3/tool_call_id").asText()).isEqualTo("call-1");
+    }
+
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {
         return config(transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS);
     }
