@@ -84,6 +84,10 @@ public final class BubblewrapExecutor implements Executor {
     @Override
     public ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal) {
         Objects.requireNonNull(request, "request must not be null");
+        Optional<String> protectedProcPath = protectedProcPath(request);
+        if (protectedProcPath.isPresent()) {
+            return policyRejected("protected proc metadata path is not readable in sandbox: " + protectedProcPath.get());
+        }
         Optional<Path> bwrapPath = bwrapPathSupplier.get();
         if (bwrapPath.isEmpty()) {
             return handleUnavailable(request, progress, signal, UNAVAILABLE_MESSAGE);
@@ -160,6 +164,58 @@ public final class BubblewrapExecutor implements Executor {
             Optional.empty(),
             ExecutionMetadata.sandboxDenied(name(), diagnostic)
         );
+    }
+
+    private Optional<String> protectedProcPath(ExecutionRequest request) {
+        String command = shellCommand(request);
+        for (String protectedPath : List.of("/proc/self/status", "/proc/self/mountinfo")) {
+            if (containsPathToken(command, protectedPath)) {
+                return Optional.of(protectedPath);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private String shellCommand(ExecutionRequest request) {
+        List<String> command = request.command();
+        if (command == null || command.isEmpty()) {
+            return "";
+        }
+        if (command.size() >= 3 && "-lc".equals(command.get(1))) {
+            return command.get(2);
+        }
+        return String.join(" ", command);
+    }
+
+    private boolean containsPathToken(String command, String path) {
+        if (command == null || command.isBlank()) {
+            return false;
+        }
+        int index = command.indexOf(path);
+        while (index >= 0) {
+            int before = index - 1;
+            int after = index + path.length();
+            boolean leftBoundary = before < 0 || isPathBoundary(command.charAt(before));
+            boolean rightBoundary = after >= command.length() || isPathBoundary(command.charAt(after));
+            if (leftBoundary && rightBoundary) {
+                return true;
+            }
+            index = command.indexOf(path, index + path.length());
+        }
+        return false;
+    }
+
+    private boolean isPathBoundary(char character) {
+        return Character.isWhitespace(character)
+            || character == '\''
+            || character == '"'
+            || character == ';'
+            || character == '|'
+            || character == '&'
+            || character == '('
+            || character == ')'
+            || character == '<'
+            || character == '>';
     }
 
     private void cleanupSyntheticMountTargets(List<BubblewrapCommandBuilder.SyntheticMountTarget> syntheticMountTargets) {

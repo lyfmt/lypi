@@ -96,6 +96,33 @@ class BubblewrapExecutorTest {
     }
 
     @Test
+    void deniesProtectedProcSelfStatusBeforeStartingSandbox() throws Exception {
+        Path fakeBwrap = fakeBwrap();
+        RecordingExecutor host = new RecordingExecutor(new ExecutionResult(
+            0,
+            "leaked",
+            "",
+            false,
+            Optional.empty(),
+            ExecutionMetadata.unsandboxed("host")
+        ));
+        BubblewrapExecutor executor = new BubblewrapExecutor(
+            BubblewrapCommandBuilder.defaults(),
+            host,
+            () -> Optional.of(fakeBwrap)
+        );
+
+        ExecutionResult result = executor.execute(request("cat /proc/self/status", false), progress -> {
+        }, () -> false);
+
+        assertEquals(126, result.exitCode());
+        assertEquals("", result.stdout());
+        assertTrue(result.metadata().sandboxDenied());
+        assertEquals("sandboxPermissions=requireEscalated", result.metadata().retryWith().orElseThrow());
+        assertEquals(0, host.calls());
+    }
+
+    @Test
     void failsWithRetryHintWhenBwrapUnavailableByDefault() {
         BubblewrapExecutor executor = new BubblewrapExecutor(
             BubblewrapCommandBuilder.defaults(),
@@ -785,6 +812,30 @@ class BubblewrapExecutorTest {
                 Optional.empty(),
                 ExecutionMetadata.unsandboxed(name())
             );
+        }
+
+        private int calls() {
+            return calls.get();
+        }
+    }
+
+    private static final class RecordingExecutor implements Executor {
+        private final ExecutionResult result;
+        private final AtomicInteger calls = new AtomicInteger();
+
+        private RecordingExecutor(ExecutionResult result) {
+            this.result = result;
+        }
+
+        @Override
+        public String name() {
+            return "host";
+        }
+
+        @Override
+        public ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal) {
+            calls.incrementAndGet();
+            return result;
         }
 
         private int calls() {

@@ -27,11 +27,15 @@ import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.security.BashRiskAnalysis;
+import cn.lypi.contracts.security.BashRiskLevel;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionResponse;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -283,7 +287,7 @@ class DefaultToolRuntimeTest {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger permissionCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
-        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "low risk");
         PermissionGate gate = (request, tool, context, decision) -> {
             gateCalls.incrementAndGet();
             return PermissionGateResult.deny("should not ask before sandbox");
@@ -306,6 +310,30 @@ class DefaultToolRuntimeTest {
         assertEquals(0, gateCalls.get());
         assertEquals(0, permissionCalls.get());
         assertEquals(1, executeCalls.get());
+    }
+
+    @Test
+    void defaultSandboxBashKeepsDestructiveRiskApprovalBeforeExecution() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.DESTRUCTIVE, "rm -f 洗车店.md");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            requestedDecision.set(decision);
+            return PermissionGateResult.deny("user denied destructive command");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+        assertEquals(BashRiskLevel.DESTRUCTIVE, bashRisk(requestedDecision.get()).riskLevel());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("user denied destructive command"));
+        assertEquals(0, executeCalls.get());
     }
 
     @Test
@@ -1183,6 +1211,27 @@ class DefaultToolRuntimeTest {
 
     private SecurityRuntimePort allowAllSecurity() {
         return (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+    }
+
+    private PermissionDecision bashRiskDecision(BashRiskLevel riskLevel, String command) {
+        return new PermissionDecision(
+            PermissionBehavior.ASK,
+            PermissionDecisionReason.BASH_RISK,
+            "bash risk",
+            Optional.<PermissionUpdate>empty(),
+            Map.of("bashRisk", new BashRiskAnalysis(
+                command,
+                List.of(command),
+                List.of(),
+                riskLevel,
+                List.of("test risk"),
+                riskLevel != BashRiskLevel.UNKNOWN
+            ))
+        );
+    }
+
+    private BashRiskAnalysis bashRisk(PermissionDecision decision) {
+        return (BashRiskAnalysis) decision.metadata().get("bashRisk");
     }
 
     private List<AgentEvent> lifecycleEvents(RecordingEventBus events) {

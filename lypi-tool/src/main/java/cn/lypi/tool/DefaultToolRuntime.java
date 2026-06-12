@@ -499,7 +499,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
             PermissionDecision effectiveDecision;
             if (isDefaultSandboxBashRequest(request)) {
-                effectiveDecision = isDeny(securityDecision)
+                effectiveDecision = isDeny(securityDecision) || isAsk(securityDecision)
                     ? securityDecision
                     : allowDecision("默认 Bash 请求先进入沙箱执行。");
             } else {
