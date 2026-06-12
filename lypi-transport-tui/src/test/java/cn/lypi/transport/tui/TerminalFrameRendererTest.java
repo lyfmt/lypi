@@ -37,7 +37,7 @@ class TerminalFrameRendererTest {
     @Test
     void firstFrameWithStartupPaddingRendersWelcomeScreen() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
-        io.width = 46;
+        io.width = 80;
         io.height = 11;
         TerminalFrameRenderer renderer = TerminalFrameRenderer.withStartupPadding(io, rows -> {
         });
@@ -47,7 +47,10 @@ class TerminalFrameRendererTest {
         String plainOutput = stripAnsi(io.output.toString());
         assertTrue(plainOutput.contains("LY-PI"));
         assertTrue(plainOutput.contains("coding agent"));
-        assertTrue(plainOutput.contains("local-first"));
+        assertFalse(plainOutput.contains("local-first"));
+        assertTrue(plainOutput.contains("██████╗ "));
+        assertTrue(plainOutput.contains("██╔══██╗"));
+        assertTrue(plainOutput.contains("██████╔╝"));
         assertTrue(plainOutput.endsWith("hello\n> \nstatus"));
         assertTrue(io.output.toString().endsWith("\033[10;3H\033[?2026l"));
 

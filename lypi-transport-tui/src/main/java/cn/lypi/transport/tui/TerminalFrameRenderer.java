@@ -380,22 +380,21 @@ final class TerminalFrameRenderer {
 
     private List<String> fullWelcomeLines(int width) {
         return List.of(
-            center(WELCOME_DIM + "╭────────────────────────────────────╮" + ANSI_RESET, width),
-            center(WELCOME_PRIMARY + WELCOME_BOLD + "██╗     ██╗   ██╗       ██████╗ ██╗" + ANSI_RESET, width),
-            center(WELCOME_PRIMARY + WELCOME_BOLD + "██║     ╚██╗ ██╔╝       ██╔══██╗██║" + ANSI_RESET, width),
-            center(WELCOME_ACCENT + WELCOME_BOLD + "██║      ╚████╔╝  █████╗██████╔╝██║" + ANSI_RESET, width),
-            center(WELCOME_PRIMARY + WELCOME_BOLD + "███████╗   ██║          ██║     ██║" + ANSI_RESET, width),
-            center(WELCOME_PRIMARY + WELCOME_BOLD + "LY-PI" + ANSI_RESET, width),
-            center(WELCOME_ACCENT + "coding agent cockpit" + ANSI_RESET, width),
-            center(WELCOME_DIM + "local-first tools · session-aware runtime" + ANSI_RESET, width)
+            center(WELCOME_DIM + "╭────────────────────────────────────────────────────────╮" + ANSI_RESET, width),
+            center(WELCOME_PRIMARY + WELCOME_BOLD + "██╗      ██╗   ██╗      ██████╗  ██╗" + ANSI_RESET, width),
+            center(WELCOME_PRIMARY + WELCOME_BOLD + "██║      ╚██╗ ██╔╝      ██╔══██╗ ██║" + ANSI_RESET, width),
+            center(WELCOME_ACCENT + WELCOME_BOLD + "██║       ╚████╔╝ █████╗██████╔╝ ██║" + ANSI_RESET, width),
+            center(WELCOME_ACCENT + WELCOME_BOLD + "██║        ╚██╔╝  ╚════╝██╔═══╝  ██║" + ANSI_RESET, width),
+            center(WELCOME_PRIMARY + WELCOME_BOLD + "███████╗    ██║         ██║      ██║" + ANSI_RESET, width),
+            center(WELCOME_DIM + "╰──────────────────────── LY-PI ────────────────────────╯" + ANSI_RESET, width),
+            center(WELCOME_ACCENT + "coding agent cockpit" + ANSI_RESET, width)
         );
     }
 
     private List<String> compactWelcomeLines(int width) {
         return List.of(
             center(WELCOME_PRIMARY + WELCOME_BOLD + "LY-PI" + ANSI_RESET, width),
-            center(WELCOME_ACCENT + "coding agent" + ANSI_RESET, width),
-            center(WELCOME_DIM + "local-first runtime" + ANSI_RESET, width)
+            center(WELCOME_ACCENT + "coding agent" + ANSI_RESET, width)
         );
     }
 
