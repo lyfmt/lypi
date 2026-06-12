@@ -11,6 +11,7 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.context.ContextBudget;
+import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
@@ -25,6 +26,7 @@ import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -167,6 +169,73 @@ class JLineTuiTransportTest {
         assertTrue(frame.contains("coding agent"));
         assertTrue(frame.contains("> "));
         assertTrue(frame.contains("ses_1"));
+
+        transport.close();
+    }
+
+    @Test
+    void committedHistoryDoesNotRenderWelcomeHeaderAgainWhenLiveViewportIsEmpty() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 12;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            80,
+            12
+        );
+        io.output.setLength(0);
+
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            "block_user",
+            ContentBlockKind.TEXT,
+            "hello",
+            true,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+
+        String output = stripAnsi(io.output.toString());
+        assertTrue(output.contains("user: hello"));
+        assertFalse(output.contains("LY-PI"), output);
+        assertFalse(output.contains("coding agent"), output);
+
+        transport.close();
+    }
+
+    @Test
+    void runningTurnWithoutLiveBlocksDoesNotRenderWelcomeHeader() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 12;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            80,
+            12
+        );
+        io.output.setLength(0);
+
+        events.emit(new TurnStartEvent("ses_1", "turn_1", Instant.parse("2026-06-09T00:00:00Z")));
+
+        String output = stripAnsi(io.output.toString());
+        assertTrue(output.contains("turn running turn_1"), output);
+        assertFalse(output.contains("LY-PI"), output);
+        assertFalse(output.contains("coding agent"), output);
 
         transport.close();
     }
@@ -659,9 +728,10 @@ class JLineTuiTransportTest {
         String frame = io.output.toString();
         String fullClear = "\033[2J\033[H";
         String rendered = frame.substring(frame.indexOf(fullClear) + fullClear.length(), frame.indexOf("\033[?2026l"));
-        assertTrue(positionedRowCount(rendered) >= 6);
+        assertTrue(positionedRowCount(rendered) >= 3);
         assertFalse(rendered.contains("\n"));
         assertTrue(rendered.contains("> "));
+        assertTrue(rendered.contains("ses_1"));
 
         transport.close();
     }

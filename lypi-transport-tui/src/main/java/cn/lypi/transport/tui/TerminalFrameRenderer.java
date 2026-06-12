@@ -15,6 +15,7 @@ final class TerminalFrameRenderer {
     private static final String WELCOME_ACCENT = "\033[38;5;213m";
     private static final String WELCOME_DIM = "\033[38;5;244m";
     private static final String WELCOME_BOLD = "\033[1m";
+    private static final int DEFAULT_TERMINAL_WIDTH = 80;
     private static final IntConsumer NOOP_RENDERED_ROWS = rows -> {
     };
 
@@ -30,6 +31,7 @@ final class TerminalFrameRenderer {
     private int previousViewportTop;
     private int hardwareCursorRow;
     private int startupPaddingLineCount = -1;
+    private boolean startupPaddingApplied;
 
     TerminalFrameRenderer(TerminalIo io) {
         this(io, NOOP_RENDERED_ROWS, false);
@@ -65,21 +67,24 @@ final class TerminalFrameRenderer {
         if (startupPaddingEnabled && (startupPaddingLineCount < 0 || previousAreaHeight != 0 && previousAreaHeight != height)) {
             startupPaddingLineCount = Math.max(0, height - rawLines.size());
         }
-        CursorFrame frame = stripCursor(withStartupPadding(rawLines));
+        boolean applyStartupPadding = startupPaddingEnabled && !startupPaddingApplied;
+        CursorFrame frame = stripCursor(withStartupPadding(rawLines, applyStartupPadding));
         List<String> newLines = frame.lines();
         boolean widthChanged = previousWidth != 0 && previousWidth != width;
         boolean heightChanged = previousHeight != 0 && previousHeight != height;
         boolean areaChanged = previousTopRow != boundedTopRow || previousAreaHeight != 0 && previousAreaHeight != height;
+        boolean startupPaddingRemoved = startupPaddingApplied && rawLines.size() < previousLines.size();
         int viewportTop = viewportTopFor(newLines, height);
 
         if (previousLines.isEmpty() && !widthChanged && !heightChanged && !areaChanged) {
             writeFullFrame(newLines, frame.cursor(), startupPaddingEnabled, viewportTop, height, boundedTopRow);
+            startupPaddingApplied = applyStartupPadding;
             updateState(newLines, width, height, boundedTopRow, viewportTop, physicalBottomRow(newLines, viewportTop, height, boundedTopRow));
             return;
         }
 
-        if (widthChanged || heightChanged || areaChanged) {
-            logFullRedraw("terminal size changed");
+        if (widthChanged || heightChanged || areaChanged || startupPaddingRemoved) {
+            logFullRedraw(startupPaddingRemoved ? "startup padding removed" : "terminal size changed");
             writeFullFrame(newLines, frame.cursor(), true, viewportTop, height, boundedTopRow);
             updateState(newLines, width, height, boundedTopRow, viewportTop, physicalBottomRow(newLines, viewportTop, height, boundedTopRow));
             return;
@@ -128,6 +133,7 @@ final class TerminalFrameRenderer {
         previousAreaHeight = 0;
         previousViewportTop = 0;
         hardwareCursorRow = 0;
+        startupPaddingApplied = false;
     }
 
     private void writeFullFrame(
@@ -296,12 +302,12 @@ final class TerminalFrameRenderer {
         return lines.subList(start, end);
     }
 
-    private List<String> withStartupPadding(List<String> lines) {
-        if (startupPaddingLineCount <= 0) {
+    private List<String> withStartupPadding(List<String> lines, boolean applyStartupPadding) {
+        if (!applyStartupPadding || startupPaddingLineCount <= 0) {
             return lines;
         }
         List<String> padded = new ArrayList<>(startupPaddingLineCount + lines.size());
-        padded.addAll(startupWelcomeLines(startupPaddingLineCount, io.width()));
+        padded.addAll(startupWelcomeLines(startupPaddingLineCount, safeWidth()));
         padded.addAll(lines);
         return padded;
     }
@@ -376,7 +382,11 @@ final class TerminalFrameRenderer {
     }
 
     private void writeLine(String line) throws IOException {
-        io.write(AnsiWidth.truncate(line, io.width()));
+        io.write(AnsiWidth.truncate(line, safeWidth()));
+    }
+
+    private int safeWidth() {
+        return io.width() > 0 ? io.width() : DEFAULT_TERMINAL_WIDTH;
     }
 
     private void logFullRedraw(String reason) {

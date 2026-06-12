@@ -16,6 +16,7 @@ import cn.lypi.contracts.skill.SkillMention;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 final class TuiInputLoop {
@@ -32,6 +33,7 @@ final class TuiInputLoop {
     private final Supplier<SkillIndex> skillIndexSupplier;
     private final ResumeSessionController resumeController;
     private final Consumer<SessionRuntimeState> resumeStateConsumer;
+    private final BooleanSupplier emptySessionHeaderSupplier;
     private final TuiRenderOptions renderOptions;
     private SlashCommandPicker slashPicker;
     private SkillMentionToken skillToken;
@@ -130,6 +132,7 @@ final class TuiInputLoop {
             resumeController,
             resumeStateConsumer,
             skillIndexSupplier,
+            () -> true,
             new TuiRenderOptions()
         );
     }
@@ -147,6 +150,36 @@ final class TuiInputLoop {
         Supplier<SkillIndex> skillIndexSupplier,
         TuiRenderOptions renderOptions
     ) {
+        this(
+            submitHandler,
+            frameSink,
+            renderer,
+            screen,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            skillIndexSupplier,
+            () -> true,
+            renderOptions
+        );
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        FrameSink frameSink,
+        TuiRenderer renderer,
+        TuiScreen screen,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier,
+        BooleanSupplier emptySessionHeaderSupplier,
+        TuiRenderOptions renderOptions
+    ) {
         this.submitHandler = submitHandler;
         this.frameSink = frameSink;
         this.renderer = renderer;
@@ -159,6 +192,7 @@ final class TuiInputLoop {
         this.skillIndexSupplier = skillIndexSupplier == null ? () -> new SkillIndex(List.of(), List.of()) : skillIndexSupplier;
         this.resumeController = resumeController;
         this.resumeStateConsumer = resumeStateConsumer;
+        this.emptySessionHeaderSupplier = emptySessionHeaderSupplier == null ? () -> true : emptySessionHeaderSupplier;
         this.renderOptions = renderOptions == null ? new TuiRenderOptions() : renderOptions;
     }
 
@@ -395,7 +429,8 @@ final class TuiInputLoop {
             editor.text(),
             editor.cursor(),
             overlayLines(),
-            renderOptions.toolOutputExpanded()
+            renderOptions.toolOutputExpanded(),
+            emptySessionHeaderSupplier.getAsBoolean()
         ));
     }
 

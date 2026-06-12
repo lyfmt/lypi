@@ -65,7 +65,24 @@ class TerminalFrameRendererTest {
     }
 
     @Test
-    void startupPaddingRemainsPartOfLinearScrollbackAfterFirstFrame() throws Exception {
+    void startupPaddingFallsBackToDefaultWidthWhenTerminalReportsZeroWidth() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 0;
+        io.height = 11;
+        TerminalFrameRenderer renderer = TerminalFrameRenderer.withStartupPadding(io, rows -> {
+        });
+
+        renderer.render(List.of("LY-PI", "coding agent", "> |CURSOR|", "status"));
+
+        String plainOutput = stripAnsi(io.output.toString());
+        assertTrue(plainOutput.contains("LY-PI"));
+        assertTrue(plainOutput.contains("coding agent"));
+        assertTrue(plainOutput.contains("> "));
+        assertTrue(plainOutput.contains("status"));
+    }
+
+    @Test
+    void startupPaddingIsOneShotAndNextFrameOwnsVisibleRows() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 4;
         TerminalFrameRenderer renderer = TerminalFrameRenderer.withStartupPadding(io, rows -> {
@@ -77,10 +94,28 @@ class TerminalFrameRendererTest {
 
         String output = io.output.toString();
         assertFalse(output.contains("\r\n"), escaped(output));
-        assertTrue(output.contains("\033[2;1H\033[2Khello"), escaped(output));
-        assertTrue(output.contains("\033[3;1H\033[2Kassistant"), escaped(output));
-        assertTrue(output.contains("\033[4;1H\033[2K> "), escaped(output));
-        assertTrue(output.endsWith("\033[4;3H\033[?2026l"), escaped(output));
+        assertTrue(output.contains("\033[2J\033[H"), escaped(output));
+        assertTrue(output.contains("\033[1;1H\033[2Khello"), escaped(output));
+        assertTrue(output.contains("\033[2;1H\033[2Kassistant"), escaped(output));
+        assertTrue(output.contains("\033[3;1H\033[2K> "), escaped(output));
+        assertTrue(output.endsWith("\033[3;3H\033[?2026l"), escaped(output));
+    }
+
+    @Test
+    void startupPaddingIsRemovedWhenNextFrameNoLongerUsesWelcomeSpace() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 12;
+        TerminalFrameRenderer renderer = TerminalFrameRenderer.withStartupPadding(io, rows -> {
+        });
+
+        renderer.render(List.of("LY-PI", "coding agent", "> |CURSOR|", "status"));
+        io.output.setLength(0);
+        renderer.render(List.of("· turn running turn_1", "──", "> |CURSOR|", "status"));
+
+        String output = stripAnsi(io.output.toString());
+        assertFalse(output.contains("coding agent cockpit"), output);
+        assertTrue(output.contains("turn running turn_1"), output);
+        assertTrue(io.output.toString().contains("\033[2J\033[H"), escaped(io.output.toString()));
     }
 
     @Test

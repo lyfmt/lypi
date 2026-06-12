@@ -49,6 +49,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final TerminalHistoryWriter historyWriter;
     private final Runnable viewportInvalidator;
     private final Set<String> committedHistoryBlockIds = new LinkedHashSet<>();
+    private boolean sessionHistoryStarted;
     private TuiViewportArea viewportArea;
     private final TerminalSession terminalSession;
     private final DiffViewProvider diffViewProvider;
@@ -175,6 +176,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             resumeController,
             this::resumeRuntimeState,
             skillIndexSupplier,
+            this::showEmptySessionHeader,
             renderOptions
         );
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
@@ -967,7 +969,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 currentDraft(),
                 currentCursor(),
                 List.of(),
-                renderOptions.toolOutputExpanded()
+                renderOptions.toolOutputExpanded(),
+                showEmptySessionHeader()
             );
             renderArea = viewportArea;
         }
@@ -1048,6 +1051,11 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             }
         }
         newBlocks.forEach(block -> committedHistoryBlockIds.add(block.blockId()));
+        sessionHistoryStarted = true;
+    }
+
+    private boolean showEmptySessionHeader() {
+        return committedHistoryBlockIds.isEmpty() && !sessionHistoryStarted;
     }
 
     private void refreshDiffAfterToolEnd(AgentEvent event) {

@@ -227,23 +227,25 @@ public final class TuiEventReducer {
         }
         streamingThinkingContent.remove(event.blockId());
         int index = state.blockIndex(event.blockId()).orElse(-1);
+        String summary = thinkingSummary(event.delta());
         if (index < 0) {
             state.addBlock(new TuiThinkingBlock(
                 event.blockId(),
                 event.messageId(),
-                event.delta(),
+                summary,
                 !event.isFinal(),
-                false
+                true
             ));
             return;
         }
         TuiThinkingBlock current = (TuiThinkingBlock) state.blocks().get(index);
+        String nextContent = thinkingSummary(current.content() + event.delta());
         state.putBlock(index, new TuiThinkingBlock(
             current.blockId(),
             current.messageId(),
-            current.content() + event.delta(),
+            nextContent,
             !event.isFinal(),
-            current.collapsed()
+            true
         ));
     }
 
@@ -328,9 +330,9 @@ public final class TuiEventReducer {
                 case THINKING -> putOrAdd(index, new TuiThinkingBlock(
                     blockId,
                     event.messageId(),
-                    snapshot.text(),
+                    thinkingSummary(snapshot.text()),
                     false,
-                    false
+                    true
                 ));
                 case ERROR -> putOrAdd(index, new TuiErrorBlock(blockId, snapshot.text()));
                 case TOOL_CALL -> {
@@ -377,6 +379,19 @@ public final class TuiEventReducer {
             }
             return java.util.Optional.empty();
         });
+    }
+
+    private String thinkingSummary(String content) {
+        if (content == null || content.isBlank()) {
+            return "";
+        }
+        java.util.regex.Matcher bold = java.util.regex.Pattern
+            .compile("\\*\\*([^*]+)\\*\\*")
+            .matcher(content);
+        if (bold.find()) {
+            return bold.group(1).strip();
+        }
+        return content.strip().lines().findFirst().orElse("");
     }
 
     private void putOrAdd(int index, TuiBlock block) {

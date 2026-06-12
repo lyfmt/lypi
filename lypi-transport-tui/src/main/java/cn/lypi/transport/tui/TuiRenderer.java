@@ -67,6 +67,19 @@ final class TuiRenderer {
         List<String> overlayLines,
         boolean toolOutputExpanded
     ) {
+        return renderFrame(view, screen, layout, input, cursor, overlayLines, toolOutputExpanded, true);
+    }
+
+    TuiRenderFrame renderFrame(
+        TuiViewModel view,
+        TuiScreen screen,
+        TuiLayout layout,
+        String input,
+        int cursor,
+        List<String> overlayLines,
+        boolean toolOutputExpanded,
+        boolean showEmptySessionHeader
+    ) {
         InputBlock inputBlock = layoutInput(input, cursor, layout);
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
             .map(line -> AnsiWidth.truncate(line, layout.width()))
@@ -75,14 +88,43 @@ final class TuiRenderer {
         int transcriptLineBudget = Math.max(0, layout.height() - bottomUiLineCount);
         int effectiveTranscriptBudget = toolOutputExpanded ? transcriptLineBudget : Integer.MAX_VALUE;
         List<String> transcript = transcriptLines(view, layout.width(), toolOutputExpanded, effectiveTranscriptBudget);
-        screen.setTranscript(transcript);
+        boolean emptySessionHeader = showEmptySessionHeader
+            && transcript.isEmpty()
+            && transcriptLineBudget >= 4
+            && emptySessionChrome(view);
+        screen.setTranscript(emptySessionHeader ? List.of() : transcript);
 
         List<String> lines = new ArrayList<>();
-        lines.addAll(transcript);
+        lines.addAll(emptySessionHeader ? emptySessionHeaderLines(view, layout.width(), transcriptLineBudget) : transcript);
         lines.addAll(inputBlock.lines());
         lines.addAll(overlay);
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
         return new TuiRenderFrame(lines);
+    }
+
+    private boolean emptySessionChrome(TuiViewModel view) {
+        return view.blocks().isEmpty()
+            && (view.runtimeLine() == null || view.runtimeLine().isBlank())
+            && view.permissionPrompt().isEmpty()
+            && view.diffView().isEmpty();
+    }
+
+    private List<String> emptySessionHeaderLines(TuiViewModel view, int width, int lineBudget) {
+        if (lineBudget <= 0) {
+            return List.of();
+        }
+        List<String> lines = new ArrayList<>();
+        appendWithinBudget(lines, wrap("LY-PI", width), lineBudget);
+        appendWithinBudget(lines, wrap("coding agent", width), lineBudget);
+        String model = nullToEmpty(view.statusBar().model());
+        if (!model.isBlank()) {
+            appendWithinBudget(lines, wrap("model: " + model, width), lineBudget);
+        }
+        String sessionId = nullToEmpty(view.statusBar().sessionId());
+        if (!sessionId.isBlank()) {
+            appendWithinBudget(lines, wrap("session: " + sessionId, width), lineBudget);
+        }
+        return lines;
     }
 
     private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded) {
@@ -121,6 +163,9 @@ final class TuiRenderer {
                 case TuiErrorBlock error -> "error: " + error.message();
             };
             if (block instanceof TuiMessageBlock message) {
+                if (message.content() == null || message.content().isBlank()) {
+                    continue;
+                }
                 if ("user".equalsIgnoreCase(message.role())) {
                     appendWithinBudget(lines, styledLines(prefixedLines("user: ", message.content(), width), USER_MESSAGE), lineBudget);
                 } else {
@@ -129,8 +174,7 @@ final class TuiRenderer {
             } else if (block instanceof TuiToolBlock tool) {
                 appendWithinBudget(lines, toolLines(tool, width, toolOutputExpanded, remainingBudget(lines, lineBudget)), lineBudget);
             } else if (block instanceof TuiThinkingBlock thinking) {
-                String content = thinking.collapsed() ? "collapsed" : thinking.content();
-                appendWithinBudget(lines, styledLines(prefixedLines("thinking: ", content, width), THINKING_MESSAGE), lineBudget);
+                appendWithinBudget(lines, styledLines(prefixedLines("thinking: ", thinking.content(), width), THINKING_MESSAGE), lineBudget);
             } else {
                 appendWithinBudget(lines, wrap(text, width), lineBudget);
             }

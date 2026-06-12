@@ -86,6 +86,27 @@ class TuiRendererTest {
     }
 
     @Test
+    void rendersSessionHeaderForEmptyConversationWithoutPersistingAsTranscript() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(2);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(80, 8), "");
+
+        assertTrue(lines.contains("LY-PI"));
+        assertTrue(lines.contains("coding agent"));
+        assertTrue(lines.contains("model: gpt-5.4"));
+        assertTrue(lines.contains("session: ses_1"));
+        assertTrue(screen.visibleTranscript().isEmpty(), "empty-state header is frame chrome, not transcript history");
+    }
+
+    @Test
     void statusBarDoesNotRenderApplicationScrollbackCounter() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
@@ -178,6 +199,28 @@ class TuiRendererTest {
     }
 
     @Test
+    void skipsEmptyMessageBlocks() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(4);
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock("u1", "m1", "user", "", false),
+                new TuiMessageBlock("a1", "m2", "assistant", "   ", false),
+                new TuiMessageBlock("a2", "m3", "assistant", "done", false)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        String output = String.join("\n", renderer.render(view, screen, new TuiLayout(40, 6), ""));
+
+        assertFalse(output.contains("user:"), output);
+        assertTrue(output.contains("done"), output);
+    }
+
+    @Test
     void rendersMultilineThinkingWithoutEmbeddedNewlines() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(2);
@@ -193,6 +236,24 @@ class TuiRendererTest {
 
         assertEquals("\033[38;5;244mthinking: 第一行\033[0m", lines.get(0));
         assertEquals("\033[38;5;244m          第二行\033[0m", lines.get(1));
+    }
+
+    @Test
+    void rendersCollapsedThinkingSummaryInsteadOfPlaceholder() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(2);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiThinkingBlock("t1", "m1", "Finding project files", false, true)),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 6), "");
+
+        assertEquals("\033[38;5;244mthinking: Finding project files\033[0m", lines.get(0));
+        assertFalse(String.join("\n", lines).contains("collapsed"));
     }
 
     @Test

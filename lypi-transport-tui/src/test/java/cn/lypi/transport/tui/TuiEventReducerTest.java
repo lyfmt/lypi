@@ -1077,6 +1077,51 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void streamingThinkingRuntimeLineUsesBoldHeaderSummary() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.THINKING,
+            "block-thinking",
+            ContentBlockKind.THINKING,
+            "**Clarifying skill requirements**\n\nprivate detail",
+            false,
+            Map.of(),
+            NOW
+        ));
+
+        assertTrue(reducer.view().blocks().isEmpty());
+        assertEquals("thinking: Clarifying skill requirements", reducer.view().runtimeLine());
+    }
+
+    @Test
+    void finalThinkingDeltaCreatesCollapsedSummaryBlock() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.THINKING,
+            "block-thinking",
+            ContentBlockKind.THINKING,
+            "**Exploring project files**\n\nLong private reasoning that should not fill history.",
+            true,
+            Map.of(),
+            NOW
+        ));
+
+        assertEquals(1, reducer.view().blocks().size());
+        TuiThinkingBlock thinking = assertInstanceOf(TuiThinkingBlock.class, reducer.view().blocks().getFirst());
+        assertEquals("Exploring project files", thinking.content());
+        assertFalse(thinking.streaming());
+        assertTrue(thinking.collapsed());
+    }
+
+    @Test
     void runtimeStateInitializesStatusBar() {
         TuiEventReducer reducer = TuiEventReducer.fromRuntimeState(TestRuntimeStates.basic("ses_1"));
 

@@ -119,7 +119,7 @@ class TuiContractEndToEndTest {
         assertFalse(message.streaming());
         assertEquals("private chain", thinking.content());
         assertFalse(thinking.streaming());
-        assertFalse(thinking.collapsed());
+        assertTrue(thinking.collapsed());
         assertEquals("toolu_bash", tool.toolUseId());
         assertEquals("bash", tool.toolName());
         assertEquals("printf output", tool.label());

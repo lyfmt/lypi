@@ -360,6 +360,12 @@ final class TuiRenderState {
         if (value == null || value.isBlank()) {
             return "";
         }
+        java.util.regex.Matcher bold = java.util.regex.Pattern
+            .compile("\\*\\*([^*]+)\\*\\*")
+            .matcher(value);
+        if (bold.find()) {
+            return bold.group(1).strip();
+        }
         return value.strip().lines().findFirst().orElse("");
     }
 

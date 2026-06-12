@@ -77,6 +77,40 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void inputEditsCanSuppressEmptySessionHeaderAfterHistoryExists() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(12),
+            new TuiLayout(80, 12),
+            () -> view,
+            null,
+            null,
+            null,
+            null,
+            () -> false,
+            new TuiRenderOptions()
+        );
+
+        loop.acceptText("second turn");
+
+        String output = frames.getLast();
+        assertTrue(!output.contains("LY-PI"), output);
+        assertTrue(!output.contains("coding agent"), output);
+        assertTrue(output.contains("second turn"), output);
+    }
+
+    @Test
     void backspaceDeletesPreviousCharacterAndRerendersInput() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
