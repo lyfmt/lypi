@@ -51,7 +51,10 @@ class SkillScanner {
     }
 
     private List<Path> skillRoots(ResourceLocation location) {
-        return List.of(location.root().resolve("skills"), location.root().resolve(".ly-pi").resolve("skills"));
+        return List.of(
+            location.root().resolve("skills"),
+            location.root().resolve(".ly-pi").resolve("skills")
+        );
     }
 
     private void scanSkillRoot(

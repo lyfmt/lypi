@@ -41,24 +41,7 @@ public class DefaultSystemPromptBuilder implements SystemPromptBuilder {
         }
 
         if (!resources.skillIndex().skills().isEmpty()) {
-            content.append("## Available Skills\n");
-            for (SkillDescriptor skill : resources.skillIndex().skills()) {
-                sourceNames.add("skill:" + skill.name());
-                content.append("- skill:")
-                    .append(skill.name())
-                    .append(" source=")
-                    .append(skill.source())
-                    .append(" hash=")
-                    .append(skill.contentHash())
-                    .append('\n')
-                    .append("  description: ")
-                    .append(skill.description())
-                    .append('\n');
-                if (!skill.pathGlobs().isEmpty()) {
-                    content.append("  paths: ").append(skill.pathGlobs()).append('\n');
-                }
-            }
-            content.append('\n');
+            appendSkills(content, sourceNames, resources.skillIndex().skills());
         }
 
         if (!resources.promptTemplates().isEmpty()) {
@@ -91,5 +74,27 @@ public class DefaultSystemPromptBuilder implements SystemPromptBuilder {
             .map(parameter -> parameter.name() + (parameter.required() ? "(required)" : "(optional)"))
             .reduce((left, right) -> left + ", " + right)
             .orElse("");
+    }
+
+    private void appendSkills(StringBuilder content, List<String> sourceNames, List<SkillDescriptor> skills) {
+        content.append("## Skills\n");
+        content.append("A skill is a set of local instructions to follow that is stored in a `SKILL.md` file.\n\n");
+        content.append("### Available skills\n");
+        for (SkillDescriptor skill : skills) {
+            sourceNames.add("skill:" + skill.name());
+            content.append("- ")
+                .append(skill.name())
+                .append(": ")
+                .append(skill.description())
+                .append(" (file: ")
+                .append(skill.skillFile())
+                .append(")\n");
+        }
+        content.append("\n");
+        content.append("### How to use skills\n");
+        content.append("- Discovery: The list above is the skills available in this session.\n");
+        content.append("- Trigger rules: If the user names a skill with `$skillName`, you must use that skill for that turn.\n");
+        content.append("- Progressive disclosure: After deciding to use a skill, read its `SKILL.md` before following it.\n");
+        content.append("- Skill bodies are not included in this index. Use normal file-reading tools for implicit skill use.\n\n");
     }
 }

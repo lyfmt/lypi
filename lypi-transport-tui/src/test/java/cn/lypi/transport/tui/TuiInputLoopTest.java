@@ -18,6 +18,10 @@ import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.skill.SkillDescriptor;
+import cn.lypi.contracts.skill.SkillIndex;
+import cn.lypi.contracts.skill.SkillMention;
+import cn.lypi.contracts.skill.SkillSource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -439,6 +443,83 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void skillOverlayShowsCandidatesAcceptsSelectionAndSubmitsBinding() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(6),
+            new TuiLayout(60, 9),
+            null,
+            () -> new SlashCommandPicker(List.of()),
+            null,
+            null,
+            () -> skills("doc", "Document workflow")
+        );
+
+        loop.acceptText("use $d");
+
+        assertTrue(frames.getLast().contains("> $doc"));
+
+        loop.acceptKey(TerminalKey.TAB);
+        assertEquals("use $doc", loop.draft());
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("use $doc"), submit.submitted);
+        assertEquals(List.of(new SkillMention("doc", Path.of("/tmp/doc/SKILL.md"))), submit.skillMentions.getFirst());
+    }
+
+    @Test
+    void skillOverlayOpensWhenOnlyDollarIsTyped() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(6),
+            new TuiLayout(60, 9),
+            null,
+            () -> new SlashCommandPicker(List.of()),
+            null,
+            null,
+            () -> skills("doc", "Document workflow")
+        );
+
+        loop.acceptText("$");
+
+        assertTrue(frames.getLast().contains("> $doc"));
+    }
+
+    @Test
+    void escapeClosesSkillOverlayAndSuppressesCurrentTokenBinding() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(4),
+            new TuiLayout(60, 7),
+            null,
+            () -> new SlashCommandPicker(List.of()),
+            null,
+            null,
+            () -> skills("doc", "Document workflow")
+        );
+
+        loop.acceptText("$doc");
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("$doc"), submit.submitted);
+        assertTrue(submit.skillMentions.getFirst().isEmpty());
+    }
+
+    @Test
     void slashOverlayScrollsSelectedCandidateIntoVisibleWindow() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
@@ -768,6 +849,7 @@ class TuiInputLoopTest {
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
+        private final List<List<SkillMention>> skillMentions = new ArrayList<>();
         private final List<String> permissionOptions = new ArrayList<>();
         private final List<String> resumes = new ArrayList<>();
         private final List<String> interruptReasons = new ArrayList<>();
@@ -777,6 +859,13 @@ class TuiInputLoopTest {
         @Override
         public void submitUserInput(String input) {
             submitted.add(input);
+            skillMentions.add(List.of());
+        }
+
+        @Override
+        public void submitUserInput(String input, List<SkillMention> skillMentions) {
+            submitted.add(input);
+            this.skillMentions.add(skillMentions);
         }
 
         @Override
@@ -799,6 +888,18 @@ class TuiInputLoopTest {
         public void resumeSession(String sessionId, String leafId) {
             resumes.add(sessionId + ":" + leafId);
         }
+    }
+
+    private static SkillIndex skills(String name, String description) {
+        return new SkillIndex(List.of(new SkillDescriptor(
+            name,
+            description,
+            SkillSource.PROJECT,
+            Path.of("/tmp/" + name + "/SKILL.md"),
+            List.of(),
+            List.of(),
+            "sha256:" + name
+        )), List.of());
     }
 
     private static TuiViewModel permissionView(String defaultOptionId, String cancelOptionId) {

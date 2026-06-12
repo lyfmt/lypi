@@ -201,6 +201,18 @@ final class InputEditor {
         history.resetNavigation(text());
     }
 
+    void replaceRange(int start, int end, String value) {
+        String replacement = value == null ? "" : value;
+        int safeStart = Math.max(0, Math.min(start, text.length()));
+        int safeEnd = Math.max(safeStart, Math.min(end, text.length()));
+        saveUndo();
+        text.replace(safeStart, safeEnd, replacement);
+        cursor = safeStart + replacement.length();
+        preferredColumn = -1;
+        clearYankState();
+        history.resetNavigation(text());
+    }
+
     void replaceDraft(String value) {
         saveUndo();
         replaceDraftWithoutUndo(value == null ? "" : value);

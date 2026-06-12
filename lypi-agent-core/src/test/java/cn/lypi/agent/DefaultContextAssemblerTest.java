@@ -15,6 +15,8 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.skill.SkillMention;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
@@ -96,6 +98,55 @@ class DefaultContextAssemblerTest {
         assembler.build(new ContextBuildRequest("session-1", Optional.empty(), Path.of("."), false));
 
         assertThat(sessionManager.requestedLeafId).isEqualTo("entry-current");
+    }
+
+    @Test
+    void injectsExplicitSkillBodiesIntoTurnLocalSystemPrompt() throws Exception {
+        Path skillFile = Files.createTempFile("skill", ".md");
+        Files.writeString(skillFile, """
+            ---
+            name: doc
+            description: Document workflow
+            ---
+            Use python-docx.
+            """);
+        StubSessionManager sessionManager = new StubSessionManager(new SessionContext(
+            List.of(userMessage("msg-user", "use $doc")),
+            List.of("entry-user"),
+            List.of(),
+            new ModelSelection("default", "default", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            sessionManager,
+            fixedResourceRuntime("skill index only"),
+            new ContextBudgetEstimator()
+        );
+
+        ContextAssembly assembly = assembler.build(new ContextBuildRequest(
+            "session-1",
+            Optional.of("entry-user"),
+            Path.of("."),
+            true,
+            List.of(new SkillMention("doc", skillFile))
+        ));
+
+        assertThat(assembly.snapshot().systemPrompt().content())
+            .contains("skill index only")
+            .contains("<skill>")
+            .contains("<name>doc</name>")
+            .contains("<path>" + skillFile + "</path>")
+            .contains("Use python-docx.");
+
+        ContextAssembly nextTurn = assembler.build(new ContextBuildRequest(
+            "session-1",
+            Optional.of("entry-user"),
+            Path.of("."),
+            true
+        ));
+        assertThat(nextTurn.snapshot().systemPrompt().content()).doesNotContain("<skill>");
     }
 
     private static final class StubSessionManager extends AgentCoreTestFixtures.InMemorySessionManager {

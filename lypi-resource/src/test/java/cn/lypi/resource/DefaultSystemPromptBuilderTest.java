@@ -51,9 +51,12 @@ class DefaultSystemPromptBuilderTest {
 
         assertThat(prompt.content()).contains("Follow project rules.");
         assertThat(prompt.content()).contains("MEMORY.md").contains("sha256:memory");
-        assertThat(prompt.content()).contains("skill:java-style").contains("PROJECT").contains("sha256:skill");
-        assertThat(prompt.content()).contains("description: Use Java conventions");
-        assertThat(prompt.content()).contains("paths: [**/*.java]");
+        assertThat(prompt.content()).contains("## Skills");
+        assertThat(prompt.content()).contains("### Available skills");
+        assertThat(prompt.content()).contains("- java-style: Use Java conventions (file: .ly-pi/skills/java/SKILL.md)");
+        assertThat(prompt.content()).contains("### How to use skills");
+        assertThat(prompt.content()).contains("After deciding to use a skill");
+        assertThat(prompt.content()).doesNotContain("skill:java-style").doesNotContain("sha256:skill");
         assertThat(prompt.content()).contains("prompt:review").contains("PROJECT").contains("sha256:prompt");
         assertThat(prompt.content()).contains("description: Review changes");
         assertThat(prompt.content()).contains("parameters: scope(required)");

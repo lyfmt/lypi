@@ -246,7 +246,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             leafEntryId,
             // NOTE: lypi-resource 负责从 cwd 探索 project root 和资源层级；agent-core 只传入启动层确定的 cwd 起点。
             ports.cwd(),
-            true
+            true,
+            request.skillMentions()
         );
         ContextAssembly assembly = ports.contextAssembler().build(contextBuildRequest);
         ToolMicroCompactResult microCompact = ports.toolMicroCompactor().compact(new ToolMicroCompactRequest(
