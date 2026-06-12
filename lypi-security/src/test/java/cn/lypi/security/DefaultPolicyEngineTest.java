@@ -240,6 +240,24 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
+    void decideSuggestsRequestedPrefixRuleForStaticBashLoginCommand() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of(
+                "command", "bash -lc \"mvn -pl lypi-security test\"",
+                "prefix_rule", List.of("mvn", "-pl")
+            )),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.message()).contains("默认执行模式");
+        assertThat(decision.suggestedUpdate()).isPresent();
+        assertThat(decision.suggestedUpdate().orElseThrow().rule().value().pattern()).isEqualTo("prefix:mvn -pl");
+    }
+
+    @Test
     void decideRejectsBannedRequestedPrefixRule() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 

@@ -101,6 +101,25 @@ class DefaultBashRiskAnalyzerTest {
     }
 
     @Test
+    void analyzeLowersStaticBashLoginCommandBeforeRiskClassification() {
+        BashRiskAnalysis analysis = analyzer.analyze("bash -lc \"mvn -pl lypi-security test\"");
+
+        assertThat(analysis.normalizedCommand()).isEqualTo("mvn -pl lypi-security test");
+        assertThat(analysis.parsedCommands()).containsExactly("mvn -pl lypi-security test");
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.MEDIUM);
+        assertThat(analysis.staticallyKnown()).isTrue();
+    }
+
+    @Test
+    void analyzeKeepsDynamicBashLoginCommandUnknown() {
+        BashRiskAnalysis analysis = analyzer.analyze("bash -lc \"$(cat script.sh)\"");
+
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.UNKNOWN);
+        assertThat(analysis.staticallyKnown()).isFalse();
+        assertThat(analysis.reasons()).contains("包含动态 shell 结构");
+    }
+
+    @Test
     void analyzeCollectsRedirectTargetsAndRaisesWriteRisk() {
         BashRiskAnalysis analysis = analyzer.analyze("echo hello > notes/output.txt");
 
