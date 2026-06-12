@@ -20,6 +20,7 @@ public enum TerminalInputAction {
     PREVIOUS_HISTORY,
     NEXT_HISTORY,
     TOGGLE_THINKING,
+    TOGGLE_TOOL_OUTPUT_EXPANDED,
     EXPAND_TOOLS,
     RESTORE_FOCUS,
     EXIT,

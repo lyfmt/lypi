@@ -369,7 +369,7 @@ public final class TuiEventReducer {
     }
 
     private void reduceToolStart(ToolStartEvent event) {
-        String label = firstNonBlank(event.displayTitle(), event.inputSummary(), event.toolName());
+        String label = firstNonBlank(event.inputSummary(), event.displayTitle(), event.toolName());
         TuiToolBlock block = new TuiToolBlock(
             "tool:" + event.toolUseId(),
             event.parentMessageId(),
@@ -377,6 +377,7 @@ public final class TuiEventReducer {
             event.toolName(),
             TuiToolState.RUNNING,
             label,
+            metadataString(event.inputMetadata(), "preview", ""),
             true
         );
         int index = state.toolIndex(event.toolUseId()).orElse(-1);

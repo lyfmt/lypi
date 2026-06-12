@@ -26,7 +26,7 @@ final class KeyBindingRegistry {
         bindings.put(TerminalKey.WORD_RIGHT, TerminalInputAction.MOVE_WORD_RIGHT);
         bindings.put(TerminalKey.UP, TerminalInputAction.PREVIOUS_HISTORY);
         bindings.put(TerminalKey.DOWN, TerminalInputAction.NEXT_HISTORY);
-        bindings.put(TerminalKey.CTRL_O, TerminalInputAction.TOGGLE_THINKING);
+        bindings.put(TerminalKey.CTRL_O, TerminalInputAction.TOGGLE_TOOL_OUTPUT_EXPANDED);
         bindings.put(TerminalKey.EXPAND_TOOLS, TerminalInputAction.EXPAND_TOOLS);
         return new KeyBindingRegistry(bindings);
     }
@@ -64,6 +64,7 @@ final class KeyBindingRegistry {
             case "deletepreviousword" -> TerminalInputAction.DELETE_PREVIOUS_WORD;
             case "deletenextword" -> TerminalInputAction.DELETE_NEXT_WORD;
             case "togglethinking" -> TerminalInputAction.TOGGLE_THINKING;
+            case "toggletooloutputexpanded" -> TerminalInputAction.TOGGLE_TOOL_OUTPUT_EXPANDED;
             case "expandtools" -> TerminalInputAction.EXPAND_TOOLS;
             case "insertnewline" -> TerminalInputAction.INSERT_NEWLINE;
             default -> null;

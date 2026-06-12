@@ -10,7 +10,6 @@ import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 final class TuiRenderer {
     private static final String INPUT_BACKGROUND = "\033[48;5;236m";
@@ -21,6 +20,7 @@ final class TuiRenderer {
     private static final String ANSI_RESET = "\033[0m";
     private static final String INPUT_PREFIX = "> ";
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
+    private final ToolDisplayRendererRegistry toolDisplayRenderers = ToolDisplayRendererRegistry.defaults();
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input) {
         return renderFrame(view, screen, layout, input, -1).lines();
@@ -53,7 +53,19 @@ final class TuiRenderer {
         int cursor,
         List<String> overlayLines
     ) {
-        List<String> transcript = transcriptLines(view, layout.width());
+        return renderFrame(view, screen, layout, input, cursor, overlayLines, false);
+    }
+
+    TuiRenderFrame renderFrame(
+        TuiViewModel view,
+        TuiScreen screen,
+        TuiLayout layout,
+        String input,
+        int cursor,
+        List<String> overlayLines,
+        boolean toolOutputExpanded
+    ) {
+        List<String> transcript = transcriptLines(view, layout.width(), toolOutputExpanded);
         InputBlock inputBlock = layoutInput(input, cursor, layout);
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
             .map(line -> AnsiWidth.truncate(line, layout.width()))
@@ -73,7 +85,7 @@ final class TuiRenderer {
         return new TuiRenderFrame(lines, inputBlock.height() + overlay.size() + 1);
     }
 
-    private List<String> transcriptLines(List<TuiBlock> blocks, int width) {
+    private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded) {
         List<String> lines = new ArrayList<>();
         for (TuiBlock block : blocks) {
             String text = switch (block) {
@@ -89,7 +101,7 @@ final class TuiRenderer {
                     lines.addAll(markdownRenderer.render(message.content(), width));
                 }
             } else if (block instanceof TuiToolBlock tool) {
-                lines.addAll(toolLines(tool, width));
+                lines.addAll(toolLines(tool, width, toolOutputExpanded));
             } else if (block instanceof TuiThinkingBlock thinking) {
                 String content = thinking.collapsed() ? "collapsed" : thinking.content();
                 lines.addAll(styledLines(prefixedLines("thinking: ", content, width), THINKING_MESSAGE));
@@ -100,8 +112,8 @@ final class TuiRenderer {
         return lines;
     }
 
-    private List<String> transcriptLines(TuiViewModel view, int width) {
-        List<String> lines = transcriptLines(view.blocks(), width);
+    private List<String> transcriptLines(TuiViewModel view, int width, boolean toolOutputExpanded) {
+        List<String> lines = transcriptLines(view.blocks(), width, toolOutputExpanded);
         view.permissionPrompt().ifPresent(prompt -> {
             lines.addAll(wrap("permission " + prompt.toolUseId() + ": " + prompt.reason(), width));
             if (!prompt.rule().isBlank()) {
@@ -126,16 +138,16 @@ final class TuiRenderer {
         return option.description().isBlank() ? label : label + " - " + option.description();
     }
 
-    private List<String> toolLines(TuiToolBlock tool, int width) {
+    private List<String> toolLines(TuiToolBlock tool, int width, boolean toolOutputExpanded) {
         List<String> lines = new ArrayList<>();
-        lines.addAll(wrap("tool " + tool.state().name().toLowerCase(Locale.ROOT) + " " + tool.toolName() + ": " + tool.label(), width));
-        if (tool.details() == null || tool.details().isBlank()) {
-            return lines;
-        }
-        for (String detailLine : tool.details().split("\\R", -1)) {
-            if (detailLine.isBlank()) {
-                continue;
+        ToolDisplayModel model = toolDisplayRenderers.render(tool, toolOutputExpanded);
+        lines.addAll(wrap(model.title(), width));
+        for (String summaryLine : model.summaryLines()) {
+            if (!summaryLine.isBlank()) {
+                lines.addAll(wrap("  " + summaryLine, width));
             }
+        }
+        for (String detailLine : model.previewLines()) {
             lines.addAll(wrap("  " + detailLine, width));
         }
         return lines;

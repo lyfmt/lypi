@@ -490,9 +490,91 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(40, 7), "");
 
-        assertEquals("tool done bash: Bash", lines.get(0));
+        assertEquals("done $ Bash", lines.get(0));
         assertEquals("  stdout: ok", lines.get(1));
         assertEquals("  exit 0", lines.get(2));
+    }
+
+    @Test
+    void bashToolCollapsedShowsCommandStatusSummaryAndTailPreview() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(20);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:1",
+                "msg_1",
+                "toolu_1",
+                "bash",
+                TuiToolState.FAILED,
+                "mvn test",
+                "stdout: line 1\nstdout: line 2\nstdout: line 3\nstdout: line 4\nstdout: line 5\nstdout: line 6\nexit 1\nBUILD FAILURE",
+                false
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
+
+        assertTrue(lines.contains("failed $ mvn test"));
+        assertTrue(lines.contains("  exit 1"));
+        assertFalse(lines.contains("  stdout: line 1"));
+        assertTrue(lines.contains("  stdout: line 6"));
+    }
+
+    @Test
+    void readEditAndUnknownToolsUseStructuredTitles() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(20);
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiToolBlock("tool:read", "msg_1", "toolu_read", "read", TuiToolState.DONE, "src/App.java:1-80", "1 | class App {}\n2 |", false),
+                new TuiToolBlock("tool:edit", "msg_1", "toolu_edit", "edit", TuiToolState.DONE, "src/App.java", "@@ -1 +1 @@\n-old\n+new", false),
+                new TuiToolBlock("tool:custom", "msg_1", "toolu_custom", "custom_tool", TuiToolState.RUNNING, "payload", "{\"key\":\"value\"}", true)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
+
+        assertTrue(lines.contains("done read src/App.java:1-80"));
+        assertTrue(lines.contains("done edit src/App.java +1 -1"));
+        assertTrue(lines.contains("running custom_tool payload"));
+    }
+
+    @Test
+    void expandedToolOutputShowsMorePreviewLines() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(30);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:1",
+                "msg_1",
+                "toolu_1",
+                "read",
+                TuiToolState.DONE,
+                "src/Large.java:1-20",
+                String.join("\n", java.util.stream.IntStream.rangeClosed(1, 12)
+                    .mapToObj(index -> index + " | line " + index)
+                    .toList()),
+                false
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> collapsed = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
+        List<String> expanded = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), true).lines();
+
+        assertFalse(collapsed.contains("  11 | line 11"));
+        assertTrue(expanded.contains("  11 | line 11"));
     }
 
     @Test

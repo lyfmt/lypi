@@ -12,6 +12,8 @@ import cn.lypi.contracts.tui.SessionResumeInfo;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SessionTreeNodeView;
 import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.TuiToolBlock;
+import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
@@ -189,6 +191,137 @@ class TuiInputLoopTest {
 
         assertEquals(1, submit.exits);
         assertEquals(true, loop.exitRequested());
+    }
+
+    @Test
+    void ctrlOTogglesToolOutputExpandedWithoutChangingDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:1",
+                "msg_1",
+                "toolu_1",
+                "read",
+                TuiToolState.DONE,
+                "src/Large.java:1-20",
+                String.join("\n", java.util.stream.IntStream.rangeClosed(1, 12)
+                    .mapToObj(index -> index + " | line " + index)
+                    .toList()),
+                false
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(30),
+            new TuiLayout(80, 30),
+            () -> view
+        );
+
+        loop.acceptText("draft");
+        loop.acceptKey(TerminalKey.CTRL_O);
+        loop.acceptKey(TerminalKey.CTRL_O);
+
+        assertEquals("draft", loop.draft());
+        assertTrue(frames.get(1).contains("11 | line 11"));
+        assertTrue(!frames.get(2).contains("11 | line 11"));
+    }
+
+    @Test
+    void toolOutputToggleAppliesToHistoricalAndRunningToolBlocksTogether() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiToolBlock(
+                    "tool:read",
+                    "msg_1",
+                    "toolu_read",
+                    "read",
+                    TuiToolState.DONE,
+                    "src/Large.java:1-20",
+                    String.join("\n", java.util.stream.IntStream.rangeClosed(1, 12)
+                        .mapToObj(index -> index + " | line " + index)
+                        .toList()),
+                    false
+                ),
+                new TuiToolBlock(
+                    "tool:bash",
+                    "msg_2",
+                    "toolu_bash",
+                    "bash",
+                    TuiToolState.RUNNING,
+                    "mvn test",
+                    String.join("\n", java.util.stream.IntStream.rangeClosed(1, 7)
+                        .mapToObj(index -> "stdout: line " + index)
+                        .toList()),
+                    true
+                )
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(40),
+            new TuiLayout(80, 40),
+            () -> view
+        );
+
+        loop.acceptKey(TerminalKey.CTRL_O);
+        loop.acceptKey(TerminalKey.CTRL_O);
+
+        assertTrue(frames.get(0).contains("11 | line 11"));
+        assertTrue(frames.get(0).contains("stdout: line 1"));
+        assertTrue(!frames.get(1).contains("11 | line 11"));
+        assertTrue(!frames.get(1).contains("stdout: line 1"));
+        assertTrue(frames.get(1).contains("stdout: line 7"));
+    }
+
+    @Test
+    void expandToolsActionTogglesToolOutputExpanded() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:read",
+                "msg_1",
+                "toolu_read",
+                "read",
+                TuiToolState.DONE,
+                "src/Large.java:1-20",
+                String.join("\n", java.util.stream.IntStream.rangeClosed(1, 12)
+                    .mapToObj(index -> index + " | line " + index)
+                    .toList()),
+                false
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(30),
+            new TuiLayout(80, 30),
+            () -> view
+        );
+
+        loop.acceptKey(TerminalKey.EXPAND_TOOLS);
+
+        assertTrue(frames.getFirst().contains("11 | line 11"));
     }
 
     @Test
