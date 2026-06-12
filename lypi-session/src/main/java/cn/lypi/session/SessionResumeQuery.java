@@ -31,9 +31,18 @@ public final class SessionResumeQuery {
      */
     public List<SessionResumeInfo> sessions() {
         return store.headers().stream()
-            .map(this::info)
+            .map(this::tryInfo)
+            .flatMap(Optional::stream)
             .sorted(Comparator.comparing(SessionResumeInfo::modified).reversed())
             .toList();
+    }
+
+    private Optional<SessionResumeInfo> tryInfo(SessionHeader header) {
+        try {
+            return Optional.of(info(header));
+        } catch (SessionEngineException exception) {
+            return Optional.empty();
+        }
     }
 
     private SessionResumeInfo info(SessionHeader header) {
