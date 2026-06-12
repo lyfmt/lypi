@@ -333,6 +333,63 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void rememberedPrefixAllowSkipsBashToolAskForRepeatedPrefixRuleRequest() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("should not ask");
+        };
+        SecurityRuntimePort security = (request, context) -> new PermissionDecision(
+            PermissionBehavior.ALLOW,
+            PermissionDecisionReason.EXPLICIT_RULE,
+            "命中 Bash prefix 规则",
+            Optional.empty(),
+            Map.of()
+        );
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr")),
+            List.of(),
+            List.of(tempDir),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate,
+            ToolExecutionEventPublisher.noop(),
+            new FilePermissionUpdateStore(tempDir)
+        );
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "done", "", false, Optional.empty()));
+        runtime.register(new BashTool(executor, (workspace, cwd) -> policy));
+
+        ToolUseRequest request = new ToolUseRequest(
+            "toolu_1",
+            "bash",
+            Map.of(
+                "command", "bash -lc \"mvn -pl lypi-security test\"",
+                "text", "done",
+                "prefix_rule", List.of("mvn", "-pl"),
+                "sandboxPermissions", "useDefault"
+            ),
+            "msg_1"
+        );
+
+        ToolResult<?> result = runtime.execute(List.of(request), TestTools.context(PermissionMode.DEFAULT_EXECUTE)).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executor.calls.get());
+    }
+
+    @Test
     void allowOnceDoesNotPersistExecPolicyRule() {
         AtomicInteger gateCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -1519,15 +1576,7 @@ class DefaultToolRuntimeTest {
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.BASH_RISK,
                 "bash risk",
-                Optional.of(new PermissionUpdate(
-                    PermissionRuleSource.USER,
-                    new PermissionRule(
-                        PermissionRuleSource.USER,
-                        PermissionBehavior.ALLOW,
-                        new PermissionRuleValue("bash", "prefix:go test"),
-                        "允许 Bash prefix: go test"
-                    )
-                )),
+                Optional.of(prefixUpdate("go test")),
                 Map.of("bashRisk", new BashRiskAnalysis(
                     "go test ./...",
                     List.of("go test ./..."),
@@ -1538,6 +1587,18 @@ class DefaultToolRuntimeTest {
                 ))
             );
         };
+    }
+
+    private PermissionUpdate prefixUpdate(String prefix) {
+        return new PermissionUpdate(
+            PermissionRuleSource.USER,
+            new PermissionRule(
+                PermissionRuleSource.USER,
+                PermissionBehavior.ALLOW,
+                new PermissionRuleValue("bash", "prefix:" + prefix),
+                "允许 Bash prefix: " + prefix
+            )
+        );
     }
 
     private PermissionDecision bashRiskDecision(BashRiskLevel riskLevel, String command) {

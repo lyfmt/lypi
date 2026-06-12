@@ -1017,6 +1017,9 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         if (isAsk(securityDecision)) {
             return securityDecision;
         }
+        if (isExplicitRuleAllow(securityDecision)) {
+            return securityDecision;
+        }
         if (isAsk(toolDecision)) {
             return toolDecision;
         }
@@ -1029,6 +1032,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
     private boolean isAsk(PermissionDecision decision) {
         return decision != null && decision.behavior() == PermissionBehavior.ASK;
+    }
+
+    private boolean isExplicitRuleAllow(PermissionDecision decision) {
+        return decision != null
+            && decision.behavior() == PermissionBehavior.ALLOW
+            && decision.reason() == PermissionDecisionReason.EXPLICIT_RULE;
     }
 
     private PermissionDecision allowDecision(String message) {
