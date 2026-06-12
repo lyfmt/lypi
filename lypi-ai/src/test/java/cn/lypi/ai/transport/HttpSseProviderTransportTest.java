@@ -153,6 +153,41 @@ class HttpSseProviderTransportTest {
     }
 
     @Test
+    void includesProviderJsonErrorMessageWithoutLeakingRequestBody() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/responses", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            byte[] body = """
+                {"error":{"message":"previous_response_id is only supported on Responses WebSocket v2","type":"invalid_request_error"}}
+                """.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(400, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ProviderRequest request = new ProviderRequest(
+                URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/responses"),
+                Map.of("Authorization", "Bearer ${LYPI_TEST_TOKEN}"),
+                "{\"previous_response_id\":\"resp-secret\"}"
+            );
+
+            assertThatThrownBy(() -> {
+                try (ProviderEventStream stream = new HttpSseProviderTransport().stream(request, () -> false)) {
+                    StreamSupport.stream(stream.spliterator(), false).toList();
+                }
+            })
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("HTTP 400")
+                .hasMessageContaining("previous_response_id is only supported on Responses WebSocket v2")
+                .hasMessageNotContaining("LYPI_TEST_TOKEN")
+                .hasMessageNotContaining("resp-secret");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void returnsEmptyWhenAlreadyAborted() throws IOException {
         ProviderRequest request = new ProviderRequest(URI.create("http://localhost:1/v1/responses"), Map.of(), "{}");
 

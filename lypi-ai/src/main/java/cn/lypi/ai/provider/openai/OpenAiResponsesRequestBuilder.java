@@ -39,8 +39,18 @@ public final class OpenAiResponsesRequestBuilder {
      * Provider 鉴权信息由 transport 设置 header，不进入请求体。
      */
     public ObjectNode build(LypiModelRequest request, OpenAiProviderConfig config) {
+        return build(request, config, OpenAiResponsesRequestOptions.defaults());
+    }
+
+    /**
+     * 构造 OpenAI Responses 请求体。
+     *
+     * Provider 鉴权信息由 transport 设置 header，不进入请求体。
+     */
+    public ObjectNode build(LypiModelRequest request, OpenAiProviderConfig config, OpenAiResponsesRequestOptions options) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(options, "options");
         ObjectNode body = objectMapper.createObjectNode();
         body.put("model", request.model().modelId());
         body.put("stream", true);
@@ -51,9 +61,11 @@ public final class OpenAiResponsesRequestBuilder {
         request.options().temperature().ifPresent(temperature -> body.put("temperature", temperature));
         Optional<String> promptCacheKey = promptCacheKey(request);
         promptCacheKey.ifPresent(key -> body.put("prompt_cache_key", key));
-        Optional<PreviousResponseState> previousResponseState = previousResponseState(request);
+        Optional<PreviousResponseState> previousResponseState = options.previousResponseStateEnabled()
+            ? previousResponseState(request)
+            : Optional.empty();
         previousResponseState.ifPresent(state -> body.put("previous_response_id", state.previousResponseId()));
-        body.set("input", input(request, previousResponseState));
+        body.set("input", input(request, previousResponseState, options.replayToolInteractionsAsProtocolItems()));
         if (!request.tools().isEmpty()) {
             body.set("tools", tools(request));
         }
@@ -75,14 +87,18 @@ public final class OpenAiResponsesRequestBuilder {
         return event;
     }
 
-    private ArrayNode input(LypiModelRequest request, Optional<PreviousResponseState> previousResponseState) {
+    private ArrayNode input(
+        LypiModelRequest request,
+        Optional<PreviousResponseState> previousResponseState,
+        boolean replayToolInteractionsAsProtocolItems
+    ) {
         ArrayNode input = objectMapper.createArrayNode();
         List<LypiMessage> messages = request.messages();
         int startIndex = previousResponseState
             .flatMap(state -> indexAfterMessage(messages, state.messageId()))
             .orElse(0);
         for (LypiMessage message : messages.subList(startIndex, messages.size())) {
-            appendMessage(input, message, previousResponseState.isPresent());
+            appendMessage(input, message, previousResponseState.isPresent(), replayToolInteractionsAsProtocolItems);
         }
         return input;
     }
@@ -100,14 +116,19 @@ public final class OpenAiResponsesRequestBuilder {
         return Optional.empty();
     }
 
-    private void appendMessage(ArrayNode input, LypiMessage message, boolean allowProtocolToolItems) {
+    private void appendMessage(
+        ArrayNode input,
+        LypiMessage message,
+        boolean allowProtocolToolItems,
+        boolean replayToolInteractionsAsProtocolItems
+    ) {
         for (LypiContentBlock block : message.content()) {
             if (block instanceof LypiToolCallBlock toolCall) {
-                if (allowProtocolToolItems && pendingToolCall(toolCall)) {
+                if (replayToolInteractionsAsProtocolItems || allowProtocolToolItems && pendingToolCall(toolCall)) {
                     input.add(functionCall(toolCall));
                 }
             } else if (block instanceof LypiToolResultBlock toolResult) {
-                if (allowProtocolToolItems && pendingToolOutput(toolResult)) {
+                if (replayToolInteractionsAsProtocolItems || allowProtocolToolItems && pendingToolOutput(toolResult)) {
                     input.add(functionCallOutput(toolResult));
                 }
             } else {

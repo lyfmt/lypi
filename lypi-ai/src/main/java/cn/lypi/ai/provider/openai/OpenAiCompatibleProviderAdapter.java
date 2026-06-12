@@ -186,14 +186,22 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
             }
             if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
-                attempts.add(new OpenAiStreamAttempt(responsesSseTransport, responsesSseRequest(request), normalizer));
+                attempts.add(new OpenAiStreamAttempt(
+                    responsesSseTransport,
+                    responsesSseRequest(request, OpenAiResponsesRequestOptions.fallbackWithoutPreviousResponseState()),
+                    normalizer
+                ));
             }
             return;
         }
         if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
-            OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
-            attempts.add(new OpenAiStreamAttempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer));
+            addChatCompletionsSseAttempt(attempts, request);
         }
+    }
+
+    private void addChatCompletionsSseAttempt(List<OpenAiStreamAttempt> attempts, LypiModelRequest request) {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+        attempts.add(new OpenAiStreamAttempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer));
     }
 
     private ProviderRequest responsesWebSocketRequest(LypiModelRequest request) {
@@ -203,8 +211,8 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         return new ProviderRequest(uri, headers(), body.toString(), java.util.Optional.of(config.timeout()));
     }
 
-    private ProviderRequest responsesSseRequest(LypiModelRequest request) {
-        ObjectNode body = responsesRequestBuilder.build(request, config);
+    private ProviderRequest responsesSseRequest(LypiModelRequest request, OpenAiResponsesRequestOptions options) {
+        ObjectNode body = responsesRequestBuilder.build(request, config, options);
         return new ProviderRequest(endpoint("responses"), headers(), body.toString(), java.util.Optional.of(config.timeout()));
     }
 

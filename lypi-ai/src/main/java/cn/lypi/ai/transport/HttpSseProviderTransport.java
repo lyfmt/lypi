@@ -19,8 +19,13 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 public final class HttpSseProviderTransport implements ProviderTransport {
+    private static final int MAX_ERROR_BODY_BYTES = 8192;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final HttpClient httpClient;
 
     public HttpSseProviderTransport() {
@@ -46,8 +51,10 @@ public final class HttpSseProviderTransport implements ProviderTransport {
         try {
             HttpResponse<InputStream> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                closeQuietly(response.body());
-                throw new IllegalStateException("Provider HTTP " + response.statusCode() + ".");
+                String message = errorMessage(response.body())
+                    .map(error -> "Provider HTTP " + response.statusCode() + ": " + error)
+                    .orElse("Provider HTTP " + response.statusCode() + ".");
+                throw new IllegalStateException(message);
             }
             return new SseProviderEventStream(response.body(), signal);
         } catch (IOException exception) {
@@ -55,6 +62,23 @@ public final class HttpSseProviderTransport implements ProviderTransport {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Provider HTTP request interrupted.", exception);
+        }
+    }
+
+    private static Optional<String> errorMessage(InputStream body) {
+        try (body) {
+            byte[] bytes = body.readNBytes(MAX_ERROR_BODY_BYTES);
+            if (bytes.length == 0) {
+                return Optional.empty();
+            }
+            JsonNode root = OBJECT_MAPPER.readTree(bytes);
+            JsonNode message = root.path("error").path("message");
+            if (!message.isTextual() || message.asText().isBlank()) {
+                return Optional.empty();
+            }
+            return Optional.of(message.asText());
+        } catch (IOException ignored) {
+            return Optional.empty();
         }
     }
 

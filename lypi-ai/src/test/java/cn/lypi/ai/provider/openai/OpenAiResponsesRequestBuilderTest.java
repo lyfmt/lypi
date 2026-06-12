@@ -359,6 +359,104 @@ class OpenAiResponsesRequestBuilderTest {
     }
 
     @Test
+    void omitsPreviousResponseIdAndKeepsFullInputWhenPreviousStateIsDisabled() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-cache-disabled",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "You are concise.",
+            List.of(
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("first", Map.of())),
+                    Map.of("messageId", "msg-user-1")
+                ),
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiTextBlock("answer", Map.of())),
+                    Map.of("messageId", "msg-assistant-1")
+                ),
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("follow up", Map.of())),
+                    Map.of("messageId", "msg-user-2")
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of(
+                "promptCacheKey", "ses_main",
+                "providerConversationState", Map.of(
+                    "provider", "openai",
+                    "style", "responses",
+                    "previousResponseId", "resp-123",
+                    "messageId", "msg-assistant-1"
+                )
+            )
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder()
+            .build(request, config(), OpenAiResponsesRequestOptions.withPreviousResponseState(false));
+
+        assertThat(body.get("previous_response_id")).isNull();
+        assertThat(body.get("input")).hasSize(3);
+        assertThat(body.at("/input/0/content/0/text").asText()).isEqualTo("first");
+        assertThat(body.at("/input/2/content/0/text").asText()).isEqualTo("follow up");
+        assertThat(body.get("prompt_cache_key").asText()).isEqualTo("ses_main");
+    }
+
+    @Test
+    void serializesToolInteractionsAsResponsesItemsWhenPreviousStateIsDisabled() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-tool-cache-disabled",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "You are concise.",
+            List.of(
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiToolCallBlock(
+                        "call-1",
+                        "read",
+                        "",
+                        Map.of("input", Map.of("path", "AGENTS.md"))
+                    )),
+                    Map.of("messageId", "msg-assistant-1")
+                ),
+                new LypiMessage(
+                    LypiRole.TOOL_RESULT,
+                    List.of(new LypiToolResultBlock("call-1", "tool output", false, Map.of("openaiPendingToolOutput", true))),
+                    Map.of("messageId", "msg-tool-1")
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of(
+                "promptCacheKey", "ses_main",
+                "providerConversationState", Map.of(
+                    "provider", "openai",
+                    "style", "responses",
+                    "previousResponseId", "resp-123",
+                    "messageId", "msg-assistant-1"
+                )
+            )
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder()
+            .build(request, config(), OpenAiResponsesRequestOptions.fallbackWithoutPreviousResponseState());
+
+        assertThat(body.get("previous_response_id")).isNull();
+        assertThat(body.get("input")).hasSize(2);
+        assertThat(body.at("/input/0/type").asText()).isEqualTo("function_call");
+        assertThat(body.at("/input/0/call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/input/0/name").asText()).isEqualTo("read");
+        assertThat(body.at("/input/0/arguments").asText()).isEqualTo("{\"path\":\"AGENTS.md\"}");
+        assertThat(body.at("/input/1/type").asText()).isEqualTo("function_call_output");
+        assertThat(body.at("/input/1/call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/input/1/output").asText()).isEqualTo("tool output");
+    }
+
+    @Test
     void sendsOnlyPendingToolResultWithPreviousResponseIdWhenToolResultsFollowCachedAssistant() {
         LypiModelRequest request = new LypiModelRequest(
             "req-tool-cache",

@@ -18,6 +18,7 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantEventStream;
@@ -540,6 +541,137 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(events).singleElement().isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
     }
 
+    @Test
+    void responsesSseUsesPromptCacheKeyWithoutPreviousResponseId() throws Exception {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"done\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-2\"}}"
+        );
+        RecordingTransport chat = RecordingTransport.events();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS),
+            websocket,
+            sse,
+            chat
+        );
+        AiStreamOptions options = new AiStreamOptions("ses_main");
+
+        collect(adapter.stream(contextWithProviderConversationState(), descriptor(), AiProviderRuntimePort.emptyTools(), options, () -> false));
+
+        assertThat(sse.requests).hasSize(1);
+        JsonNode firstRequest = OBJECT_MAPPER.readTree(sse.requests.get(0).body());
+        assertThat(firstRequest.get("previous_response_id")).isNull();
+        assertThat(firstRequest.get("prompt_cache_key").asText()).isEqualTo("ses_main");
+        assertThat(firstRequest.get("input")).hasSize(3);
+        assertThat(firstRequest.at("/input/0/content/0/text").asText()).isEqualTo("first");
+        assertThat(firstRequest.at("/input/2/content/0/text").asText()).isEqualTo("follow up");
+    }
+
+    @Test
+    void responsesSseSendsProtocolToolItemsWithoutPreviousResponseId() throws Exception {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"done\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-2\"}}"
+        );
+        RecordingTransport chat = RecordingTransport.events();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS),
+            websocket,
+            sse,
+            chat
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(
+            contextWithPendingToolResult(),
+            descriptor(),
+            AiProviderRuntimePort.emptyTools(),
+            new AiStreamOptions("ses_main"),
+            () -> false
+        ));
+
+        assertThat(events).contains(new TextDelta("done"), new AssistantDone(Optional.empty(), Optional.of("stop")));
+        assertThat(sse.requests).hasSize(1);
+        JsonNode request = OBJECT_MAPPER.readTree(sse.requests.getFirst().body());
+        assertThat(request.get("previous_response_id")).isNull();
+        assertThat(request.get("prompt_cache_key").asText()).isEqualTo("ses_main");
+        assertThat(request.at("/input/1/type").asText()).isEqualTo("function_call");
+        assertThat(request.at("/input/1/call_id").asText()).isEqualTo("call-1");
+        assertThat(request.at("/input/2/type").asText()).isEqualTo("function_call_output");
+        assertThat(request.at("/input/2/call_id").asText()).isEqualTo("call-1");
+        assertThat(request.at("/input/2/output").asText()).isEqualTo("contents");
+        assertThat(chat.requests).isEmpty();
+    }
+
+    @Test
+    void retriesResponsesSseWithProtocolToolItemsWhenPreviousStateRejectedForPendingToolResult() throws Exception {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"done\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-2\"}}"
+        );
+        RecordingTransport chat = RecordingTransport.events();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS),
+            websocket,
+            sse,
+            chat
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(
+            contextWithPendingToolResult(),
+            descriptor(),
+            AiProviderRuntimePort.emptyTools(),
+            new AiStreamOptions("ses_main"),
+            () -> false
+        ));
+
+        assertThat(events).contains(new TextDelta("done"), new AssistantDone(Optional.empty(), Optional.of("stop")));
+        assertThat(sse.requests).hasSize(1);
+        assertThat(chat.requests).isEmpty();
+        JsonNode retryRequest = OBJECT_MAPPER.readTree(sse.requests.getFirst().body());
+        assertThat(retryRequest.get("previous_response_id")).isNull();
+        assertThat(retryRequest.at("/input/1/type").asText()).isEqualTo("function_call");
+        assertThat(retryRequest.at("/input/1/call_id").asText()).isEqualTo("call-1");
+        assertThat(retryRequest.at("/input/2/type").asText()).isEqualTo("function_call_output");
+        assertThat(retryRequest.at("/input/2/call_id").asText()).isEqualTo("call-1");
+        assertThat(retryRequest.at("/input/2/output").asText()).isEqualTo("contents");
+    }
+
+    @Test
+    void retriesResponsesSseWithProtocolToolItemsWhenConfiguredFallbackStyleIsResponses() throws Exception {
+        RecordingTransport websocket = RecordingTransport.events();
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"done\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-2\"}}"
+        );
+        RecordingTransport chat = RecordingTransport.events();
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.SSE, "test-key", RequestStyle.RESPONSES, RequestStyle.RESPONSES),
+            websocket,
+            sse,
+            chat
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(
+            contextWithPendingToolResult(),
+            descriptor(),
+            AiProviderRuntimePort.emptyTools(),
+            new AiStreamOptions("ses_main"),
+            () -> false
+        ));
+
+        assertThat(events).contains(new TextDelta("done"), new AssistantDone(Optional.empty(), Optional.of("stop")));
+        assertThat(sse.requests).hasSize(1);
+        assertThat(chat.requests).isEmpty();
+        JsonNode retryRequest = OBJECT_MAPPER.readTree(sse.requests.getFirst().body());
+        assertThat(retryRequest.get("previous_response_id")).isNull();
+        assertThat(retryRequest.at("/input/1/type").asText()).isEqualTo("function_call");
+        assertThat(retryRequest.at("/input/2/type").asText()).isEqualTo("function_call_output");
+        assertThat(retryRequest.at("/input/2/output").asText()).isEqualTo("contents");
+    }
+
     private static OpenAiProviderConfig config(TransportMode transportMode, String apiKey) {
         return config(transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS);
     }
@@ -616,14 +748,124 @@ class OpenAiCompatibleProviderAdapterTest {
         );
     }
 
+    private static ContextSnapshot contextWithProviderConversationState() {
+        return new ContextSnapshot(
+            new SystemPrompt("system", List.of("test"), "hash"),
+            List.of(
+                new AgentMessage(
+                    "msg-user-1",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("first")),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                new AgentMessage(
+                    "msg-assistant-1",
+                    MessageRole.ASSISTANT,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock(
+                        "answer",
+                        Map.of("providerConversationState", Map.of(
+                            "provider", "openai",
+                            "style", "responses",
+                            "previousResponseId", "resp-123"
+                        ))
+                    )),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                new AgentMessage(
+                    "msg-user-2",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("follow up")),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                )
+            ),
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
+        );
+    }
+
+    private static ContextSnapshot contextWithPendingToolResult() {
+        return new ContextSnapshot(
+            new SystemPrompt("system", List.of("test"), "hash"),
+            List.of(
+                new AgentMessage(
+                    "msg-user-1",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("inspect project")),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                new AgentMessage(
+                    "msg-assistant-1",
+                    MessageRole.ASSISTANT,
+                    MessageKind.TOOL_CALL,
+                    List.of(new ToolCallContentBlock(
+                        "call-1",
+                        "read",
+                        "",
+                        Map.of(
+                            "input", Map.of("path", "AGENTS.md"),
+                            "providerConversationState", Map.of(
+                                "provider", "openai",
+                                "style", "responses",
+                                "previousResponseId", "resp-123"
+                            )
+                        )
+                    )),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                new AgentMessage(
+                    "msg-tool-1",
+                    MessageRole.TOOL_RESULT,
+                    MessageKind.TOOL_RESULT,
+                    List.of(new cn.lypi.contracts.context.ToolResultContentBlock(
+                        "call-1",
+                        "contents",
+                        false,
+                        Map.of("openaiPendingToolOutput", true)
+                    )),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                )
+            ),
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE,
+            new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
+        );
+    }
+
     private static final class RecordingTransport implements ProviderTransport {
         private final List<String> events;
         private final RuntimeException failure;
+        private final boolean failOnlyFirstRequest;
         private final List<ProviderRequest> requests = new ArrayList<>();
 
         private RecordingTransport(List<String> events, RuntimeException failure) {
+            this(events, failure, false);
+        }
+
+        private RecordingTransport(List<String> events, RuntimeException failure, boolean failOnlyFirstRequest) {
             this.events = events;
             this.failure = failure;
+            this.failOnlyFirstRequest = failOnlyFirstRequest;
         }
 
         private static RecordingTransport events(String... events) {
@@ -638,9 +880,19 @@ class OpenAiCompatibleProviderAdapterTest {
             return new RecordingTransport(List.of(events), new IllegalStateException(message));
         }
 
+        private static RecordingTransport failOnceThenEvents(String message, String... events) {
+            return new RecordingTransport(List.of(events), new IllegalStateException(message), true);
+        }
+
         @Override
         public ProviderEventStream stream(ProviderRequest request, AbortSignal signal) {
             requests.add(request);
+            if (failOnlyFirstRequest && requests.size() == 1) {
+                throw failure;
+            }
+            if (failOnlyFirstRequest && requests.size() > 1) {
+                return new ListProviderEventStream(events.stream().map(ProviderRawEvent::new).toList());
+            }
             if (failure != null && events.isEmpty()) {
                 throw failure;
             }

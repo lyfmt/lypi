@@ -1796,6 +1796,50 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void usesStableStreamingBlockIdsWhenAssistantTextIsFollowedByError() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new ThinkingDelta("thinking"),
+            new TextDelta("answer"),
+            new AssistantError("provider.request_failed", "Provider HTTP request failed.")
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        MessageEndEvent assistantEnd = messageEnd(eventBus, "msg-assistant");
+        assertThat(assistantEnd.blocks())
+            .extracting(MessageBlockSnapshot::blockId)
+            .containsExactly("msg-assistant:thinking:0", "msg-assistant:text:0", "msg-assistant:error:0");
+    }
+
+    @Test
     void publishesToolCallDeltaMetadataWhileAssistantStreamIsGeneratingArguments() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
