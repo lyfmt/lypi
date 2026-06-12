@@ -35,7 +35,7 @@ class ExecutorRegistryTest {
     }
 
     @Test
-    void routesToHostExecutorWhenSandboxDisabled() {
+    void failsDefaultExecutionWhenSandboxDisabled() {
         RecordingExecutor host = new RecordingExecutor("host");
         RecordingExecutor sandbox = new RecordingExecutor("bubblewrap");
         ExecutorRegistry registry = new ExecutorRegistry(host, sandbox, false);
