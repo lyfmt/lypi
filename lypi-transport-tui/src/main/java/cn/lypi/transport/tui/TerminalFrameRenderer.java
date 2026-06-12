@@ -84,8 +84,7 @@ final class TerminalFrameRenderer {
 
         boolean appendOnly = newLines.size() > previousLines.size()
             && firstChanged == previousLines.size()
-            && viewportTop == previousViewportTop
-            && chromeLineCount == 0;
+            && viewportTop == previousViewportTop;
         if (appendOnly) {
             for (int i = firstChanged; i < newLines.size(); i++) {
                 io.write("\n");
@@ -100,12 +99,6 @@ final class TerminalFrameRenderer {
 
         boolean transcriptGrew = renderFrame.transcriptLineCount() > previousTranscriptLineCount;
         if (transcriptGrew && viewportTop > previousViewportTop && newLines.size() > previousLines.size()) {
-            if (chromeLineCount > 0) {
-                writeShrinkPatch(newLines, frame.cursor(), viewportTop, height);
-                updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height), renderFrame.transcriptLineCount());
-                io.flush();
-                return;
-            }
             writeFlowingTail(newLines, frame.cursor(), firstChanged, previousViewportTop, viewportTop, height, chromeLineCount);
             updateState(newLines, width, height, viewportTop, hardwareCursorRow, renderFrame.transcriptLineCount());
             io.flush();

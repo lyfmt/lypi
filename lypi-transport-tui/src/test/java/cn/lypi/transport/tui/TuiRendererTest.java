@@ -33,7 +33,7 @@ class TuiRendererTest {
     private static final String ANSI_RESET = "\033[0m";
 
     @Test
-    void rendersVisibleTranscriptStatusAndInput() {
+    void rendersLinearTranscriptStatusAndInput() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(2);
         TuiViewModel view = new TuiViewModel(
@@ -200,7 +200,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void emptyTranscriptStillAnchorsInputBlockAtBottomOfViewport() {
+    void emptyTranscriptRendersInputBlockAndStatusOnly() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -213,13 +213,11 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(20, 6), "", 0);
 
-        assertEquals(6, lines.size());
-        assertEquals("", lines.get(0));
-        assertEquals("", lines.get(1));
+        assertEquals(4, lines.size());
+        assertInputBorder(lines.get(0), 20);
+        assertInputContent(lines.get(1), "> |CURSOR|" + INPUT_CURSOR);
         assertInputBorder(lines.get(2), 20);
-        assertInputContent(lines.get(3), "> |CURSOR|" + INPUT_CURSOR);
-        assertInputBorder(lines.get(4), 20);
-        assertTrue(lines.get(5).contains("ses_1"));
+        assertTrue(lines.get(3).contains("ses_1"));
     }
 
     @Test
@@ -261,7 +259,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void longInputSoftWrapsInsideBottomInputBlockWithVisibleTranscript() {
+    void longInputSoftWrapsInsideBottomInputBlockWithFullTranscript() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -279,9 +277,11 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(8, 6), "abcdefghij", 10);
 
-        assertEquals(6, lines.size());
-        assertEquals("line4", lines.get(0));
-        assertFalse(lines.contains("line1"));
+        assertEquals(9, lines.size());
+        assertEquals("line1", lines.get(0));
+        assertEquals("line2", lines.get(1));
+        assertEquals("line3", lines.get(2));
+        assertEquals("line4", lines.get(3));
         assertInputBorder(lines.get(lines.size() - 5), 8);
         assertEquals("\033[48;5;236m> abcde\033[0m", lines.get(lines.size() - 4));
         assertEquals("\033[48;5;236mfghij|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 3));
@@ -312,7 +312,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void inputViewportShowsLatestRowsWhileKeepingTranscriptViewportFixed() {
+    void inputViewportShowsLatestRowsWhileKeepingFullTranscript() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -325,8 +325,8 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 6), "one\ntwo\nthree\nfour", 18);
 
-        assertEquals(6, lines.size());
-        assertFalse(lines.contains("history"));
+        assertEquals(7, lines.size());
+        assertTrue(lines.contains("history"));
         assertInputBorder(lines.get(lines.size() - 6), 10);
         assertEquals("\033[48;5;236mtwo\033[0m", lines.get(lines.size() - 5));
         assertEquals("\033[48;5;236mthree\033[0m", lines.get(lines.size() - 4));
@@ -335,7 +335,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void inputBlockCanUseFullTerminalHeightWhenDraftHasManyRows() {
+    void inputBlockCanUseFullTerminalHeightAfterFullTranscript() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -348,8 +348,8 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "one\ntwo\nthree\nfour", 18);
 
-        assertEquals(3, lines.size());
-        assertFalse(lines.contains("history"));
+        assertEquals(4, lines.size());
+        assertTrue(lines.contains("history"));
         assertInputBorder(lines.get(lines.size() - 3), 10);
         assertEquals("\033[48;5;236mfour|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 2));
         assertTrue(lines.getLast().contains("ses_1"));
@@ -468,10 +468,9 @@ class TuiRendererTest {
         );
         List<String> withoutRuntimeLines = renderer.render(withoutRuntime, screenWithoutRuntime, new TuiLayout(40, 8), "");
 
-        assertEquals("", withoutRuntimeLines.get(0));
-        assertEquals("line1", withoutRuntimeLines.get(1));
-        assertEquals("line2", withoutRuntimeLines.get(2));
-        assertEquals("line3", withoutRuntimeLines.get(3));
+        assertEquals("line1", withoutRuntimeLines.get(0));
+        assertEquals("line2", withoutRuntimeLines.get(1));
+        assertEquals("line3", withoutRuntimeLines.get(2));
     }
 
     @Test
@@ -717,7 +716,7 @@ class TuiRendererTest {
             view, screen, new TuiLayout(40, 10), "/", 1
         );
 
-        assertEquals(withoutOverlay.size(), withOverlay.size());
+        assertEquals(withoutOverlay.size() + 3, withOverlay.size());
         int overlayIndex = -1;
         int inputBorderIndex = -1;
         for (int i = 0; i < withOverlay.size(); i++) {
