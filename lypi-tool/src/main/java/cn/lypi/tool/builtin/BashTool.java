@@ -8,6 +8,7 @@ import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
+import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.tool.ToolResult;
@@ -26,6 +27,8 @@ import java.util.Optional;
 public final class BashTool extends AbstractFileTool {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(120);
     private static final AbortSignal NOT_ABORTED = () -> false;
+    private static final String INPUT_SANDBOX_PERMISSIONS = "sandboxPermissions";
+    private static final String INPUT_JUSTIFICATION = "justification";
 
     private final Executor executor;
     private final SandboxPolicyResolver sandboxPolicyResolver;
@@ -54,7 +57,12 @@ public final class BashTool extends AbstractFileTool {
             "properties", Map.of(
                 "command", Map.of("type", "string"),
                 "cwd", Map.of("type", "string"),
-                "timeoutSeconds", Map.of("type", "integer", "minimum", 1)
+                "timeoutSeconds", Map.of("type", "integer", "minimum", 1),
+                INPUT_SANDBOX_PERMISSIONS, Map.of(
+                    "type", "string",
+                    "enum", List.of("useDefault", "requireEscalated")
+                ),
+                INPUT_JUSTIFICATION, Map.of("type", "string")
             )
         ));
     }
@@ -63,6 +71,11 @@ public final class BashTool extends AbstractFileTool {
     public ValidationResult validateInput(Map<String, Object> input, ToolUseContext context) {
         if (input.get("command") == null || input.get("command").toString().isBlank()) {
             return new ValidationResult(false, List.of("command 不能为空。"));
+        }
+        SandboxPermissions sandboxPermissions = sandboxPermissions(input);
+        String justification = stringInput(input, INPUT_JUSTIFICATION);
+        if (sandboxPermissions == SandboxPermissions.REQUIRE_ESCALATED && justification.isBlank()) {
+            return new ValidationResult(false, List.of("sandboxPermissions=requireEscalated 时 justification 不能为空。"));
         }
         return new ValidationResult(true, List.of());
     }
@@ -86,12 +99,17 @@ public final class BashTool extends AbstractFileTool {
             requireRealPathInsideWorkspace(cwd, context);
             Duration timeout = Duration.ofSeconds(intInput(input, "timeoutSeconds", (int) DEFAULT_TIMEOUT.toSeconds(), 1, 86_400));
             SandboxRuntimePolicy sandboxPolicy = sandboxPolicyResolver.resolve(context.cwd(), cwd);
+            SandboxPermissions sandboxPermissions = sandboxPermissions(input);
             ExecutionRequest request = new ExecutionRequest(
                 List.of("bash", "-lc", input.get("command").toString()),
                 cwd,
                 Map.of(),
                 timeout,
-                sandboxPolicy
+                sandboxPolicy,
+                sandboxPermissions,
+                sandboxPermissions == SandboxPermissions.REQUIRE_ESCALATED
+                    ? Optional.of(stringInput(input, INPUT_JUSTIFICATION))
+                    : Optional.empty()
             );
             progress.progress(ToolProgress.phase("running", "执行 shell 命令"));
             ExecutionResult result = executor.execute(request, progress, abortSignal(context));
@@ -139,6 +157,14 @@ public final class BashTool extends AbstractFileTool {
         if (result.metadata() != null && !result.metadata().executorName().isBlank()) {
             builder.append("\nexecutor=").append(result.metadata().executorName());
             builder.append("\nsandboxed=").append(result.metadata().sandboxed());
+            if (result.metadata().sandboxDenied()) {
+                builder.append("\nsandboxDenied=true");
+            }
+            if (result.metadata().sandboxUnavailable()) {
+                builder.append("\nsandboxUnavailable=true");
+            }
+            result.metadata().retryWith().ifPresent(retryWith -> builder.append("\nretryWith=").append(retryWith));
+            result.metadata().retryHint().ifPresent(retryHint -> builder.append("\nretryHint=").append(retryHint));
             result.metadata().diagnostic().ifPresent(diagnostic -> builder.append("\ndiagnostic=").append(diagnostic));
         }
         if (result.stdout() != null && !result.stdout().isBlank()) {
@@ -153,5 +179,14 @@ public final class BashTool extends AbstractFileTool {
 
     private String sanitizeCommand(String command) {
         return command.replaceAll("(?i)(api[_-]?key|token|password)=\\S+", "$1=<redacted>");
+    }
+
+    private SandboxPermissions sandboxPermissions(Map<String, Object> input) {
+        return SandboxPermissions.fromToolValue(stringInput(input, INPUT_SANDBOX_PERMISSIONS));
+    }
+
+    private String stringInput(Map<String, Object> input, String key) {
+        Object value = input == null ? null : input.get(key);
+        return value == null ? "" : value.toString().trim();
     }
 }

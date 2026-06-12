@@ -74,16 +74,6 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             return bashRiskDecision.get();
         }
 
-        PermissionMode mode = permissionMode(context);
-        if (mode == PermissionMode.PLAN && isWriteTool(request.toolName())) {
-            return decision(
-                PermissionBehavior.DENY,
-                PermissionDecisionReason.MODE_DEFAULT,
-                "Plan Mode 禁止写入类工具调用: " + request.toolName(),
-                Map.of()
-            );
-        }
-
         Optional<PermissionDecision> explicitAsk = explicitDecision(request, effectiveRules, PermissionBehavior.ASK, bashRisk);
         if (explicitAsk.isPresent()) {
             return explicitAsk.get();
@@ -94,14 +84,9 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             return explicitAllow.get();
         }
 
+        PermissionMode mode = permissionMode(context);
         return switch (mode) {
-            case PLAN -> decision(
-                PermissionBehavior.ALLOW,
-                PermissionDecisionReason.MODE_DEFAULT,
-                "Plan Mode 允许只读工具调用。",
-                Map.of()
-            );
-            case DEFAULT_EXECUTE, ACCEPT_EDITS, DONT_ASK, BYPASS -> decision(
+            case DEFAULT_EXECUTE, ACCEPT_EDITS, BYPASS -> decision(
                 PermissionBehavior.ALLOW,
                 PermissionDecisionReason.MODE_DEFAULT,
                 "当前权限模式允许工具调用。",
@@ -150,7 +135,7 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         PermissionMode mode,
         BashRiskAnalysis bashRisk
     ) {
-        // NOTE: DONT_ASK 和 BYPASS 仍不能越过未知 Bash；DEFAULT_EXECUTE 对非低风险 Bash 更保守。
+        // NOTE: BYPASS 仍不能越过未知 Bash；DEFAULT_EXECUTE 对非低风险 Bash 更保守。
         if (!isBashTool(request.toolName())) {
             return Optional.empty();
         }

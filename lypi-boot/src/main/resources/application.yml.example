@@ -28,13 +28,13 @@
 #     thinking-level: medium
 #
 #     # 重要性：可选覆盖。Agent 执行模式。
-#     # 可选值：plan、execute、bypass。
+#     # 可选值：plan、execute。
 #     # 建议：默认 execute；需要只规划不执行时使用 plan。
 #     agent-mode: execute
 #
 #     # 重要性：必须谨慎。权限模式决定工具调用是否需要审批以及默认放行范围。
-#     # 可选值：plan、default_execute、accept_edits、dont_ask、bypass。
-#     # 建议：默认 default_execute；高信任自动化场景才考虑 dont_ask 或 bypass。
+#     # 可选值：default_execute、accept_edits、bypass。
+#     # 建议：默认 default_execute；高信任自动化场景才考虑 bypass。
 #     permission-mode: default_execute
 #
 #     # 重要性：可选覆盖。启动传输入口。
@@ -209,9 +209,9 @@
 #       # 建议：默认 disabled，避免工具调用意外访问网络；确需联网安装依赖或访问服务时再切换 host。
 #       network-mode: disabled
 #
-#       # 重要性：生产建议。沙盒不可用时是否直接失败。
-#       # true：缺少 bubblewrap 等沙盒能力时拒绝执行，更安全。
-#       # false：允许回退到宿主机执行器，更方便但风险更高。
+#       # 重要性：兼容字段。沙盒不可用时的默认执行失败策略。
+#       # NOTE: 默认执行不会自动回退到宿主机执行器；模型必须显式请求 sandboxPermissions=requireEscalated，
+#       # 并提供面向用户的 justification，之后再按 PermissionMode 进入审批或 BYPASS 自动放行。
 #       fail-if-unavailable: false
 #
 #       # 重要性：生产建议。命令已在沙盒中执行时是否自动放行 bash 权限。

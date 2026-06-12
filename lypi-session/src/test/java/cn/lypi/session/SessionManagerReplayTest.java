@@ -90,7 +90,7 @@ class SessionManagerReplayTest {
             new ModelSelection("anthropic", "claude-sonnet", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.PLAN
+            PermissionMode.DEFAULT_EXECUTE
         );
         SessionHandle reopened = reopenedWithDifferentDefaults.openOrCreate("ses_main");
 
@@ -99,7 +99,7 @@ class SessionManagerReplayTest {
         assertThat(context.model()).isEqualTo(new ModelSelection("anthropic", "claude-sonnet", ThinkingLevel.HIGH));
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.PLAN);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
     }
 
     @Test
@@ -125,7 +125,7 @@ class SessionManagerReplayTest {
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.PLAN,
-            PermissionMode.PLAN
+            PermissionMode.DEFAULT_EXECUTE
         );
         manager.openOrCreate("ses_legacy");
 
@@ -134,7 +134,7 @@ class SessionManagerReplayTest {
         assertThat(context.model()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.PLAN);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
     }
 
     @Test
@@ -194,15 +194,21 @@ class SessionManagerReplayTest {
         ));
         manager.append(new ThinkingChangeEntry("thinking-high", "model-new", ThinkingLevel.HIGH, "high", NOW));
         manager.append(new ModeChangeEntry("mode-plan", "thinking-high", AgentMode.PLAN, "plan", NOW));
-        manager.append(new PermissionModeChangeEntry("permission-plan", "mode-plan", PermissionMode.PLAN, "plan", NOW));
+        manager.append(new PermissionModeChangeEntry(
+            "permission-accept-edits",
+            "mode-plan",
+            PermissionMode.ACCEPT_EDITS,
+            "accept edits",
+            NOW
+        ));
 
-        SessionContext context = manager.context("permission-plan");
+        SessionContext context = manager.context("permission-accept-edits");
 
         assertThat(context.model().modelId()).isEqualTo("gpt-test-latest");
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.model().thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.PLAN);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
     }
 
     @Test

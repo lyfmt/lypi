@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -30,6 +31,7 @@ class ToolRuntimeContextFactoryTest {
         assertEquals("msg_1", context.messageId());
         assertEquals(Path.of("/workspace"), context.cwd());
         assertEquals(PermissionMode.BYPASS, context.metadata().get("permissionMode"));
+        assertEquals(AgentMode.EXECUTE, context.metadata().get("agentMode"));
         assertEquals("tr_1", context.metadata().get("traceId"));
     }
 
@@ -37,12 +39,24 @@ class ToolRuntimeContextFactoryTest {
     void usesSafeDefaultsWhenOptionsAreEmpty() {
         ToolUseContext context = new ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()).create(
             new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
-            TestTools.context(PermissionMode.PLAN)
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
         );
 
         assertEquals("session_unknown", context.sessionId());
-        assertEquals(PermissionMode.PLAN, context.metadata().get("permissionMode"));
+        assertEquals(PermissionMode.DEFAULT_EXECUTE, context.metadata().get("permissionMode"));
+        assertEquals(AgentMode.EXECUTE, context.metadata().get("agentMode"));
         assertTrue(context.cwd().isAbsolute());
+    }
+
+    @Test
+    void copiesAgentModeFromContextSnapshot() {
+        ToolUseContext context = new ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()).create(
+            new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
+            TestTools.context(AgentMode.PLAN, PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertEquals(AgentMode.PLAN, context.metadata().get("agentMode"));
+        assertEquals(PermissionMode.DEFAULT_EXECUTE, context.metadata().get("permissionMode"));
     }
 
     @Test

@@ -37,6 +37,17 @@ class ApplicationExampleConfigTest {
     }
 
     @Test
+    void applicationExampleDocumentsSeparatedModeAndSandboxFailureSemantics() throws IOException {
+        String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(example).contains("#     # 可选值：plan、execute。");
+        assertThat(example).contains("#     # 可选值：default_execute、accept_edits、bypass。");
+        assertThat(example).doesNotContain("#     # 可选值：plan、default_execute、accept_edits、dont_ask、bypass。");
+        assertThat(example).doesNotContain("允许回退到宿主机执行器");
+        assertThat(example).contains("不会自动回退到宿主机执行器");
+    }
+
+    @Test
     void overrideExtensionAndToolFragmentsBindToSupportedProperties() {
         Binder binder = new Binder(new MapConfigurationPropertySource(Map.ofEntries(
             Map.entry("lypi.runtime.default-provider", "fixture"),

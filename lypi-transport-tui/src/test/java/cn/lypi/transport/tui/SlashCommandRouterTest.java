@@ -120,6 +120,26 @@ class SlashCommandRouterTest {
     }
 
     @Test
+    void stateCommandUsageOnlyListsSupportedModeValues() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
+
+        SlashCommandResult modeResult = router.route("/mode");
+        SlashCommandResult permissionModeResult = router.route("/permission-mode");
+
+        assertEquals("usage: /mode <plan|execute>", modeResult.message().orElseThrow());
+        assertEquals(
+            "usage: /permission-mode <default-execute|accept-edits|bypass>",
+            permissionModeResult.message().orElseThrow()
+        );
+    }
+
+    @Test
     void invalidStateCommandIsConsumedWithErrorButDoesNotAppend() {
         RecordingSessionManager session = new RecordingSessionManager(context(
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),

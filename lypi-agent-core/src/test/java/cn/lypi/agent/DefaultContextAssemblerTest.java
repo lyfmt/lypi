@@ -48,7 +48,7 @@ class DefaultContextAssemblerTest {
             new ModelSelection("openai", "gpt-test", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.PLAN
+            PermissionMode.DEFAULT_EXECUTE
         ));
         DefaultContextAssembler assembler = new DefaultContextAssembler(
             sessionManager,
@@ -71,7 +71,7 @@ class DefaultContextAssemblerTest {
         assertThat(assembly.snapshot().model().modelId()).isEqualTo("gpt-test");
         assertThat(assembly.snapshot().thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(assembly.snapshot().mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(assembly.snapshot().permissionMode()).isEqualTo(PermissionMode.PLAN);
+        assertThat(assembly.snapshot().permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
         assertThat(assembly.branchEntryIds()).containsExactly("entry-user");
         assertThat(assembly.appliedCompactionEntryIds()).containsExactly("entry-compact");
         assertThat(assembly.budgetExceeded()).isFalse();

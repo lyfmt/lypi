@@ -9,10 +9,12 @@ import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
+import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
+import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.tool.ToolResult;
@@ -33,6 +35,19 @@ class BashToolTest {
     Path tempDir;
 
     @Test
+    void inputSchemaExposesSandboxEscalationFields() {
+        BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> sandboxPermissions = (Map<String, Object>) properties.get("sandboxPermissions");
+
+        assertEquals(List.of("useDefault", "requireEscalated"), sandboxPermissions.get("enum"));
+        assertEquals(Map.of("type", "string"), properties.get("justification"));
+    }
+
+    @Test
     void mapsCommandToExecutionRequestAndResult() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(7, "out", "err", false, Optional.empty()));
         RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
@@ -50,6 +65,8 @@ class BashToolTest {
         assertEquals(tempDir, executor.request.get().cwd());
         assertEquals(Duration.ofSeconds(3), executor.request.get().timeout());
         assertSame(resolver.policy, executor.request.get().sandboxPolicy());
+        assertEquals(SandboxPermissions.USE_DEFAULT, executor.request.get().sandboxPermissions());
+        assertEquals(Optional.empty(), executor.request.get().justification());
         assertEquals(tempDir, resolver.workspace.get());
         assertEquals(tempDir, resolver.cwd.get());
         assertEquals(NetworkMode.DISABLED, executor.request.get().sandboxPolicy().networkMode());
@@ -62,6 +79,60 @@ class BashToolTest {
             ToolProgress.phase("running", "执行 shell 命令"),
             ToolProgress.status("executor progress", null)
         ), progresses);
+    }
+
+    @Test
+    void mapsEscalatedSandboxRequestToExecutionRequest() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+
+        ToolResult<String> result = tool.execute(
+            Map.of(
+                "command", "id",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host access to inspect local process state."
+            ),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(SandboxPermissions.REQUIRE_ESCALATED, executor.request.get().sandboxPermissions());
+        assertEquals(
+            Optional.of("Need host access to inspect local process state."),
+            executor.request.get().justification()
+        );
+    }
+
+    @Test
+    void rendersSandboxRetryHintFromExecutionMetadata() {
+        ExecutionMetadata metadata = ExecutionMetadata.sandboxUnavailable(
+            "bubblewrap",
+            "bubblewrap unavailable"
+        );
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(126, "", "denied", false, Optional.empty(), metadata));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+
+        ToolResult<String> result = tool.execute(Map.of("command", "id"), context(Map.of()), message -> {
+        });
+
+        assertTrue(result.output().contains("sandboxUnavailable=true"));
+        assertTrue(result.output().contains("retryWith=sandboxPermissions=requireEscalated"));
+        assertTrue(result.output().contains("retryHint="));
+    }
+
+    @Test
+    void rejectsEscalatedSandboxRequestWithoutJustification() {
+        BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
+
+        var result = tool.validateInput(
+            Map.of("command", "id", "sandboxPermissions", "requireEscalated", "justification", " "),
+            context(Map.of())
+        );
+
+        assertFalse(result.valid());
+        assertTrue(result.messages().getFirst().contains("justification"));
     }
 
     @Test

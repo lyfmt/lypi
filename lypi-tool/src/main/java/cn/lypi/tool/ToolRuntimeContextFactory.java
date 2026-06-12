@@ -2,6 +2,7 @@ package cn.lypi.tool;
 
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -16,6 +17,7 @@ import java.util.Objects;
  * NOTE: 该工厂集中处理 runtime options、模型上下文和单次 tool call 的上下文合并。
  */
 public final class ToolRuntimeContextFactory {
+    static final String METADATA_AGENT_MODE = "agentMode";
     static final String METADATA_PERMISSION_MODE = "permissionMode";
 
     private final ToolRuntimeOptions options;
@@ -41,7 +43,9 @@ public final class ToolRuntimeContextFactory {
     public ToolUseContext create(ToolUseRequest request, ContextSnapshot context, ToolRuntimeInvocation invocation) {
         Objects.requireNonNull(request, "request must not be null");
         Map<String, Object> metadata = new LinkedHashMap<>();
+        AgentMode agentMode = context == null ? AgentMode.EXECUTE : context.mode();
         PermissionMode permissionMode = context == null ? PermissionMode.DEFAULT_EXECUTE : context.permissionMode();
+        metadata.put(METADATA_AGENT_MODE, agentMode);
         metadata.put(METADATA_PERMISSION_MODE, permissionMode);
         metadata.putAll(options.metadata());
         String turnId = invocation == null ? null : invocation.turnId();

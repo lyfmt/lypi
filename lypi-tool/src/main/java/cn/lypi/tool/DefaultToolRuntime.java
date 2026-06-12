@@ -9,11 +9,14 @@ import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -60,6 +63,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final SecurityRuntimePort securityRuntime;
     private final PermissionGate permissionGate;
     private final ToolExecutionEventPublisher eventPublisher;
+    private final SandboxEscalationPolicy sandboxEscalationPolicy;
+    private final BashSandboxRiskPolicy bashSandboxRiskPolicy;
     private final int maxConcurrency;
 
     public DefaultToolRuntime(SecurityRuntimePort securityRuntime) {
@@ -265,6 +270,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.securityRuntime = Objects.requireNonNull(securityRuntime, "securityRuntime must not be null");
         this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
         this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
+        this.sandboxEscalationPolicy = new SandboxEscalationPolicy();
+        this.bashSandboxRiskPolicy = new BashSandboxRiskPolicy();
         this.maxConcurrency = normalizedOptions.maxConcurrency();
     }
 
@@ -483,10 +490,33 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 finalResult = errorResult(request.toolUseId(), "工具输入校验失败: " + joinMessages(inputResult));
                 return finalResult;
             }
+            if (isPlanMode(toolContext) && !tool.isReadOnly(input)) {
+                finalResult = errorResult(
+                    request.toolUseId(),
+                    "AgentMode.PLAN 禁止执行非只读工具: " + tool.name()
+                );
+                return finalResult;
+            }
 
             PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
-            PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
-            PermissionDecision effectiveDecision = effectiveDecision(toolDecision, securityDecision);
+            PermissionDecision effectiveDecision;
+            if (isDefaultSandboxBashRequest(request)) {
+                effectiveDecision = isDeny(securityDecision)
+                    ? securityDecision
+                    : allowDecision("默认 Bash 请求先进入沙箱执行。");
+            } else {
+                PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
+                effectiveDecision = effectiveDecision(toolDecision, securityDecision);
+            }
+            Optional<PermissionDecision> sandboxEscalationDecision = sandboxEscalationPolicy.decide(request, toolContext);
+            if (sandboxEscalationDecision.isPresent()) {
+                effectiveDecision = effectiveDecision(isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"), sandboxEscalationDecision.get());
+            } else if (!isDeny(effectiveDecision)) {
+                Optional<PermissionDecision> bashSandboxRiskDecision = bashSandboxRiskPolicy.decide(request, toolContext, securityDecision);
+                if (bashSandboxRiskDecision.isPresent()) {
+                    effectiveDecision = bashSandboxRiskDecision.get();
+                }
+            }
             if (isDeny(effectiveDecision)) {
                 finalResult = permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(effectiveDecision)));
                 return finalResult;
@@ -528,6 +558,17 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return result.status() == PermissionGateResult.Status.ABORT
             ? ToolExecutionStatus.CANCELLED
             : ToolExecutionStatus.FAILED;
+    }
+
+    private boolean isPlanMode(ToolUseContext context) {
+        Object value = context.metadata().get(ToolRuntimeContextFactory.METADATA_AGENT_MODE);
+        if (value instanceof AgentMode agentMode) {
+            return agentMode == AgentMode.PLAN;
+        }
+        if (value instanceof String agentMode) {
+            return AgentMode.valueOf(agentMode) == AgentMode.PLAN;
+        }
+        return false;
     }
 
     private ExecutedToolResult executeTool(
@@ -797,6 +838,17 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return ToolAbortSupport.aborted(context) && tool.interruptBehavior() == InterruptBehavior.CANCEL;
     }
 
+    private boolean isDefaultSandboxBashRequest(ToolUseRequest request) {
+        return request != null
+            && "bash".equals(request.toolName())
+            && SandboxPermissions.fromToolValue(stringInput(request.input(), "sandboxPermissions")) == SandboxPermissions.USE_DEFAULT;
+    }
+
+    private String stringInput(Map<String, Object> input, String key) {
+        Object value = input == null ? null : input.get(key);
+        return value == null ? "" : value.toString();
+    }
+
     private PermissionGateResult resolvePermission(
         ToolUseRequest request,
         Tool<Map<String, Object>, ?> tool,
@@ -835,6 +887,16 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
     private boolean isAsk(PermissionDecision decision) {
         return decision != null && decision.behavior() == PermissionBehavior.ASK;
+    }
+
+    private PermissionDecision allowDecision(String message) {
+        return new PermissionDecision(
+            PermissionBehavior.ALLOW,
+            PermissionDecisionReason.MODE_DEFAULT,
+            message,
+            Optional.empty(),
+            Map.of()
+        );
     }
 
     private ToolResult<?> permissionGateError(String toolUseId, PermissionGateResult result) {
