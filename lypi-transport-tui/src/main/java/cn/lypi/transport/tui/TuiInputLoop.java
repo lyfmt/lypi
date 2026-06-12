@@ -151,6 +151,11 @@ final class TuiInputLoop {
             }
             return;
         }
+        if (decision.action() == TerminalInputAction.INTERRUPT) {
+            submitHandler.requestInterrupt(key == TerminalKey.ESC ? "esc" : "interrupt");
+            render();
+            return;
+        }
         if (resumeOverlayOpen()) {
             handleResumeOverlayKey(key);
             return;

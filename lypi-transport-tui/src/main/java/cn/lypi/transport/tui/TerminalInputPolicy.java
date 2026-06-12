@@ -11,6 +11,9 @@ public final class TerminalInputPolicy {
         if (key == TerminalKey.ESC && context.permissionOverlayOpen()) {
             return TerminalInputDecision.option(context.cancelOptionId());
         }
+        if (key == TerminalKey.ESC && context.toolRunning()) {
+            return TerminalInputDecision.action(TerminalInputAction.INTERRUPT);
+        }
         if (key == TerminalKey.CTRL_C) {
             return decideCtrlC(context);
         }
