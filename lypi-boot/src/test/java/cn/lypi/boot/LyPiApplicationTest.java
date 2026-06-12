@@ -39,7 +39,7 @@ class LyPiApplicationTest {
             .run()) {
 
             assertThat(context.getBean(LyPiRuntime.class)).isNotNull();
-            assertThat(tempDir.resolve(".lypi/sessions/application-startup.jsonl")).exists();
+            assertThat(tempDir.resolve(".ly-pi/sessions/application-startup.jsonl")).exists();
         }
     }
 }

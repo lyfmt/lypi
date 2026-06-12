@@ -162,7 +162,7 @@ class SessionResumeQueryTest {
             .findFirst()
             .orElseThrow();
         assertThat(child.parentSessionPath())
-            .contains(tempDir.resolve(".lypi").resolve("sessions").resolve("ses_parent.jsonl").toAbsolutePath().normalize());
+            .contains(tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_parent.jsonl").toAbsolutePath().normalize());
     }
 
     private AgentMessage message(String id, MessageRole role, String text, Instant timestamp) {

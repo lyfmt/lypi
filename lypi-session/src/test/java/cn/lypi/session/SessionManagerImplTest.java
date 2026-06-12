@@ -171,7 +171,7 @@ class SessionManagerImplTest {
             .isInstanceOf(SessionEngineException.class)
             .hasMessageContaining("Invalid session id");
 
-        assertThat(tempDir.resolve(".lypi").resolve("escape.jsonl")).doesNotExist();
+        assertThat(tempDir.resolve(".ly-pi").resolve("escape.jsonl")).doesNotExist();
     }
 
     @Test
@@ -236,7 +236,7 @@ class SessionManagerImplTest {
 
     @Test
     void readRejectsNonSessionHeaderType() throws Exception {
-        Path sessionFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_main.jsonl");
+        Path sessionFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_main.jsonl");
         Files.createDirectories(sessionFile.getParent());
         Files.writeString(sessionFile, "{\"type\":\"message\",\"version\":1,\"id\":\"ses_main\"}\n");
         SessionManager engine = new SessionManagerImpl(tempDir);
@@ -248,7 +248,7 @@ class SessionManagerImplTest {
 
     @Test
     void openOrCreateReportsLineNumberForMalformedJsonlEntry() throws Exception {
-        Path sessionFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_main.jsonl");
+        Path sessionFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_main.jsonl");
         Files.createDirectories(sessionFile.getParent());
         Files.writeString(
             sessionFile,
@@ -483,7 +483,7 @@ class SessionManagerImplTest {
         SessionHandle forked = engine.fork(new ForkRequest("ses_main", "left", targetCwd, "explore"));
 
         assertThat(forked.sessionId()).isNotEqualTo("ses_main");
-        assertThat(forked.sessionFile()).startsWith(targetCwd.resolve(".lypi").resolve("sessions"));
+        assertThat(forked.sessionFile()).startsWith(targetCwd.resolve(".ly-pi").resolve("sessions"));
         assertThat(forked.byId()).containsKeys("root", "left", forked.leafId());
         assertThat(forked.byId().get(forked.leafId()))
             .isInstanceOfSatisfying(SessionInfoEntry.class, entry -> assertThat(entry.parentId()).isEqualTo("left"));

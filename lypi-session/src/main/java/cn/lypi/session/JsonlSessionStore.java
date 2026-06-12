@@ -23,7 +23,7 @@ final class JsonlSessionStore {
     private final SessionJsonMapper mapper;
 
     JsonlSessionStore(Path cwd) {
-        this(cwd.resolve(".lypi").resolve("sessions"), new SessionJsonMapper());
+        this(cwd.resolve(".ly-pi").resolve("sessions"), new SessionJsonMapper());
     }
 
     JsonlSessionStore(Path sessionsDir, SessionJsonMapper mapper) {
