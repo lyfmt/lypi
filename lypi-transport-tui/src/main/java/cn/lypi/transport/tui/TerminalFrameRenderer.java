@@ -101,8 +101,8 @@ final class TerminalFrameRenderer {
         boolean transcriptGrew = renderFrame.transcriptLineCount() > previousTranscriptLineCount;
         if (transcriptGrew && viewportTop > previousViewportTop && newLines.size() > previousLines.size()) {
             if (chromeLineCount > 0) {
-                writeShrinkPatch(newLines, frame.cursor(), viewportTop, height);
-                updateState(newLines, width, height, viewportTop, physicalBottomRow(newLines, viewportTop, height), renderFrame.transcriptLineCount());
+                writeTranscriptRegionTail(newLines, frame.cursor(), firstChanged, previousViewportTop, viewportTop, height, chromeLineCount);
+                updateState(newLines, width, height, viewportTop, hardwareCursorRow, renderFrame.transcriptLineCount());
                 io.flush();
                 return;
             }
@@ -186,6 +186,58 @@ final class TerminalFrameRenderer {
                 io.write(visible.get(row));
                 hardwareCursorRow = physicalRow;
             }
+        }
+        moveCursor(cursor, viewportTop, height);
+        io.write(SYNC_END);
+    }
+
+    private void writeTranscriptRegionTail(
+        List<String> lines,
+        java.util.Optional<CursorPosition> cursor,
+        int firstChanged,
+        int previousViewportTop,
+        int viewportTop,
+        int height,
+        int chromeLineCount
+    ) throws IOException {
+        io.write(SYNC_START);
+        int transcriptBottom = Math.max(1, height - chromeLineCount);
+        io.write("\033[1;" + transcriptBottom + "r");
+        int firstChromeLine = Math.max(0, lines.size() - chromeLineCount);
+        int flowingEnd = Math.min(lines.size(), firstChromeLine);
+        int firstVisibleChange = Math.max(firstChanged, previousViewportTop);
+        for (int i = firstVisibleChange; i < flowingEnd; i++) {
+            if (!visibleLogicalRow(i + 1, previousViewportTop, height)) {
+                continue;
+            }
+            int physicalRow = physicalRow(i + 1, previousViewportTop, height);
+            io.write("\033[" + Math.min(physicalRow, transcriptBottom) + ";1H");
+            io.write("\033[2K");
+            io.write(lines.get(i));
+            io.write("\r\n");
+            hardwareCursorRow = Math.min(physicalRow, transcriptBottom);
+        }
+        io.write("\033[r");
+        List<String> visible = visibleLines(lines, viewportTop, height);
+        for (int row = 0; row < Math.max(0, height - chromeLineCount); row++) {
+            int physicalRow = row + 1;
+            io.write("\033[" + physicalRow + ";1H");
+            io.write("\033[2K");
+            if (row < visible.size()) {
+                io.write(visible.get(row));
+                hardwareCursorRow = physicalRow;
+            }
+        }
+        int firstVisibleChromeLine = Math.max(firstChromeLine, viewportTop);
+        for (int i = firstVisibleChromeLine; i < lines.size(); i++) {
+            if (!visibleLogicalRow(i + 1, viewportTop, height)) {
+                continue;
+            }
+            int physicalRow = physicalRow(i + 1, viewportTop, height);
+            io.write("\033[" + physicalRow + ";1H");
+            io.write("\033[2K");
+            io.write(lines.get(i));
+            hardwareCursorRow = physicalRow;
         }
         moveCursor(cursor, viewportTop, height);
         io.write(SYNC_END);

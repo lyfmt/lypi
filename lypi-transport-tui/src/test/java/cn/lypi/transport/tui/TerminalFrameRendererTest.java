@@ -122,7 +122,7 @@ class TerminalFrameRendererTest {
     }
 
     @Test
-    void transcriptAppendThatOverflowsTerminalRepaintsChromeWithoutTerminalScroll() throws Exception {
+    void transcriptAppendThatOverflowsTerminalScrollsTranscriptRegionOnly() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
@@ -131,21 +131,20 @@ class TerminalFrameRendererTest {
         io.output.setLength(0);
         renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "> |CURSOR|", "status"), 2));
 
-        assertEquals(
-            "\033[?2026h"
-                + "\033[1;1H\033[2Ktwo"
-                + "\033[2;1H\033[2Kthree"
-                + "\033[3;1H\033[2K> "
-                + "\033[4;1H\033[2Kstatus"
-                + "\033[3;3H"
-                + "\033[?2026l",
-            io.output.toString()
-        );
-        assertFalse(io.output.toString().contains("\r\n"));
+        String output = io.output.toString();
+        assertTrue(output.startsWith("\033[?2026h\033[1;2r"));
+        assertTrue(output.contains("\033[2;1H\033[2Kthree\r\n"));
+        assertTrue(output.contains("\033[r"));
+        assertTrue(output.contains("\033[1;1H\033[2Ktwo"));
+        assertTrue(output.contains("\033[2;1H\033[2Kthree"));
+        assertTrue(output.contains("\033[3;1H\033[2K> "));
+        assertTrue(output.contains("\033[4;1H\033[2Kstatus"));
+        assertTrue(output.endsWith("\033[3;3H\033[?2026l"));
+        assertFalse(output.contains("\r\n\033[3;1H"));
     }
 
     @Test
-    void transcriptAppendAfterOverflowRepaintsChromeWithoutTerminalScroll() throws Exception {
+    void transcriptAppendAfterOverflowScrollsTranscriptRegionOnly() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
@@ -154,21 +153,20 @@ class TerminalFrameRendererTest {
         io.output.setLength(0);
         renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "four", "> |CURSOR|", "status"), 2));
 
-        assertEquals(
-            "\033[?2026h"
-                + "\033[1;1H\033[2Kthree"
-                + "\033[2;1H\033[2Kfour"
-                + "\033[3;1H\033[2K> "
-                + "\033[4;1H\033[2Kstatus"
-                + "\033[3;3H"
-                + "\033[?2026l",
-            io.output.toString()
-        );
-        assertFalse(io.output.toString().contains("\r\n"));
+        String output = io.output.toString();
+        assertTrue(output.startsWith("\033[?2026h\033[1;2r"));
+        assertTrue(output.contains("\033[2;1H\033[2Kfour\r\n"));
+        assertTrue(output.contains("\033[r"));
+        assertTrue(output.contains("\033[1;1H\033[2Kthree"));
+        assertTrue(output.contains("\033[2;1H\033[2Kfour"));
+        assertTrue(output.contains("\033[3;1H\033[2K> "));
+        assertTrue(output.contains("\033[4;1H\033[2Kstatus"));
+        assertTrue(output.endsWith("\033[3;3H\033[?2026l"));
+        assertFalse(output.contains("\r\n\033[3;1H"));
     }
 
     @Test
-    void transcriptAppendWithChromeRepaintsVisibleViewportWithoutTerminalScroll() throws Exception {
+    void transcriptAppendWithChromeScrollsTranscriptRegionWithoutScrollingChrome() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 6;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
@@ -196,11 +194,13 @@ class TerminalFrameRendererTest {
         ), 3));
 
         String output = io.output.toString();
-        assertFalse(output.contains("\r\n"), "chrome frames must not scroll old input/status into scrollback");
-        assertTrue(output.contains("\033[1;1H\033[2K  written bytes 洗车店.md"));
-        assertTrue(output.contains("\033[2;1H\033[2Kassistant done"));
+        assertTrue(output.contains("\033[1;3r"));
+        assertTrue(output.contains("\033[3;1H\033[2K  written bytes 洗车店.md\r\n"));
+        assertTrue(output.contains("\033[3;1H\033[2Kassistant done\r\n"));
+        assertTrue(output.contains("\033[r"));
         assertTrue(output.contains("\033[4;1H\033[2K> "));
         assertTrue(output.contains("\033[6;1H\033[2Ksession PLAN"));
+        assertFalse(output.contains("\r\n\033[4;1H"), "chrome rows must be repainted, not scrolled");
     }
 
     @Test

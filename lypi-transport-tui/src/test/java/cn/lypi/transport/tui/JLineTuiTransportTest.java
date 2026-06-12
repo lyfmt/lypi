@@ -213,8 +213,9 @@ class JLineTuiTransportTest {
         }
 
         String output = io.output.toString();
-        assertFalse(output.contains("\r\n"));
+        assertTrue(output.contains("\r\n"));
         assertTrue(output.contains("\033[?2026h"));
+        assertTrue(output.contains("\033[1;"));
         assertTrue(output.contains("\033[2K"));
         assertFalse(output.contains("\r\n\033[2K\033[38;5;240m"));
         assertFalse(output.contains("\r\n\033[2K\033[48;5;236m> "));
