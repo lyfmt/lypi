@@ -39,8 +39,10 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.ExecutionMetadata;
+import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.NetworkMode;
+import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
@@ -88,6 +90,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -99,6 +102,36 @@ class ContractSerializationTest {
     private final ObjectMapper mapper = new ObjectMapper()
         .registerModule(new Jdk8Module())
         .registerModule(new JavaTimeModule());
+
+    @Test
+    void modeContractsExposeOnlySeparatedStageAndPermissionValues() {
+        assertEquals(List.of(AgentMode.PLAN, AgentMode.EXECUTE), List.of(AgentMode.values()));
+        assertEquals(
+            List.of(PermissionMode.DEFAULT_EXECUTE, PermissionMode.ACCEPT_EDITS, PermissionMode.BYPASS),
+            List.of(PermissionMode.values())
+        );
+    }
+
+    @Test
+    void sandboxPermissionsParseToolInputValues() {
+        assertEquals(SandboxPermissions.USE_DEFAULT, SandboxPermissions.fromToolValue(null));
+        assertEquals(SandboxPermissions.USE_DEFAULT, SandboxPermissions.fromToolValue("useDefault"));
+        assertEquals(SandboxPermissions.REQUIRE_ESCALATED, SandboxPermissions.fromToolValue("requireEscalated"));
+    }
+
+    @Test
+    void executionRequestDefaultsToDefaultSandboxPermissions() {
+        ExecutionRequest request = new ExecutionRequest(
+            List.of("bash", "-lc", "true"),
+            Path.of("."),
+            Map.of(),
+            Duration.ofSeconds(1),
+            null
+        );
+
+        assertEquals(SandboxPermissions.USE_DEFAULT, request.sandboxPermissions());
+        assertEquals(Optional.empty(), request.justification());
+    }
 
     @Test
     void sandboxRuntimePolicyRoundTripKeepsNetworkModeWithoutDomainFields() throws Exception {
@@ -219,7 +252,7 @@ class ContractSerializationTest {
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.PLAN,
+            PermissionMode.DEFAULT_EXECUTE,
             Instant.parse("2026-06-11T00:00:00Z")
         );
 
@@ -232,7 +265,7 @@ class ContractSerializationTest {
         assertEquals(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH), state.model());
         assertEquals(ThinkingLevel.HIGH, state.thinkingLevel());
         assertEquals(AgentMode.PLAN, state.agentMode());
-        assertEquals(PermissionMode.PLAN, state.permissionMode());
+        assertEquals(PermissionMode.DEFAULT_EXECUTE, state.permissionMode());
     }
 
     @Test

@@ -4,12 +4,31 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 public record ExecutionRequest(
     List<String> command,
     Path cwd,
     Map<String, String> env,
     Duration timeout,
-    SandboxRuntimePolicy sandboxPolicy
-) {}
+    SandboxRuntimePolicy sandboxPolicy,
+    SandboxPermissions sandboxPermissions,
+    Optional<String> justification
+) {
+    public ExecutionRequest(
+        List<String> command,
+        Path cwd,
+        Map<String, String> env,
+        Duration timeout,
+        SandboxRuntimePolicy sandboxPolicy
+    ) {
+        this(command, cwd, env, timeout, sandboxPolicy, SandboxPermissions.USE_DEFAULT, Optional.empty());
+    }
 
+    public ExecutionRequest {
+        command = command == null ? List.of() : List.copyOf(command);
+        env = env == null ? Map.of() : Map.copyOf(env);
+        sandboxPermissions = sandboxPermissions == null ? SandboxPermissions.USE_DEFAULT : sandboxPermissions;
+        justification = justification == null ? Optional.empty() : justification.filter(value -> !value.isBlank());
+    }
+}
