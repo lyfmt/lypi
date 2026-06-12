@@ -39,17 +39,17 @@ class TerminalInputPolicyTest {
     }
 
     @Test
-    void escapeAndCtrlCCancelPermissionOverlay() {
+    void escapeAndCtrlCInterruptPermissionOverlay() {
         TerminalInputPolicy policy = new TerminalInputPolicy();
         TerminalInputContext context = new TerminalInputContext("", true, true, "permission", "editor", "cancel_once");
 
         TerminalInputDecision escape = policy.decide(TerminalKey.ESC, context);
         TerminalInputDecision ctrlC = policy.decide(TerminalKey.CTRL_C, context);
 
-        assertEquals(TerminalInputAction.SUBMIT_PERMISSION_OPTION, escape.action());
-        assertEquals(TerminalInputAction.SUBMIT_PERMISSION_OPTION, ctrlC.action());
-        assertEquals("cancel_once", escape.optionId().orElseThrow());
-        assertEquals("cancel_once", ctrlC.optionId().orElseThrow());
+        assertEquals(TerminalInputAction.INTERRUPT, escape.action());
+        assertEquals(TerminalInputAction.INTERRUPT, ctrlC.action());
+        assertTrue(escape.optionId().isEmpty());
+        assertTrue(ctrlC.optionId().isEmpty());
     }
 
     @Test

@@ -401,7 +401,7 @@ class TuiInputLoopTest {
     }
 
     @Test
-    void escapeAndCtrlCCancelPermissionPromptInsteadOfExitOrInterrupt() {
+    void escapeAndCtrlCInterruptPermissionPromptInsteadOfSubmittingPermissionOption() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
@@ -416,12 +416,10 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.ESC);
         loop.acceptKey(TerminalKey.CTRL_C);
 
-        assertEquals(
-            List.of("perm_toolu_1:toolu_1:escape_cancel", "perm_toolu_1:toolu_1:escape_cancel"),
-            submit.permissionOptions
-        );
+        assertEquals(List.of(), submit.permissionOptions);
         assertEquals(0, submit.exits);
-        assertEquals(0, submit.interrupts);
+        assertEquals(2, submit.interrupts);
+        assertEquals(List.of("esc", "ctrl-c"), submit.interruptReasons);
     }
 
     @Test

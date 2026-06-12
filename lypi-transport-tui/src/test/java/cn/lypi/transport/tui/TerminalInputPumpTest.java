@@ -59,7 +59,7 @@ class TerminalInputPumpTest {
     }
 
     @Test
-    void dispatchesStandaloneEscapeToInputLoop() throws IOException {
+    void dispatchesStandaloneEscapeToPermissionPromptInterrupt() throws IOException {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
@@ -78,7 +78,8 @@ class TerminalInputPumpTest {
 
         pump.drainAvailable();
 
-        assertEquals(List.of("perm_toolu_1:toolu_1:cancel"), submit.permissionOptions);
+        assertEquals(List.of(), submit.permissionOptions);
+        assertEquals(List.of("esc"), submit.interruptReasons);
     }
 
     @Test
@@ -231,6 +232,7 @@ class TerminalInputPumpTest {
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
         private final List<String> permissionOptions = new ArrayList<>();
+        private final List<String> interruptReasons = new ArrayList<>();
 
         @Override
         public void submitUserInput(String input) {
@@ -239,6 +241,7 @@ class TerminalInputPumpTest {
 
         @Override
         public void requestInterrupt(String reason) {
+            interruptReasons.add(reason);
         }
 
         @Override

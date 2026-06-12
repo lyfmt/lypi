@@ -166,7 +166,8 @@ final class TuiInputLoop {
                 return;
             }
             if (key == TerminalKey.ESC || key == TerminalKey.CTRL_C) {
-                submitPermissionOption(currentPrompt, currentPrompt.cancelOptionId());
+                submitHandler.requestInterrupt(key == TerminalKey.ESC ? "esc" : "ctrl-c");
+                render();
                 return;
             }
         }

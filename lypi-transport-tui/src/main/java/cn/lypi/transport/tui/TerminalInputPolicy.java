@@ -9,7 +9,7 @@ public final class TerminalInputPolicy {
             return TerminalInputDecision.action(TerminalInputAction.INSERT_PASTE);
         }
         if (key == TerminalKey.ESC && context.permissionOverlayOpen()) {
-            return TerminalInputDecision.option(context.cancelOptionId());
+            return TerminalInputDecision.action(TerminalInputAction.INTERRUPT);
         }
         if (key == TerminalKey.ESC && context.toolRunning()) {
             return TerminalInputDecision.action(TerminalInputAction.INTERRUPT);
@@ -32,7 +32,7 @@ public final class TerminalInputPolicy {
             return TerminalInputDecision.action(TerminalInputAction.CLEAR_INPUT);
         }
         if (context.permissionOverlayOpen()) {
-            return TerminalInputDecision.option(context.cancelOptionId());
+            return TerminalInputDecision.action(TerminalInputAction.INTERRUPT);
         }
         if (context.toolRunning()) {
             return TerminalInputDecision.action(TerminalInputAction.INTERRUPT);
