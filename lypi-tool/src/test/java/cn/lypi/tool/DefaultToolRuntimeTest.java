@@ -787,6 +787,58 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void explicitSandboxEscalationKeepsSecuritySuggestedUpdate() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            requestedDecision.set(decision);
+            return PermissionGateResult.allow(decision.suggestedUpdate());
+        };
+        PermissionUpdate update = prefixUpdate("mvn -pl");
+        SecurityRuntimePort security = (request, context) -> new PermissionDecision(
+            PermissionBehavior.ASK,
+            PermissionDecisionReason.BASH_RISK,
+            "默认执行模式下 Bash 写入、网络或远端变更需要用户确认。",
+            Optional.of(update),
+            Map.of("bashRisk", new BashRiskAnalysis(
+                "mvn -pl lypi-security test",
+                List.of("mvn -pl lypi-security test"),
+                List.of(),
+                BashRiskLevel.MEDIUM,
+                List.of("包含未登记命令"),
+                true
+            ))
+        );
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate,
+            ToolExecutionEventPublisher.noop(),
+            new FilePermissionUpdateStore(tempDir)
+        );
+        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "text", "done",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host access."
+            ), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+        assertTrue(requestedDecision.get().message().contains("沙箱提权执行"));
+        assertTrue(requestedDecision.get().suggestedUpdate().isPresent());
+        assertEquals(update, requestedDecision.get().suggestedUpdate().orElseThrow());
+    }
+
+    @Test
     void acceptEditsAsksForExplicitSandboxEscalation() {
         AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         PermissionGate gate = (request, tool, context, decision) -> {

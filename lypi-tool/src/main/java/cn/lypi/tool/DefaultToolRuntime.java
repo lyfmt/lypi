@@ -626,7 +626,14 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             }
             Optional<PermissionDecision> sandboxEscalationDecision = sandboxEscalationPolicy.decide(request, toolContext);
             if (sandboxEscalationDecision.isPresent()) {
-                effectiveDecision = effectiveDecision(isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"), sandboxEscalationDecision.get());
+                PermissionDecision sandboxDecision = withSuggestedUpdate(
+                    sandboxEscalationDecision.get(),
+                    securityDecision.suggestedUpdate()
+                );
+                effectiveDecision = effectiveDecision(
+                    isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"),
+                    sandboxDecision
+                );
             } else if (!isDeny(effectiveDecision)) {
                 Optional<PermissionDecision> bashSandboxRiskDecision = bashSandboxRiskPolicy.decide(request, toolContext, securityDecision);
                 if (bashSandboxRiskDecision.isPresent()) {
@@ -1047,6 +1054,22 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             message,
             Optional.empty(),
             Map.of()
+        );
+    }
+
+    private PermissionDecision withSuggestedUpdate(
+        PermissionDecision decision,
+        Optional<PermissionUpdate> suggestedUpdate
+    ) {
+        if (decision == null || suggestedUpdate == null || suggestedUpdate.isEmpty() || decision.suggestedUpdate().isPresent()) {
+            return decision;
+        }
+        return new PermissionDecision(
+            decision.behavior(),
+            decision.reason(),
+            decision.message(),
+            suggestedUpdate,
+            decision.metadata()
         );
     }
 
