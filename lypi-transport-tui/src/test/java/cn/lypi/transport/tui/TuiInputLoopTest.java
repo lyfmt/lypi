@@ -229,8 +229,10 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.CTRL_O);
 
         assertEquals("draft", loop.draft());
-        assertTrue(frames.get(1).contains("11 | line 11"));
-        assertTrue(!frames.get(2).contains("11 | line 11"));
+        assertTrue(frames.get(0).contains("tools: read x1 (Ctrl+O details)"));
+        assertTrue(frames.get(1).contains("done read src/Large.java:1-20"));
+        assertTrue(!frames.get(1).contains("11 | line 11"));
+        assertTrue(frames.get(2).contains("tools: read x1 (Ctrl+O details)"));
     }
 
     @Test
@@ -281,8 +283,10 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.CTRL_O);
         loop.acceptKey(TerminalKey.CTRL_O);
 
-        assertTrue(frames.get(0).contains("11 | line 11"));
+        assertTrue(frames.get(0).contains("done read src/Large.java:1-20"));
+        assertTrue(!frames.get(0).contains("11 | line 11"));
         assertTrue(frames.get(0).contains("stdout: line 1"));
+        assertTrue(frames.get(1).contains("tools: read x1 (Ctrl+O details)"));
         assertTrue(!frames.get(1).contains("11 | line 11"));
         assertTrue(!frames.get(1).contains("stdout: line 1"));
         assertTrue(frames.get(1).contains("stdout: line 7"));
@@ -321,7 +325,8 @@ class TuiInputLoopTest {
 
         loop.acceptKey(TerminalKey.EXPAND_TOOLS);
 
-        assertTrue(frames.getFirst().contains("11 | line 11"));
+        assertTrue(frames.getFirst().contains("done read src/Large.java:1-20"));
+        assertTrue(!frames.getFirst().contains("11 | line 11"));
     }
 
     @Test

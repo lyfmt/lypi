@@ -9,7 +9,9 @@ import cn.lypi.contracts.tui.TuiThinkingBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 final class TuiRenderer {
     private static final String INPUT_BACKGROUND = "\033[48;5;236m";
@@ -87,7 +89,22 @@ final class TuiRenderer {
 
     private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded) {
         List<String> lines = new ArrayList<>();
-        for (TuiBlock block : blocks) {
+        for (int index = 0; index < blocks.size(); index++) {
+            TuiBlock block = blocks.get(index);
+            if (block instanceof TuiToolBlock tool
+                && !toolOutputExpanded
+                && toolDisplayRenderers.isReadLikeTool(tool)) {
+                List<TuiToolBlock> group = new ArrayList<>();
+                group.add(tool);
+                while (index + 1 < blocks.size()
+                    && blocks.get(index + 1) instanceof TuiToolBlock nextTool
+                    && toolDisplayRenderers.isReadLikeTool(nextTool)) {
+                    group.add(nextTool);
+                    index++;
+                }
+                lines.addAll(readLikeToolSummaryLines(group, width));
+                continue;
+            }
             String text = switch (block) {
                 case TuiMessageBlock message -> null;
                 case TuiThinkingBlock thinking -> null;
@@ -110,6 +127,17 @@ final class TuiRenderer {
             }
         }
         return lines;
+    }
+
+    private List<String> readLikeToolSummaryLines(List<TuiToolBlock> tools, int width) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (TuiToolBlock tool : tools) {
+            counts.merge(tool.toolName(), 1, Integer::sum);
+        }
+        String summary = counts.entrySet().stream()
+            .map(entry -> entry.getKey() + " x" + entry.getValue())
+            .collect(java.util.stream.Collectors.joining(", "));
+        return wrap("tools: " + summary + " (Ctrl+O details)", width);
     }
 
     private List<String> transcriptLines(TuiViewModel view, int width, boolean toolOutputExpanded) {

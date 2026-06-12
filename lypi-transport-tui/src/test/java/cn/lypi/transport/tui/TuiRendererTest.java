@@ -542,13 +542,13 @@ class TuiRendererTest {
 
         List<String> lines = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
 
-        assertTrue(lines.contains("done read src/App.java:1-80"));
+        assertTrue(lines.contains("tools: read x1 (Ctrl+O details)"));
         assertTrue(lines.contains("done edit src/App.java +1 -1"));
         assertTrue(lines.contains("running custom_tool payload"));
     }
 
     @Test
-    void expandedToolOutputShowsMorePreviewLines() {
+    void readToolOutputNeverShowsFileContentAndExpandsToInvocationOnly() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(30);
         TuiViewModel view = new TuiViewModel(
@@ -573,8 +573,95 @@ class TuiRendererTest {
         List<String> collapsed = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
         List<String> expanded = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), true).lines();
 
+        assertFalse(collapsed.contains("  1 | line 1"));
         assertFalse(collapsed.contains("  11 | line 11"));
-        assertTrue(expanded.contains("  11 | line 11"));
+        assertTrue(collapsed.contains("tools: read x1 (Ctrl+O details)"));
+        assertTrue(expanded.contains("done read src/Large.java:1-20"));
+        assertFalse(expanded.contains("  1 | line 1"));
+        assertFalse(expanded.contains("  11 | line 11"));
+    }
+
+    @Test
+    void writeToolStillShowsContentPreview() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(20);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:write",
+                "msg_1",
+                "toolu_write",
+                "write",
+                TuiToolState.DONE,
+                "src/App.java",
+                "class App {}\n",
+                false
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.renderFrame(view, screen, new TuiLayout(80, 20), "", -1, List.of(), false).lines();
+
+        assertTrue(lines.contains("done write src/App.java"));
+        assertTrue(lines.contains("  class App {}"));
+    }
+
+    @Test
+    void searchToolsCollapseToCountsAndExpandToInvocationOnly() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(20);
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiToolBlock(
+                    "tool:glob",
+                    "msg_1",
+                    "toolu_glob",
+                    "glob",
+                    TuiToolState.DONE,
+                    "{path=., pattern=**/*}",
+                    "matched AGENTS.md\nmatched Solution.java\nmatched application.yml",
+                    false
+                ),
+                new TuiToolBlock(
+                    "tool:read",
+                    "msg_1",
+                    "toolu_read",
+                    "read",
+                    TuiToolState.DONE,
+                    "AGENTS.md:1-200",
+                    "File: AGENTS.md\n1 | secret content",
+                    false
+                ),
+                new TuiToolBlock(
+                    "tool:grep",
+                    "msg_1",
+                    "toolu_grep",
+                    "grep",
+                    TuiToolState.RUNNING,
+                    "{pattern=apiKey, path=.}",
+                    "matched application.yml",
+                    true
+                )
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> collapsed = renderer.renderFrame(view, screen, new TuiLayout(80, 20), "", -1, List.of(), false).lines();
+        List<String> expanded = renderer.renderFrame(view, screen, new TuiLayout(80, 20), "", -1, List.of(), true).lines();
+
+        assertTrue(collapsed.contains("tools: glob x1, read x1, grep x1 (Ctrl+O details)"));
+        assertFalse(collapsed.contains("  matched AGENTS.md"));
+        assertFalse(collapsed.contains("File: AGENTS.md"));
+        assertTrue(expanded.contains("done glob {path=., pattern=**/*}"));
+        assertTrue(expanded.contains("done read AGENTS.md:1-200"));
+        assertTrue(expanded.contains("running grep {pattern=apiKey, path=.}"));
+        assertFalse(expanded.contains("  matched AGENTS.md"));
+        assertFalse(expanded.contains("File: AGENTS.md"));
     }
 
     @Test

@@ -21,13 +21,12 @@ final class ToolDisplayRendererRegistry {
         ToolDisplayRenderer fallback = new FallbackToolDisplayRenderer();
         Map<String, ToolDisplayRenderer> renderers = new HashMap<>();
         ToolDisplayRenderer bash = new BashToolDisplayRenderer();
-        ToolDisplayRenderer file = new FilePreviewToolDisplayRenderer();
         ToolDisplayRenderer edit = new EditToolDisplayRenderer();
         ToolDisplayRenderer search = new SearchToolDisplayRenderer();
         renderers.put("bash", bash);
         renderers.put("shell", bash);
-        renderers.put("read", file);
-        renderers.put("write", file);
+        renderers.put("read", new ReadToolDisplayRenderer());
+        renderers.put("write", new WriteToolDisplayRenderer());
         renderers.put("edit", edit);
         renderers.put("grep", search);
         renderers.put("glob", search);
@@ -36,6 +35,11 @@ final class ToolDisplayRendererRegistry {
 
     ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
         return renderers.getOrDefault(normalize(block.toolName()), fallback).render(block, expanded);
+    }
+
+    boolean isReadLikeTool(TuiToolBlock block) {
+        String toolName = normalize(block.toolName());
+        return "read".equals(toolName) || "grep".equals(toolName) || "glob".equals(toolName);
     }
 
     private static String normalize(String value) {
@@ -89,7 +93,18 @@ final class ToolDisplayRendererRegistry {
         }
     }
 
-    private static final class FilePreviewToolDisplayRenderer implements ToolDisplayRenderer {
+    private static final class ReadToolDisplayRenderer implements ToolDisplayRenderer {
+        @Override
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
+            return new ToolDisplayModel(
+                stateLabel(block.state()) + " " + block.toolName() + " " + label(block),
+                List.of(),
+                List.of()
+            );
+        }
+    }
+
+    private static final class WriteToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
         public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
             return new ToolDisplayModel(
@@ -125,11 +140,10 @@ final class ToolDisplayRendererRegistry {
     private static final class SearchToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
         public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
-            int collapsedLimit = "glob".equalsIgnoreCase(block.toolName()) ? 20 : 15;
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " " + block.toolName() + " " + label(block),
                 List.of(),
-                firstLines(detailLines(block), expanded ? 120 : collapsedLimit)
+                List.of()
             );
         }
     }
