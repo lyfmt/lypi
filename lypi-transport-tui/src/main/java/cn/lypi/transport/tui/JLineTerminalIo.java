@@ -2,6 +2,7 @@ package cn.lypi.transport.tui;
 
 import java.io.IOException;
 import org.jline.terminal.Attributes;
+import org.jline.terminal.Attributes.LocalFlag;
 import org.jline.terminal.Terminal;
 
 final class JLineTerminalIo implements TerminalIo {
@@ -14,6 +15,10 @@ final class JLineTerminalIo implements TerminalIo {
     @Override
     public AutoCloseable enterRawMode() {
         Attributes previous = terminal.enterRawMode();
+        Attributes interactive = new Attributes(previous);
+        interactive.setLocalFlag(LocalFlag.ECHO, false);
+        interactive.setLocalFlag(LocalFlag.ECHOCTL, false);
+        terminal.setAttributes(interactive);
         return () -> terminal.setAttributes(previous);
     }
 
