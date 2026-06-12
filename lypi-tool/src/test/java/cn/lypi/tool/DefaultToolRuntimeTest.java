@@ -406,6 +406,33 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void securityDenyOverridesExplicitSandboxEscalationRequest() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.DENY, "security denied");
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "text", "done",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host access."
+            ), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("security denied"));
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, executeCalls.get());
+    }
+
+    @Test
     void sandboxEscalationDeniedByUserReturnsPermissionError() {
         PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.deny("user denied escalation");
         DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());

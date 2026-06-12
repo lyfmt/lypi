@@ -371,7 +371,7 @@ final class SlashCommandRouter {
 
     private SlashCommandResult routeMode(SlashCommandArguments arguments, String reason) {
         if (arguments.positionals().size() != 1) {
-            return SlashCommandResult.error("usage: /mode <plan|execute|bypass>");
+            return SlashCommandResult.error("usage: /mode <plan|execute>");
         }
         AgentMode mode = parseEnum(AgentMode.class, arguments.positionals().getFirst());
         if (mode == null) {
@@ -383,7 +383,7 @@ final class SlashCommandRouter {
 
     private SlashCommandResult routePermissionMode(SlashCommandArguments arguments, String reason) {
         if (arguments.positionals().size() != 1) {
-            return SlashCommandResult.error("usage: /permission-mode <plan|default-execute|accept-edits|dont-ask|bypass>");
+            return SlashCommandResult.error("usage: /permission-mode <default-execute|accept-edits|bypass>");
         }
         PermissionMode mode = parseEnum(PermissionMode.class, arguments.positionals().getFirst());
         if (mode == null) {
