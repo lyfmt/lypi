@@ -21,6 +21,35 @@ class TerminalFrameRendererTest {
     }
 
     @Test
+    void firstFrameWithStartupPaddingClearsScreenPadsToViewportBottomAndPositionsHardwareCursor() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 4;
+        TerminalFrameRenderer renderer = TerminalFrameRenderer.withStartupPadding(io, rows -> {
+        });
+
+        renderer.render(List.of("hello", "world|CURSOR|"));
+
+        assertEquals("\033[?2026h\033[2J\033[H\n\nhello\nworld\033[4;6H\033[?2026l", io.output.toString());
+    }
+
+    @Test
+    void startupPaddingRemainsPartOfLinearScrollbackAfterFirstFrame() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 4;
+        TerminalFrameRenderer renderer = TerminalFrameRenderer.withStartupPadding(io, rows -> {
+        });
+
+        renderer.render(List.of("hello", "> |CURSOR|"));
+        io.output.setLength(0);
+        renderer.render(List.of("hello", "assistant", "> |CURSOR|"));
+
+        assertTrue(io.output.toString().contains("\r\n"));
+        assertTrue(io.output.toString().contains("\033[2Kassistant"));
+        assertTrue(io.output.toString().contains("\033[2K> "));
+        assertTrue(io.output.toString().endsWith("\033[4;3H\033[?2026l"));
+    }
+
+    @Test
     void terminalWritesTruncateLongPhysicalLinesToTerminalWidth() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.width = 10;

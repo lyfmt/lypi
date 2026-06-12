@@ -108,7 +108,10 @@ class JLineTuiTransportTest {
 
         assertTrue(io.rawModeEntered);
         assertFalse(io.output.toString().contains("\033[?1049h"));
-        assertTrue(io.output.toString().contains("\033[?2026h\033[1;1H\033[2Kerror: boom"));
+        assertTrue(io.output.toString().contains("\033[?2026h\033[2J\033[H"));
+        assertTrue(io.output.toString().contains("error: boom"));
+        assertTrue(io.output.toString().contains("> "));
+        assertTrue(io.output.toString().contains("ses_1"));
 
         transport.close();
 
