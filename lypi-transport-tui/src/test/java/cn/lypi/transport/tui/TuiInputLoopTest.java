@@ -144,6 +144,42 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void escapeInterruptsActiveToolWithoutRequiringInputFocus() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
+        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+
+        loop.setToolRunning(true);
+        loop.acceptKey(TerminalKey.ESC);
+
+        assertEquals(1, submit.interrupts);
+        assertEquals(List.of("esc"), submit.interruptReasons);
+    }
+
+    @Test
+    void escapeInterruptsActiveToolBeforeClosingSlashOverlay() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(3),
+            new TuiLayout(40, 5),
+            null,
+            () -> new SlashCommandPicker(List.of("/model"))
+        );
+
+        loop.acceptText("/");
+        loop.setToolRunning(true);
+        loop.acceptKey(TerminalKey.ESC);
+
+        assertEquals("/", loop.draft());
+        assertEquals(1, submit.interrupts);
+        assertEquals(List.of("esc"), submit.interruptReasons);
+    }
+
+    @Test
     void ctrlCRequestsExitWhenInputIsEmptyAndNoToolIsRunning() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
@@ -734,6 +770,7 @@ class TuiInputLoopTest {
         private final List<String> submitted = new ArrayList<>();
         private final List<String> permissionOptions = new ArrayList<>();
         private final List<String> resumes = new ArrayList<>();
+        private final List<String> interruptReasons = new ArrayList<>();
         private int interrupts;
         private int exits;
 
@@ -745,6 +782,7 @@ class TuiInputLoopTest {
         @Override
         public void requestInterrupt(String reason) {
             interrupts++;
+            interruptReasons.add(reason);
         }
 
         @Override

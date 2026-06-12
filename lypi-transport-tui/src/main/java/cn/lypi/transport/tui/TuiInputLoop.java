@@ -33,7 +33,7 @@ final class TuiInputLoop {
     private ResumeBranchTreeSelector resumeBranchTreeSelector;
     private String resumeSessionId;
     private boolean slashOverlayClosed;
-    private boolean toolRunning;
+    private boolean interruptibleRunning;
     private boolean exitRequested;
     private String permissionRequestId = "";
     private String selectedPermissionOptionId = "";
@@ -151,6 +151,11 @@ final class TuiInputLoop {
             }
             return;
         }
+        if (decision.action() == TerminalInputAction.INTERRUPT) {
+            submitHandler.requestInterrupt(key == TerminalKey.ESC ? "esc" : "interrupt");
+            render();
+            return;
+        }
         if (resumeOverlayOpen()) {
             handleResumeOverlayKey(key);
             return;
@@ -238,7 +243,11 @@ final class TuiInputLoop {
     }
 
     void setToolRunning(boolean toolRunning) {
-        this.toolRunning = toolRunning;
+        setInterruptibleRunning(toolRunning);
+    }
+
+    void setInterruptibleRunning(boolean interruptibleRunning) {
+        this.interruptibleRunning = interruptibleRunning;
     }
 
     private void submitDraft() {
@@ -268,7 +277,7 @@ final class TuiInputLoop {
             render();
             return;
         }
-        if (toolRunning) {
+        if (interruptibleRunning) {
             submitHandler.requestInterrupt("ctrl-c");
         } else {
             exitRequested = true;
@@ -280,7 +289,7 @@ final class TuiInputLoop {
     private TerminalInputContext inputContext(Optional<PermissionPromptView> prompt) {
         return new TerminalInputContext(
             editor.text(),
-            toolRunning,
+            interruptibleRunning,
             prompt.isPresent(),
             prompt.isPresent() ? "permission" : "editor",
             "editor",
@@ -572,7 +581,7 @@ final class TuiInputLoop {
     private TuiViewModel emptyView() {
         return new TuiViewModel(
             List.of(),
-            new StatusBarState("", "", toolRunning ? "running" : "ready", ""),
+            new StatusBarState("", "", interruptibleRunning ? "running" : "ready", ""),
             List.of(),
             Optional.empty(),
             Optional.empty()

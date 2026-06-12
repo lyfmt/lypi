@@ -29,6 +29,16 @@ class TerminalInputPolicyTest {
     }
 
     @Test
+    void escapeInterruptsRunningToolWithoutPermissionOverlay() {
+        TerminalInputPolicy policy = new TerminalInputPolicy();
+        TerminalInputContext context = new TerminalInputContext("", true, false, "chat", "chat", "cancel");
+
+        TerminalInputDecision decision = policy.decide(TerminalKey.ESC, context);
+
+        assertEquals(TerminalInputAction.INTERRUPT, decision.action());
+    }
+
+    @Test
     void escapeAndCtrlCCancelPermissionOverlay() {
         TerminalInputPolicy policy = new TerminalInputPolicy();
         TerminalInputContext context = new TerminalInputContext("", true, true, "permission", "editor", "cancel_once");
