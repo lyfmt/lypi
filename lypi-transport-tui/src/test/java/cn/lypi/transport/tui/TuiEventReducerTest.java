@@ -750,6 +750,55 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void messageEndSnapshotReusesStreamingTextBlockWhenThinkingPrecedesText() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new MessageStartEvent(
+            "ses_1",
+            "msg_assistant",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            Map.of("streaming", true, "kindProvisional", true),
+            NOW
+        ));
+        reducer.reduce(new MessageDeltaEvent(
+            "ses_1",
+            "msg_assistant",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "msg_assistant:text:0",
+            ContentBlockKind.TEXT,
+            "answer",
+            false,
+            Map.of(),
+            NOW
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_assistant",
+            MessageRole.ASSISTANT,
+            MessageKind.ERROR,
+            List.of(
+                new MessageBlockSnapshot("msg_assistant:thinking:0", ContentBlockKind.THINKING, "thinking", Map.of()),
+                new MessageBlockSnapshot("msg_assistant:text:0", ContentBlockKind.TEXT, "answer", Map.of()),
+                new MessageBlockSnapshot("msg_assistant:error:0", ContentBlockKind.ERROR, "Provider HTTP request failed.", Map.of())
+            ),
+            Optional.empty(),
+            Optional.of("error"),
+            Map.of("streaming", true),
+            NOW
+        ));
+
+        List<TuiMessageBlock> messages = reducer.view().blocks().stream()
+            .filter(TuiMessageBlock.class::isInstance)
+            .map(TuiMessageBlock.class::cast)
+            .toList();
+        assertEquals(1, messages.size());
+        assertEquals("msg_assistant:text:0", messages.getFirst().blockId());
+        assertEquals("answer", messages.getFirst().content());
+    }
+
+    @Test
     void toolCallDeltaCreatesPendingToolBlockThenToolStartUpdatesItInPlace() {
         TuiEventReducer reducer = new TuiEventReducer();
 

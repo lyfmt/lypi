@@ -629,7 +629,12 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private String blockId(String messageId, ContentBlockKind kind, int index) {
-        return messageId + ":" + kind.name().toLowerCase() + ":" + index;
+        return switch (kind) {
+            case TEXT -> textBlockId(messageId);
+            case THINKING -> thinkingBlockId(messageId);
+            case ERROR -> errorBlockId(messageId);
+            default -> messageId + ":" + kind.name().toLowerCase() + ":" + index;
+        };
     }
 
     private void publishAssistantDelta(MessageDeltaEvent delta) {
