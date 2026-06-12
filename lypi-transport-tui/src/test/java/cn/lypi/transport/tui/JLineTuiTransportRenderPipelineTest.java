@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
@@ -16,6 +17,7 @@ import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
+import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.tui.SessionRuntimeState;
@@ -316,6 +318,50 @@ class JLineTuiTransportRenderPipelineTest {
         ));
 
         assertEquals(inputContent("> dra|CURSOR|" + INPUT_CURSOR + "ft"), inputLine(frames.getLast()));
+    }
+
+    @Test
+    void eventRerenderPreservesExpandedToolOutput() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            80,
+            8,
+            new QueueInputSource("\u000f"),
+            new RecordingSubmitHandler()
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new ToolStartEvent(
+            "ses_1",
+            "toolu_read",
+            "msg_1",
+            "turn_1",
+            "read",
+            "Read",
+            "src/Large.java:1-20",
+            java.util.Map.of("path", "src/Large.java"),
+            Instant.parse("2026-06-09T00:00:00Z"),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        events.emit(new ToolProgressEvent(
+            "ses_1",
+            "toolu_read",
+            ToolProgress.output("stdout", "1 | line 1\n2 | line 2\n"),
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+        transport.drainInputForTest();
+        events.emit(new ToolProgressEvent(
+            "ses_1",
+            "toolu_read",
+            ToolProgress.output("stdout", "3 | line 3\n"),
+            Instant.parse("2026-06-09T00:00:02Z")
+        ));
+
+        List<String> latest = frames.getLast();
+        assertTrue(latest.contains("running read src/Large.java:1-20"));
+        assertFalse(latest.contains("tools: read x1 (Ctrl+O details)"));
     }
 
     @Test

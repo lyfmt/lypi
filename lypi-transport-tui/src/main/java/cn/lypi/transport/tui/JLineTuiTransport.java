@@ -41,6 +41,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final FrameSink frameSink;
     private final TerminalInputPump inputPump;
     private final TuiInputLoop inputLoop;
+    private final TuiRenderOptions renderOptions;
     private final TerminalSession terminalSession;
     private final DiffViewProvider diffViewProvider;
     private SessionRuntimeState runtimeState;
@@ -59,6 +60,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.frameSink = null;
         this.inputPump = null;
         this.inputLoop = null;
+        this.renderOptions = new TuiRenderOptions();
         this.terminalSession = null;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.runtimeState = null;
@@ -79,6 +81,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.frameSink = frameSink;
         this.inputPump = null;
         this.inputLoop = null;
+        this.renderOptions = new TuiRenderOptions();
         this.terminalSession = terminalSession;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.runtimeState = null;
@@ -105,6 +108,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.screen = new TuiScreen(Math.max(1, safeHeight - 2));
         this.layout = new TuiLayout(safeWidth, safeHeight);
         this.frameSink = frameSink;
+        this.renderOptions = new TuiRenderOptions();
         this.inputLoop = new TuiInputLoop(
             submitHandler,
             frameSink,
@@ -115,7 +119,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             slashPickerSupplier,
             resumeController,
             this::resumeRuntimeState,
-            skillIndexSupplier
+            skillIndexSupplier,
+            renderOptions
         );
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
         this.terminalSession = terminalSession;
@@ -613,7 +618,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         FrameSink frameSink = new FrameSink() {
             @Override
             public void render(List<String> lines) {
-                render(TuiRenderFrame.transcriptOnly(lines));
+                render(TuiRenderFrame.of(lines));
             }
 
             @Override
@@ -865,7 +870,15 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private void renderCurrentFrame() {
         TuiViewModel view = reducer.view();
         syncInputLoopToolState(view);
-        frameSink.render(tuiRenderer.renderFrame(view, screen, layout, currentDraft(), currentCursor()));
+        frameSink.render(tuiRenderer.renderFrame(
+            view,
+            screen,
+            layout,
+            currentDraft(),
+            currentCursor(),
+            List.of(),
+            renderOptions.toolOutputExpanded()
+        ));
     }
 
     private void refreshDiffAfterToolEnd(AgentEvent event) {

@@ -216,7 +216,7 @@ class JLineTuiTransportTest {
         }
 
         String output = io.output.toString();
-        assertTrue(output.contains("\r\n"));
+        assertFalse(output.contains("\r\n"));
         assertFalse(output.matches("(?s).*\\033\\[1;\\d+r.*"));
         assertTrue(output.contains("\033[2K\033[48;5;236m> "));
         assertTrue(output.contains("\033[2Kses_1 gpt-5.4"));

@@ -32,6 +32,7 @@ final class TuiInputLoop {
     private final Supplier<SkillIndex> skillIndexSupplier;
     private final ResumeSessionController resumeController;
     private final Consumer<SessionRuntimeState> resumeStateConsumer;
+    private final TuiRenderOptions renderOptions;
     private SlashCommandPicker slashPicker;
     private SkillMentionToken skillToken;
     private int skillSelectedIndex;
@@ -43,7 +44,6 @@ final class TuiInputLoop {
     private boolean slashOverlayClosed;
     private boolean interruptibleRunning;
     private boolean exitRequested;
-    private boolean toolOutputExpanded;
     private String permissionRequestId = "";
     private String selectedPermissionOptionId = "";
 
@@ -119,6 +119,34 @@ final class TuiInputLoop {
         Consumer<SessionRuntimeState> resumeStateConsumer,
         Supplier<SkillIndex> skillIndexSupplier
     ) {
+        this(
+            submitHandler,
+            frameSink,
+            renderer,
+            screen,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            skillIndexSupplier,
+            new TuiRenderOptions()
+        );
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        FrameSink frameSink,
+        TuiRenderer renderer,
+        TuiScreen screen,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier,
+        TuiRenderOptions renderOptions
+    ) {
         this.submitHandler = submitHandler;
         this.frameSink = frameSink;
         this.renderer = renderer;
@@ -131,6 +159,7 @@ final class TuiInputLoop {
         this.skillIndexSupplier = skillIndexSupplier == null ? () -> new SkillIndex(List.of(), List.of()) : skillIndexSupplier;
         this.resumeController = resumeController;
         this.resumeStateConsumer = resumeStateConsumer;
+        this.renderOptions = renderOptions == null ? new TuiRenderOptions() : renderOptions;
     }
 
     void acceptText(String text) {
@@ -268,7 +297,7 @@ final class TuiInputLoop {
             case MOVE_WORD_RIGHT -> editor.moveWordRight();
             case PREVIOUS_HISTORY -> editor.previousHistory();
             case NEXT_HISTORY -> editor.nextHistory();
-            case TOGGLE_TOOL_OUTPUT_EXPANDED, EXPAND_TOOLS -> toolOutputExpanded = !toolOutputExpanded;
+            case TOGGLE_TOOL_OUTPUT_EXPANDED, EXPAND_TOOLS -> renderOptions.toggleToolOutputExpanded();
             default -> {
             }
         }
@@ -366,7 +395,7 @@ final class TuiInputLoop {
             editor.text(),
             editor.cursor(),
             overlayLines(),
-            toolOutputExpanded
+            renderOptions.toolOutputExpanded()
         ));
     }
 

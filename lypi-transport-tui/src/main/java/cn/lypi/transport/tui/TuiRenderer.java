@@ -71,8 +71,8 @@ final class TuiRenderer {
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
             .map(line -> AnsiWidth.truncate(line, layout.width()))
             .toList();
-        int chromeLineCount = inputBlock.lines().size() + overlay.size() + 1;
-        int transcriptLineBudget = Math.max(0, layout.height() - chromeLineCount);
+        int bottomUiLineCount = inputBlock.lines().size() + overlay.size() + 1;
+        int transcriptLineBudget = Math.max(0, layout.height() - bottomUiLineCount);
         int effectiveTranscriptBudget = toolOutputExpanded ? transcriptLineBudget : Integer.MAX_VALUE;
         List<String> transcript = transcriptLines(view, layout.width(), toolOutputExpanded, effectiveTranscriptBudget);
         screen.setTranscript(transcript);
@@ -82,7 +82,7 @@ final class TuiRenderer {
         lines.addAll(inputBlock.lines());
         lines.addAll(overlay);
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
-        return new TuiRenderFrame(lines, chromeLineCount);
+        return new TuiRenderFrame(lines);
     }
 
     private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded) {
