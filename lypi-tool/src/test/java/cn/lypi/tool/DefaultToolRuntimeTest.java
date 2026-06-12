@@ -27,6 +27,7 @@ import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionMode;
@@ -275,6 +276,62 @@ class DefaultToolRuntimeTest {
         assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
         assertEquals("security ask", requestedDecision.get().message());
         assertEquals("done", result.newMessages().getFirst().content().getFirst().text());
+    }
+
+    @Test
+    void planModeAllowsReadOnlyTools() {
+        AtomicInteger securityCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> {
+            securityCalls.incrementAndGet();
+            return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+        };
+        DefaultToolRuntime runtime = new DefaultToolRuntime(security);
+        runtime.register(TestTools.echo("read", List.of(), true, true, false));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "read", Map.of("text", "ok"), "msg_1")),
+            TestTools.context(AgentMode.PLAN, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(1, securityCalls.get());
+        assertEquals("ok", result.newMessages().getFirst().content().getFirst().text());
+    }
+
+    @Test
+    void planModeRejectsNonReadOnlyToolsBeforePermissionsAndExecution() {
+        AtomicInteger securityCalls = new AtomicInteger();
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger toolPermissionCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> {
+            securityCalls.incrementAndGet();
+            return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+        };
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        Tool<Map<String, Object>, String> writeTool = TestTools.permissionAndExecutionCountingTool(
+            "write",
+            PermissionBehavior.ALLOW,
+            toolPermissionCalls,
+            executeCalls
+        );
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(writeTool);
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "blocked"), "msg_1")),
+            TestTools.context(AgentMode.PLAN, PermissionMode.BYPASS)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("AgentMode.PLAN"));
+        assertEquals(0, securityCalls.get());
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, toolPermissionCalls.get());
+        assertEquals(0, executeCalls.get());
     }
 
     @Test

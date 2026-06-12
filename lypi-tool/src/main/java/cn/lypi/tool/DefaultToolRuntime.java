@@ -12,6 +12,7 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.tool.InterruptBehavior;
@@ -483,6 +484,13 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 finalResult = errorResult(request.toolUseId(), "工具输入校验失败: " + joinMessages(inputResult));
                 return finalResult;
             }
+            if (isPlanMode(toolContext) && !tool.isReadOnly(input)) {
+                finalResult = errorResult(
+                    request.toolUseId(),
+                    "AgentMode.PLAN 禁止执行非只读工具: " + tool.name()
+                );
+                return finalResult;
+            }
 
             PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
             PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
@@ -528,6 +536,17 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return result.status() == PermissionGateResult.Status.ABORT
             ? ToolExecutionStatus.CANCELLED
             : ToolExecutionStatus.FAILED;
+    }
+
+    private boolean isPlanMode(ToolUseContext context) {
+        Object value = context.metadata().get(ToolRuntimeContextFactory.METADATA_AGENT_MODE);
+        if (value instanceof AgentMode agentMode) {
+            return agentMode == AgentMode.PLAN;
+        }
+        if (value instanceof String agentMode) {
+            return AgentMode.valueOf(agentMode) == AgentMode.PLAN;
+        }
+        return false;
     }
 
     private ExecutedToolResult executeTool(

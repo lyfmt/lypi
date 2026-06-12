@@ -142,6 +142,27 @@ final class TestTools {
         };
     }
 
+    static Tool<Map<String, Object>, String> permissionAndExecutionCountingTool(
+        String name,
+        PermissionBehavior behavior,
+        AtomicInteger permissionCalls,
+        AtomicInteger executionCalls
+    ) {
+        return new EchoTool(name, List.of(), false, false, true, Duration.ZERO) {
+            @Override
+            public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
+                permissionCalls.incrementAndGet();
+                return decision(behavior, "tool permission");
+            }
+
+            @Override
+            public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+                executionCalls.incrementAndGet();
+                return super.execute(input, context, progress);
+            }
+        };
+    }
+
     static ToolResult<String> result(String toolUseId, String text, boolean error) {
         AgentMessage message = new AgentMessage(
             "msg_" + toolUseId,
@@ -165,12 +186,16 @@ final class TestTools {
     }
 
     static cn.lypi.contracts.context.ContextSnapshot context(PermissionMode permissionMode) {
+        return context(AgentMode.EXECUTE, permissionMode);
+    }
+
+    static cn.lypi.contracts.context.ContextSnapshot context(AgentMode agentMode, PermissionMode permissionMode) {
         return new cn.lypi.contracts.context.ContextSnapshot(
             new SystemPrompt("system", List.of(), "hash"),
             List.of(),
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
-            AgentMode.EXECUTE,
+            agentMode,
             permissionMode,
             new cn.lypi.contracts.context.ContextBudget(
                 0,
