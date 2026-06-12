@@ -15,12 +15,14 @@ import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private String currentSessionId;
@@ -28,6 +30,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private final EventBus events;
     private final Executor executor;
     private final SlashCommandRouter slashCommandRouter;
+    private final Consumer<SessionRuntimeState> runtimeStateConsumer;
     private MutableAbortSignal activeSignal;
 
     RuntimeTuiSubmitHandler(String sessionId, AgentCorePort core, EventBus events) {
@@ -45,12 +48,24 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         Executor executor,
         List<SlashCommand> slashCommands
     ) {
+        this(sessionId, core, events, executor, slashCommands, null);
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        List<SlashCommand> slashCommands,
+        Consumer<SessionRuntimeState> runtimeStateConsumer
+    ) {
         this(
             sessionId,
             core,
             events,
             executor,
-            slashCommands == null || slashCommands.isEmpty() ? null : new SlashCommandRouter(slashCommands)
+            slashCommands == null || slashCommands.isEmpty() ? null : new SlashCommandRouter(slashCommands),
+            runtimeStateConsumer
         );
     }
 
@@ -61,11 +76,23 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         Executor executor,
         SlashCommandRouter slashCommandRouter
     ) {
+        this(sessionId, core, events, executor, slashCommandRouter, null);
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        SlashCommandRouter slashCommandRouter,
+        Consumer<SessionRuntimeState> runtimeStateConsumer
+    ) {
         this.currentSessionId = sessionId;
         this.core = core;
         this.events = events;
         this.executor = executor;
         this.slashCommandRouter = slashCommandRouter;
+        this.runtimeStateConsumer = runtimeStateConsumer;
     }
 
     @Override
@@ -75,7 +102,8 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             SlashCommandResult result = slashCommandRouter.route(routedInput);
             result.message().ifPresent(this::publishSlashCommandError);
             if (result.consumed()) {
-                if (result.stateChanged() && slashCommandRouter != null) {
+                result.runtimeState().ifPresent(this::switchRuntimeState);
+                if (result.stateChanged() && result.runtimeState().isEmpty() && slashCommandRouter != null) {
                     publishSessionState();
                 }
                 result.notice().ifPresent(this::publishSlashCommandNotice);
@@ -152,6 +180,16 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             return;
         }
         currentSessionId = sessionId;
+    }
+
+    private void switchRuntimeState(SessionRuntimeState state) {
+        if (state == null || state.sessionId() == null || state.sessionId().isBlank()) {
+            return;
+        }
+        currentSessionId = state.sessionId();
+        if (runtimeStateConsumer != null) {
+            runtimeStateConsumer.accept(state);
+        }
     }
 
     private void publishSlashOutput(String commandName, String output) {

@@ -3,6 +3,7 @@ package cn.lypi.boot.runtime;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
@@ -17,17 +18,20 @@ final class JLineTuiTransportLauncher implements TransportLauncher {
     private final JLineTuiTransportFactory factory;
     private final DiffViewProvider diffViewProvider;
     private final ResumeSessionController resumeController;
+    private final NewSessionController newSessionController;
     private final List<SlashCommand> slashCommands;
 
     JLineTuiTransportLauncher(
         JLineTuiTransportFactory factory,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
+        NewSessionController newSessionController,
         List<SlashCommand> slashCommands
     ) {
         this.factory = factory;
         this.diffViewProvider = diffViewProvider;
         this.resumeController = resumeController;
+        this.newSessionController = newSessionController;
         this.slashCommands = slashCommands == null ? List.of() : List.copyOf(slashCommands);
     }
 
@@ -46,6 +50,7 @@ final class JLineTuiTransportLauncher implements TransportLauncher {
                  terminal,
                  diffViewProvider,
                  resumeController,
+                 newSessionController,
                  slashCommands
              )) {
             transport.runUntilExit();

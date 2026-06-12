@@ -36,6 +36,7 @@ import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
@@ -370,7 +371,7 @@ public class LyPiRuntimeAutoConfiguration {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) {
-        return (state, core, events, terminal, diffViewProvider, resumeController, slashCommands) -> JLineTuiTransport.open(
+        return (state, core, events, terminal, diffViewProvider, resumeController, newSessionController, slashCommands) -> JLineTuiTransport.open(
             state,
             core,
             events,
@@ -378,6 +379,7 @@ public class LyPiRuntimeAutoConfiguration {
             diffViewProvider,
             slashCommands,
             resumeController,
+            newSessionController,
             sessionManager,
             resourceRuntime,
             compactionRuntime
@@ -395,6 +397,19 @@ public class LyPiRuntimeAutoConfiguration {
         EventBus eventBus
     ) {
         return new DefaultResumeSessionController(properties.getCwd(), sessionManager, eventBus);
+    }
+
+    /**
+     * 创建默认 new session 控制器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NewSessionController newSessionController(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        EventBus eventBus
+    ) {
+        return new DefaultNewSessionController(properties.getCwd(), sessionManager, eventBus);
     }
 
     /**
@@ -417,12 +432,14 @@ public class LyPiRuntimeAutoConfiguration {
         JLineTuiTransportFactory factory,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
+        NewSessionController newSessionController,
         ObjectProvider<SlashCommand> slashCommands
     ) {
         return new JLineTuiTransportLauncher(
             factory,
             diffViewProvider,
             resumeController,
+            newSessionController,
             slashCommands.orderedStream().toList()
         );
     }

@@ -3,6 +3,7 @@ package cn.lypi.transport.tui;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
@@ -22,6 +23,7 @@ public interface JLineTuiTransportFactory {
         Terminal terminal,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
+        NewSessionController newSessionController,
         List<SlashCommand> slashCommands
     ) throws IOException;
 }

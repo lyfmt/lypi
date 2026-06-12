@@ -11,6 +11,7 @@ import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
@@ -311,6 +312,37 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            terminal,
+            diffViewProvider,
+            slashCommands,
+            resumeController,
+            null,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime
+        );
+    }
+
+    /**
+     * 打开真实 JLine TUI transport，并启用 slash command 路由、resume 和 /new 控制器。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        DiffViewProvider diffViewProvider,
+        List<SlashCommand> slashCommands,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime
+    ) throws IOException {
         JLineTerminalIo io = new JLineTerminalIo(terminal);
         return open(
             state,
@@ -324,6 +356,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             compactionRuntime,
             diffViewProvider,
             resumeController,
+            newSessionController,
             terminal.getWidth(),
             terminal.getHeight()
         );
@@ -385,26 +418,76 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int width,
         int height
     ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            io,
+            inputSource,
+            slashCommands,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            diffViewProvider,
+            resumeController,
+            null,
+            width,
+            height
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        List<SlashCommand> slashCommands,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        int width,
+        int height
+    ) throws IOException {
         SlashCommandRouter router = new SlashCommandRouter(
             state.sessionId(),
             state.cwd(),
             sessionManager,
             resourceRuntime,
             compactionRuntime,
+            newSessionController,
             slashCommands
         );
-        return open(
+        JLineTuiTransport[] holder = new JLineTuiTransport[1];
+        RuntimeTuiSubmitHandler submitHandler = new RuntimeTuiSubmitHandler(
+            state.sessionId(),
+            core,
+            events,
+            command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command),
+            router,
+            runtimeState -> {
+                if (holder[0] != null) {
+                    holder[0].resumeRuntimeState(runtimeState);
+                }
+            }
+        );
+        JLineTuiTransport transport = open(
             state,
             events,
             io,
             inputSource,
-            new RuntimeTuiSubmitHandler(state.sessionId(), core, events, command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command), router),
+            submitHandler,
             () -> new SlashCommandPicker(router.commandNames()),
             diffViewProvider,
             resumeController,
             width,
             height
         );
+        holder[0] = transport;
+        return transport;
     }
 
     static JLineTuiTransport open(

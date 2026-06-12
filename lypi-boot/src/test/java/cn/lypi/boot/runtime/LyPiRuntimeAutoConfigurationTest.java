@@ -82,6 +82,7 @@ import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionBranchTreeView;
 import cn.lypi.contracts.tui.SessionResumeInfo;
@@ -572,6 +573,38 @@ class LyPiRuntimeAutoConfigurationTest {
                 SessionStateEvent state = (SessionStateEvent) events.events.getLast();
                 assertThat(state.sessionId()).isEqualTo("ses_old");
                 assertThat(state.leafId()).isEqualTo(userLeaf.leafId());
+            });
+    }
+
+    @Test
+    void createsNewSessionControllerThatSwitchesToEmptySessionWithDefaultSettings() {
+        SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        RecordingEventBus events = new RecordingEventBus();
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.default-provider=openai",
+                "lypi.ai.default-model=gpt-5-mini",
+                "lypi.runtime.default-provider=openai",
+                "lypi.runtime.default-model=gpt-5-mini",
+                "lypi.runtime.cwd=" + tempDir
+            )
+            .withBean(SessionManagerPort.class, () -> sessionManager)
+            .withBean(EventBus.class, () -> events)
+            .run(context -> {
+                assertThat(context).hasSingleBean(NewSessionController.class);
+
+                SessionRuntimeState state = context.getBean(NewSessionController.class).createNewSession();
+
+                assertThat(state.sessionId()).isNotEqualTo("ses_old");
+                assertThat(sessionManager.currentView().sessionId()).isEqualTo(state.sessionId());
+                assertThat(state.transcript()).isEmpty();
+                assertThat(state.model()).isEqualTo(new ModelSelection("default", "default", ThinkingLevel.MEDIUM));
+                assertThat(state.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
+                assertThat(state.agentMode()).isEqualTo(AgentMode.EXECUTE);
+                assertThat(state.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+                assertThat(events.events).hasAtLeastOneElementOfType(cn.lypi.contracts.event.SessionStartEvent.class);
+                assertThat(events.events).hasAtLeastOneElementOfType(SessionStateEvent.class);
             });
     }
 
