@@ -33,6 +33,7 @@ class TuiBoundaryTest {
         assertEquals(Set.of(
             "lypi-contracts",
             "jline-terminal",
+            "jline-terminal-jna",
             "jline-reader",
             "jline-builtins"
         ), dependencies);

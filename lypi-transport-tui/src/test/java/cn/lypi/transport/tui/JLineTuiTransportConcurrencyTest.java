@@ -55,7 +55,7 @@ class JLineTuiTransportConcurrencyTest {
         transport.drainInputForTest();
 
         assertEquals(List.of("hello"), submit.submitted);
-        assertEquals(2, transport.uiLockEntryCountForTest());
+        assertEquals(3, transport.uiLockEntryCountForTest());
     }
 
     @Test

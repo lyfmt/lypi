@@ -624,6 +624,28 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
+    void controlShortcutRendersAgainAfterInputDrain() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            40,
+            5,
+            new QueueInputSource("\u000f"),
+            submit
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new ToolStartEvent("ses_1", "tool_1", "read", Instant.parse("2026-06-09T00:00:00Z")));
+        int framesBeforeShortcut = frames.size();
+        transport.drainInputForTest();
+
+        assertEquals(framesBeforeShortcut + 2, frames.size());
+        assertEquals(inputContent("> |CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));
+    }
+
+    @Test
     void finalizedMessageCommitsToScrollbackAndLeavesLiveViewport() throws Exception {
         RecordingEventBus events = new RecordingEventBus();
         RecordingSubmitHandler submit = new RecordingSubmitHandler();

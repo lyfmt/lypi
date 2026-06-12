@@ -898,6 +898,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         if (inputPump == null) {
             return;
         }
+        boolean inputDispatched = false;
         for (int drained = 0; drained < MAX_INPUT_CHUNKS_PER_DRAIN; drained++) {
             Optional<String> chunk = inputPump.readChunk();
             if (chunk.isEmpty()) {
@@ -905,14 +906,28 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                     synchronized (uiMonitor) {
                         uiLockEntries++;
                         inputPump.flushBufferedInput();
+                        inputDispatched = true;
                     }
                 }
+                refreshAfterInputDrain(inputDispatched);
                 return;
             }
             synchronized (uiMonitor) {
                 uiLockEntries++;
                 inputPump.dispatchChunk(chunk.orElseThrow());
+                inputDispatched = true;
             }
+        }
+        refreshAfterInputDrain(inputDispatched);
+    }
+
+    private void refreshAfterInputDrain(boolean inputDispatched) {
+        if (!inputDispatched || reducer == null) {
+            return;
+        }
+        synchronized (uiMonitor) {
+            uiLockEntries++;
+            renderCurrentFrame();
         }
     }
 

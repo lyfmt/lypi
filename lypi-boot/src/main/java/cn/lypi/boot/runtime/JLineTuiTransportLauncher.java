@@ -42,7 +42,7 @@ final class JLineTuiTransportLauncher implements TransportLauncher {
 
     @Override
     public void launch(SessionRuntimeState state, AgentCorePort core, EventBus events) {
-        try (Terminal terminal = TerminalBuilder.builder().system(true).build();
+        try (Terminal terminal = TerminalBuilder.builder().provider("jna").system(true).build();
              var transport = factory.open(
                  state,
                  core,
