@@ -313,27 +313,25 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void defaultSandboxBashKeepsDestructiveRiskApprovalBeforeExecution() {
-        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+    void defaultSandboxBashRiskAskSkipsUserApprovalAndExecutesInSandboxPath() {
+        AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.DESTRUCTIVE, "rm -f 洗车店.md");
         PermissionGate gate = (request, tool, context, decision) -> {
-            requestedDecision.set(decision);
-            return PermissionGateResult.deny("user denied destructive command");
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("should not ask before sandbox");
         };
         DefaultToolRuntime runtime = runtimeWithGate(gate, security);
         runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
 
         ToolResult<?> result = runtime.execute(
-            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "sandbox"), "msg_1")),
             TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
         ).getFirst();
 
-        assertTrue(result.isError());
-        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
-        assertEquals(BashRiskLevel.DESTRUCTIVE, bashRisk(requestedDecision.get()).riskLevel());
-        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("user denied destructive command"));
-        assertEquals(0, executeCalls.get());
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
