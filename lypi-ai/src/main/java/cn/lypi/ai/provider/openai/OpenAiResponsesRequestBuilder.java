@@ -39,8 +39,18 @@ public final class OpenAiResponsesRequestBuilder {
      * Provider 鉴权信息由 transport 设置 header，不进入请求体。
      */
     public ObjectNode build(LypiModelRequest request, OpenAiProviderConfig config) {
+        return build(request, config, OpenAiResponsesRequestOptions.defaults());
+    }
+
+    /**
+     * 构造 OpenAI Responses 请求体。
+     *
+     * Provider 鉴权信息由 transport 设置 header，不进入请求体。
+     */
+    public ObjectNode build(LypiModelRequest request, OpenAiProviderConfig config, OpenAiResponsesRequestOptions options) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(options, "options");
         ObjectNode body = objectMapper.createObjectNode();
         body.put("model", request.model().modelId());
         body.put("stream", true);
@@ -51,7 +61,9 @@ public final class OpenAiResponsesRequestBuilder {
         request.options().temperature().ifPresent(temperature -> body.put("temperature", temperature));
         Optional<String> promptCacheKey = promptCacheKey(request);
         promptCacheKey.ifPresent(key -> body.put("prompt_cache_key", key));
-        Optional<PreviousResponseState> previousResponseState = previousResponseState(request);
+        Optional<PreviousResponseState> previousResponseState = options.previousResponseStateEnabled()
+            ? previousResponseState(request)
+            : Optional.empty();
         previousResponseState.ifPresent(state -> body.put("previous_response_id", state.previousResponseId()));
         body.set("input", input(request, previousResponseState));
         if (!request.tools().isEmpty()) {
