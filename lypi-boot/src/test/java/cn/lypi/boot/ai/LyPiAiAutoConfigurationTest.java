@@ -177,6 +177,30 @@ class LyPiAiAutoConfigurationTest {
     }
 
     @Test
+    void configuredModelDescriptorOverridesRemoteAndBuiltInDescriptors() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(RemoteModelDiscoveryClient.class, () -> new FixedRemoteModelDiscoveryClient("gpt-5-mini"))
+            .withPropertyValues(
+                "lypi.ai.providers.openai.enabled=true",
+                "lypi.ai.providers.openai.api-style=openai_compatible",
+                "lypi.ai.providers.openai.base-url=https://api.openai.test/v1",
+                "lypi.ai.providers.openai.model-discovery.enabled=true",
+                "lypi.ai.providers.openai.models[0].model-id=remote-defaults",
+                "lypi.ai.providers.openai.models[0].context-window=96000",
+                "lypi.ai.providers.openai.models[0].max-output-tokens=8192",
+                "lypi.ai.providers.openai.models[1].model-id=gpt-5-mini",
+                "lypi.ai.providers.openai.models[1].context-window=64000",
+                "lypi.ai.providers.openai.models[1].max-output-tokens=8192"
+            )
+            .run(context -> {
+                ModelDescriptor descriptor = openAiModel(context.getBean(ModelRegistry.class), "gpt-5-mini");
+
+                assertThat(descriptor.contextWindow()).isEqualTo(64_000);
+            });
+    }
+
+    @Test
     void defaultsResponsesFallbackToResponses() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiAiAutoConfiguration.class)
@@ -284,6 +308,19 @@ class LyPiAiAutoConfigurationTest {
         @Override
         public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
             throw new AssertionError("Remote discovery should not be called when disabled.");
+        }
+    }
+
+    private static final class FixedRemoteModelDiscoveryClient extends RemoteModelDiscoveryClient {
+        private final String modelId;
+
+        private FixedRemoteModelDiscoveryClient(String modelId) {
+            this.modelId = modelId;
+        }
+
+        @Override
+        public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
+            return List.of(modelId);
         }
     }
 

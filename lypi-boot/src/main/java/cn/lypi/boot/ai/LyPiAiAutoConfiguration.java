@@ -102,8 +102,8 @@ public class LyPiAiAutoConfiguration {
     private ModelDescriptorSource modelDescriptorSource(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
         List<ModelDescriptorSource> sources = new ArrayList<>();
         sources.add(new StaticModelDescriptorSource(builtinModelDescriptors(properties)));
-        sources.add(new StaticModelDescriptorSource(modelDescriptors(properties)));
         sources.add(new StaticModelDescriptorSource(remoteModelDescriptors(properties, discoveryClient)));
+        sources.add(new StaticModelDescriptorSource(modelDescriptors(properties)));
         return new CompositeModelDescriptorSource(sources);
     }
 

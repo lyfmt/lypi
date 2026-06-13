@@ -1,11 +1,12 @@
 package cn.lypi.ai;
 
+import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import java.util.List;
 import java.util.Optional;
 
-public interface ModelRegistry {
+public interface ModelRegistry extends ModelCatalogPort {
     /**
      * 列出可用模型描述。
      *
