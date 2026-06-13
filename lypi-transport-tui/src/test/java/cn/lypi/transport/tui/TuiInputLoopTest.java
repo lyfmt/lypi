@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.security.PermissionOption;
@@ -774,15 +775,17 @@ class TuiInputLoopTest {
                 return runtimeState(sessionId, leafId);
             }
         };
+        TuiRenderState renderState = new TuiRenderState();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
             new TuiRenderer(),
             new TuiScreen(8),
             new TuiLayout(80, 10),
-            null,
+            renderState::view,
             () -> new SlashCommandPicker(List.of("/resume")),
-            controller
+            controller,
+            renderState::configure
         );
 
         loop.acceptText("/resume");
@@ -851,6 +854,7 @@ class TuiInputLoopTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
         List<String> summaryResumes = new ArrayList<>();
+        String summaryText = "RAW BRANCH SUMMARY SHOULD STAY HIDDEN";
         MessageEntry assistant = new MessageEntry(
             "assistant_old",
             "user_old",
@@ -899,8 +903,21 @@ class TuiInputLoopTest {
 
             @Override
             public SessionRuntimeState resumeWithBranchSummary(String sessionId, String targetLeafId) {
+                assertTrue(frames.getLast().contains("Summarizing abandoned branch"));
                 summaryResumes.add(sessionId + ":" + targetLeafId);
-                return runtimeState(sessionId, "summary_leaf");
+                return runtimeState(
+                    sessionId,
+                    "summary_leaf",
+                    List.of(new AgentMessage(
+                        "summary_msg",
+                        MessageRole.SYSTEM_LOCAL,
+                        MessageKind.SUMMARY,
+                        List.of(new TextContentBlock(summaryText)),
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.empty()
+                    ))
+                );
             }
         };
         TuiInputLoop loop = new TuiInputLoop(
@@ -927,6 +944,8 @@ class TuiInputLoopTest {
 
         assertEquals(List.of("ses_old:assistant_old"), summaryResumes);
         assertEquals(List.of("ses_old:summary_leaf"), submit.resumes);
+        assertTrue(frames.getLast().contains("Branch summary saved."));
+        assertFalse(frames.getLast().contains(summaryText));
     }
 
     @Test
@@ -1133,6 +1152,10 @@ class TuiInputLoopTest {
     }
 
     private static SessionRuntimeState runtimeState(String sessionId, String leafId) {
+        return runtimeState(sessionId, leafId, List.of());
+    }
+
+    private static SessionRuntimeState runtimeState(String sessionId, String leafId, List<AgentMessage> transcript) {
         return new SessionRuntimeState(
             sessionId,
             Path.of("."),
@@ -1142,6 +1165,7 @@ class TuiInputLoopTest {
             cn.lypi.contracts.security.AgentMode.EXECUTE,
             cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE,
             new cn.lypi.contracts.context.ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, java.math.BigDecimal.ZERO),
+            transcript,
             false,
             false,
             false,

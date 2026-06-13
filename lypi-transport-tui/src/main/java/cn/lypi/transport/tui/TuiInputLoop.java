@@ -8,6 +8,7 @@ import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
@@ -41,6 +42,7 @@ final class TuiInputLoop {
     private ResumeSessionSelector resumeSessionSelector;
     private ResumeBranchTreeSelector resumeBranchTreeSelector;
     private PendingBranchSummaryResume pendingBranchSummaryResume;
+    private String branchSummaryLine;
     private String resumeSessionId;
     private boolean slashOverlayClosed;
     private boolean interruptibleRunning;
@@ -140,6 +142,7 @@ final class TuiInputLoop {
             handleBranchSummaryConfirmationText(text);
             return;
         }
+        branchSummaryLine = null;
         editor.insert(text);
         slashOverlayClosed = false;
         skillToken = null;
@@ -147,6 +150,7 @@ final class TuiInputLoop {
     }
 
     void acceptPaste(String text) {
+        branchSummaryLine = null;
         editor.insertPaste(text);
         slashOverlayClosed = false;
         skillToken = null;
@@ -154,6 +158,9 @@ final class TuiInputLoop {
     }
 
     void acceptKey(TerminalKey key) {
+        if (pendingBranchSummaryResume == null) {
+            branchSummaryLine = null;
+        }
         Optional<PermissionPromptView> prompt = currentView().permissionPrompt();
         if (prompt.isPresent()) {
             PermissionPromptView currentPrompt = prompt.orElseThrow();
@@ -512,10 +519,16 @@ final class TuiInputLoop {
     private List<String> overlayLines() {
         if (pendingBranchSummaryResume != null) {
             BranchSummaryOffer offer = pendingBranchSummaryResume.offer();
+            if (branchSummaryLine != null && !branchSummaryLine.isBlank()) {
+                return List.of(branchSummaryLine);
+            }
             return List.of(
                 "Summarize abandoned branch before switching? [y/N]",
                 offer.entriesToSummarize() + " entries will be summarized from the branch you are leaving."
             );
+        }
+        if (branchSummaryLine != null && !branchSummaryLine.isBlank()) {
+            return List.of(branchSummaryLine);
         }
         if (resumeBranchTreeSelector != null) {
             return resumeBranchTreeSelector.render(layout.width());
@@ -656,13 +669,16 @@ final class TuiInputLoop {
 
     private void resumeWithBranchSummary() {
         PendingBranchSummaryResume pending = pendingBranchSummaryResume;
+        branchSummaryLine = "Summarizing abandoned branch...";
+        render();
         SessionRuntimeState resumed = resumeController.resumeWithBranchSummary(pending.sessionId(), pending.target().leafId());
         String resumedLeafId = resumed == null ? pending.target().leafId() : resumed.currentBranchLeafId();
         submitHandler.resumeSession(pending.sessionId(), resumedLeafId);
         pending.target().draftText().ifPresent(editor::replaceDraft);
         if (resumeStateConsumer != null && resumed != null) {
-            resumeStateConsumer.accept(resumed);
+            resumeStateConsumer.accept(withoutSummaryTranscript(resumed));
         }
+        branchSummaryLine = "Branch summary saved.";
         closeResumeOverlay();
         render();
     }
@@ -681,6 +697,27 @@ final class TuiInputLoop {
         resumeBranchTreeSelector = null;
         pendingBranchSummaryResume = null;
         resumeSessionId = null;
+    }
+
+    private SessionRuntimeState withoutSummaryTranscript(SessionRuntimeState state) {
+        List<AgentMessage> visibleTranscript = state.transcript().stream()
+            .filter(message -> message.kind() != MessageKind.SUMMARY)
+            .toList();
+        return new SessionRuntimeState(
+            state.sessionId(),
+            state.cwd(),
+            state.currentBranchLeafId(),
+            state.model(),
+            state.thinkingLevel(),
+            state.agentMode(),
+            state.permissionMode(),
+            state.budget(),
+            visibleTranscript,
+            state.hasInterruptibleTool(),
+            state.hasActiveTurn(),
+            state.hasPendingPermission(),
+            state.hasPendingInput()
+        );
     }
 
     private ResumeTarget resumeTarget(SessionEntry entry) {
