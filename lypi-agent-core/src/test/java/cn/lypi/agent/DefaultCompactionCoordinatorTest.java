@@ -70,6 +70,12 @@ class DefaultCompactionCoordinatorTest {
         assertThat(session.handle().byId().values())
             .filteredOn(CompactionEntry.class::isInstance)
             .hasSize(1);
+        CompactionEntry compactionEntry = session.handle().byId().values().stream()
+            .filter(CompactionEntry.class::isInstance)
+            .map(CompactionEntry.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertThat(decision.compactionEntryId()).contains(compactionEntry.id());
         assertThat(decision.context().messages())
             .extracting(AgentMessage::kind)
             .startsWith(MessageKind.SUMMARY);
@@ -81,12 +87,7 @@ class DefaultCompactionCoordinatorTest {
             .filteredOn(CompactEndEvent.class::isInstance)
             .singleElement()
             .extracting(event -> ((CompactEndEvent) event).compactionEntryId())
-            .isEqualTo(session.handle().byId().values().stream()
-                .filter(CompactionEntry.class::isInstance)
-                .map(CompactionEntry.class::cast)
-                .findFirst()
-                .orElseThrow()
-                .id());
+            .isEqualTo(compactionEntry.id());
     }
 
     @Test

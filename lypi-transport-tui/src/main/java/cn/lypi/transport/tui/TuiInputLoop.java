@@ -142,6 +142,10 @@ final class TuiInputLoop {
             handleBranchSummaryConfirmationText(text);
             return;
         }
+        if (compactRunning()) {
+            render();
+            return;
+        }
         branchSummaryLine = null;
         editor.insert(text);
         slashOverlayClosed = false;
@@ -150,6 +154,10 @@ final class TuiInputLoop {
     }
 
     void acceptPaste(String text) {
+        if (compactRunning()) {
+            render();
+            return;
+        }
         branchSummaryLine = null;
         editor.insertPaste(text);
         slashOverlayClosed = false;
@@ -158,6 +166,10 @@ final class TuiInputLoop {
     }
 
     void acceptKey(TerminalKey key) {
+        if (compactRunning() && key != TerminalKey.CTRL_C && key != TerminalKey.ESC) {
+            render();
+            return;
+        }
         if (pendingBranchSummaryResume == null) {
             branchSummaryLine = null;
         }
@@ -357,9 +369,10 @@ final class TuiInputLoop {
     }
 
     private TerminalInputContext inputContext(Optional<PermissionPromptView> prompt) {
+        boolean runtimeInterruptible = interruptibleRunning || compactRunning();
         return new TerminalInputContext(
             editor.text(),
-            interruptibleRunning,
+            runtimeInterruptible,
             prompt.isPresent(),
             prompt.isPresent() ? "permission" : "editor",
             "editor",
@@ -396,6 +409,11 @@ final class TuiInputLoop {
             prompt.map(this::withSelectedPermissionOption),
             view.diffView()
         );
+    }
+
+    private boolean compactRunning() {
+        String runtimeLine = currentView().runtimeLine();
+        return runtimeLine != null && runtimeLine.startsWith("compacting");
     }
 
     private void syncPermissionSelection(Optional<PermissionPromptView> prompt) {

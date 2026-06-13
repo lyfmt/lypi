@@ -3,7 +3,6 @@ lypi:
     default-provider: openai
     default-model: gpt-5-mini
     compaction-summary:
-      enabled: true
       fallback-policy: fallback_deterministic
     providers:
       openai:

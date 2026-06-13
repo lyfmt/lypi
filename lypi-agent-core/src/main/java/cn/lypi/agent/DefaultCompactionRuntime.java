@@ -40,6 +40,6 @@ public final class DefaultCompactionRuntime implements CompactionRuntimePort {
             assembly,
             request.abortSignal()
         ));
-        return new CompactionResult(decision.compacted(), Optional.empty(), decision.reason());
+        return new CompactionResult(decision.compacted(), decision.compactionEntryId(), decision.reason());
     }
 }

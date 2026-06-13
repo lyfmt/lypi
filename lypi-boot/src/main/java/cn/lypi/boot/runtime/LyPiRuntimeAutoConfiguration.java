@@ -154,13 +154,16 @@ public class LyPiRuntimeAutoConfiguration {
     }
 
     /**
-     * 创建默认 compaction summarizer。
+     * 创建缺省 compact summary 占位实现。
+     *
+     * NOTE: 完整应用由 LyPiAiAutoConfiguration 提供使用主模型的 AiCompactionSummarizer；
+     * 这里仅让未加载 AI 自动配置的精简装配在使用 compact 时 fail-fast。
      */
     @Bean
     @ConditionalOnMissingBean(CompactionSummarizer.class)
     public CompactionSummarizer compactionSummarizer() {
         return request -> {
-            throw new IllegalStateException("AI compaction summary is disabled");
+            throw new IllegalStateException("AI compaction summarizer is unavailable");
         };
     }
 

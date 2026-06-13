@@ -128,10 +128,11 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
                     fallbackContext,
                     plan,
                     true,
-                    "compacted; resource backfill failed: " + backfillFailure.orElseThrow()
+                    "compacted; resource backfill failed: " + backfillFailure.orElseThrow(),
+                    Optional.of(compactionEntry.id())
                 );
             }
-            return new CompactionDecision(compactedContext, plan, true, "compacted");
+            return new CompactionDecision(compactedContext, plan, true, "compacted", Optional.of(compactionEntry.id()));
         } catch (RuntimeException exception) {
             return new CompactionDecision(assembly.snapshot(), plan, false, "compaction failed: " + exception.getMessage());
         } finally {

@@ -7,6 +7,7 @@ import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CompactionPlan;
 import cn.lypi.contracts.session.MessageEntry;
@@ -22,9 +23,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CompactSummaryContextBuilderTest {
     @Test
-    void appendsInstructionAfterFullContextMessagesAndKeepsCurrentModel() {
+    void appendsInstructionAfterSummarizedEntriesAndKeepsCurrentModel() {
         CompactSummaryContextBuilder builder = new CompactSummaryContextBuilder(new CompactSummaryInstructionFactory());
         ContextSnapshot currentContext = minimalContext(List.of(
+            userMessage("summary-entry-compact-1", "old compact summary must not be summarized again"),
             userMessage("msg-user-1", "old user"),
             assistantMessage("msg-assistant-1", "old assistant"),
             userMessage("msg-user-2", "kept user")
@@ -36,18 +38,32 @@ class CompactSummaryContextBuilderTest {
             CompactionKind.SESSION
         );
         List<SessionEntry> branchEntries = List.of(
-            new MessageEntry("entry-user-1", "", currentContext.messages().get(0), NOW),
-            new MessageEntry("entry-assistant-1", "entry-user-1", currentContext.messages().get(1), NOW),
-            new MessageEntry("entry-user-2", "entry-assistant-1", currentContext.messages().get(2), NOW)
+            new CompactionEntry(
+                "entry-compact-1",
+                "entry-before-compact",
+                "old compact summary must not be summarized again",
+                "entry-user-1",
+                100,
+                50,
+                CompactionKind.MANUAL,
+                NOW
+            ),
+            new MessageEntry("entry-user-1", "", currentContext.messages().get(1), NOW),
+            new MessageEntry("entry-assistant-1", "entry-user-1", currentContext.messages().get(2), NOW),
+            new MessageEntry("entry-user-2", "entry-assistant-1", currentContext.messages().get(3), NOW)
         );
 
         ContextSnapshot summaryContext = builder.build(
             new CompactSummaryRequest(currentContext, plan, branchEntries, () -> false)
         );
 
-        assertThat(summaryContext.messages().subList(0, currentContext.messages().size()))
-            .containsExactlyElementsOf(currentContext.messages());
-        assertThat(summaryContext.messages()).hasSize(currentContext.messages().size() + 1);
+        assertThat(summaryContext.messages().subList(0, summaryContext.messages().size() - 1))
+            .containsExactly(
+                currentContext.messages().get(1),
+                currentContext.messages().get(2)
+            );
+        assertThat(summaryContext.messages())
+            .noneMatch(message -> message.content().getFirst().text().contains("old compact summary must not be summarized again"));
         AgentMessage instruction = summaryContext.messages().getLast();
         assertThat(instruction.role()).isIn(MessageRole.USER, MessageRole.SYSTEM_LOCAL);
         assertThat(instruction.content().getFirst().text()).contains("compact summary", "不要调用工具");

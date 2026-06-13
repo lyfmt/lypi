@@ -221,6 +221,27 @@ class TuiRendererTest {
     }
 
     @Test
+    void compactRuntimeUsesSingleReadonlyInputLineWithoutCursorBackgroundBlock() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4-mini", "running", "DEFAULT_EXECUTE"),
+            "compacting MANUAL",
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 8), "draft", 5);
+        String frame = String.join("\n", lines);
+
+        assertTrue(frame.contains("compact"));
+        assertFalse(frame.contains(INPUT_CURSOR));
+        assertTrue(lines.stream().filter(line -> line.contains(INPUT_BACKGROUND)).count() <= 1);
+    }
+
+    @Test
     void inputLineKeepsCursorMarkerAfterNarrowWrapping() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);

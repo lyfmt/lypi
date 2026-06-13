@@ -4,3 +4,5 @@ target/
 **/target/
 .worktrees/
 worktree-*/
+.ly-pi/
+**/.ly-pi/

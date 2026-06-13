@@ -1,7 +1,6 @@
 package cn.lypi.boot.ai;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.ai.ApiProviderRegistry;
 import cn.lypi.ai.ModelPort;
@@ -11,22 +10,10 @@ import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
 import cn.lypi.ai.provider.openai.OpenAiProviderConfig;
 import cn.lypi.agent.compact.AiCompactionSummarizer;
-import cn.lypi.agent.compact.CompactSummaryRequest;
 import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
-import cn.lypi.contracts.common.AbortSignal;
-import cn.lypi.contracts.context.ContextBudget;
-import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.model.ModelDescriptor;
-import cn.lypi.contracts.model.ModelSelection;
-import cn.lypi.contracts.model.ThinkingLevel;
-import cn.lypi.contracts.prompt.SystemPrompt;
-import cn.lypi.contracts.security.AgentMode;
-import cn.lypi.contracts.security.PermissionMode;
-import cn.lypi.contracts.session.CompactionKind;
-import cn.lypi.contracts.session.CompactionPlan;
 import java.lang.reflect.Field;
-import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -212,37 +199,32 @@ class LyPiAiAutoConfigurationTest {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiAiAutoConfiguration.class)
             .withPropertyValues(
-                "lypi.ai.compaction-summary.enabled=true",
                 "lypi.ai.compaction-summary.fallback-policy=skip_compaction"
             )
             .run(context -> {
                 LyPiAiProperties properties = context.getBean(LyPiAiProperties.class);
 
-                assertThat(properties.getCompactionSummary().isEnabled()).isTrue();
                 assertThat(properties.getCompactionSummary().getFallbackPolicy())
                     .isEqualTo(CompactionSummaryFallbackPolicy.SKIP_COMPACTION);
             });
     }
 
     @Test
-    void createsUnavailableCompactionSummarizerWhenSummaryDisabled() {
+    void createsAiCompactionSummarizerByDefault() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiAiAutoConfiguration.class)
             .run(context -> {
                 assertThat(context).hasSingleBean(CompactionSummarizer.class);
                 assertThat(context.getBean(CompactionSummarizer.class))
-                    .isNotInstanceOf(AiCompactionSummarizer.class);
-                assertThatThrownBy(() -> context.getBean(CompactionSummarizer.class).summarize(disabledSummaryRequest()))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("disabled");
+                    .isInstanceOf(AiCompactionSummarizer.class);
             });
     }
 
     @Test
-    void createsAiCompactionSummarizerWhenSummaryEnabled() {
+    void createsAiCompactionSummarizerWhenFallbackPolicyConfigured() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiAiAutoConfiguration.class)
-            .withPropertyValues("lypi.ai.compaction-summary.enabled=true")
+            .withPropertyValues("lypi.ai.compaction-summary.fallback-policy=skip_compaction")
             .run(context -> {
                 assertThat(context).hasSingleBean(CompactionSummarizer.class);
                 assertThat(context.getBean(CompactionSummarizer.class))
@@ -323,18 +305,4 @@ class LyPiAiAutoConfigurationTest {
             .orElseThrow(() -> new AssertionError("Missing openai model: " + modelId));
     }
 
-    private static CompactSummaryRequest disabledSummaryRequest() {
-        ContextSnapshot context = new ContextSnapshot(
-            new SystemPrompt("system", List.of("test"), "hash"),
-            List.of(),
-            new ModelSelection("test", "gpt-test", ThinkingLevel.MEDIUM),
-            ThinkingLevel.MEDIUM,
-            AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
-            new ContextBudget(0, 128000, 100000, 8192, 16384, 0, 0, BigDecimal.ZERO)
-        );
-        CompactionPlan plan = new CompactionPlan("first", "kept", List.of("first"), CompactionKind.SESSION);
-        AbortSignal abortSignal = () -> false;
-        return new CompactSummaryRequest(context, plan, List.of(), abortSignal);
-    }
 }

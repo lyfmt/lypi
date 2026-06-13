@@ -67,7 +67,9 @@ final class TuiRenderer {
         List<String> overlayLines,
         boolean toolOutputExpanded
     ) {
-        InputBlock inputBlock = layoutInput(input, cursor, layout);
+        InputBlock inputBlock = compactRunning(view)
+            ? readonlyRuntimeInputBlock("compact 正在进行...", layout)
+            : layoutInput(input, cursor, layout);
         List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
             .map(line -> AnsiWidth.truncate(line, layout.width()))
             .toList();
@@ -291,6 +293,16 @@ final class TuiRenderer {
             lines.add(inputBorder(width));
         }
         return new InputBlock(lines);
+    }
+
+    private boolean compactRunning(TuiViewModel view) {
+        return view != null && view.runtimeLine() != null && view.runtimeLine().startsWith("compacting");
+    }
+
+    private InputBlock readonlyRuntimeInputBlock(String text, TuiLayout layout) {
+        int width = layout.width();
+        String content = AnsiWidth.truncate(text == null ? "" : text, width);
+        return new InputBlock(List.of(INPUT_BACKGROUND + content + ANSI_RESET));
     }
 
     private List<InputVisualLine> visualInputLines(String value, int cursor, boolean showCursor, int width) {
