@@ -48,6 +48,15 @@ class ApplicationExampleConfigTest {
     }
 
     @Test
+    void applicationExampleDocumentsHeadlessSubagentCommandConfiguration() throws IOException {
+        String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(example).contains("#   subagent:");
+        assertThat(example).contains("#     command:");
+        assertThat(example).contains("headless-subagent");
+    }
+
+    @Test
     void overrideExtensionAndToolFragmentsBindToSupportedProperties() {
         Binder binder = new Binder(new MapConfigurationPropertySource(Map.ofEntries(
             Map.entry("lypi.runtime.default-provider", "fixture"),
