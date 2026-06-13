@@ -7,6 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.subagent.AgentRunStatus;
@@ -54,7 +57,7 @@ class SubagentToolsTest {
         assertEquals("ses_parent", agentCenter.spawnRequest.parentSessionId());
         assertEquals("entry_tool_call", agentCenter.spawnRequest.parentEntryId());
         assertEquals(Path.of("/workspace"), agentCenter.spawnRequest.cwd());
-        assertEquals(List.of(), agentCenter.spawnRequest.allowedTools());
+        assertEquals(List.of("read", "grep", "glob"), agentCenter.spawnRequest.allowedTools());
         assertEquals(PermissionMode.DEFAULT_EXECUTE, agentCenter.spawnRequest.permissionMode());
         assertEquals(90, agentCenter.spawnRequest.timeoutSeconds());
         assertEquals(Optional.of("reviewer"), agentCenter.spawnRequest.agentName());
@@ -70,7 +73,12 @@ class SubagentToolsTest {
         Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
 
         assertTrue(properties.containsKey("role"));
+        assertTrue(properties.containsKey("tools"));
         assertTrue(properties.containsKey("allowedTools"));
+        assertTrue(properties.containsKey("model"));
+        assertTrue(properties.containsKey("thinkingLevel"));
+        assertTrue(properties.containsKey("mode"));
+        assertTrue(properties.containsKey("permissionMode"));
     }
 
     @Test
@@ -89,20 +97,28 @@ class SubagentToolsTest {
     }
 
     @Test
-    void spawnAgentRejectsUnimplementedToolAndPermissionIsolationInputs() {
+    void spawnAgentPassesExplicitToolsAndModelContext() {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
         SpawnAgentTool tool = new SpawnAgentTool(agentCenter);
 
         ToolResult<String> result = tool.execute(Map.of(
             "prompt", "检查测试失败原因",
-            "allowedTools", List.of("read"),
-            "permissionMode", "BYPASS"
+            "tools", List.of("read", "bash", "read"),
+            "allowedTools", List.of("grep", "bash"),
+            "model", "gpt-5.4",
+            "thinkingLevel", "high",
+            "mode", "plan",
+            "permissionMode", "ACCEPT_EDITS"
         ), context(), ignored -> {
         });
 
-        assertTrue(result.isError());
-        assertTrue(result.output().contains("暂不支持"));
-        assertEquals(null, agentCenter.spawnRequest);
+        assertFalse(result.isError());
+        assertEquals(List.of("read", "bash", "grep"), agentCenter.spawnRequest.toolPolicy().requestedTools());
+        assertEquals(List.of("read", "grep", "glob", "bash"), agentCenter.spawnRequest.toolPolicy().effectiveTools());
+        assertEquals(PermissionMode.ACCEPT_EDITS, agentCenter.spawnRequest.permissionMode());
+        assertEquals(Optional.of(new ModelSelection("", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.spawnRequest.model());
+        assertEquals(Optional.of(ThinkingLevel.HIGH), agentCenter.spawnRequest.thinkingLevel());
+        assertEquals(Optional.of(AgentMode.PLAN), agentCenter.spawnRequest.agentMode());
     }
 
     @Test
@@ -146,6 +162,32 @@ class SubagentToolsTest {
         assertTrue(result.output().contains("run_2"));
         assertTrue(result.output().contains("STARTED"));
         assertFalse(tool.isReadOnly(Map.of()));
+    }
+
+    @Test
+    void continueAgentPassesExplicitToolsAndModelContext() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        ContinueAgentTool tool = new ContinueAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "childSessionId", "ses_child",
+            "prompt", "继续检查",
+            "tools", List.of("read", "bash", "read"),
+            "allowedTools", List.of("grep", "bash"),
+            "model", "gpt-5.4",
+            "thinking", "high",
+            "agentMode", "execute",
+            "permission_mode", "ACCEPT_EDITS"
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals(List.of("read", "bash", "grep"), agentCenter.continueRequest.toolPolicy().requestedTools());
+        assertEquals(List.of("read", "grep", "glob", "bash"), agentCenter.continueRequest.toolPolicy().effectiveTools());
+        assertEquals(PermissionMode.ACCEPT_EDITS, agentCenter.continueRequest.permissionMode());
+        assertEquals(Optional.of(new ModelSelection("", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.continueRequest.model());
+        assertEquals(Optional.of(ThinkingLevel.HIGH), agentCenter.continueRequest.thinkingLevel());
+        assertEquals(Optional.of(AgentMode.EXECUTE), agentCenter.continueRequest.agentMode());
     }
 
     @Test

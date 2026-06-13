@@ -8,7 +8,10 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CustomEntry;
-import cn.lypi.contracts.session.SessionContext;
+import cn.lypi.contracts.session.ModeChangeEntry;
+import cn.lypi.contracts.session.ModelChangeEntry;
+import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
@@ -78,14 +81,10 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         if (command.isEmpty()) {
             return failedSpawn(request, "Subagent command is not configured");
         }
-        if (!request.allowedTools().isEmpty() || request.permissionMode() != PermissionMode.DEFAULT_EXECUTE) {
-            return failedSpawn(request, "Subagent tool and permission isolation is not implemented");
-        }
         String agentId = "agent_" + randomId();
         String childSessionId = "ses_child_" + randomId();
         String parentSpawnEntryId = "entry_spawn_" + randomId();
         Instant now = Instant.now(clock);
-        SessionContext parentContext = parentSession.context(request.parentEntryId());
         SubagentToolPolicy toolPolicy = request.toolPolicy();
         childSessions.create(new ChildSessionRequest(
             childSessionId,
@@ -96,10 +95,10 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             1,
             request.agentName(),
             request.agentRole(),
-            Optional.ofNullable(parentContext.model()),
-            Optional.ofNullable(parentContext.thinkingLevel()),
-            Optional.ofNullable(parentContext.mode()),
-            Optional.ofNullable(parentContext.permissionMode()),
+            request.model(),
+            request.thinkingLevel(),
+            request.agentMode(),
+            request.permissionModeSpecified() ? Optional.of(request.permissionMode()) : Optional.empty(),
             toolPolicy
         ));
         parentSession.append(new AgentLifecycleEntry(
@@ -197,6 +196,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         }
         String parentContinueEntryId = "entry_continue_" + randomId();
         RunningAgent running = existing.withParentSpawnEntryId(parentContinueEntryId).withHandle(null);
+        applyContinueContextChanges(existing, request);
         parentSession.append(new AgentLifecycleEntry(
             parentContinueEntryId,
             request.parentEntryId(),
@@ -216,7 +216,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             request.cwd() == null ? parentCwd : request.cwd(),
             request.allowedTools(),
             request.toolPolicy(),
-            PermissionMode.DEFAULT_EXECUTE,
+            request.permissionMode(),
             request.timeoutSeconds(),
             HeadlessSubagentRunMode.CONTINUE
         );
@@ -238,6 +238,37 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             );
         } catch (RuntimeException exception) {
             return failedContinue(request, exception.getMessage());
+        }
+    }
+
+    private void applyContinueContextChanges(RunningAgent existing, SubagentContinueRequest request) {
+        if (request.model().isEmpty()
+            && request.thinkingLevel().isEmpty()
+            && request.agentMode().isEmpty()
+            && request.permissionMode() == PermissionMode.DEFAULT_EXECUTE) {
+            return;
+        }
+        SessionManagerPort childSession = sessionManagerFactory.open(existing.parentCwd(), existing.childSessionId());
+        String parentId = childSession.currentView().leafId();
+        Instant now = Instant.now(clock);
+        if (request.model().isPresent()) {
+            String entryId = "entry_model_" + randomId();
+            childSession.append(new ModelChangeEntry(entryId, parentId, request.model().orElseThrow(), "subagent continue model", now));
+            parentId = entryId;
+        }
+        if (request.thinkingLevel().isPresent()) {
+            String entryId = "entry_thinking_" + randomId();
+            childSession.append(new ThinkingChangeEntry(entryId, parentId, request.thinkingLevel().orElseThrow(), "subagent continue thinking", now));
+            parentId = entryId;
+        }
+        if (request.agentMode().isPresent()) {
+            String entryId = "entry_mode_" + randomId();
+            childSession.append(new ModeChangeEntry(entryId, parentId, request.agentMode().orElseThrow(), "subagent continue mode", now));
+            parentId = entryId;
+        }
+        if (request.permissionMode() != PermissionMode.DEFAULT_EXECUTE) {
+            String entryId = "entry_permission_" + randomId();
+            childSession.append(new PermissionModeChangeEntry(entryId, parentId, request.permissionMode(), "subagent continue permission", now));
         }
     }
 

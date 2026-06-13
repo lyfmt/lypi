@@ -6,11 +6,15 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolResultContentBlock;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
@@ -26,6 +30,7 @@ import java.util.Optional;
 
 abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String> {
     private static final int DEFAULT_MAX_RESULT_SIZE = 16_384;
+    private static final List<String> BASE_READ_TOOLS = List.of("read", "grep", "glob");
 
     @Override
     public List<String> aliases() {
@@ -156,9 +161,6 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
 
     protected PermissionMode permissionMode(Map<String, Object> input, ToolUseContext context) {
         Object value = value(input, "permissionMode", "permission_mode");
-        if (value == null) {
-            value = context.metadata().get("permissionMode");
-        }
         if (value instanceof PermissionMode permissionMode) {
             return permissionMode;
         }
@@ -166,6 +168,53 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
             return PermissionMode.DEFAULT_EXECUTE;
         }
         return PermissionMode.valueOf(value.toString().trim().toUpperCase(Locale.ROOT));
+    }
+
+    protected Optional<ModelSelection> model(Map<String, Object> input) {
+        Object value = value(input, "model", "modelId", "model_id");
+        if (value == null || value.toString().isBlank()) {
+            return Optional.empty();
+        }
+        String raw = value.toString().trim();
+        String provider = "";
+        String modelId = raw;
+        int separator = raw.indexOf('/');
+        if (separator > 0 && separator < raw.length() - 1) {
+            provider = raw.substring(0, separator);
+            modelId = raw.substring(separator + 1);
+        }
+        return Optional.of(new ModelSelection(provider, modelId, thinkingLevel(input).orElse(ThinkingLevel.MEDIUM)));
+    }
+
+    protected Optional<ThinkingLevel> thinkingLevel(Map<String, Object> input) {
+        Object value = value(input, "thinkingLevel", "thinking_level", "thinking");
+        if (value instanceof ThinkingLevel thinkingLevel) {
+            return Optional.of(thinkingLevel);
+        }
+        if (value == null || value.toString().isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(ThinkingLevel.valueOf(value.toString().trim().toUpperCase(Locale.ROOT)));
+    }
+
+    protected Optional<AgentMode> agentMode(Map<String, Object> input) {
+        Object value = value(input, "agentMode", "agent_mode", "mode");
+        if (value instanceof AgentMode agentMode) {
+            return Optional.of(agentMode);
+        }
+        if (value == null || value.toString().isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(AgentMode.valueOf(value.toString().trim().toUpperCase(Locale.ROOT)));
+    }
+
+    protected SubagentToolPolicy toolPolicy(Map<String, Object> input) {
+        java.util.LinkedHashSet<String> requested = new java.util.LinkedHashSet<>();
+        requested.addAll(stringListInput(input, "tools"));
+        requested.addAll(stringListInput(input, "allowedTools", "allowed_tools"));
+        java.util.LinkedHashSet<String> effective = new java.util.LinkedHashSet<>(BASE_READ_TOOLS);
+        effective.addAll(requested);
+        return new SubagentToolPolicy(List.copyOf(requested), List.copyOf(effective));
     }
 
     protected Path cwd(Map<String, Object> input, ToolUseContext context) {

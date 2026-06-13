@@ -5,12 +5,13 @@ import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.runtime.AgentCenterPort;
-import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -34,18 +35,28 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
 
     @Override
     public JsonSchema inputSchema() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("prompt", Map.of("type", "string"));
+        properties.put("cwd", Map.of("type", "string"));
+        properties.put("timeoutSeconds", Map.of("type", "integer", "minimum", 1));
+        properties.put("agentName", Map.of("type", "string"));
+        properties.put("role", Map.of("type", "string"));
+        properties.put("agentRole", Map.of("type", "string"));
+        properties.put("tools", Map.of("type", "array", "items", Map.of("type", "string")));
+        properties.put("allowedTools", Map.of("type", "array", "items", Map.of("type", "string")));
+        properties.put("allowed_tools", Map.of("type", "array", "items", Map.of("type", "string")));
+        properties.put("model", Map.of("type", "string"));
+        properties.put("modelId", Map.of("type", "string"));
+        properties.put("thinkingLevel", Map.of("type", "string"));
+        properties.put("thinking", Map.of("type", "string"));
+        properties.put("mode", Map.of("type", "string"));
+        properties.put("agentMode", Map.of("type", "string"));
+        properties.put("permissionMode", Map.of("type", "string"));
+        properties.put("permission_mode", Map.of("type", "string"));
         return new JsonSchema(Map.of(
             "type", "object",
             "required", List.of("prompt"),
-            "properties", Map.of(
-                "prompt", Map.of("type", "string"),
-                "cwd", Map.of("type", "string"),
-                "timeoutSeconds", Map.of("type", "integer", "minimum", 1),
-                "agentName", Map.of("type", "string"),
-                "role", Map.of("type", "string"),
-                "agentRole", Map.of("type", "string"),
-                "allowedTools", Map.of("type", "array", "items", Map.of("type", "string"))
-            )
+            "properties", properties
         ));
     }
 
@@ -57,21 +68,23 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
     @Override
     public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
         try {
-            ToolResult<String> unsupportedIsolation = rejectUnsupportedIsolation(input, context);
-            if (unsupportedIsolation != null) {
-                return unsupportedIsolation;
-            }
             progress.progress(ToolProgress.phase("spawning", "启动 subagent"));
+            SubagentToolPolicy toolPolicy = toolPolicy(input);
             SubagentSpawnResult result = agentCenter.spawn(new SubagentSpawnRequest(
                 context.sessionId(),
                 parentEntryId(context),
                 stringInput(input, "prompt"),
                 cwd(input, context),
-                List.of(),
-                PermissionMode.DEFAULT_EXECUTE,
+                toolPolicy.effectiveTools(),
+                toolPolicy,
+                permissionMode(input, context),
                 intInput(input, 600, "timeoutSeconds", "timeout_seconds"),
                 optionalStringInput(input, "agentName", "agent_name"),
-                optionalStringInput(input, "role", "agentRole", "agent_role")
+                optionalStringInput(input, "role", "agentRole", "agent_role"),
+                model(input),
+                thinkingLevel(input),
+                agentMode(input),
+                value(input, "permissionMode", "permission_mode") != null
             ));
             if (result.status() == SubagentRunStatus.FAILED) {
                 return error(context, result.message().orElse("subagent 启动失败。"));
@@ -95,17 +108,6 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
         } catch (IllegalArgumentException exception) {
             return error(context, exception.getMessage());
         }
-    }
-
-    private ToolResult<String> rejectUnsupportedIsolation(Map<String, Object> input, ToolUseContext context) {
-        if (!stringListInput(input, "allowedTools", "allowed_tools").isEmpty()) {
-            return error(context, "暂不支持为 subagent 单独设置 allowedTools；未启动 subagent。");
-        }
-        Object permissionMode = input.getOrDefault("permissionMode", input.get("permission_mode"));
-        if (permissionMode != null) {
-            return error(context, "暂不支持为 subagent 单独设置 permissionMode；未启动 subagent。");
-        }
-        return null;
     }
 
     private String parentEntryId(ToolUseContext context) {

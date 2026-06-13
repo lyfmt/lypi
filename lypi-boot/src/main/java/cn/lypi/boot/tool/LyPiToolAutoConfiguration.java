@@ -118,7 +118,8 @@ public class LyPiToolAutoConfiguration {
 
             @Override
             public ToolRuntimePort create(Path cwd, SubagentToolPolicy toolPolicy) {
-                return new FilteredToolRuntime(createRuntime(cwd), toolPolicy);
+                ToolRuntimePort runtime = createRuntime(cwd);
+                return toolPolicy == null ? runtime : new FilteredToolRuntime(runtime, toolPolicy);
             }
 
             private ToolRuntimePort createRuntime(Path cwd) {

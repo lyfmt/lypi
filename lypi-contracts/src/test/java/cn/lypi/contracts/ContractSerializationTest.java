@@ -388,6 +388,34 @@ class ContractSerializationTest {
     }
 
     @Test
+    void subagentSpawnRequestRoundTripKeepsExplicitModelContext() throws Exception {
+        SubagentSpawnRequest request = new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请检查 contracts",
+            Path.of("/tmp/project"),
+            List.of("read"),
+            new SubagentToolPolicy(List.of("read"), List.of("read", "grep", "glob")),
+            PermissionMode.ACCEPT_EDITS,
+            120,
+            Optional.of("reviewer"),
+            Optional.of("contracts"),
+            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.PLAN)
+        );
+
+        String json = mapper.writeValueAsString(request);
+        SubagentSpawnRequest restored = mapper.readValue(json, SubagentSpawnRequest.class);
+
+        assertEquals(request, restored);
+        assertTrue(json.contains("\"model\""));
+        assertTrue(json.contains("\"thinkingLevel\":\"HIGH\""));
+        assertTrue(json.contains("\"agentMode\":\"PLAN\""));
+        assertTrue(json.contains("\"permissionMode\":\"ACCEPT_EDITS\""));
+    }
+
+    @Test
     void childSessionRequestRoundTripKeepsInitialSubagentMetadata() throws Exception {
         ChildSessionRequest request = new ChildSessionRequest(
             "ses_child",
@@ -464,6 +492,33 @@ class ContractSerializationTest {
         assertEquals(result, mapper.readValue(resultJson, SubagentContinueResult.class));
         assertTrue(requestJson.contains("\"tools\""));
         assertTrue(resultJson.contains("\"runId\":\"run_02\""));
+    }
+
+    @Test
+    void subagentContinueRequestRoundTripKeepsExplicitModelContext() throws Exception {
+        SubagentContinueRequest request = new SubagentContinueRequest(
+            "ses_parent",
+            "entry_continue_parent",
+            "ses_child",
+            "继续完成剩余检查",
+            Path.of("/tmp/project"),
+            List.of("bash", "read"),
+            new SubagentToolPolicy(List.of("bash", "read"), List.of("read", "grep", "glob", "bash")),
+            PermissionMode.ACCEPT_EDITS,
+            90,
+            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.EXECUTE)
+        );
+
+        String json = mapper.writeValueAsString(request);
+        SubagentContinueRequest restored = mapper.readValue(json, SubagentContinueRequest.class);
+
+        assertEquals(request, restored);
+        assertTrue(json.contains("\"model\""));
+        assertTrue(json.contains("\"thinkingLevel\":\"HIGH\""));
+        assertTrue(json.contains("\"agentMode\":\"EXECUTE\""));
+        assertTrue(json.contains("\"permissionMode\":\"ACCEPT_EDITS\""));
     }
 
     @Test

@@ -11,7 +11,6 @@ import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
-import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
@@ -59,7 +58,7 @@ public final class HeadlessSubagentRunner {
         validate(input);
         try {
             SessionManagerPort childSessionManager = sessionManagerFactory.open(input.sessionCwd(), input.childSessionId());
-            AgentCorePort agentCore = agentCoreFactory.create(input.cwd(), childSessionManager);
+            AgentCorePort agentCore = agentCoreFactory.create(input.cwd(), childSessionManager, input.toolPolicy());
             Optional<String> parentEntryId = turnParentEntryId(input, childSessionManager);
             TurnState state = agentCore.execute(new TurnRequest(
                 input.childSessionId(),
@@ -101,12 +100,6 @@ public final class HeadlessSubagentRunner {
         }
         if (input.sessionCwd() == null) {
             throw new IllegalArgumentException("sessionCwd is required");
-        }
-        if (!input.allowedTools().isEmpty()) {
-            throw new IllegalArgumentException("allowedTools is not supported yet");
-        }
-        if (input.permissionMode() != PermissionMode.DEFAULT_EXECUTE) {
-            throw new IllegalArgumentException("permissionMode override is not supported yet");
         }
     }
 
