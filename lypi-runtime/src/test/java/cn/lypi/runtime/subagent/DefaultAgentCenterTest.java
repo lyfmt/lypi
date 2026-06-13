@@ -25,6 +25,8 @@ import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import cn.lypi.contracts.subagent.SubagentWaitRequest;
+import cn.lypi.contracts.subagent.SubagentWaitResult;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -113,6 +115,87 @@ class DefaultAgentCenterTest {
             .map(AgentLifecycleEntry.class::cast)
             .extracting(AgentLifecycleEntry::lifecycle)
             .containsExactly("spawned", "finished");
+    }
+
+    @Test
+    void waitForRunningAgentTimesOutWithoutPublishingMailbox() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "慢任务"));
+
+        SubagentWaitResult result = center.waitFor(new SubagentWaitRequest(
+            Optional.of(spawned.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            1,
+            true
+        ));
+
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.TIMED_OUT);
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING))).isEmpty();
+    }
+
+    @Test
+    void waitForRunningAgentReturnsCompletionAndKeepsSingleMailboxMessage() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "快任务"));
+        processRunner.complete(new HeadlessSubagentOutput(
+            spawned.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "完成摘要",
+            Optional.of("entry_final"),
+            Optional.empty()
+        ));
+
+        SubagentWaitResult result = center.waitFor(new SubagentWaitRequest(
+            Optional.of(spawned.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            1,
+            true
+        ));
+
+        assertThat(result.agentId()).isEqualTo(spawned.agentId());
+        assertThat(result.childSessionId()).isEqualTo(spawned.childSessionId());
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+        assertThat(result.summary()).contains("完成摘要");
+        assertThat(result.finalEntryId()).contains("entry_final");
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING))).hasSize(1);
     }
 
     @Test

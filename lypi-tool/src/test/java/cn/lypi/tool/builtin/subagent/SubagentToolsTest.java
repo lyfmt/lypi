@@ -19,6 +19,8 @@ import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import cn.lypi.contracts.subagent.SubagentWaitRequest;
+import cn.lypi.contracts.subagent.SubagentWaitResult;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.nio.file.Path;
@@ -119,6 +121,26 @@ class SubagentToolsTest {
 
         assertTrue(result.isError());
         assertTrue(result.output().contains("Subagent command is not configured"));
+    }
+
+    @Test
+    void waitAgentReturnsSubagentCompletion() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        WaitAgentTool tool = new WaitAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "agentId", "agent_1",
+            "timeoutSeconds", 30
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals(Optional.of("agent_1"), agentCenter.waitRequest.agentId());
+        assertEquals(30, agentCenter.waitRequest.timeoutSeconds());
+        assertTrue(result.output().contains("SUCCEEDED"));
+        assertTrue(result.output().contains("完成摘要"));
+        assertTrue(result.output().contains("entry_final"));
+        assertFalse(tool.isReadOnly(Map.of()));
     }
 
     @Test
@@ -260,6 +282,7 @@ class SubagentToolsTest {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
 
         assertFalse(new SpawnAgentTool(agentCenter).validateInput(Map.of(), context()).valid());
+        assertFalse(new WaitAgentTool(agentCenter).validateInput(Map.of(), context()).valid());
         assertFalse(new InterruptAgentTool(agentCenter).validateInput(Map.of(), context()).valid());
         assertFalse(new ReadAgentResultTool(agentCenter).validateInput(Map.of(), context()).valid());
         assertFalse(new AcceptMailboxMessageTool(new RecordingMailbox()).validateInput(Map.of(), context()).valid());
@@ -272,6 +295,7 @@ class SubagentToolsTest {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
 
         assertEquals(PermissionBehavior.ALLOW, new SpawnAgentTool(agentCenter).checkPermissions(Map.of(), context()).behavior());
+        assertEquals(PermissionBehavior.ALLOW, new WaitAgentTool(agentCenter).checkPermissions(Map.of(), context()).behavior());
         assertEquals(PermissionBehavior.ALLOW, new ReadAgentResultTool(agentCenter).checkPermissions(Map.of(), context()).behavior());
         assertEquals(PermissionBehavior.ALLOW, new ReadMailboxTool(new RecordingMailbox()).checkPermissions(Map.of(), context()).behavior());
         assertEquals(PermissionBehavior.ALLOW, new ListAgentsTool(new RecordingAgentRegistry()).checkPermissions(Map.of(), context()).behavior());
@@ -308,6 +332,8 @@ class SubagentToolsTest {
     private final class RecordingAgentCenter implements AgentCenterPort {
         private SubagentSpawnRequest spawnRequest;
         private SubagentSpawnResult spawnResult;
+        private SubagentWaitRequest waitRequest;
+        private SubagentWaitResult waitResult;
         private String interruptedAgentId;
         private String readResultChildSessionId;
 
@@ -324,6 +350,23 @@ class SubagentToolsTest {
                 request.parentEntryId(),
                 SubagentRunStatus.STARTED,
                 Optional.of("started")
+            );
+        }
+
+        @Override
+        public SubagentWaitResult waitFor(SubagentWaitRequest request) {
+            this.waitRequest = request;
+            if (waitResult != null) {
+                return waitResult;
+            }
+            return new SubagentWaitResult(
+                request.agentId().orElse("agent_1"),
+                request.childSessionId().orElse("ses_child"),
+                request.runId().orElse("run_1"),
+                SubagentRunStatus.SUCCEEDED,
+                Optional.of("完成摘要"),
+                Optional.of("entry_final"),
+                Optional.empty()
             );
         }
 
