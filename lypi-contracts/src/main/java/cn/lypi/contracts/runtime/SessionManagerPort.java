@@ -1,6 +1,7 @@
 package cn.lypi.contracts.runtime;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.session.BranchSummaryPlan;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
@@ -45,6 +46,13 @@ public interface SessionManagerPort {
     List<SessionEntry> branch(String leafId);
 
     /**
+     * 收集从旧 leaf 离开时需要保留语义的路径后缀。
+     *
+     * NOTE: 返回的 entries 来自 oldLeafId 到目标路径共同祖先之间，不包含共同祖先。
+     */
+    BranchSummaryPlan collectBranchSummaryPlan(String oldLeafId, String targetLeafId);
+
+    /**
      * 返回当前 session 最小视图。
      */
     SessionView currentView();
@@ -70,6 +78,11 @@ public interface SessionManagerPort {
      * NOTE: Typed helper 只能委托 append 语义，不得提供覆盖或更新能力。
      */
     SessionHandle appendMessage(AgentMessage message);
+
+    /**
+     * 在指定父节点后追加 branch summary 并移动当前 leaf。
+     */
+    SessionHandle appendBranchSummary(String parentId, String fromId, String summary);
 
     /**
      * fork 一个新 session。
