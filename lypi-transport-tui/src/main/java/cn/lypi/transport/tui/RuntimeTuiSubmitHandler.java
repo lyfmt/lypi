@@ -176,16 +176,18 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             publishSlashCommandError("compact: compaction is running");
             return;
         }
-        Optional<CompactCommandInvocation> invocation = slashCommandRouter.compactInvocation(input);
+        MutableAbortSignal signal = new MutableAbortSignal();
+        Optional<CompactCommandInvocation> invocation = slashCommandRouter.compactInvocation(input, signal);
         if (invocation.isEmpty()) {
             publishSlashCommandError("compact: compaction runtime is unavailable");
             return;
         }
+        activeSignal = signal;
         compactRunning = true;
-        executor.execute(() -> runCompact(invocation.orElseThrow()));
+        executor.execute(() -> runCompact(invocation.orElseThrow(), signal));
     }
 
-    private void runCompact(CompactCommandInvocation invocation) {
+    private void runCompact(CompactCommandInvocation invocation, MutableAbortSignal signal) {
         try {
             CompactionResult result = invocation.runtime().compact(invocation.request());
             if (result.compacted()) {
@@ -197,6 +199,9 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             publishSlashCommandError("compact: " + errorMessage(exception));
         } finally {
             compactRunning = false;
+            if (activeSignal == signal) {
+                activeSignal = null;
+            }
         }
     }
 

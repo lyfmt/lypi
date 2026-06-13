@@ -29,6 +29,7 @@ import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.PromptTemplateSource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.CompactionRequest;
 import cn.lypi.contracts.runtime.CompactionResult;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -431,6 +432,41 @@ class RuntimeTuiSubmitHandlerTest {
         executor.runNext();
 
         assertEquals("after compact", core.requests.getFirst().userInput());
+    }
+
+    @Test
+    void interruptAbortsBackgroundCompact() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        QueuedExecutor executor = new QueuedExecutor();
+        List<CompactionRequest> compactionRequests = new ArrayList<>();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            executor,
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("/tmp/project"),
+                session,
+                emptyResources(),
+                request -> {
+                    compactionRequests.add(request);
+                    return new CompactionResult(!request.abortSignal().aborted(), Optional.of("entry-compact-1"), "compacted");
+                }
+            )
+        );
+
+        handler.submitUserInput("/compact");
+        handler.requestInterrupt("esc");
+        executor.runNext();
+
+        assertTrue(core.requests.isEmpty());
+        assertEquals(1, compactionRequests.size());
+        assertTrue(compactionRequests.getFirst().abortSignal().aborted());
+        InterruptEvent event = assertInstanceOf(InterruptEvent.class, events.published.getFirst());
+        assertEquals("esc", event.reason());
     }
 
     @Test

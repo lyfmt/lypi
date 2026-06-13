@@ -2,6 +2,7 @@ package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -165,6 +166,10 @@ final class SlashCommandRouter {
     }
 
     Optional<CompactCommandInvocation> compactInvocation(String input) {
+        return compactInvocation(input, () -> false);
+    }
+
+    Optional<CompactCommandInvocation> compactInvocation(String input, AbortSignal abortSignal) {
         SlashCommandResult validation = compactValidation(input);
         if (!validation.matched() || validation.message().isPresent()) {
             return Optional.empty();
@@ -175,7 +180,7 @@ final class SlashCommandRouter {
                 sessionId,
                 Optional.of(currentLeafId()),
                 cwd,
-                () -> false
+                abortSignal
             )
         ));
     }
