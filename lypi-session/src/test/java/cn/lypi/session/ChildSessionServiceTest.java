@@ -3,15 +3,22 @@ package cn.lypi.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -65,6 +72,36 @@ class ChildSessionServiceTest {
             .doesNotContain("entry_root")
             .doesNotContain("entry_left")
             .doesNotContain("entry_right");
+    }
+
+    @Test
+    void createChildSessionWritesInitialModelContextIntoHeader() throws Exception {
+        SessionManager parent = new SessionManagerImpl(tempDir);
+        parent.openOrCreate("ses_parent");
+        ChildSessionService service = new ChildSessionService(Clock.fixed(NOW, ZoneOffset.UTC));
+
+        SessionHandle child = service.create(new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            tempDir,
+            tempDir,
+            1,
+            Optional.of("reviewer"),
+            Optional.of("code-review"),
+            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.EXECUTE),
+            Optional.of(PermissionMode.DEFAULT_EXECUTE),
+            new SubagentToolPolicy(List.of("bash"), List.of("read", "grep", "glob", "bash"))
+        ));
+
+        SessionHeader header = new JsonlSessionStore(tempDir).read(child.sessionId()).header();
+
+        assertThat(header.initialModel()).contains(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH));
+        assertThat(header.initialThinkingLevel()).contains(ThinkingLevel.HIGH);
+        assertThat(header.initialAgentMode()).contains(AgentMode.EXECUTE);
+        assertThat(header.initialPermissionMode()).contains(PermissionMode.DEFAULT_EXECUTE);
     }
 
     @Test

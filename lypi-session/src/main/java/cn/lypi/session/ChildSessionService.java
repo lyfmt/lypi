@@ -47,10 +47,10 @@ public final class ChildSessionService implements ChildSessionPort {
             request.agentName(),
             request.agentRole(),
             now,
-            java.util.Optional.empty(),
-            java.util.Optional.empty(),
-            java.util.Optional.empty(),
-            java.util.Optional.empty()
+            request.initialModel(),
+            request.initialThinkingLevel(),
+            request.initialAgentMode(),
+            request.initialPermissionMode()
         );
         store.create(header);
 

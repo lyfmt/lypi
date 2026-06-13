@@ -48,6 +48,16 @@
 #     # 建议：常驻服务保持为空；一次性命令或冒烟测试可通过环境变量传入。
 #     initial-prompt: "${LYPI_INITIAL_PROMPT:}"
 #
+#   subagent:
+#     # 重要性：可选覆盖。父 Agent 会按该命令启动独立 headless 子进程。
+#     # 默认：从打包运行的当前 lypi-boot jar 自动推导为 java -jar <current-jar> headless-subagent。
+#     # 建议：只有在非 jar/classpath 开发模式或需要自定义启动命令时才显式配置。
+#     command:
+#       - java
+#       - -jar
+#       - /absolute/path/to/lypi-boot.jar
+#       - headless-subagent
+#
 #   ai:
 #     # 重要性：兼容字段。当前默认运行模型选择以 lypi.runtime.default-provider 为准。
 #     # 建议：除非兼容旧配置读取方，否则不要配置；配置时保持与 runtime.default-provider 一致。

@@ -8,10 +8,12 @@ import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionResponse;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.tool.BlockingPermissionGate;
 import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.EventPublishingPermissionGate;
 import cn.lypi.tool.FilePermissionUpdateStore;
+import cn.lypi.tool.FilteredToolRuntime;
 import cn.lypi.tool.PermissionGate;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.PermissionResponseGate;
@@ -108,36 +110,49 @@ public class LyPiToolAutoConfiguration {
     ) {
         EventBus resolvedEventBus = eventBus.getIfAvailable();
         String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
-        return cwd -> {
-            Path runtimeCwd = cwd == null ? Path.of(configuredCwd) : cwd;
-            ToolRuntimeOptions options = ToolRuntimeOptions.builder()
-                .cwd(runtimeCwd)
-                .build();
-            DefaultToolRuntime runtime = toolRuntime(
-                resolvedEventBus,
-                new cn.lypi.tool.DefaultToolRegistry(),
-                new cn.lypi.tool.ToolSchemaValidator(),
-                new cn.lypi.tool.ToolExecutionPlanner(),
-                new cn.lypi.tool.ToolResultBudgeter(),
-                new cn.lypi.tool.ToolRuntimeContextFactory(options),
-                cn.lypi.tool.ToolExecutionInterceptors.noop(),
-                securityRuntime,
-                responseGate.getIfAvailable(),
-                promptPort.getIfAvailable(),
-                new FilePermissionUpdateStore(runtimeCwd)
-            );
-            BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
-            AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
-            MailboxPort resolvedMailbox = mailbox.getIfAvailable();
-            if (resolvedAgentCenter != null && resolvedMailbox != null) {
-                AgentRegistryPort resolvedAgentRegistry = agentRegistry.getIfAvailable();
-                if (resolvedAgentRegistry == null) {
-                    BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox);
-                } else {
-                    BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox, resolvedAgentRegistry);
-                }
+        return new ToolRuntimeFactoryPort() {
+            @Override
+            public ToolRuntimePort create(Path cwd) {
+                return createRuntime(cwd);
             }
-            return runtime;
+
+            @Override
+            public ToolRuntimePort create(Path cwd, SubagentToolPolicy toolPolicy) {
+                ToolRuntimePort runtime = createRuntime(cwd);
+                return toolPolicy == null ? runtime : new FilteredToolRuntime(runtime, toolPolicy);
+            }
+
+            private ToolRuntimePort createRuntime(Path cwd) {
+                Path runtimeCwd = cwd == null ? Path.of(configuredCwd) : cwd;
+                ToolRuntimeOptions options = ToolRuntimeOptions.builder()
+                    .cwd(runtimeCwd)
+                    .build();
+                DefaultToolRuntime runtime = toolRuntime(
+                    resolvedEventBus,
+                    new cn.lypi.tool.DefaultToolRegistry(),
+                    new cn.lypi.tool.ToolSchemaValidator(),
+                    new cn.lypi.tool.ToolExecutionPlanner(),
+                    new cn.lypi.tool.ToolResultBudgeter(),
+                    new cn.lypi.tool.ToolRuntimeContextFactory(options),
+                    cn.lypi.tool.ToolExecutionInterceptors.noop(),
+                    securityRuntime,
+                    responseGate.getIfAvailable(),
+                    promptPort.getIfAvailable(),
+                    new FilePermissionUpdateStore(runtimeCwd)
+                );
+                BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
+                AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
+                MailboxPort resolvedMailbox = mailbox.getIfAvailable();
+                if (resolvedAgentCenter != null && resolvedMailbox != null) {
+                    AgentRegistryPort resolvedAgentRegistry = agentRegistry.getIfAvailable();
+                    if (resolvedAgentRegistry == null) {
+                        BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox);
+                    } else {
+                        BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox, resolvedAgentRegistry);
+                    }
+                }
+                return runtime;
+            }
         };
     }
 

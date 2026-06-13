@@ -124,6 +124,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -1272,6 +1273,22 @@ class LyPiRuntimeAutoConfigurationTest {
 
                 assertThat(result.status()).isEqualTo(SubagentRunStatus.STARTED);
                 assertThat(result.agentId()).isNotBlank();
+            });
+    }
+
+    @Test
+    void usesResolvedSubagentCommandWhenCommandIsNotConfigured() {
+        List<String> inferredCommand = List.of("java", "-jar", "/opt/lypi/lypi-boot.jar", "headless-subagent");
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(SubagentCommandResolver.class, () -> new SubagentCommandResolver(null, () ->
+                Path.of("/opt/lypi/lypi-boot.jar").toUri()))
+            .run(context -> {
+                assertThat(ReflectionTestUtils.getField(context.getBean(SubagentProcessRunner.class), "command"))
+                    .isEqualTo(inferredCommand);
+                assertThat(ReflectionTestUtils.getField(context.getBean(AgentCenterPort.class), "command"))
+                    .isEqualTo(inferredCommand);
             });
     }
 

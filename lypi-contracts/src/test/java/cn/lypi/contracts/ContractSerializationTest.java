@@ -60,15 +60,26 @@ import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
+import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
+import cn.lypi.contracts.subagent.HeadlessSubagentInput;
+import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
+import cn.lypi.contracts.subagent.SubagentContinueRequest;
+import cn.lypi.contracts.subagent.SubagentContinueResult;
+import cn.lypi.contracts.subagent.SubagentSpawnRequest;
+import cn.lypi.contracts.subagent.SubagentRunStatus;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
+import cn.lypi.contracts.subagent.SubagentWaitRequest;
+import cn.lypi.contracts.subagent.SubagentWaitResult;
 import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -366,6 +377,189 @@ class ContractSerializationTest {
 
         assertEquals(message, restoredMessage);
         assertTrue(messageJson.contains("\"status\":\"PENDING\""));
+    }
+
+    @Test
+    void headlessSubagentInputRoundTripKeepsRunModeToolPolicyAndSkills() throws Exception {
+        HeadlessSubagentInput input = new HeadlessSubagentInput(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "继续检查",
+            Path.of("/tmp/project/.ly-pi"),
+            Path.of("/tmp/project"),
+            new SubagentToolPolicy(List.of("read", "grep", "read"), List.of("read", "grep", "glob")),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            HeadlessSubagentRunMode.CONTINUE,
+            List.of(new SkillMention("doc", Path.of("/tmp/project/.ly-pi/skills/doc/SKILL.md")))
+        );
+
+        String json = mapper.writeValueAsString(input);
+        HeadlessSubagentInput restored = mapper.readValue(json, HeadlessSubagentInput.class);
+
+        assertEquals(input, restored);
+        assertTrue(json.contains("\"runMode\":\"CONTINUE\""));
+        assertTrue(json.contains("\"requestedTools\""));
+        assertTrue(json.contains("\"effectiveTools\""));
+        assertTrue(json.contains("\"skillMentions\""));
+    }
+
+    @Test
+    void subagentSpawnRequestRoundTripKeepsToolsCompatibilityFields() throws Exception {
+        SubagentSpawnRequest request = new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请检查 contracts",
+            Path.of("/tmp/project"),
+            List.of("bash", "read"),
+            List.of("read"),
+            PermissionMode.DEFAULT_EXECUTE,
+            120,
+            Optional.of("reviewer"),
+            Optional.of("contracts")
+        );
+
+        String json = mapper.writeValueAsString(request);
+        SubagentSpawnRequest restored = mapper.readValue(json, SubagentSpawnRequest.class);
+
+        assertEquals(request, restored);
+        assertTrue(json.contains("\"tools\""));
+        assertTrue(json.contains("\"allowedTools\""));
+    }
+
+    @Test
+    void subagentSpawnRequestRoundTripKeepsExplicitModelContext() throws Exception {
+        SubagentSpawnRequest request = new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请检查 contracts",
+            Path.of("/tmp/project"),
+            List.of("read"),
+            new SubagentToolPolicy(List.of("read"), List.of("read", "grep", "glob")),
+            PermissionMode.ACCEPT_EDITS,
+            120,
+            Optional.of("reviewer"),
+            Optional.of("contracts"),
+            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.PLAN)
+        );
+
+        String json = mapper.writeValueAsString(request);
+        SubagentSpawnRequest restored = mapper.readValue(json, SubagentSpawnRequest.class);
+
+        assertEquals(request, restored);
+        assertTrue(json.contains("\"model\""));
+        assertTrue(json.contains("\"thinkingLevel\":\"HIGH\""));
+        assertTrue(json.contains("\"agentMode\":\"PLAN\""));
+        assertTrue(json.contains("\"permissionMode\":\"ACCEPT_EDITS\""));
+    }
+
+    @Test
+    void childSessionRequestRoundTripKeepsInitialSubagentMetadata() throws Exception {
+        ChildSessionRequest request = new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            Path.of("/tmp/project/.ly-pi"),
+            Path.of("/tmp/project"),
+            2,
+            Optional.of("reviewer"),
+            Optional.of("contracts"),
+            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.EXECUTE),
+            Optional.of(PermissionMode.DEFAULT_EXECUTE),
+            new SubagentToolPolicy(List.of("read", "bash"), List.of("read", "grep", "glob", "bash"))
+        );
+
+        String json = mapper.writeValueAsString(request);
+        ChildSessionRequest restored = mapper.readValue(json, ChildSessionRequest.class);
+
+        assertEquals(request, restored);
+        assertTrue(json.contains("\"initialModel\""));
+        assertTrue(json.contains("\"toolPolicy\""));
+    }
+
+    @Test
+    void subagentWaitContractsRoundTripKeepLocatorAndStatus() throws Exception {
+        SubagentWaitRequest request = new SubagentWaitRequest(
+            Optional.of("agent_01"),
+            Optional.of("ses_child"),
+            Optional.of("run_01"),
+            600,
+            true
+        );
+        SubagentWaitResult result = new SubagentWaitResult(
+            "agent_01",
+            "ses_child",
+            "run_01",
+            SubagentRunStatus.RUNNING,
+            Optional.of("处理中"),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        String requestJson = mapper.writeValueAsString(request);
+        String resultJson = mapper.writeValueAsString(result);
+
+        assertEquals(request, mapper.readValue(requestJson, SubagentWaitRequest.class));
+        assertEquals(result, mapper.readValue(resultJson, SubagentWaitResult.class));
+        assertTrue(requestJson.contains("\"timeoutSeconds\":600"));
+        assertTrue(resultJson.contains("\"status\":\"RUNNING\""));
+    }
+
+    @Test
+    void subagentContinueContractsRoundTripKeepPromptAndResultRef() throws Exception {
+        SubagentContinueRequest request = new SubagentContinueRequest(
+            "ses_child",
+            "继续完成剩余检查",
+            List.of("bash", "read"),
+            90
+        );
+        SubagentContinueResult result = new SubagentContinueResult(
+            "agent_01",
+            "ses_child",
+            "run_02",
+            SubagentRunStatus.STARTED,
+            Optional.of("entry_continue")
+        );
+
+        String requestJson = mapper.writeValueAsString(request);
+        String resultJson = mapper.writeValueAsString(result);
+
+        assertEquals(request, mapper.readValue(requestJson, SubagentContinueRequest.class));
+        assertEquals(result, mapper.readValue(resultJson, SubagentContinueResult.class));
+        assertTrue(requestJson.contains("\"tools\""));
+        assertTrue(resultJson.contains("\"runId\":\"run_02\""));
+    }
+
+    @Test
+    void subagentContinueRequestRoundTripKeepsExplicitModelContext() throws Exception {
+        SubagentContinueRequest request = new SubagentContinueRequest(
+            "ses_parent",
+            "entry_continue_parent",
+            "ses_child",
+            "继续完成剩余检查",
+            Path.of("/tmp/project"),
+            List.of("bash", "read"),
+            new SubagentToolPolicy(List.of("bash", "read"), List.of("read", "grep", "glob", "bash")),
+            PermissionMode.ACCEPT_EDITS,
+            90,
+            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.EXECUTE)
+        );
+
+        String json = mapper.writeValueAsString(request);
+        SubagentContinueRequest restored = mapper.readValue(json, SubagentContinueRequest.class);
+
+        assertEquals(request, restored);
+        assertTrue(json.contains("\"model\""));
+        assertTrue(json.contains("\"thinkingLevel\":\"HIGH\""));
+        assertTrue(json.contains("\"agentMode\":\"EXECUTE\""));
+        assertTrue(json.contains("\"permissionMode\":\"ACCEPT_EDITS\""));
     }
 
     @Test

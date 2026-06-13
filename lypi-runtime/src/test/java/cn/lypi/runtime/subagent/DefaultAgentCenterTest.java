@@ -3,9 +3,12 @@ package cn.lypi.runtime.subagent;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
@@ -20,8 +23,13 @@ import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
+import cn.lypi.contracts.subagent.SubagentContinueRequest;
+import cn.lypi.contracts.subagent.SubagentContinueResult;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
+import cn.lypi.contracts.subagent.SubagentWaitRequest;
+import cn.lypi.contracts.subagent.SubagentWaitResult;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -113,6 +121,340 @@ class DefaultAgentCenterTest {
     }
 
     @Test
+    void continueRunStartsNewHeadlessContinueRunForExistingChildSession() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "第一轮"));
+        processRunner.complete(new HeadlessSubagentOutput(
+            spawned.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "第一轮完成",
+            Optional.of("entry_final_1"),
+            Optional.empty()
+        ));
+
+        SubagentContinueResult continued = center.continueRun(new SubagentContinueRequest(
+            "ses_parent",
+            "entry_parent_continue",
+            spawned.childSessionId(),
+            "第二轮",
+            tempDir,
+            List.of(),
+            30
+        ));
+
+        assertThat(continued.status()).isEqualTo(SubagentRunStatus.STARTED);
+        assertThat(continued.agentId()).isEqualTo(spawned.agentId());
+        assertThat(processRunner.input.childSessionId()).isEqualTo(spawned.childSessionId());
+        assertThat(processRunner.input.prompt()).isEqualTo("第二轮");
+        assertThat(processRunner.input.runMode()).isEqualTo(cn.lypi.contracts.subagent.HeadlessSubagentRunMode.CONTINUE);
+        assertThat(processRunner.input.parentSpawnEntryId()).isEqualTo(continued.parentContinueEntryId());
+        assertThat(parentSession.entries)
+            .filteredOn(AgentLifecycleEntry.class::isInstance)
+            .map(AgentLifecycleEntry.class::cast)
+            .extracting(AgentLifecycleEntry::lifecycle)
+            .contains("continued");
+    }
+
+    @Test
+    void spawnInitializesChildContextOnlyFromExplicitRequestFields() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        parentSession.sessionContext = new SessionContext(
+            List.of(),
+            List.of(),
+            List.of(),
+            new ModelSelection("parent-provider", "parent-model", ThinkingLevel.MAX),
+            ThinkingLevel.MAX,
+            AgentMode.PLAN,
+            PermissionMode.BYPASS
+        );
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultAgentCenter center = center(childSessions, parentSession, processRunner);
+
+        center.spawn(new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请审查代码",
+            tempDir,
+            List.of("read", "bash"),
+            new SubagentToolPolicy(List.of("read", "bash"), List.of("read", "grep", "glob", "bash")),
+            PermissionMode.ACCEPT_EDITS,
+            30,
+            Optional.empty(),
+            Optional.empty(),
+            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.EXECUTE)
+        ));
+
+        assertThat(childSessions.request.initialModel())
+            .contains(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH));
+        assertThat(childSessions.request.initialThinkingLevel()).contains(ThinkingLevel.HIGH);
+        assertThat(childSessions.request.initialAgentMode()).contains(AgentMode.EXECUTE);
+        assertThat(childSessions.request.initialPermissionMode()).contains(PermissionMode.ACCEPT_EDITS);
+        assertThat(processRunner.input.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
+        assertThat(processRunner.input.toolPolicy().requestedTools()).containsExactly("read", "bash");
+        assertThat(processRunner.input.toolPolicy().effectiveTools()).containsExactly("read", "grep", "glob", "bash");
+    }
+
+    @Test
+    void spawnInheritsParentContextWhenExplicitFieldsAreMissing() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        parentSession.sessionContext = new SessionContext(
+            List.of(),
+            List.of(),
+            List.of(),
+            new ModelSelection("parent-provider", "parent-model", ThinkingLevel.MAX),
+            ThinkingLevel.MAX,
+            AgentMode.PLAN,
+            PermissionMode.BYPASS
+        );
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultAgentCenter center = center(childSessions, parentSession, processRunner);
+
+        center.spawn(request("ses_parent", "entry_parent", "请审查代码"));
+
+        assertThat(childSessions.request.initialModel())
+            .contains(new ModelSelection("parent-provider", "parent-model", ThinkingLevel.MAX));
+        assertThat(childSessions.request.initialThinkingLevel()).contains(ThinkingLevel.MAX);
+        assertThat(childSessions.request.initialAgentMode()).contains(AgentMode.PLAN);
+        assertThat(childSessions.request.initialPermissionMode()).contains(PermissionMode.BYPASS);
+        assertThat(processRunner.input.permissionMode()).isEqualTo(PermissionMode.BYPASS);
+    }
+
+    @Test
+    void waitForRunningAgentTimesOutWithoutPublishingMailbox() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "慢任务"));
+
+        SubagentWaitResult result = center.waitFor(new SubagentWaitRequest(
+            Optional.of(spawned.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            1,
+            true
+        ));
+
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.TIMED_OUT);
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING))).isEmpty();
+    }
+
+    @Test
+    void waitForRunningAgentReturnsCompletionAndKeepsSingleMailboxMessage() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "快任务"));
+        processRunner.complete(new HeadlessSubagentOutput(
+            spawned.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "完成摘要",
+            Optional.of("entry_final"),
+            Optional.empty()
+        ));
+
+        SubagentWaitResult result = center.waitFor(new SubagentWaitRequest(
+            Optional.of(spawned.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            1,
+            true
+        ));
+
+        assertThat(result.agentId()).isEqualTo(spawned.agentId());
+        assertThat(result.childSessionId()).isEqualTo(spawned.childSessionId());
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+        assertThat(result.summary()).contains("完成摘要");
+        assertThat(result.finalEntryId()).contains("entry_final");
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING))).hasSize(1);
+    }
+
+    @Test
+    void waitForRealJsonSubagentProcessPublishesMailboxAndReadableResult() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("python3", "-c", """
+                import json, sys, time
+                data = json.load(sys.stdin)
+                time.sleep(0.2)
+                print(json.dumps({
+                    'childSessionId': data['childSessionId'],
+                    'status': 'SUCCEEDED',
+                    'summary': 'real wait ok',
+                    'finalEntryId': 'entry_real_final'
+                }))
+                """),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            new JsonSubagentProcessRunner(List.of("python3", "-c", """
+                import json, sys, time
+                data = json.load(sys.stdin)
+                time.sleep(0.2)
+                print(json.dumps({
+                    'childSessionId': data['childSessionId'],
+                    'status': 'SUCCEEDED',
+                    'summary': 'real wait ok',
+                    'finalEntryId': 'entry_real_final'
+                }))
+                """)),
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "真实 wait"));
+        SubagentWaitResult waited = center.waitFor(new SubagentWaitRequest(
+            Optional.of(spawned.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            5,
+            true
+        ));
+
+        assertThat(waited.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+        assertThat(waited.summary()).contains("real wait ok");
+        assertThat(waited.finalEntryId()).contains("entry_real_final");
+        assertThat(center.readResult(spawned.childSessionId()))
+            .hasValueSatisfying(output -> assertThat(output.summary()).isEqualTo("real wait ok"));
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
+            .singleElement()
+            .satisfies(message -> {
+                assertThat(message.summary()).isEqualTo("real wait ok");
+                assertThat(message.contentRef().finalEntryId()).isEqualTo("entry_real_final");
+            });
+    }
+
+    @Test
+    void multipleSubagentsCanBeWaitedIndependentlyWithoutResultMixing() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        QueuedProcessRunner processRunner = new QueuedProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        SubagentSpawnResult first = center.spawn(request("ses_parent", "entry_parent", "第一子任务"));
+        SubagentSpawnResult second = center.spawn(request("ses_parent", "entry_parent", "第二子任务"));
+        processRunner.complete(second.childSessionId(), new HeadlessSubagentOutput(
+            second.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "第二结果",
+            Optional.of("entry_second_final"),
+            Optional.empty()
+        ));
+        processRunner.complete(first.childSessionId(), new HeadlessSubagentOutput(
+            first.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "第一结果",
+            Optional.of("entry_first_final"),
+            Optional.empty()
+        ));
+
+        SubagentWaitResult waitedFirst = center.waitFor(new SubagentWaitRequest(
+            Optional.of(first.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            1,
+            true
+        ));
+        SubagentWaitResult waitedSecond = center.waitFor(new SubagentWaitRequest(
+            Optional.of(second.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            1,
+            true
+        ));
+
+        assertThat(waitedFirst.childSessionId()).isEqualTo(first.childSessionId());
+        assertThat(waitedFirst.summary()).contains("第一结果");
+        assertThat(waitedFirst.finalEntryId()).contains("entry_first_final");
+        assertThat(waitedSecond.childSessionId()).isEqualTo(second.childSessionId());
+        assertThat(waitedSecond.summary()).contains("第二结果");
+        assertThat(waitedSecond.finalEntryId()).contains("entry_second_final");
+        assertThat(center.readResult(first.childSessionId()))
+            .hasValueSatisfying(output -> assertThat(output.summary()).isEqualTo("第一结果"));
+        assertThat(center.readResult(second.childSessionId()))
+            .hasValueSatisfying(output -> assertThat(output.summary()).isEqualTo("第二结果"));
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
+            .extracting(MailboxMessage::summary)
+            .containsExactly("第二结果", "第一结果");
+    }
+
+    @Test
     void completionLifecycleDoesNotMoveParentSessionCurrentLeaf() {
         ChildSessionPort childSessions = request -> null;
         CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
@@ -152,6 +494,61 @@ class DefaultAgentCenterTest {
             .map(AgentLifecycleEntry.class::cast)
             .extracting(AgentLifecycleEntry::lifecycle)
             .containsExactly("finished");
+    }
+
+    @Test
+    void spawnPassesExplicitModelContextToChildSessionRequest() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        parentSession.sessionContext = new SessionContext(
+            List.of(),
+            List.of("entry_parent"),
+            List.of(),
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        );
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        center.spawn(new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请使用指定模型上下文",
+            tempDir,
+            List.of(),
+            new SubagentToolPolicy(List.of(), List.of()),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            Optional.empty(),
+            Optional.empty(),
+            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.EXECUTE),
+            true
+        ));
+
+        assertThat(childSessions.request.initialModel())
+            .contains(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH));
+        assertThat(childSessions.request.initialThinkingLevel()).contains(ThinkingLevel.HIGH);
+        assertThat(childSessions.request.initialAgentMode()).contains(AgentMode.EXECUTE);
+        assertThat(childSessions.request.initialPermissionMode()).contains(PermissionMode.DEFAULT_EXECUTE);
     }
 
     @Test
@@ -509,6 +906,29 @@ class DefaultAgentCenterTest {
         return (cwd, sessionId) -> sessionManager;
     }
 
+    private DefaultAgentCenter center(
+        CapturingChildSessions childSessions,
+        CapturingParentSession parentSession,
+        CompletingProcessRunner processRunner
+    ) {
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        return new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+    }
+
     private static final class CapturingSessionFactory implements SessionManagerFactoryPort {
         private final SessionManagerPort sessionManager;
         private Path openedCwd;
@@ -561,10 +981,43 @@ class DefaultAgentCenterTest {
         }
     }
 
+    private static final class QueuedProcessRunner implements SubagentProcessRunner {
+        private final Map<String, CompletableFuture<HeadlessSubagentOutput>> completions = new java.util.LinkedHashMap<>();
+
+        @Override
+        public SubagentProcessHandle start(HeadlessSubagentInput input) {
+            CompletableFuture<HeadlessSubagentOutput> completion = new CompletableFuture<>();
+            completions.put(input.childSessionId(), completion);
+            return new SubagentProcessHandle() {
+                @Override
+                public CompletableFuture<HeadlessSubagentOutput> completion() {
+                    return completion;
+                }
+
+                @Override
+                public void interrupt() {
+                }
+            };
+        }
+
+        private void complete(String childSessionId, HeadlessSubagentOutput output) {
+            completions.get(childSessionId).complete(output);
+        }
+    }
+
     private static final class CapturingParentSession implements SessionManagerPort {
         private final String sessionId;
         private String leafId;
         private final List<SessionEntry> entries = new ArrayList<>();
+        private SessionContext sessionContext = new SessionContext(
+            List.of(),
+            List.of(),
+            List.of(),
+            new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        );
 
         private CapturingParentSession(String sessionId, String leafId) {
             this.sessionId = sessionId;
@@ -611,7 +1064,7 @@ class DefaultAgentCenterTest {
 
         @Override
         public SessionContext context(String leafId) {
-            throw new UnsupportedOperationException();
+            return sessionContext;
         }
 
         @Override

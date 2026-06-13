@@ -11,9 +11,9 @@ import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
-import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
+import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -58,20 +58,24 @@ public final class HeadlessSubagentRunner {
         validate(input);
         try {
             SessionManagerPort childSessionManager = sessionManagerFactory.open(input.sessionCwd(), input.childSessionId());
-            AgentCorePort agentCore = agentCoreFactory.create(input.cwd(), childSessionManager);
+            AgentCorePort agentCore = agentCoreFactory.create(input.cwd(), childSessionManager, input.toolPolicy());
+            Optional<String> parentEntryId = turnParentEntryId(input, childSessionManager);
             TurnState state = agentCore.execute(new TurnRequest(
                 input.childSessionId(),
                 input.prompt(),
-                Optional.empty(),
-                neverAborted()
+                parentEntryId,
+                neverAborted(),
+                TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+                input.skillMentions()
             ));
             SubagentRunStatus status = status(state.status());
+            String summary = summary(state);
             return new HeadlessSubagentOutput(
                 input.childSessionId(),
                 status,
-                summary(state),
+                summary,
                 finalEntryId(childSessionManager),
-                status == SubagentRunStatus.SUCCEEDED ? Optional.empty() : Optional.of("Child turn ended with " + state.status())
+                failureMessage(status, state.status(), summary)
             );
         } catch (RuntimeException e) {
             return failure(input.childSessionId(), e.getMessage());
@@ -88,7 +92,7 @@ public final class HeadlessSubagentRunner {
         if (blank(input.parentSessionId())) {
             throw new IllegalArgumentException("parentSessionId is required");
         }
-        if (blank(input.parentSpawnEntryId())) {
+        if (input.runMode() == HeadlessSubagentRunMode.START && blank(input.parentSpawnEntryId())) {
             throw new IllegalArgumentException("parentSpawnEntryId is required");
         }
         if (blank(input.prompt())) {
@@ -99,12 +103,6 @@ public final class HeadlessSubagentRunner {
         }
         if (input.sessionCwd() == null) {
             throw new IllegalArgumentException("sessionCwd is required");
-        }
-        if (!input.allowedTools().isEmpty()) {
-            throw new IllegalArgumentException("allowedTools is not supported yet");
-        }
-        if (input.permissionMode() != PermissionMode.DEFAULT_EXECUTE) {
-            throw new IllegalArgumentException("permissionMode override is not supported yet");
         }
     }
 
@@ -126,6 +124,17 @@ public final class HeadlessSubagentRunner {
         return () -> false;
     }
 
+    private Optional<String> turnParentEntryId(HeadlessSubagentInput input, SessionManagerPort childSessionManager) {
+        if (input.runMode() != HeadlessSubagentRunMode.CONTINUE) {
+            return Optional.empty();
+        }
+        String leafId = childSessionManager.currentView().leafId();
+        if (leafId == null || leafId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(leafId);
+    }
+
     private SubagentRunStatus status(TurnStatus status) {
         if (status == TurnStatus.COMPLETED) {
             return SubagentRunStatus.SUCCEEDED;
@@ -134,6 +143,17 @@ public final class HeadlessSubagentRunner {
             return SubagentRunStatus.INTERRUPTED;
         }
         return SubagentRunStatus.FAILED;
+    }
+
+    private Optional<String> failureMessage(SubagentRunStatus runStatus, TurnStatus turnStatus, String summary) {
+        if (runStatus == SubagentRunStatus.SUCCEEDED) {
+            return Optional.empty();
+        }
+        String base = "Child turn ended with " + turnStatus;
+        if (summary == null || summary.isBlank()) {
+            return Optional.of(base);
+        }
+        return Optional.of(base + ": " + summary);
     }
 
     private String summary(TurnState state) {

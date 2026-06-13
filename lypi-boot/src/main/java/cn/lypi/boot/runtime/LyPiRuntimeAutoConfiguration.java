@@ -38,6 +38,7 @@ import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.NewSessionController;
@@ -270,45 +271,53 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<ModelCatalogPort> modelCatalog,
         Clock clock
     ) {
-        return (cwd, sessionManager) -> {
-            AiProviderRuntimePort resolvedAiProvider = aiProvider.getObject();
-            ToolRuntimeFactoryPort resolvedToolRuntimeFactory = toolRuntimeFactory.getIfAvailable();
-            ToolRuntimePort resolvedToolRuntime = resolvedToolRuntimeFactory == null
-                ? toolRuntime.getObject()
-                : resolvedToolRuntimeFactory.create(cwd);
-            SecurityRuntimePort resolvedSecurityRuntime = securityRuntime.getObject();
-            ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getObject();
-            CompactionSummarizer resolvedCompactionSummarizer = compactionSummarizer.getObject();
-            DefaultContextAssembler assembler = new DefaultContextAssembler(
-                sessionManager,
-                resolvedResourceRuntime,
-                new ContextBudgetEstimator(modelCatalog.getIfAvailable())
-            );
-            DefaultCompactionCoordinator compactionCoordinator = new DefaultCompactionCoordinator(
-                sessionManager,
-                assembler,
-                eventBus,
-                new DefaultCompactionPlanner(),
-                resolvedCompactionSummarizer,
-                clock
-            );
-            return new DefaultTurnExecutor(
-                new AgentCoreRuntimePorts(
-                    cwd,
+        return new AgentCoreFactoryPort() {
+            @Override
+            public AgentCorePort create(Path cwd, SessionManagerPort sessionManager) {
+                return create(cwd, sessionManager, null);
+            }
+
+            @Override
+            public AgentCorePort create(Path cwd, SessionManagerPort sessionManager, SubagentToolPolicy toolPolicy) {
+                AiProviderRuntimePort resolvedAiProvider = aiProvider.getObject();
+                ToolRuntimeFactoryPort resolvedToolRuntimeFactory = toolRuntimeFactory.getIfAvailable();
+                ToolRuntimePort resolvedToolRuntime = resolvedToolRuntimeFactory == null
+                    ? toolRuntime.getObject()
+                    : resolvedToolRuntimeFactory.create(cwd, toolPolicy);
+                SecurityRuntimePort resolvedSecurityRuntime = securityRuntime.getObject();
+                ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getObject();
+                CompactionSummarizer resolvedCompactionSummarizer = compactionSummarizer.getObject();
+                DefaultContextAssembler assembler = new DefaultContextAssembler(
                     sessionManager,
-                    resolvedAiProvider,
-                    resolvedToolRuntime,
-                    resolvedSecurityRuntime,
                     resolvedResourceRuntime,
-                    eventBus,
+                    new ContextBudgetEstimator(modelCatalog.getIfAvailable())
+                );
+                DefaultCompactionCoordinator compactionCoordinator = new DefaultCompactionCoordinator(
+                    sessionManager,
                     assembler,
-                    null,
-                    compactionCoordinator,
-                    new NoopMemoryExtractionWorker()
-                ),
-                TurnIds.random(),
-                clock
-            );
+                    eventBus,
+                    new DefaultCompactionPlanner(),
+                    resolvedCompactionSummarizer,
+                    clock
+                );
+                return new DefaultTurnExecutor(
+                    new AgentCoreRuntimePorts(
+                        cwd,
+                        sessionManager,
+                        resolvedAiProvider,
+                        resolvedToolRuntime,
+                        resolvedSecurityRuntime,
+                        resolvedResourceRuntime,
+                        eventBus,
+                        assembler,
+                        null,
+                        compactionCoordinator,
+                        new NoopMemoryExtractionWorker()
+                    ),
+                    TurnIds.random(),
+                    clock
+                );
+            }
         };
     }
 
@@ -765,12 +774,21 @@ public class LyPiRuntimeAutoConfiguration {
     }
 
     /**
+     * 创建 subagent 子进程命令解析器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    SubagentCommandResolver subagentCommandResolver(LyPiSubagentProperties properties) {
+        return new SubagentCommandResolver(properties);
+    }
+
+    /**
      * 创建 JSON subagent 子进程 runner。
      */
     @Bean
     @ConditionalOnMissingBean
-    public SubagentProcessRunner subagentProcessRunner(LyPiSubagentProperties properties) {
-        return new JsonSubagentProcessRunner(properties.getCommand());
+    public SubagentProcessRunner subagentProcessRunner(SubagentCommandResolver subagentCommandResolver) {
+        return new JsonSubagentProcessRunner(subagentCommandResolver.resolve());
     }
 
     /**
@@ -786,11 +804,12 @@ public class LyPiRuntimeAutoConfiguration {
         SubagentProcessRunner processRunner,
         DefaultMailboxService mailbox,
         MailboxDeliveryService deliveryService,
-        LyPiSubagentProperties properties,
+        SubagentCommandResolver subagentCommandResolver,
         Clock clock
     ) {
+        List<String> command = subagentCommandResolver.resolve();
         return new DefaultAgentCenter(
-            properties.getCommand(),
+            command,
             childSessions,
             parentSession,
             sessionStorageRoot(parentSession),
@@ -808,4 +827,5 @@ public class LyPiRuntimeAutoConfiguration {
         }
         return DEFAULT_CWD;
     }
+
 }

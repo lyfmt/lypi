@@ -6,11 +6,15 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolResultContentBlock;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
@@ -26,6 +30,11 @@ import java.util.Optional;
 
 abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String> {
     private static final int DEFAULT_MAX_RESULT_SIZE = 16_384;
+    protected static final int DEFAULT_TIMEOUT_SECONDS = 1_200;
+    protected static final int MAX_TIMEOUT_SECONDS = 1_200;
+    private static final List<String> BASE_READ_TOOLS = List.of("read", "grep", "glob");
+    private static final List<String> PERMISSION_MODE_VALUES = List.of("DEFAULT_EXECUTE", "ACCEPT_EDITS", "BYPASS");
+    private static final List<String> AGENT_MODE_VALUES = List.of("PLAN", "EXECUTE");
 
     @Override
     public List<String> aliases() {
@@ -126,6 +135,20 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
         return Integer.parseInt(value.toString());
     }
 
+    protected int timeoutSeconds(Map<String, Object> input) {
+        int value = intInput(input, DEFAULT_TIMEOUT_SECONDS, "timeoutSeconds", "timeout_seconds");
+        return Math.max(1, Math.min(value, MAX_TIMEOUT_SECONDS));
+    }
+
+    protected Map<String, Object> timeoutSecondsSchema() {
+        return Map.of(
+            "type", "integer",
+            "minimum", 1,
+            "maximum", MAX_TIMEOUT_SECONDS,
+            "description", "子 Agent 单次运行/等待最长秒数。默认 1200 秒，最大 1200 秒（20 分钟）。"
+        );
+    }
+
     protected List<String> stringListInput(Map<String, Object> input, String... names) {
         Object value = value(input, names);
         if (value == null) {
@@ -156,16 +179,126 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
 
     protected PermissionMode permissionMode(Map<String, Object> input, ToolUseContext context) {
         Object value = value(input, "permissionMode", "permission_mode");
-        if (value == null) {
-            value = context.metadata().get("permissionMode");
-        }
         if (value instanceof PermissionMode permissionMode) {
             return permissionMode;
         }
         if (value == null || value.toString().isBlank()) {
             return PermissionMode.DEFAULT_EXECUTE;
         }
-        return PermissionMode.valueOf(value.toString().trim().toUpperCase(Locale.ROOT));
+        String normalized = normalizeEnumToken(value.toString());
+        if (normalized.equals("USEDEFAULT") || normalized.equals("USE_DEFAULT") || normalized.equals("DEFAULT")) {
+            return PermissionMode.DEFAULT_EXECUTE;
+        }
+        try {
+            return PermissionMode.valueOf(normalized);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                "permissionMode 不支持: %s。允许值: %s。默认执行模式请省略该字段，或使用 DEFAULT_EXECUTE；兼容别名: useDefault/use_default。"
+                    .formatted(value, String.join(", ", PERMISSION_MODE_VALUES))
+            );
+        }
+    }
+
+    protected Optional<ModelSelection> model(Map<String, Object> input) {
+        Object value = value(input, "model", "modelId", "model_id");
+        if (value == null || value.toString().isBlank()) {
+            return Optional.empty();
+        }
+        String raw = value.toString().trim();
+        String provider = "openai";
+        String modelId = raw;
+        int separator = raw.indexOf('/');
+        if (separator > 0 && separator < raw.length() - 1) {
+            provider = raw.substring(0, separator);
+            modelId = raw.substring(separator + 1);
+        }
+        return Optional.of(new ModelSelection(provider, modelId, thinkingLevel(input).orElse(ThinkingLevel.MEDIUM)));
+    }
+
+    protected Optional<ThinkingLevel> thinkingLevel(Map<String, Object> input) {
+        Object value = value(input, "thinkingLevel", "thinking_level", "thinking");
+        if (value instanceof ThinkingLevel thinkingLevel) {
+            return Optional.of(thinkingLevel);
+        }
+        if (value == null || value.toString().isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(ThinkingLevel.valueOf(normalizeEnumToken(value.toString())));
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                "thinkingLevel 不支持: %s。允许值: LOW, MEDIUM, HIGH, MAX。".formatted(value)
+            );
+        }
+    }
+
+    protected Optional<AgentMode> agentMode(Map<String, Object> input) {
+        Object value = value(input, "agentMode", "agent_mode", "mode");
+        if (value instanceof AgentMode agentMode) {
+            return Optional.of(agentMode);
+        }
+        if (value == null || value.toString().isBlank()) {
+            return Optional.empty();
+        }
+        String normalized = normalizeEnumToken(value.toString());
+        if (normalized.equals("GENERAL") || normalized.equals("DEFAULT")) {
+            return Optional.of(AgentMode.EXECUTE);
+        }
+        try {
+            return Optional.of(AgentMode.valueOf(normalized));
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                "mode/agentMode 不支持: %s。允许值: %s。通用执行任务请省略该字段或使用 EXECUTE；兼容别名: general。"
+                    .formatted(value, String.join(", ", AGENT_MODE_VALUES))
+            );
+        }
+    }
+
+    protected Map<String, Object> permissionModeSchema() {
+        return Map.of(
+            "type", "string",
+            "enum", PERMISSION_MODE_VALUES,
+            "description", "子 Agent 权限模式。默认请省略或使用 DEFAULT_EXECUTE；兼容 useDefault/use_default。"
+        );
+    }
+
+    protected Map<String, Object> agentModeSchema() {
+        return Map.of(
+            "type", "string",
+            "enum", AGENT_MODE_VALUES,
+            "description", "子 Agent 模式。通用执行任务请省略或使用 EXECUTE；兼容 general。"
+        );
+    }
+
+    protected Map<String, Object> thinkingLevelSchema() {
+        return Map.of(
+            "type", "string",
+            "enum", List.of("LOW", "MEDIUM", "HIGH", "MAX"),
+            "description", "推理强度。通常省略以继承父 session；只有用户明确指定时填写。可用值: LOW, MEDIUM, HIGH, MAX。"
+        );
+    }
+
+    protected Map<String, Object> modelSchema() {
+        return Map.of(
+            "type", "string",
+            "description", "子 Agent 模型。通常省略以继承父 session 当前模型；只有用户明确要求某个模型时填写。裸模型名使用当前唯一 provider/openai，provider/model 形式仅用于兼容。"
+        );
+    }
+
+    private String normalizeEnumToken(String value) {
+        return value.trim()
+            .replace('-', '_')
+            .replaceAll("([a-z])([A-Z])", "$1_$2")
+            .toUpperCase(Locale.ROOT);
+    }
+
+    protected SubagentToolPolicy toolPolicy(Map<String, Object> input) {
+        java.util.LinkedHashSet<String> requested = new java.util.LinkedHashSet<>();
+        requested.addAll(stringListInput(input, "tools"));
+        requested.addAll(stringListInput(input, "allowedTools", "allowed_tools"));
+        java.util.LinkedHashSet<String> effective = new java.util.LinkedHashSet<>(BASE_READ_TOOLS);
+        effective.addAll(requested);
+        return new SubagentToolPolicy(List.copyOf(requested), List.copyOf(effective));
     }
 
     protected Path cwd(Map<String, Object> input, ToolUseContext context) {
