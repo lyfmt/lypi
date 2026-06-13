@@ -291,6 +291,46 @@ class SubagentToolsTest {
     }
 
     @Test
+    void waitAgentReturnsFailedRunAsReadableResultInsteadOfToolError() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        agentCenter.waitResult = new SubagentWaitResult(
+            "agent_1",
+            "ses_child",
+            "entry_spawn",
+            SubagentRunStatus.FAILED,
+            Optional.of("权限请求未获允许"),
+            Optional.empty(),
+            Optional.of("Child turn ended with FAILED: 权限请求未获允许")
+        );
+        WaitAgentTool tool = new WaitAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of("childSessionId", "ses_child"), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("status: FAILED"));
+        assertTrue(result.output().contains("权限请求未获允许"));
+        assertTrue(result.output().contains("read_agent_result"));
+    }
+
+    @Test
+    void waitAgentDescriptionTellsModelToWaitBeforeReadingAndNotFallback() {
+        WaitAgentTool tool = new WaitAgentTool(new RecordingAgentCenter());
+
+        assertTrue(tool.description().contains("read_agent_result"));
+        assertTrue(tool.description().contains("不要改由父 Agent 自己完成"));
+    }
+
+    @Test
+    void spawnAgentDescriptionWarnsBashNeedsNonInteractivePermission() {
+        SpawnAgentTool tool = new SpawnAgentTool(new RecordingAgentCenter());
+
+        assertTrue(tool.description().contains("只读调查"));
+        assertTrue(tool.description().contains("不要默认加入 bash"));
+        assertTrue(tool.description().contains("headless"));
+    }
+
+    @Test
     void interruptAgentReturnsCommandResult() {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
         InterruptAgentTool tool = new InterruptAgentTool(agentCenter);

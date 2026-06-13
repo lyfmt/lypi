@@ -30,7 +30,9 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
 
     @Override
     public String description() {
-        return "启动一个 headless subagent，并仅返回启动状态。";
+        return "启动一个 headless subagent，并仅返回启动状态。只读调查默认已有 read/grep/glob，"
+            + "不要默认加入 bash；只有用户明确需要 shell 命令，且 permissionMode 允许 headless 非交互执行时才加入 bash。"
+            + "启动后必须用 wait_agent 等待，再用 read_agent_result 读取结果。";
     }
 
     @Override

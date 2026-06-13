@@ -91,6 +91,21 @@ class HeadlessSubagentRunnerTest {
     }
 
     @Test
+    void failedChildTurnCarriesLastSummaryInErrorMessage() {
+        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(
+            new CapturingAgentCoreFactory(TurnStatus.FAILED, "权限请求未获允许"),
+            new CapturingSessionFactory("entry_final"),
+            new HeadlessSubagentJsonCodec()
+        );
+
+        HeadlessSubagentOutput output = runner.execute(input("请调查架构"));
+
+        assertThat(output.status()).isEqualTo(SubagentRunStatus.FAILED);
+        assertThat(output.summary()).isEqualTo("权限请求未获允许");
+        assertThat(output.errorMessage()).hasValue("Child turn ended with FAILED: 权限请求未获允许");
+    }
+
+    @Test
     void continueModeUsesCurrentLeafAsTurnParentEntryId() {
         CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "继续后的结果");
         CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_previous_leaf");
@@ -163,6 +178,21 @@ class HeadlessSubagentRunnerTest {
 
         assertThat(agentCoreFactory.agentCore.request.skillMentions()).containsExactly(skill);
         assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+    }
+
+    private cn.lypi.contracts.subagent.HeadlessSubagentInput input(String prompt) {
+        return new cn.lypi.contracts.subagent.HeadlessSubagentInput(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            prompt,
+            Path.of("/tmp/project/.lypi-store"),
+            Path.of("/tmp/project/work"),
+            new SubagentToolPolicy(List.of(), List.of()),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            null
+        );
     }
 
     private static final class CapturingAgentCoreFactory implements AgentCoreFactoryPort {

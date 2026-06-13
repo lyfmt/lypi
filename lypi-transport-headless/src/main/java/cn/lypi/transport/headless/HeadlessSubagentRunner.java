@@ -69,12 +69,13 @@ public final class HeadlessSubagentRunner {
                 input.skillMentions()
             ));
             SubagentRunStatus status = status(state.status());
+            String summary = summary(state);
             return new HeadlessSubagentOutput(
                 input.childSessionId(),
                 status,
-                summary(state),
+                summary,
                 finalEntryId(childSessionManager),
-                status == SubagentRunStatus.SUCCEEDED ? Optional.empty() : Optional.of("Child turn ended with " + state.status())
+                failureMessage(status, state.status(), summary)
             );
         } catch (RuntimeException e) {
             return failure(input.childSessionId(), e.getMessage());
@@ -142,6 +143,17 @@ public final class HeadlessSubagentRunner {
             return SubagentRunStatus.INTERRUPTED;
         }
         return SubagentRunStatus.FAILED;
+    }
+
+    private Optional<String> failureMessage(SubagentRunStatus runStatus, TurnStatus turnStatus, String summary) {
+        if (runStatus == SubagentRunStatus.SUCCEEDED) {
+            return Optional.empty();
+        }
+        String base = "Child turn ended with " + turnStatus;
+        if (summary == null || summary.isBlank()) {
+            return Optional.of(base);
+        }
+        return Optional.of(base + ": " + summary);
     }
 
     private String summary(TurnState state) {

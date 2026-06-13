@@ -29,7 +29,9 @@ public final class WaitAgentTool extends AbstractSubagentTool {
 
     @Override
     public String description() {
-        return "等待指定 subagent run 完成，并返回该 run 的状态和结果。";
+        return "等待指定 subagent run 完成，并返回该 run 的状态、摘要和错误信息。wait_agent 返回 FAILED 表示子 Agent run 失败，"
+            + "不是等待工具失败；此时应继续使用 read_agent_result 或 read_mailbox 读取子 Agent 结果/错误，"
+            + "不要改由父 Agent 自己完成原任务。";
     }
 
     @Override
@@ -64,9 +66,6 @@ public final class WaitAgentTool extends AbstractSubagentTool {
             intInput(input, 600, "timeoutSeconds", "timeout_seconds"),
             true
         ));
-        if (result.status() == SubagentRunStatus.FAILED) {
-            return error(context, render(result));
-        }
         return success(context, render(result));
     }
 
@@ -85,6 +84,7 @@ public final class WaitAgentTool extends AbstractSubagentTool {
             summary: %s
             finalEntryId: %s
             errorMessage: %s
+            nextStep: %s
             """.formatted(
                 result.agentId(),
                 result.childSessionId(),
@@ -92,7 +92,18 @@ public final class WaitAgentTool extends AbstractSubagentTool {
                 result.status(),
                 result.summary().orElse(""),
                 result.finalEntryId().orElse(""),
-                result.errorMessage().orElse("")
+                result.errorMessage().orElse(""),
+                nextStep(result)
             ).trim();
+    }
+
+    private String nextStep(SubagentWaitResult result) {
+        if (result.status() == SubagentRunStatus.SUCCEEDED || result.status() == SubagentRunStatus.FAILED) {
+            return "调用 read_agent_result(childSessionId) 读取完整结果；如需 mailbox 审计，再调用 read_mailbox。";
+        }
+        if (result.status() == SubagentRunStatus.TIMED_OUT) {
+            return "继续 wait_agent 或按需 interrupt_agent；不要假定子 Agent 已完成。";
+        }
+        return "";
     }
 }
