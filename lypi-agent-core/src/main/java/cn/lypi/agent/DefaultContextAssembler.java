@@ -40,7 +40,7 @@ public final class DefaultContextAssembler implements ContextAssembler {
             request.skillMentions()
         ) : null;
         SessionContext sessionContext = sessionManager.context(leafId);
-        ContextBudget budget = budgetEstimator.estimate(systemPrompt, sessionContext.messages());
+        ContextBudget budget = budgetEstimator.estimate(systemPrompt, sessionContext.messages(), sessionContext.model());
         ContextSnapshot snapshot = new ContextSnapshot(
             systemPrompt,
             sessionContext.messages(),

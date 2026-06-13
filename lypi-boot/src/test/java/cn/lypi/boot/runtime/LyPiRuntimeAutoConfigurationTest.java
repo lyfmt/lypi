@@ -2,6 +2,8 @@ package cn.lypi.boot.runtime;
 
 import cn.lypi.agent.compact.CompactSummaryResult;
 import cn.lypi.agent.compact.CompactionSummarizer;
+import cn.lypi.agent.ContextAssembler;
+import cn.lypi.agent.ContextBuildRequest;
 import cn.lypi.boot.BootstrapService;
 import cn.lypi.boot.ai.LyPiAiAutoConfiguration;
 import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
@@ -67,6 +69,7 @@ import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxMessage;
@@ -161,6 +164,52 @@ class LyPiRuntimeAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasSingleBean(EventBus.class);
                 assertThat(context.getBean(EventBus.class)).isSameAs(customEventBus);
+            });
+    }
+
+    @Test
+    void contextAssemblerUsesConfiguredModelContextWindowForCompactThreshold() {
+        SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        sessionManager.openOrCreate("ses_budget");
+        SessionHandle parent = sessionManager.appendMessage(new AgentMessage(
+            "msg-user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new TextContentBlock("hello")),
+            Instant.EPOCH,
+            Optional.empty(),
+            Optional.empty()
+        ));
+        sessionManager.append(new ModelChangeEntry(
+            "entry-model",
+            parent.leafId(),
+            new ModelSelection("fixture", "fixture-model", ThinkingLevel.MEDIUM),
+            "test",
+            Instant.EPOCH
+        ));
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.providers.fixture.enabled=true",
+                "lypi.ai.providers.fixture.api-style=openai_compatible",
+                "lypi.ai.providers.fixture.base-url=https://api.fixture.example/v1",
+                "lypi.ai.providers.fixture.models[0].model-id=fixture-model",
+                "lypi.ai.providers.fixture.models[0].context-window=64000",
+                "lypi.ai.providers.fixture.models[0].max-output-tokens=8192"
+            )
+            .withBean(SessionManagerPort.class, () -> sessionManager)
+            .run(context -> {
+                ContextAssembler assembler = context.getBean(ContextAssembler.class);
+
+                ContextBudget budget = assembler.build(new ContextBuildRequest(
+                    "ses_budget",
+                    Optional.of("entry-model"),
+                    tempDir,
+                    true
+                )).snapshot().budget();
+
+                assertThat(budget.effectiveContextWindow()).isEqualTo(64_000);
+                assertThat(budget.autoCompactThreshold()).isEqualTo(51_200);
             });
     }
 

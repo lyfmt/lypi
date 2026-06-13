@@ -16,6 +16,7 @@ import cn.lypi.boot.BootstrapService;
 import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
@@ -145,9 +146,14 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnMissingBean(ContextAssembler.class)
     public ContextAssembler contextAssembler(
         SessionManagerPort sessionManager,
-        ResourceRuntimePort resourceRuntime
+        ResourceRuntimePort resourceRuntime,
+        ObjectProvider<ModelCatalogPort> modelCatalog
     ) {
-        return new DefaultContextAssembler(sessionManager, resourceRuntime, new ContextBudgetEstimator());
+        return new DefaultContextAssembler(
+            sessionManager,
+            resourceRuntime,
+            new ContextBudgetEstimator(modelCatalog.getIfAvailable())
+        );
     }
 
     /**
@@ -258,6 +264,7 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         EventBus eventBus,
         ObjectProvider<CompactionSummarizer> compactionSummarizer,
+        ObjectProvider<ModelCatalogPort> modelCatalog,
         Clock clock
     ) {
         return (cwd, sessionManager) -> {
@@ -272,7 +279,7 @@ public class LyPiRuntimeAutoConfiguration {
             DefaultContextAssembler assembler = new DefaultContextAssembler(
                 sessionManager,
                 resolvedResourceRuntime,
-                new ContextBudgetEstimator()
+                new ContextBudgetEstimator(modelCatalog.getIfAvailable())
             );
             DefaultCompactionCoordinator compactionCoordinator = new DefaultCompactionCoordinator(
                 sessionManager,

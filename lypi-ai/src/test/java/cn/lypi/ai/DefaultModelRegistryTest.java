@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.CostProfile;
+import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
@@ -38,6 +39,15 @@ class DefaultModelRegistryTest {
 
         assertThat(registry.find(new ModelSelection("openai", "gpt-4.1", ThinkingLevel.MEDIUM)))
             .isEmpty();
+    }
+
+    @Test
+    void registryExposesContractsModelCatalogPort() {
+        ModelDescriptor descriptor = descriptor("openai", "gpt-5");
+        ModelCatalogPort catalog = new DefaultModelRegistry(List.of(descriptor));
+
+        assertThat(catalog.find(new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM)))
+            .contains(descriptor);
     }
 
     @Test
