@@ -755,6 +755,19 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void interruptClearsPermissionPromptOverlay() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new PermissionRequestEvent("ses_1", "toolu_1", "Need approval", NOW));
+        assertTrue(reducer.view().permissionPrompt().isPresent());
+
+        reducer.reduce(new InterruptEvent("ses_1", "esc", NOW));
+
+        assertTrue(reducer.view().permissionPrompt().isEmpty());
+        assertEquals("interrupted esc", reducer.view().runtimeLine());
+    }
+
+    @Test
     void errorEventAppendsErrorBlock() {
         TuiEventReducer reducer = new TuiEventReducer();
 

@@ -103,7 +103,10 @@ public final class TuiEventReducer {
             case RetryEndEvent ignored -> state.retryEnded();
             case CompactStartEvent start -> state.compactStarted(start.kind());
             case CompactEndEvent ignored -> state.compactEnded();
-            case InterruptEvent interrupt -> state.interrupted(interrupt.reason());
+            case InterruptEvent interrupt -> {
+                state.clearPermissionPrompt();
+                state.interrupted(interrupt.reason());
+            }
             case SessionStartEvent start -> state.sessionStarted(start.sessionId());
             case SessionStateEvent sessionState -> state.sessionStateChanged(sessionState);
             default -> {
