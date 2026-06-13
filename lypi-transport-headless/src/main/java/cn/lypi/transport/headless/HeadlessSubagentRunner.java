@@ -64,7 +64,9 @@ public final class HeadlessSubagentRunner {
                 input.childSessionId(),
                 input.prompt(),
                 parentEntryId,
-                neverAborted()
+                neverAborted(),
+                TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+                input.skillMentions()
             ));
             SubagentRunStatus status = status(state.status());
             return new HeadlessSubagentOutput(

@@ -66,6 +66,7 @@ import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
@@ -341,7 +342,7 @@ class ContractSerializationTest {
     }
 
     @Test
-    void headlessSubagentInputRoundTripKeepsRunModeAndToolPolicy() throws Exception {
+    void headlessSubagentInputRoundTripKeepsRunModeToolPolicyAndSkills() throws Exception {
         HeadlessSubagentInput input = new HeadlessSubagentInput(
             "ses_child",
             "ses_parent",
@@ -352,7 +353,8 @@ class ContractSerializationTest {
             new SubagentToolPolicy(List.of("read", "grep", "read"), List.of("read", "grep", "glob")),
             PermissionMode.DEFAULT_EXECUTE,
             30,
-            HeadlessSubagentRunMode.CONTINUE
+            HeadlessSubagentRunMode.CONTINUE,
+            List.of(new SkillMention("doc", Path.of("/tmp/project/.ly-pi/skills/doc/SKILL.md")))
         );
 
         String json = mapper.writeValueAsString(input);
@@ -362,6 +364,7 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"runMode\":\"CONTINUE\""));
         assertTrue(json.contains("\"requestedTools\""));
         assertTrue(json.contains("\"effectiveTools\""));
+        assertTrue(json.contains("\"skillMentions\""));
     }
 
     @Test

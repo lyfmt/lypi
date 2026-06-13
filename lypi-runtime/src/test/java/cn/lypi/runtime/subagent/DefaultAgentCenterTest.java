@@ -385,6 +385,75 @@ class DefaultAgentCenterTest {
     }
 
     @Test
+    void multipleSubagentsCanBeWaitedIndependentlyWithoutResultMixing() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        QueuedProcessRunner processRunner = new QueuedProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        SubagentSpawnResult first = center.spawn(request("ses_parent", "entry_parent", "第一子任务"));
+        SubagentSpawnResult second = center.spawn(request("ses_parent", "entry_parent", "第二子任务"));
+        processRunner.complete(second.childSessionId(), new HeadlessSubagentOutput(
+            second.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "第二结果",
+            Optional.of("entry_second_final"),
+            Optional.empty()
+        ));
+        processRunner.complete(first.childSessionId(), new HeadlessSubagentOutput(
+            first.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "第一结果",
+            Optional.of("entry_first_final"),
+            Optional.empty()
+        ));
+
+        SubagentWaitResult waitedFirst = center.waitFor(new SubagentWaitRequest(
+            Optional.of(first.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            1,
+            true
+        ));
+        SubagentWaitResult waitedSecond = center.waitFor(new SubagentWaitRequest(
+            Optional.of(second.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            1,
+            true
+        ));
+
+        assertThat(waitedFirst.childSessionId()).isEqualTo(first.childSessionId());
+        assertThat(waitedFirst.summary()).contains("第一结果");
+        assertThat(waitedFirst.finalEntryId()).contains("entry_first_final");
+        assertThat(waitedSecond.childSessionId()).isEqualTo(second.childSessionId());
+        assertThat(waitedSecond.summary()).contains("第二结果");
+        assertThat(waitedSecond.finalEntryId()).contains("entry_second_final");
+        assertThat(center.readResult(first.childSessionId()))
+            .hasValueSatisfying(output -> assertThat(output.summary()).isEqualTo("第一结果"));
+        assertThat(center.readResult(second.childSessionId()))
+            .hasValueSatisfying(output -> assertThat(output.summary()).isEqualTo("第二结果"));
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
+            .extracting(MailboxMessage::summary)
+            .containsExactly("第二结果", "第一结果");
+    }
+
+    @Test
     void completionLifecycleDoesNotMoveParentSessionCurrentLeaf() {
         ChildSessionPort childSessions = request -> null;
         CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
@@ -908,6 +977,30 @@ class DefaultAgentCenterTest {
 
         private void complete(HeadlessSubagentOutput output) {
             completion.complete(output);
+        }
+    }
+
+    private static final class QueuedProcessRunner implements SubagentProcessRunner {
+        private final Map<String, CompletableFuture<HeadlessSubagentOutput>> completions = new java.util.LinkedHashMap<>();
+
+        @Override
+        public SubagentProcessHandle start(HeadlessSubagentInput input) {
+            CompletableFuture<HeadlessSubagentOutput> completion = new CompletableFuture<>();
+            completions.put(input.childSessionId(), completion);
+            return new SubagentProcessHandle() {
+                @Override
+                public CompletableFuture<HeadlessSubagentOutput> completion() {
+                    return completion;
+                }
+
+                @Override
+                public void interrupt() {
+                }
+            };
+        }
+
+        private void complete(String childSessionId, HeadlessSubagentOutput output) {
+            completions.get(childSessionId).complete(output);
         }
     }
 

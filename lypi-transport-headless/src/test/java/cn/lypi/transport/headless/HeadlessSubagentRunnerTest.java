@@ -15,6 +15,7 @@ import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
@@ -112,10 +113,63 @@ class HeadlessSubagentRunnerTest {
         assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
     }
 
+    @Test
+    void passesToolPolicyToAgentCoreFactoryForChildToolFiltering() {
+        CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "工具策略已透传");
+        CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_final");
+        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCoreFactory, sessionFactory, new HeadlessSubagentJsonCodec());
+        SubagentToolPolicy toolPolicy = new SubagentToolPolicy(
+            List.of("read", "bash"),
+            List.of("read", "grep", "glob", "bash")
+        );
+
+        HeadlessSubagentOutput output = runner.execute(new cn.lypi.contracts.subagent.HeadlessSubagentInput(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "验证工具策略",
+            Path.of("/tmp/project/.lypi-store"),
+            Path.of("/tmp/project/work"),
+            toolPolicy,
+            PermissionMode.ACCEPT_EDITS,
+            30,
+            HeadlessSubagentRunMode.START
+        ));
+
+        assertThat(agentCoreFactory.createdToolPolicy).isEqualTo(toolPolicy);
+        assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+    }
+
+    @Test
+    void passesSkillMentionsToChildTurnRequest() {
+        CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "skill 已注入");
+        CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_final");
+        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCoreFactory, sessionFactory, new HeadlessSubagentJsonCodec());
+        SkillMention skill = new SkillMention("doc", Path.of("/tmp/project/.ly-pi/skills/doc/SKILL.md"));
+
+        HeadlessSubagentOutput output = runner.execute(new cn.lypi.contracts.subagent.HeadlessSubagentInput(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "使用 $doc",
+            Path.of("/tmp/project/.lypi-store"),
+            Path.of("/tmp/project/work"),
+            new SubagentToolPolicy(List.of(), List.of()),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            HeadlessSubagentRunMode.START,
+            List.of(skill)
+        ));
+
+        assertThat(agentCoreFactory.agentCore.request.skillMentions()).containsExactly(skill);
+        assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+    }
+
     private static final class CapturingAgentCoreFactory implements AgentCoreFactoryPort {
         private final CapturingAgentCore agentCore;
         private Path createdCwd;
         private SessionManagerPort createdSessionManager;
+        private SubagentToolPolicy createdToolPolicy;
 
         private CapturingAgentCoreFactory(TurnStatus status, String finalText) {
             this.agentCore = new CapturingAgentCore(status, finalText);
@@ -125,6 +179,14 @@ class HeadlessSubagentRunnerTest {
         public AgentCorePort create(Path cwd, SessionManagerPort sessionManager) {
             this.createdCwd = cwd;
             this.createdSessionManager = sessionManager;
+            return agentCore;
+        }
+
+        @Override
+        public AgentCorePort create(Path cwd, SessionManagerPort sessionManager, SubagentToolPolicy toolPolicy) {
+            this.createdCwd = cwd;
+            this.createdSessionManager = sessionManager;
+            this.createdToolPolicy = toolPolicy;
             return agentCore;
         }
     }
