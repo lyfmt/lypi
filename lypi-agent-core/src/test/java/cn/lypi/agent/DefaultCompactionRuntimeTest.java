@@ -29,7 +29,8 @@ class DefaultCompactionRuntimeTest {
             new ContextSnapshot(null, java.util.List.of(), null, null, null, null, null),
             Optional.of(new CompactionPlan("entry-compact-1", "leaf_3", java.util.List.of("leaf_1"), CompactionKind.MANUAL)),
             true,
-            "compacted"
+            "compacted",
+            Optional.of("entry-compact-1")
         ));
         DefaultCompactionRuntime runtime = new DefaultCompactionRuntime(assembler, coordinator);
 
@@ -41,7 +42,7 @@ class DefaultCompactionRuntimeTest {
         ));
 
         assertTrue(result.compacted());
-        assertEquals(Optional.empty(), result.entryId());
+        assertEquals(Optional.of("entry-compact-1"), result.entryId());
         assertEquals("compacted", result.message());
         assertEquals("ses_1", assembler.request.sessionId());
         assertEquals(Optional.of("leaf_9"), assembler.request.leafEntryId());

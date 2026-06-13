@@ -4,8 +4,12 @@ import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.session.SessionEntry;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class CompactSummaryContextBuilder {
     private final CompactSummaryInstructionFactory instructionFactory;
@@ -15,8 +19,7 @@ public final class CompactSummaryContextBuilder {
     }
 
     public ContextSnapshot build(CompactSummaryRequest request) {
-        ContextSnapshot current = request.context();
-        return build(request, current.messages());
+        return build(request, summarizedMessages(request));
     }
 
     ContextSnapshot build(CompactSummaryRequest request, List<AgentMessage> messagePrefix) {
@@ -62,5 +65,19 @@ public final class CompactSummaryContextBuilder {
     private int estimateText(String text) {
         String safeText = text == null ? "" : text;
         return Math.max(1, safeText.length() / 4);
+    }
+
+    private List<AgentMessage> summarizedMessages(CompactSummaryRequest request) {
+        Set<String> summarizedEntryIds = new LinkedHashSet<>(request.plan().summarizedEntryIds());
+        if (summarizedEntryIds.isEmpty()) {
+            return request.context().messages();
+        }
+        List<AgentMessage> messages = new ArrayList<>();
+        for (SessionEntry entry : request.branchEntries()) {
+            if (summarizedEntryIds.contains(entry.id()) && entry instanceof MessageEntry messageEntry) {
+                messages.add(messageEntry.message());
+            }
+        }
+        return messages.isEmpty() ? request.context().messages() : List.copyOf(messages);
     }
 }

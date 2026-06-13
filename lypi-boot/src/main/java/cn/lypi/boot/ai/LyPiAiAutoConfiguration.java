@@ -92,20 +92,11 @@ public class LyPiAiAutoConfiguration {
     @ConditionalOnMissingBean
     public CompactionSummarizer compactionSummarizer(ModelPort modelPort, LyPiAiProperties properties) {
         LyPiAiProperties.CompactionSummaryProperties summary = properties.getCompactionSummary();
-        if (!summary.isEnabled()) {
-            return unavailableCompactionSummarizer();
-        }
         return new AiCompactionSummarizer(
             modelPort,
             new CompactSummaryContextBuilder(new CompactSummaryInstructionFactory()),
             new CompactionSummaryOptions(summary.getFallbackPolicy())
         );
-    }
-
-    private CompactionSummarizer unavailableCompactionSummarizer() {
-        return request -> {
-            throw new IllegalStateException("AI compaction summary is disabled");
-        };
     }
 
     private ModelDescriptorSource modelDescriptorSource(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {

@@ -53,16 +53,7 @@ public class LyPiAiProperties {
     }
 
     public static class CompactionSummaryProperties {
-        private boolean enabled;
         private CompactionSummaryFallbackPolicy fallbackPolicy = CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC;
-
-        public boolean isEnabled() {
-            return enabled;
-        }
-
-        public void setEnabled(boolean enabled) {
-            this.enabled = enabled;
-        }
 
         public CompactionSummaryFallbackPolicy getFallbackPolicy() {
             return fallbackPolicy;

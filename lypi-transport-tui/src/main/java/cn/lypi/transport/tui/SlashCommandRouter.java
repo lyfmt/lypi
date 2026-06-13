@@ -2,6 +2,7 @@ package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -16,6 +17,7 @@ import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
+import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SlashCommand;
@@ -150,6 +152,41 @@ final class SlashCommandRouter {
         return Optional.ofNullable(currentLeafId());
     }
 
+    SlashCommandResult compactValidation(String input) {
+        SlashCommandArguments arguments = SlashCommandArguments.parse(input);
+        if (!"/compact".equalsIgnoreCase(arguments.commandName())) {
+            return SlashCommandResult.notMatched();
+        }
+        if (!arguments.positionals().isEmpty() || !arguments.named().isEmpty()) {
+            return SlashCommandResult.error("usage: /compact");
+        }
+        if (compactionRuntime == null) {
+            return SlashCommandResult.error("compact: compaction runtime is unavailable");
+        }
+        return SlashCommandResult.consumedCommand();
+    }
+
+    Optional<CompactCommandInvocation> compactInvocation(String input) {
+        return compactInvocation(input, () -> false);
+    }
+
+    Optional<CompactCommandInvocation> compactInvocation(String input, AbortSignal abortSignal) {
+        SlashCommandResult validation = compactValidation(input);
+        if (!validation.matched() || validation.message().isPresent()) {
+            return Optional.empty();
+        }
+        SessionView currentView = sessionManager.currentView();
+        return Optional.of(new CompactCommandInvocation(
+            compactionRuntime,
+            new CompactionRequest(
+                currentView.sessionId(),
+                Optional.ofNullable(currentView.leafId()),
+                cwd,
+                abortSignal
+            )
+        ));
+    }
+
     private CommandMatch matchCommand(String command) {
         String normalized = command.toLowerCase(Locale.ROOT);
         List<String> commands = candidateCommands();
@@ -207,12 +244,7 @@ final class SlashCommandRouter {
             return SlashCommandResult.error("compact: compaction runtime is unavailable");
         }
         try {
-            CompactionResult result = compactionRuntime.compact(new CompactionRequest(
-                sessionId,
-                Optional.of(currentLeafId()),
-                cwd,
-                () -> false
-            ));
+            CompactionResult result = compactionRuntime.compact(compactInvocation("/compact").orElseThrow().request());
             if (result.compacted()) {
                 return SlashCommandResult.notice("compact: " + result.message());
             }

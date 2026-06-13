@@ -58,13 +58,9 @@
 #     default-model: gpt-5-mini
 #
 #     compaction-summary:
-#       # 重要性：可选能力。开启后创建 AI compact summary summarizer Bean。
-#       # NOTE: 当前默认 AgentCore 仍使用 NoopCompactionCoordinator；该开关不等同于默认链路自动启用压缩。
-#       # 取舍：真正接入 DefaultCompactionCoordinator 后，开启会增加模型调用成本。
-#       enabled: false
-#
 #       # 重要性：兼容字段。AI 摘要失败后的策略名仍可绑定。
 #       # 可选值：fallback_deterministic、skip_compaction。
+#       # NOTE: compact summary 是必须能力，固定使用当前上下文的主模型选择，不提供独立启用开关或专用模型配置。
 #       # NOTE: 确定性摘要器已删除，fallback_deterministic 仅保留旧配置兼容；当前行为与 skip_compaction 一样回到原上下文。
 #       fallback-policy: fallback_deterministic
 #

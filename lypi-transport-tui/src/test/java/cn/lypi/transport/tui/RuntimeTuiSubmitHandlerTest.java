@@ -29,6 +29,7 @@ import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.PromptTemplateSource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.CompactionRequest;
 import cn.lypi.contracts.runtime.CompactionResult;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -58,6 +59,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class RuntimeTuiSubmitHandlerTest {
@@ -382,6 +384,125 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
+    void compactRunsInBackgroundAndRejectsUserInputUntilFinished() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        QueuedExecutor executor = new QueuedExecutor();
+        AtomicInteger compactionCalls = new AtomicInteger();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            executor,
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("/tmp/project"),
+                session,
+                emptyResources(),
+                request -> {
+                    compactionCalls.incrementAndGet();
+                    return new CompactionResult(true, Optional.of("entry-compact-1"), "compacted");
+                }
+            )
+        );
+
+        handler.submitUserInput("/compact");
+        handler.submitUserInput("hello while compacting");
+
+        assertEquals(0, compactionCalls.get());
+        assertEquals(1, executor.tasks.size());
+        assertTrue(core.requests.isEmpty());
+        ErrorEvent blocked = assertInstanceOf(ErrorEvent.class, events.published.getFirst());
+        assertTrue(blocked.message().contains("compaction is running"));
+
+        executor.runNext();
+
+        assertEquals(1, compactionCalls.get());
+        MessageDeltaEvent compactResult = events.published.stream()
+            .filter(MessageDeltaEvent.class::isInstance)
+            .map(MessageDeltaEvent.class::cast)
+            .filter(event -> event.delta().contains("compact: compacted"))
+            .findFirst()
+            .orElseThrow();
+        assertEquals("ses_1", compactResult.sessionId());
+
+        handler.submitUserInput("after compact");
+        assertEquals(1, executor.tasks.size());
+        executor.runNext();
+
+        assertEquals("after compact", core.requests.getFirst().userInput());
+    }
+
+    @Test
+    void interruptAbortsBackgroundCompact() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        QueuedExecutor executor = new QueuedExecutor();
+        List<CompactionRequest> compactionRequests = new ArrayList<>();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            executor,
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("/tmp/project"),
+                session,
+                emptyResources(),
+                request -> {
+                    compactionRequests.add(request);
+                    return new CompactionResult(!request.abortSignal().aborted(), Optional.of("entry-compact-1"), "compacted");
+                }
+            )
+        );
+
+        handler.submitUserInput("/compact");
+        handler.requestInterrupt("esc");
+        executor.runNext();
+
+        assertTrue(core.requests.isEmpty());
+        assertEquals(1, compactionRequests.size());
+        assertTrue(compactionRequests.getFirst().abortSignal().aborted());
+        InterruptEvent event = assertInstanceOf(InterruptEvent.class, events.published.getFirst());
+        assertEquals("esc", event.reason());
+    }
+
+    @Test
+    void compactUsesCurrentSessionAfterResume() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        List<CompactionRequest> compactionRequests = new ArrayList<>();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("/tmp/project"),
+                session,
+                emptyResources(),
+                request -> {
+                    compactionRequests.add(request);
+                    return new CompactionResult(true, Optional.of("entry-compact-1"), "compacted");
+                }
+            )
+        );
+
+        session.sessionId = "ses_2";
+        session.leafId = "entry_resumed_leaf";
+        handler.resumeSession("ses_2", "entry_resumed_leaf");
+        handler.submitUserInput("/compact");
+
+        assertEquals(1, compactionRequests.size());
+        assertEquals("ses_2", compactionRequests.getFirst().sessionId());
+        assertEquals(Optional.of("entry_resumed_leaf"), compactionRequests.getFirst().leafEntryId());
+    }
+
+    @Test
     void newSlashCommandSwitchesNextTurnSessionIdWithoutSubmittingTurn() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
@@ -440,6 +561,19 @@ class RuntimeTuiSubmitHandlerTest {
                 Thread.currentThread().interrupt();
             }
             return null;
+        }
+    }
+
+    private static final class QueuedExecutor implements java.util.concurrent.Executor {
+        private final List<Runnable> tasks = new ArrayList<>();
+
+        @Override
+        public void execute(Runnable command) {
+            tasks.add(command);
+        }
+
+        private void runNext() {
+            tasks.removeFirst().run();
         }
     }
 
@@ -543,10 +677,12 @@ class RuntimeTuiSubmitHandlerTest {
 
     private static final class RecordingSessionManager implements SessionManagerPort {
         private final List<SessionEntry> entries = new ArrayList<>();
+        private String sessionId = "ses_1";
         private String leafId = "root";
 
         @Override
         public SessionHandle openOrCreate(String sessionId) {
+            this.sessionId = sessionId;
             return new SessionHandle(sessionId, Path.of("session.jsonl"), leafId, Map.of());
         }
 
@@ -570,12 +706,12 @@ class RuntimeTuiSubmitHandlerTest {
 
         @Override
         public SessionView currentView() {
-            return new SessionView("ses_1", leafId);
+            return new SessionView(sessionId, leafId);
         }
 
         @Override
         public SessionView view(String leafId) {
-            return new SessionView("ses_1", leafId);
+            return new SessionView(sessionId, leafId);
         }
 
         @Override

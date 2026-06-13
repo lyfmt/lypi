@@ -15,6 +15,7 @@ import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.CompactionResult;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tui.SessionRuntimeState;
@@ -36,6 +37,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private final Consumer<SessionRuntimeState> runtimeStateConsumer;
     private final Supplier<SkillIndex> skillIndexSupplier;
     private MutableAbortSignal activeSignal;
+    private volatile boolean compactRunning;
 
     RuntimeTuiSubmitHandler(String sessionId, AgentCorePort core, EventBus events) {
         this(sessionId, core, events, command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command));
@@ -123,6 +125,20 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     public void submitUserInput(String input, List<SkillMention> skillMentions) {
         String routedInput = input == null ? "" : input;
         if (slashCommandRouter != null) {
+            SlashCommandResult compactValidation = slashCommandRouter.compactValidation(routedInput);
+            if (compactValidation.matched()) {
+                compactValidation.message().ifPresent(this::publishSlashCommandError);
+                if (compactValidation.message().isEmpty()) {
+                    submitCompact(routedInput);
+                }
+                return;
+            }
+        }
+        if (compactRunning) {
+            publishSlashCommandError("compact: compaction is running");
+            return;
+        }
+        if (slashCommandRouter != null) {
             SlashCommandResult result = slashCommandRouter.route(routedInput);
             result.message().ifPresent(this::publishSlashCommandError);
             if (result.consumed()) {
@@ -155,6 +171,40 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         executor.execute(() -> core.execute(request));
     }
 
+    private void submitCompact(String input) {
+        if (compactRunning) {
+            publishSlashCommandError("compact: compaction is running");
+            return;
+        }
+        MutableAbortSignal signal = new MutableAbortSignal();
+        Optional<CompactCommandInvocation> invocation = slashCommandRouter.compactInvocation(input, signal);
+        if (invocation.isEmpty()) {
+            publishSlashCommandError("compact: compaction runtime is unavailable");
+            return;
+        }
+        activeSignal = signal;
+        compactRunning = true;
+        executor.execute(() -> runCompact(invocation.orElseThrow(), signal));
+    }
+
+    private void runCompact(CompactCommandInvocation invocation, MutableAbortSignal signal) {
+        try {
+            CompactionResult result = invocation.runtime().compact(invocation.request());
+            if (result.compacted()) {
+                publishSlashCommandNotice("compact: " + result.message());
+            } else {
+                publishSlashCommandError("compact: " + result.message());
+            }
+        } catch (RuntimeException exception) {
+            publishSlashCommandError("compact: " + errorMessage(exception));
+        } finally {
+            compactRunning = false;
+            if (activeSignal == signal) {
+                activeSignal = null;
+            }
+        }
+    }
+
     private void publishSlashCommandError(String message) {
         events.publish(new ErrorEvent(
             currentSessionId,
@@ -166,6 +216,11 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
 
     private void publishSlashCommandNotice(String message) {
         publishSlashOutput("slash_command", message);
+    }
+
+    private String errorMessage(RuntimeException exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
     private void publishSessionState() {
