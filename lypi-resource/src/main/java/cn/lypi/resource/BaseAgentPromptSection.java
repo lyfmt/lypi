@@ -12,7 +12,6 @@ final class BaseAgentPromptSection implements SystemPromptSection {
         content.append("You are ly-pi, a local coding agent running on the user's computer.\n\n");
         content.append("## General\n");
         content.append("- Work as a pragmatic software engineering agent.\n");
-        content.append("- Prefer `rg` and `rg --files` when searching text or files.\n");
         content.append("- Read the relevant code before changing it.\n");
         content.append("- Keep changes focused on the user's request and existing project patterns.\n\n");
         content.append("## Editing Constraints\n");

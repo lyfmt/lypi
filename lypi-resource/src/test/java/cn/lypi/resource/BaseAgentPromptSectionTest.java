@@ -16,7 +16,6 @@ class BaseAgentPromptSectionTest {
         assertThat(content.toString()).contains(
             "You are ly-pi, a local coding agent running on the user's computer.",
             "## General",
-            "Prefer `rg` and `rg --files`",
             "## Editing Constraints",
             "Treat dirty worktrees as shared state",
             "Never use destructive commands",
@@ -24,7 +23,7 @@ class BaseAgentPromptSectionTest {
             "Do not claim success without verification evidence",
             "## Final Response"
         );
-        assertThat(content.toString()).doesNotContain("Codex CLI", "apply_patch", "frontend");
+        assertThat(content.toString()).doesNotContain("Codex CLI", "apply_patch", "frontend", "rg", "ripgrep");
         assertThat(sourceNames).containsExactly("base-agent-instructions");
     }
 }
