@@ -23,7 +23,14 @@ public record BranchSummaryPlan(
      * 返回该计划是否包含可进入 branch summary 请求的内容。
      */
     public boolean hasSummarizableContent() {
-        return entries.stream().anyMatch(this::isSummarizable);
+        return summarizableEntryCount() > 0;
+    }
+
+    /**
+     * 返回会进入 branch summary 请求上下文的 entry 数量。
+     */
+    public int summarizableEntryCount() {
+        return (int) entries.stream().filter(this::isSummarizable).count();
     }
 
     private boolean isSummarizable(SessionEntry entry) {

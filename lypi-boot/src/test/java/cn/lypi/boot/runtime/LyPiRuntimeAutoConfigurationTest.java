@@ -604,7 +604,13 @@ class LyPiRuntimeAutoConfigurationTest {
         RecordingEventBus events = new RecordingEventBus();
         sessionManager.openOrCreate("ses_old");
         SessionHandle root = sessionManager.appendMessage(userMessage("msg_root", "root"));
-        SessionHandle oldLeaf = sessionManager.appendMessage(assistantMessage("msg_old", "old branch"));
+        SessionHandle oldMessage = sessionManager.appendMessage(assistantMessage("msg_old", "old branch"));
+        SessionHandle oldLeaf = sessionManager.append(new SessionInfoEntry(
+            "entry_old_info",
+            oldMessage.leafId(),
+            Map.of("ignored", true),
+            Instant.EPOCH
+        ));
         SessionHandle target = sessionManager.append(new cn.lypi.contracts.session.CustomMessageEntry(
             "entry_target",
             root.leafId(),

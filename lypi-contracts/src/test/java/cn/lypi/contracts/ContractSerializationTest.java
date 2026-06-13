@@ -210,6 +210,28 @@ class ContractSerializationTest {
     }
 
     @Test
+    void legacyBranchSummaryEntryWithoutSourceLeafStillDeserializes() throws Exception {
+        String json = """
+            {
+              "type": "branch_summary",
+              "id": "entry-branch",
+              "parentId": "entry-target",
+              "summary": "legacy branch summary",
+              "timestamp": "2026-06-01T12:00:00Z"
+            }
+            """;
+
+        SessionEntry restored = mapper.readValue(json, SessionEntry.class);
+
+        assertInstanceOf(BranchSummaryEntry.class, restored);
+        BranchSummaryEntry branchSummary = (BranchSummaryEntry) restored;
+        assertEquals("entry-branch", branchSummary.id());
+        assertEquals("entry-target", branchSummary.parentId());
+        assertEquals(null, branchSummary.fromId());
+        assertEquals("legacy branch summary", branchSummary.summary());
+    }
+
+    @Test
     void sessionEntriesRoundTripOnlyForConversationPathFacts() throws Exception {
         Instant now = Instant.parse("2026-06-01T12:00:00Z");
         List<SessionEntry> entries = List.of(

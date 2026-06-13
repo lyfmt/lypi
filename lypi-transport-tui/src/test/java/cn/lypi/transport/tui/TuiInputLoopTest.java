@@ -930,6 +930,88 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void resumeBranchSummaryForUserEntrySummarizesParentLeafAndRestoresDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> offeredTargets = new ArrayList<>();
+        List<String> summaryTargets = new ArrayList<>();
+        MessageEntry userEntry = new MessageEntry(
+            "user_old",
+            "assistant_parent",
+            new AgentMessage(
+                "msg_old",
+                MessageRole.USER,
+                MessageKind.TEXT,
+                List.of(new TextContentBlock("revise this")),
+                Instant.EPOCH,
+                Optional.empty(),
+                Optional.empty()
+            ),
+            Instant.EPOCH
+        );
+        ResumeSessionController controller = new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("/tmp/ses_old.jsonl"),
+                    "ses_old",
+                    Path.of("/tmp/project"),
+                    Optional.empty(),
+                    "user_old",
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old session",
+                    "old session"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                return new SessionBranchTreeView(sessionId, "user_old", List.of(new SessionTreeNodeView(userEntry, List.of())));
+            }
+
+            @Override
+            public Optional<BranchSummaryOffer> branchSummaryOffer(String sessionId, String targetLeafId) {
+                offeredTargets.add(targetLeafId);
+                return Optional.of(new BranchSummaryOffer(sessionId, "current_leaf", targetLeafId, "common_leaf", 1));
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+
+            @Override
+            public SessionRuntimeState resumeWithBranchSummary(String sessionId, String targetLeafId) {
+                summaryTargets.add(targetLeafId);
+                return runtimeState(sessionId, "summary_leaf");
+            }
+        };
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(8),
+            new TuiLayout(80, 10),
+            null,
+            () -> new SlashCommandPicker(List.of("/resume")),
+            controller
+        );
+
+        loop.acceptText("/resume");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("y");
+
+        assertEquals(List.of("assistant_parent"), offeredTargets);
+        assertEquals(List.of("assistant_parent"), summaryTargets);
+        assertEquals(List.of("ses_old:summary_leaf"), submit.resumes);
+        assertEquals("revise this", loop.draft());
+    }
+
+    @Test
     void resumeControllerAddsResumeToSlashPickerCandidates() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();

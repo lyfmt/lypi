@@ -82,7 +82,7 @@ final class DefaultResumeSessionController implements ResumeSessionController {
             oldLeafId,
             targetLeafId,
             plan.commonAncestorId().orElse(null),
-            plan.entries().size()
+            plan.summarizableEntryCount()
         ));
     }
 
