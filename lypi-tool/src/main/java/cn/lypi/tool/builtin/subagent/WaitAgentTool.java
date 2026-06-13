@@ -45,8 +45,8 @@ public final class WaitAgentTool extends AbstractSubagentTool {
                 "child_session_id", Map.of("type", "string"),
                 "runId", Map.of("type", "string"),
                 "run_id", Map.of("type", "string"),
-                "timeoutSeconds", Map.of("type", "integer", "minimum", 0),
-                "timeout_seconds", Map.of("type", "integer", "minimum", 0)
+                "timeoutSeconds", timeoutSecondsSchema(),
+                "timeout_seconds", timeoutSecondsSchema()
             )
         ));
     }
@@ -63,7 +63,7 @@ public final class WaitAgentTool extends AbstractSubagentTool {
             optionalStringInput(input, "agentId", "agent_id"),
             optionalStringInput(input, "childSessionId", "child_session_id"),
             optionalStringInput(input, "runId", "run_id"),
-            intInput(input, 600, "timeoutSeconds", "timeout_seconds"),
+            timeoutSeconds(input),
             true
         ));
         return success(context, render(result));

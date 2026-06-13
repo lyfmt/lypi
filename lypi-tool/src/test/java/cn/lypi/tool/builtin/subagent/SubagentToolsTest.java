@@ -66,6 +66,27 @@ class SubagentToolsTest {
     }
 
     @Test
+    void spawnAgentDefaultsTimeoutToTwentyMinutesAndCapsExplicitTimeout() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        SpawnAgentTool tool = new SpawnAgentTool(agentCenter);
+
+        ToolResult<String> defaultResult = tool.execute(Map.of("prompt", "检查测试失败原因"), context(), ignored -> {
+        });
+
+        assertFalse(defaultResult.isError());
+        assertEquals(1200, agentCenter.spawnRequest.timeoutSeconds());
+
+        ToolResult<String> cappedResult = tool.execute(Map.of(
+            "prompt", "检查测试失败原因",
+            "timeoutSeconds", 3600
+        ), context(), ignored -> {
+        });
+
+        assertFalse(cappedResult.isError());
+        assertEquals(1200, agentCenter.spawnRequest.timeoutSeconds());
+    }
+
+    @Test
     void spawnAgentSchemaExposesPlannedRoleAndAllowedToolsInputs() {
         SpawnAgentTool tool = new SpawnAgentTool(new RecordingAgentCenter());
 
@@ -79,6 +100,8 @@ class SubagentToolsTest {
         Map<String, Object> model = (Map<String, Object>) properties.get("model");
         @SuppressWarnings("unchecked")
         Map<String, Object> thinkingLevel = (Map<String, Object>) properties.get("thinkingLevel");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> timeoutSeconds = (Map<String, Object>) properties.get("timeoutSeconds");
 
         assertTrue(properties.containsKey("role"));
         assertTrue(properties.containsKey("tools"));
@@ -89,6 +112,7 @@ class SubagentToolsTest {
         assertTrue(properties.containsKey("permissionMode"));
         assertEquals(List.of("DEFAULT_EXECUTE", "ACCEPT_EDITS", "BYPASS"), permissionMode.get("enum"));
         assertTrue(permissionMode.get("description").toString().contains("useDefault"));
+        assertEquals(1200, timeoutSeconds.get("maximum"));
         assertEquals(List.of("PLAN", "EXECUTE"), mode.get("enum"));
         assertTrue(mode.get("description").toString().contains("general"));
         assertTrue(model.get("description").toString().contains("继承父 session"));
@@ -227,6 +251,31 @@ class SubagentToolsTest {
     }
 
     @Test
+    void continueAgentDefaultsTimeoutToTwentyMinutesAndCapsExplicitTimeout() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        ContinueAgentTool tool = new ContinueAgentTool(agentCenter);
+
+        ToolResult<String> defaultResult = tool.execute(Map.of(
+            "childSessionId", "ses_child",
+            "prompt", "继续检查"
+        ), context(), ignored -> {
+        });
+
+        assertFalse(defaultResult.isError());
+        assertEquals(1200, agentCenter.continueRequest.timeoutSeconds());
+
+        ToolResult<String> cappedResult = tool.execute(Map.of(
+            "childSessionId", "ses_child",
+            "prompt", "继续检查",
+            "timeoutSeconds", 3600
+        ), context(), ignored -> {
+        });
+
+        assertFalse(cappedResult.isError());
+        assertEquals(1200, agentCenter.continueRequest.timeoutSeconds());
+    }
+
+    @Test
     void continueAgentPassesExplicitToolsAndModelContext() {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
         ContinueAgentTool tool = new ContinueAgentTool(agentCenter);
@@ -288,6 +337,27 @@ class SubagentToolsTest {
         assertTrue(result.output().contains("完成摘要"));
         assertTrue(result.output().contains("entry_final"));
         assertFalse(tool.isReadOnly(Map.of()));
+    }
+
+    @Test
+    void waitAgentDefaultsTimeoutToTwentyMinutesAndCapsExplicitTimeout() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        WaitAgentTool tool = new WaitAgentTool(agentCenter);
+
+        ToolResult<String> defaultResult = tool.execute(Map.of("agentId", "agent_1"), context(), ignored -> {
+        });
+
+        assertFalse(defaultResult.isError());
+        assertEquals(1200, agentCenter.waitRequest.timeoutSeconds());
+
+        ToolResult<String> cappedResult = tool.execute(Map.of(
+            "agentId", "agent_1",
+            "timeoutSeconds", 3600
+        ), context(), ignored -> {
+        });
+
+        assertFalse(cappedResult.isError());
+        assertEquals(1200, agentCenter.waitRequest.timeoutSeconds());
     }
 
     @Test

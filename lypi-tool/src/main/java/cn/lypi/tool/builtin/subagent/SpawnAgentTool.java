@@ -40,7 +40,7 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("prompt", Map.of("type", "string"));
         properties.put("cwd", Map.of("type", "string"));
-        properties.put("timeoutSeconds", Map.of("type", "integer", "minimum", 1));
+        properties.put("timeoutSeconds", timeoutSecondsSchema());
         properties.put("agentName", Map.of("type", "string"));
         properties.put("role", Map.of("type", "string"));
         properties.put("agentRole", Map.of("type", "string"));
@@ -80,7 +80,7 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
                 toolPolicy.effectiveTools(),
                 toolPolicy,
                 permissionMode(input, context),
-                intInput(input, 600, "timeoutSeconds", "timeout_seconds"),
+                timeoutSeconds(input),
                 optionalStringInput(input, "agentName", "agent_name"),
                 optionalStringInput(input, "role", "agentRole", "agent_role"),
                 model(input),

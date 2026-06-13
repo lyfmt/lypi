@@ -42,8 +42,8 @@ public final class ContinueAgentTool extends AbstractSubagentTool {
         properties.put("child_session_id", Map.of("type", "string"));
         properties.put("prompt", Map.of("type", "string"));
         properties.put("cwd", Map.of("type", "string"));
-        properties.put("timeoutSeconds", Map.of("type", "integer", "minimum", 1));
-        properties.put("timeout_seconds", Map.of("type", "integer", "minimum", 1));
+        properties.put("timeoutSeconds", timeoutSecondsSchema());
+        properties.put("timeout_seconds", timeoutSecondsSchema());
         properties.put("tools", Map.of("type", "array", "items", Map.of("type", "string")));
         properties.put("allowedTools", Map.of("type", "array", "items", Map.of("type", "string")));
         properties.put("allowed_tools", Map.of("type", "array", "items", Map.of("type", "string")));
@@ -85,7 +85,7 @@ public final class ContinueAgentTool extends AbstractSubagentTool {
                 toolPolicy.effectiveTools(),
                 toolPolicy,
                 permissionMode(input, context),
-                intInput(input, 600, "timeoutSeconds", "timeout_seconds"),
+                timeoutSeconds(input),
                 model(input),
                 thinkingLevel(input),
                 agentMode(input)

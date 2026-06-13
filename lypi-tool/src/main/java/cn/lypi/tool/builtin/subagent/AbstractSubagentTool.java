@@ -30,6 +30,8 @@ import java.util.Optional;
 
 abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String> {
     private static final int DEFAULT_MAX_RESULT_SIZE = 16_384;
+    protected static final int DEFAULT_TIMEOUT_SECONDS = 1_200;
+    protected static final int MAX_TIMEOUT_SECONDS = 1_200;
     private static final List<String> BASE_READ_TOOLS = List.of("read", "grep", "glob");
     private static final List<String> PERMISSION_MODE_VALUES = List.of("DEFAULT_EXECUTE", "ACCEPT_EDITS", "BYPASS");
     private static final List<String> AGENT_MODE_VALUES = List.of("PLAN", "EXECUTE");
@@ -131,6 +133,20 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
             return number.intValue();
         }
         return Integer.parseInt(value.toString());
+    }
+
+    protected int timeoutSeconds(Map<String, Object> input) {
+        int value = intInput(input, DEFAULT_TIMEOUT_SECONDS, "timeoutSeconds", "timeout_seconds");
+        return Math.max(1, Math.min(value, MAX_TIMEOUT_SECONDS));
+    }
+
+    protected Map<String, Object> timeoutSecondsSchema() {
+        return Map.of(
+            "type", "integer",
+            "minimum", 1,
+            "maximum", MAX_TIMEOUT_SECONDS,
+            "description", "子 Agent 单次运行/等待最长秒数。默认 1200 秒，最大 1200 秒（20 分钟）。"
+        );
     }
 
     protected List<String> stringListInput(Map<String, Object> input, String... names) {
