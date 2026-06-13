@@ -17,6 +17,7 @@ import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
+import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SlashCommand;
@@ -174,11 +175,12 @@ final class SlashCommandRouter {
         if (!validation.matched() || validation.message().isPresent()) {
             return Optional.empty();
         }
+        SessionView currentView = sessionManager.currentView();
         return Optional.of(new CompactCommandInvocation(
             compactionRuntime,
             new CompactionRequest(
-                sessionId,
-                Optional.of(currentLeafId()),
+                currentView.sessionId(),
+                Optional.ofNullable(currentView.leafId()),
                 cwd,
                 abortSignal
             )

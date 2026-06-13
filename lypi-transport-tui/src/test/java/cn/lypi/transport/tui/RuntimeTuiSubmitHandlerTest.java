@@ -470,6 +470,39 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
+    void compactUsesCurrentSessionAfterResume() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        List<CompactionRequest> compactionRequests = new ArrayList<>();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("/tmp/project"),
+                session,
+                emptyResources(),
+                request -> {
+                    compactionRequests.add(request);
+                    return new CompactionResult(true, Optional.of("entry-compact-1"), "compacted");
+                }
+            )
+        );
+
+        session.sessionId = "ses_2";
+        session.leafId = "entry_resumed_leaf";
+        handler.resumeSession("ses_2", "entry_resumed_leaf");
+        handler.submitUserInput("/compact");
+
+        assertEquals(1, compactionRequests.size());
+        assertEquals("ses_2", compactionRequests.getFirst().sessionId());
+        assertEquals(Optional.of("entry_resumed_leaf"), compactionRequests.getFirst().leafEntryId());
+    }
+
+    @Test
     void newSlashCommandSwitchesNextTurnSessionIdWithoutSubmittingTurn() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
@@ -644,10 +677,12 @@ class RuntimeTuiSubmitHandlerTest {
 
     private static final class RecordingSessionManager implements SessionManagerPort {
         private final List<SessionEntry> entries = new ArrayList<>();
+        private String sessionId = "ses_1";
         private String leafId = "root";
 
         @Override
         public SessionHandle openOrCreate(String sessionId) {
+            this.sessionId = sessionId;
             return new SessionHandle(sessionId, Path.of("session.jsonl"), leafId, Map.of());
         }
 
@@ -671,12 +706,12 @@ class RuntimeTuiSubmitHandlerTest {
 
         @Override
         public SessionView currentView() {
-            return new SessionView("ses_1", leafId);
+            return new SessionView(sessionId, leafId);
         }
 
         @Override
         public SessionView view(String leafId) {
-            return new SessionView("ses_1", leafId);
+            return new SessionView(sessionId, leafId);
         }
 
         @Override
