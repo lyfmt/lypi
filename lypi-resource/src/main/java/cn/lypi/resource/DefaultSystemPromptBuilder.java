@@ -22,6 +22,8 @@ public class DefaultSystemPromptBuilder implements SystemPromptBuilder {
         StringBuilder content = new StringBuilder();
         List<String> sourceNames = new ArrayList<>();
 
+        new BaseAgentPromptSection().appendTo(content, sourceNames);
+
         for (ContextFile file : resources.agentFiles()) {
             String sourceName = file.path().toString();
             sourceNames.add(sourceName);
