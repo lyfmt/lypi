@@ -11,6 +11,7 @@ import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
@@ -79,13 +80,17 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
     @Override
     public SubagentSpawnResult spawn(SubagentSpawnRequest request) {
         if (command.isEmpty()) {
-            return failedSpawn(request, "Subagent command is not configured");
+            return failedSpawn(request, subagentCommandMissingMessage());
         }
         String agentId = "agent_" + randomId();
         String childSessionId = "ses_child_" + randomId();
         String parentSpawnEntryId = "entry_spawn_" + randomId();
         Instant now = Instant.now(clock);
         SubagentToolPolicy toolPolicy = request.toolPolicy();
+        SessionContext parentContext = parentSession.context(request.parentEntryId());
+        PermissionMode effectivePermissionMode = request.permissionModeSpecified()
+            ? request.permissionMode()
+            : parentContext.permissionMode();
         childSessions.create(new ChildSessionRequest(
             childSessionId,
             request.parentSessionId(),
@@ -95,10 +100,10 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             1,
             request.agentName(),
             request.agentRole(),
-            request.model(),
-            request.thinkingLevel(),
-            request.agentMode(),
-            request.permissionModeSpecified() ? Optional.of(request.permissionMode()) : Optional.empty(),
+            Optional.ofNullable(request.model().orElse(parentContext.model())),
+            Optional.ofNullable(request.thinkingLevel().orElse(parentContext.thinkingLevel())),
+            Optional.ofNullable(request.agentMode().orElse(parentContext.mode())),
+            Optional.ofNullable(effectivePermissionMode),
             toolPolicy
         ));
         parentSession.append(new AgentLifecycleEntry(
@@ -123,7 +128,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             request.cwd(),
             request.allowedTools(),
             toolPolicy,
-            request.permissionMode(),
+            effectivePermissionMode,
             request.timeoutSeconds(),
             null
         );
@@ -548,6 +553,11 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
 
     private String randomId() {
         return UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private String subagentCommandMissingMessage() {
+        return "Subagent command is not configured. Configure lypi.subagent.command or run from a packaged lypi-boot jar "
+            + "so the default command can be inferred as: java -jar <current-jar> headless-subagent";
     }
 
     private record RunningAgent(

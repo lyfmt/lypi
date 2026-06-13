@@ -752,12 +752,21 @@ public class LyPiRuntimeAutoConfiguration {
     }
 
     /**
+     * 创建 subagent 子进程命令解析器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    SubagentCommandResolver subagentCommandResolver(LyPiSubagentProperties properties) {
+        return new SubagentCommandResolver(properties);
+    }
+
+    /**
      * 创建 JSON subagent 子进程 runner。
      */
     @Bean
     @ConditionalOnMissingBean
-    public SubagentProcessRunner subagentProcessRunner(LyPiSubagentProperties properties) {
-        return new JsonSubagentProcessRunner(properties.getCommand());
+    public SubagentProcessRunner subagentProcessRunner(SubagentCommandResolver subagentCommandResolver) {
+        return new JsonSubagentProcessRunner(subagentCommandResolver.resolve());
     }
 
     /**
@@ -773,11 +782,12 @@ public class LyPiRuntimeAutoConfiguration {
         SubagentProcessRunner processRunner,
         DefaultMailboxService mailbox,
         MailboxDeliveryService deliveryService,
-        LyPiSubagentProperties properties,
+        SubagentCommandResolver subagentCommandResolver,
         Clock clock
     ) {
+        List<String> command = subagentCommandResolver.resolve();
         return new DefaultAgentCenter(
-            properties.getCommand(),
+            command,
             childSessions,
             parentSession,
             sessionStorageRoot(parentSession),
@@ -795,4 +805,5 @@ public class LyPiRuntimeAutoConfiguration {
         }
         return DEFAULT_CWD;
     }
+
 }

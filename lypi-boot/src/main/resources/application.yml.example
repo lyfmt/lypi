@@ -49,8 +49,9 @@
 #     initial-prompt: "${LYPI_INITIAL_PROMPT:}"
 #
 #   subagent:
-#     # 重要性：启用 subagent 的必填配置。父 Agent 会按该命令启动独立 headless 子进程。
-#     # 建议：使用真实 boot jar，并显式追加 headless-subagent 参数，确保 stdout 只输出 JSON。
+#     # 重要性：可选覆盖。父 Agent 会按该命令启动独立 headless 子进程。
+#     # 默认：从打包运行的当前 lypi-boot jar 自动推导为 java -jar <current-jar> headless-subagent。
+#     # 建议：只有在非 jar/classpath 开发模式或需要自定义启动命令时才显式配置。
 #     command:
 #       - java
 #       - -jar

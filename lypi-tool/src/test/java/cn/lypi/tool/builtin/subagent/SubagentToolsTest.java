@@ -75,6 +75,10 @@ class SubagentToolsTest {
         Map<String, Object> permissionMode = (Map<String, Object>) properties.get("permissionMode");
         @SuppressWarnings("unchecked")
         Map<String, Object> mode = (Map<String, Object>) properties.get("mode");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> model = (Map<String, Object>) properties.get("model");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> thinkingLevel = (Map<String, Object>) properties.get("thinkingLevel");
 
         assertTrue(properties.containsKey("role"));
         assertTrue(properties.containsKey("tools"));
@@ -87,6 +91,8 @@ class SubagentToolsTest {
         assertTrue(permissionMode.get("description").toString().contains("useDefault"));
         assertEquals(List.of("PLAN", "EXECUTE"), mode.get("enum"));
         assertTrue(mode.get("description").toString().contains("general"));
+        assertTrue(model.get("description").toString().contains("继承父 session"));
+        assertTrue(thinkingLevel.get("description").toString().contains("继承父 session"));
     }
 
     @Test
@@ -124,9 +130,24 @@ class SubagentToolsTest {
         assertEquals(List.of("read", "bash", "grep"), agentCenter.spawnRequest.toolPolicy().requestedTools());
         assertEquals(List.of("read", "grep", "glob", "bash"), agentCenter.spawnRequest.toolPolicy().effectiveTools());
         assertEquals(PermissionMode.ACCEPT_EDITS, agentCenter.spawnRequest.permissionMode());
-        assertEquals(Optional.of(new ModelSelection("", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.spawnRequest.model());
+        assertEquals(Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.spawnRequest.model());
         assertEquals(Optional.of(ThinkingLevel.HIGH), agentCenter.spawnRequest.thinkingLevel());
         assertEquals(Optional.of(AgentMode.PLAN), agentCenter.spawnRequest.agentMode());
+    }
+
+    @Test
+    void spawnAgentKeepsExplicitProviderQualifiedModel() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        SpawnAgentTool tool = new SpawnAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "prompt", "检查测试失败原因",
+            "model", "custom/gpt-5.4"
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals(Optional.of(new ModelSelection("custom", "gpt-5.4", ThinkingLevel.MEDIUM)), agentCenter.spawnRequest.model());
     }
 
     @Test
@@ -226,7 +247,7 @@ class SubagentToolsTest {
         assertEquals(List.of("read", "bash", "grep"), agentCenter.continueRequest.toolPolicy().requestedTools());
         assertEquals(List.of("read", "grep", "glob", "bash"), agentCenter.continueRequest.toolPolicy().effectiveTools());
         assertEquals(PermissionMode.ACCEPT_EDITS, agentCenter.continueRequest.permissionMode());
-        assertEquals(Optional.of(new ModelSelection("", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.continueRequest.model());
+        assertEquals(Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.continueRequest.model());
         assertEquals(Optional.of(ThinkingLevel.HIGH), agentCenter.continueRequest.thinkingLevel());
         assertEquals(Optional.of(AgentMode.EXECUTE), agentCenter.continueRequest.agentMode());
     }

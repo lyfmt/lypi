@@ -45,8 +45,8 @@ public final class ContinueAgentTool extends AbstractSubagentTool {
         properties.put("tools", Map.of("type", "array", "items", Map.of("type", "string")));
         properties.put("allowedTools", Map.of("type", "array", "items", Map.of("type", "string")));
         properties.put("allowed_tools", Map.of("type", "array", "items", Map.of("type", "string")));
-        properties.put("model", Map.of("type", "string"));
-        properties.put("modelId", Map.of("type", "string"));
+        properties.put("model", modelSchema());
+        properties.put("modelId", modelSchema());
         properties.put("thinkingLevel", thinkingLevelSchema());
         properties.put("thinking", thinkingLevelSchema());
         properties.put("mode", agentModeSchema());

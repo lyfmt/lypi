@@ -34,7 +34,7 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
     @Override
     public SubagentProcessHandle start(HeadlessSubagentInput input) {
         if (command.isEmpty()) {
-            throw new IllegalStateException("Subagent command is not configured");
+            throw new IllegalStateException(subagentCommandMissingMessage());
         }
         try {
             ProcessBuilder processBuilder = new ProcessBuilder(command);
@@ -125,6 +125,11 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
             return "Subagent process exited with code " + exitCode;
         }
         return "Subagent process exited with code " + exitCode + ": " + stderr;
+    }
+
+    private String subagentCommandMissingMessage() {
+        return "Subagent command is not configured. Configure lypi.subagent.command or run from a packaged lypi-boot jar "
+            + "so the default command can be inferred as: java -jar <current-jar> headless-subagent";
     }
 
     private record ProcessHandle(

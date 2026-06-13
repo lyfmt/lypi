@@ -216,7 +216,7 @@ class DefaultAgentCenterTest {
     }
 
     @Test
-    void spawnDoesNotCopyParentContextWhenExplicitFieldsAreMissing() {
+    void spawnInheritsParentContextWhenExplicitFieldsAreMissing() {
         CapturingChildSessions childSessions = new CapturingChildSessions();
         CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
         parentSession.sessionContext = new SessionContext(
@@ -233,11 +233,12 @@ class DefaultAgentCenterTest {
 
         center.spawn(request("ses_parent", "entry_parent", "请审查代码"));
 
-        assertThat(childSessions.request.initialModel()).isEmpty();
-        assertThat(childSessions.request.initialThinkingLevel()).isEmpty();
-        assertThat(childSessions.request.initialAgentMode()).isEmpty();
-        assertThat(childSessions.request.initialPermissionMode()).isEmpty();
-        assertThat(processRunner.input.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(childSessions.request.initialModel())
+            .contains(new ModelSelection("parent-provider", "parent-model", ThinkingLevel.MAX));
+        assertThat(childSessions.request.initialThinkingLevel()).contains(ThinkingLevel.MAX);
+        assertThat(childSessions.request.initialAgentMode()).contains(AgentMode.PLAN);
+        assertThat(childSessions.request.initialPermissionMode()).contains(PermissionMode.BYPASS);
+        assertThat(processRunner.input.permissionMode()).isEqualTo(PermissionMode.BYPASS);
     }
 
     @Test

@@ -189,7 +189,7 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
             return Optional.empty();
         }
         String raw = value.toString().trim();
-        String provider = "";
+        String provider = "openai";
         String modelId = raw;
         int separator = raw.indexOf('/');
         if (separator > 0 && separator < raw.length() - 1) {
@@ -258,7 +258,14 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
         return Map.of(
             "type", "string",
             "enum", List.of("LOW", "MEDIUM", "HIGH", "MAX"),
-            "description", "推理强度。可用值: LOW, MEDIUM, HIGH, MAX。"
+            "description", "推理强度。通常省略以继承父 session；只有用户明确指定时填写。可用值: LOW, MEDIUM, HIGH, MAX。"
+        );
+    }
+
+    protected Map<String, Object> modelSchema() {
+        return Map.of(
+            "type", "string",
+            "description", "子 Agent 模型。通常省略以继承父 session 当前模型；只有用户明确要求某个模型时填写。裸模型名使用当前唯一 provider/openai，provider/model 形式仅用于兼容。"
         );
     }
 
