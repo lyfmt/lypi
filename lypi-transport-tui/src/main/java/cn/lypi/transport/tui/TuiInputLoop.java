@@ -355,9 +355,10 @@ final class TuiInputLoop {
     }
 
     private TerminalInputContext inputContext(Optional<PermissionPromptView> prompt) {
+        boolean runtimeInterruptible = interruptibleRunning || compactRunning();
         return new TerminalInputContext(
             editor.text(),
-            interruptibleRunning,
+            runtimeInterruptible,
             prompt.isPresent(),
             prompt.isPresent() ? "permission" : "editor",
             "editor",
