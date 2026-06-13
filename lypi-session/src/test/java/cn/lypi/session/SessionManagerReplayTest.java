@@ -144,7 +144,7 @@ class SessionManagerReplayTest {
         manager.append(new MessageEntry("entry-user", null, textMessage("msg-user", "hello"), NOW));
         manager.append(new CustomEntry("entry-custom", "entry-user", "demo.extension", Map.of("enabled", true), NOW));
         manager.append(new CustomMessageEntry("entry-custom-message", "entry-custom", "local hint", NOW));
-        manager.append(new BranchSummaryEntry("entry-branch", "entry-custom-message", "branch summary", NOW));
+        manager.append(new BranchSummaryEntry("entry-branch", "entry-custom-message", "entry-old-leaf", "branch summary", NOW));
         manager.append(new MessageEntry("entry-after", "entry-branch", textMessage("msg-after", "after"), NOW));
 
         SessionContext context = manager.context("entry-after");

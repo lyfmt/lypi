@@ -128,7 +128,7 @@ class DefaultCompactionCoordinatorTest {
         session.openOrCreate("session-1");
         session.append(new MessageEntry("entry-old", "", userMessage("msg-old", "Need compact with local context"), NOW));
         session.append(new CustomMessageEntry("entry-custom", "entry-old", "local instruction: preserve this", NOW));
-        session.append(new BranchSummaryEntry("entry-branch", "entry-custom", "branch summary: preserve this too", NOW));
+        session.append(new BranchSummaryEntry("entry-branch", "entry-custom", "entry-old-leaf", "branch summary: preserve this too", NOW));
         session.append(new MessageEntry("entry-assistant-old", "entry-branch", assistantMessage("msg-assistant-old", "old assistant round"), NOW));
         session.append(new MessageEntry("entry-kept", "entry-assistant-old", assistantMessage("msg-kept", "kept assistant round long enough"), NOW));
         DefaultContextAssembler assembler = lowBudgetAssembler(session);
@@ -366,7 +366,7 @@ class DefaultCompactionCoordinatorTest {
         session.openOrCreate("session-1");
         session.append(new MessageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long enough to count"), NOW));
         session.append(new MessageEntry("entry-assistant-1", "entry-user-1", assistantMessage("msg-assistant-1", "old assistant round"), NOW));
-        session.append(new BranchSummaryEntry("entry-branch", "entry-assistant-1", "branch summary that must stay visible", NOW));
+        session.append(new BranchSummaryEntry("entry-branch", "entry-assistant-1", "entry-old-leaf", "branch summary that must stay visible", NOW));
         session.append(new CustomMessageEntry("entry-custom", "entry-branch", "custom message that must stay visible", NOW));
         session.append(new MessageEntry("entry-user-2", "entry-custom", userMessage("msg-user-2", "kept user"), NOW));
         session.append(new MessageEntry("entry-assistant-2", "entry-user-2", assistantMessage("msg-assistant-2", "kept assistant"), NOW));

@@ -194,11 +194,27 @@ class ContractSerializationTest {
     }
 
     @Test
+    void branchSummaryEntryRoundTripPreservesSourceLeaf() throws Exception {
+        Instant now = Instant.parse("2026-06-01T12:00:00Z");
+        SessionEntry entry = new BranchSummaryEntry("entry-branch", "entry-target", "entry-old-leaf", "branch summary", now);
+
+        String json = mapper.writeValueAsString(entry);
+        SessionEntry restored = mapper.readValue(json, SessionEntry.class);
+
+        assertTrue(json.contains("\"type\":\"branch_summary\""));
+        assertTrue(json.contains("\"fromId\":\"entry-old-leaf\""));
+        assertInstanceOf(BranchSummaryEntry.class, restored);
+        BranchSummaryEntry branchSummary = (BranchSummaryEntry) restored;
+        assertEquals("entry-old-leaf", branchSummary.fromId());
+        assertEquals(entry, branchSummary);
+    }
+
+    @Test
     void sessionEntriesRoundTripOnlyForConversationPathFacts() throws Exception {
         Instant now = Instant.parse("2026-06-01T12:00:00Z");
         List<SessionEntry> entries = List.of(
             new CustomEntry("entry-custom", null, "demo.extension", Map.of("enabled", true), now),
-            new BranchSummaryEntry("entry-branch", "entry-custom", "branch summary", now),
+            new BranchSummaryEntry("entry-branch", "entry-custom", "entry-old-leaf", "branch summary", now),
             new CustomMessageEntry("entry-custom-message", "entry-branch", "hello", now),
             new CompactionEntry(
                 "entry-compact",
