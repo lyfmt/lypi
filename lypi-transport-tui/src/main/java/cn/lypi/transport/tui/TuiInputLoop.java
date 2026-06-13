@@ -134,6 +134,10 @@ final class TuiInputLoop {
     }
 
     void acceptText(String text) {
+        if (compactRunning()) {
+            render();
+            return;
+        }
         editor.insert(text);
         slashOverlayClosed = false;
         skillToken = null;
@@ -141,6 +145,10 @@ final class TuiInputLoop {
     }
 
     void acceptPaste(String text) {
+        if (compactRunning()) {
+            render();
+            return;
+        }
         editor.insertPaste(text);
         slashOverlayClosed = false;
         skillToken = null;
@@ -148,6 +156,10 @@ final class TuiInputLoop {
     }
 
     void acceptKey(TerminalKey key) {
+        if (compactRunning() && key != TerminalKey.CTRL_C && key != TerminalKey.ESC) {
+            render();
+            return;
+        }
         Optional<PermissionPromptView> prompt = currentView().permissionPrompt();
         if (prompt.isPresent()) {
             PermissionPromptView currentPrompt = prompt.orElseThrow();
@@ -382,6 +394,11 @@ final class TuiInputLoop {
             prompt.map(this::withSelectedPermissionOption),
             view.diffView()
         );
+    }
+
+    private boolean compactRunning() {
+        String runtimeLine = currentView().runtimeLine();
+        return runtimeLine != null && runtimeLine.startsWith("compacting");
     }
 
     private void syncPermissionSelection(Optional<PermissionPromptView> prompt) {

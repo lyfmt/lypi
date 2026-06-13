@@ -58,6 +58,33 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void compactRuntimeLineBlocksTypingAndSubmit() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(20, 4),
+            () -> new TuiViewModel(
+                List.of(),
+                new StatusBarState("ses_1", "gpt-5.4-mini", "running", "DEFAULT_EXECUTE"),
+                "compacting MANUAL",
+                List.of(),
+                Optional.empty(),
+                Optional.empty()
+            )
+        );
+
+        loop.acceptText("hello");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals("", loop.draft());
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
     void rendersCursorAtCurrentEditorPosition() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
