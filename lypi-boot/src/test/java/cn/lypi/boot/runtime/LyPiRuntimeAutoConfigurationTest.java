@@ -684,6 +684,8 @@ class LyPiRuntimeAutoConfigurationTest {
             .extracting(message -> message.content().getFirst().text())
             .contains("old branch content")
             .doesNotContain("target branch");
+        assertThat(provider.context.get().systemPrompt()).isNotNull();
+        assertThat(provider.context.get().systemPrompt().content()).isNotBlank();
         assertThat(events.events).hasAtLeastOneElementOfType(SessionStateEvent.class);
         SessionStateEvent event = (SessionStateEvent) events.events.getLast();
         assertThat(event.leafId()).isEqualTo(state.currentBranchLeafId());

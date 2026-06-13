@@ -11,6 +11,7 @@ import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.session.BranchSummaryPlan;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.tui.BranchSummaryOffer;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionBranchTreeView;
@@ -29,6 +30,11 @@ final class DefaultResumeSessionController implements ResumeSessionController {
     private final SessionManagerPort sessionManager;
     private final EventBus events;
     private final AiBranchSummarizer branchSummarizer;
+    private static final SystemPrompt BRANCH_SUMMARY_SYSTEM_PROMPT = new SystemPrompt(
+        "Summarize the provided abandoned conversation branch for future continuity.",
+        List.of("branch-summary"),
+        "branch-summary"
+    );
 
     DefaultResumeSessionController(Path cwd, SessionManagerPort sessionManager, EventBus events) {
         this(cwd, sessionManager, events, null);
@@ -99,7 +105,7 @@ final class DefaultResumeSessionController implements ResumeSessionController {
         SessionContext currentContext = sessionManager.context(oldLeafId);
         BranchSummaryResult result = branchSummarizer.summarize(new BranchSummaryRequest(
             new ContextSnapshot(
-                null,
+                BRANCH_SUMMARY_SYSTEM_PROMPT,
                 currentContext.messages(),
                 currentContext.model(),
                 currentContext.thinkingLevel(),
