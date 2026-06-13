@@ -50,6 +50,11 @@ class DefaultSystemPromptBuilderTest {
 
         SystemPrompt prompt = new DefaultSystemPromptBuilder().build(snapshot);
 
+        assertThat(prompt.content()).startsWith("You are ly-pi");
+        assertThat(prompt.content()).contains("## General");
+        assertThat(prompt.content()).contains("## Editing Constraints");
+        assertThat(prompt.content()).contains("## Workflow");
+        assertThat(prompt.content()).contains("## AGENTS.md");
         assertThat(prompt.content()).contains("Follow project rules.");
         assertThat(prompt.content()).contains("L0 index body");
         assertThat(prompt.content()).doesNotContain("sha256:memory");
@@ -91,7 +96,13 @@ class DefaultSystemPromptBuilderTest {
         assertThat(prompt.content()).contains("description: Review changes");
         assertThat(prompt.content()).contains("parameters: scope(required)");
         assertThat(prompt.content()).doesNotContain("body must not be included");
-        assertThat(prompt.sourceNames()).containsExactly("AGENTS.md", "memory.md", "skill:memory-settlement", "prompt:review");
+        assertThat(prompt.sourceNames()).containsExactly(
+            "base-agent-instructions",
+            "AGENTS.md",
+            "memory.md",
+            "skill:memory-settlement",
+            "prompt:review"
+        );
         assertThat(prompt.contentHash()).startsWith("sha256:");
     }
 
