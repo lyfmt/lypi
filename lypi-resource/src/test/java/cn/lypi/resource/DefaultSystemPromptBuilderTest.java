@@ -73,9 +73,13 @@ class DefaultSystemPromptBuilderTest {
         assertThat(prompt.content()).contains("当前进度、临时状态、会话状态");
         assertThat(prompt.content()).contains("L0 不写详细内容、不写项目事实、不写具体 SOP");
         assertThat(prompt.content()).contains("新增、删除、重命名 L1 文件时，必须同步更新 L0 指针");
+        assertThat(prompt.content()).contains("L2 是项目方向层");
+        assertThat(prompt.content()).contains("项目目标、边界、设计方向、用户纠错、准则级事实和 L3 skill 索引");
         assertThat(prompt.content()).contains("L2 不需要写入 L0 指针");
+        assertThat(prompt.content()).contains("L3 是项目具体知识和处理技巧层");
+        assertThat(prompt.content()).contains("模块知识、处理流程、排障技巧、实现取舍和验证方式");
         assertThat(prompt.content()).doesNotContain("应迁移或整理到 AGENTS.md");
-        assertThat(prompt.content()).contains("当 L2 中某类经验反复出现");
+        assertThat(prompt.content()).contains("L2 出现具体模块知识或操作流程时，下沉到 L3");
         assertThat(prompt.content()).contains("L0 变长时，下沉到 L1");
         assertThat(prompt.content()).contains("## Skills");
         assertThat(prompt.content()).contains("### Available skills");

@@ -52,7 +52,7 @@ class ResourceLocationResolver {
         - The user gave an important correction or durable preference.
         - Repeated failures revealed a non-obvious constraint or recovery path.
         - A project handoff, restart, or future continuation would otherwise repeat work.
-        - A project memory item appeared often enough to become a reusable skill.
+        - A project direction item produced concrete project knowledge that should become a skill.
 
         Skip if there is no verified future value. Report the skip reason briefly.
 
@@ -67,14 +67,14 @@ class ResourceLocationResolver {
         1. Re-read the relevant current memory before editing:
            - L0: `~/.ly-pi/memory.md`
            - L1: the file pointed to by L0 when the memory is user-level.
-           - L2: `<cwd>/.ly-pi/memory.md` when the memory is project-level.
-           - L3: the relevant `<cwd>/.ly-pi/skills/*/SKILL.md` when updating reusable procedures.
+           - L2: `<cwd>/.ly-pi/memory.md` when updating project direction, boundaries, project-level corrections, principle-level facts, or L3 skill indexes.
+           - L3: the relevant `<cwd>/.ly-pi/skills/*/SKILL.md` when updating concrete project knowledge, handling flows, troubleshooting techniques, implementation tradeoffs, or verification methods.
         2. Classify the memory:
            - L1 for cross-project user guidance, preferences, important corrections, and collaboration rules.
-           - L2 for current-project facts, project corrections, architecture choices, and costly pitfalls.
-           - L3 for reusable SOPs, module knowledge, repeated workflows, and verified troubleshooting paths.
+           - L2 for project direction: goals, boundaries, design direction, user corrections, principle-level facts, and indexes that point to L3 skills.
+           - L3 for concrete project knowledge: module knowledge, handling flows, troubleshooting techniques, implementation tradeoffs, and verification methods.
         3. Ask the handoff question: if future context were reset, would missing this cause repeated investigation, repeated failure, or another user question?
-        4. Patch the smallest useful text. Prefer one reusable sentence, rule, pointer, or SOP update.
+        4. Patch the smallest useful text. Prefer one reusable sentence, rule, pointer, or skill update.
         5. Keep indexes synchronized:
            - If an L1 file is created, deleted, renamed, or rethemed, update L0.
            - L2 does not need an L0 pointer.
