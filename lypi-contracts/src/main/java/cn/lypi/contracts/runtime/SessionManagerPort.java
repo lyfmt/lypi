@@ -50,7 +50,9 @@ public interface SessionManagerPort {
      *
      * NOTE: 返回的 entries 来自 oldLeafId 到目标路径共同祖先之间，不包含共同祖先。
      */
-    BranchSummaryPlan collectBranchSummaryPlan(String oldLeafId, String targetLeafId);
+    default BranchSummaryPlan collectBranchSummaryPlan(String oldLeafId, String targetLeafId) {
+        return new BranchSummaryPlan(oldLeafId, targetLeafId, java.util.Optional.empty(), List.of());
+    }
 
     /**
      * 返回当前 session 最小视图。
@@ -82,7 +84,9 @@ public interface SessionManagerPort {
     /**
      * 在指定父节点后追加 branch summary 并移动当前 leaf。
      */
-    SessionHandle appendBranchSummary(String parentId, String fromId, String summary);
+    default SessionHandle appendBranchSummary(String parentId, String fromId, String summary) {
+        throw new UnsupportedOperationException("branch summary is not supported");
+    }
 
     /**
      * fork 一个新 session。
