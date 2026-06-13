@@ -1,5 +1,6 @@
 package cn.lypi.resource;
 
+import cn.lypi.contracts.memory.MemoryScope;
 import cn.lypi.contracts.resource.MemorySource;
 import cn.lypi.contracts.resource.ResourceDiagnostic;
 import java.nio.file.Files;
@@ -38,12 +39,12 @@ class MemorySourceScanner {
         Set<Path> seenRealPaths
     ) {
         Path file = switch (location.layer()) {
-            case USER -> location.root().resolve("MEMORY.md");
+            case USER -> location.root().resolve("memory.md");
             case PROJECT, NESTED_PROJECT, EXPLICIT_PATH -> location.root().resolve("MEMORY.md");
             default -> null;
         };
         if (file != null && Files.isRegularFile(file)) {
-            addMemorySource(file, diagnostics, sources, seenRealPaths);
+            addMemorySource(memoryScope(location), file, diagnostics, sources, seenRealPaths);
         }
     }
 
@@ -60,12 +61,13 @@ class MemorySourceScanner {
         };
         if (directory != null && Files.isDirectory(directory)) {
             for (Path file : ResourceFiles.regularFiles(directory, diagnostics)) {
-                addMemorySource(file, diagnostics, sources, seenRealPaths);
+                addMemorySource(memoryScope(location), file, diagnostics, sources, seenRealPaths);
             }
         }
     }
 
     private void addMemorySource(
+        MemoryScope scope,
         Path file,
         List<ResourceDiagnostic> diagnostics,
         List<MemorySource> sources,
@@ -77,8 +79,12 @@ class MemorySourceScanner {
             return;
         }
         ResourceFiles.readString(file, diagnostics).ifPresent(content ->
-            sources.add(new MemorySource(file, Hashing.sha256(content)))
+            sources.add(new MemorySource(scope, file, content, Hashing.sha256(content)))
         );
+    }
+
+    private MemoryScope memoryScope(ResourceLocation location) {
+        return location.layer() == ResourceLayer.USER ? MemoryScope.USER : MemoryScope.PROJECT;
     }
 
     private Path realPath(Path file, List<ResourceDiagnostic> diagnostics) {

@@ -12,6 +12,25 @@ import java.util.List;
  * NOTE: 只保留已存在的用户目录和显式目录，避免后续扫描产生无意义诊断。
  */
 class ResourceLocationResolver {
+    private static final String DEFAULT_APPLICATION_YML = """
+        # ly-pi user-level configuration.
+        # Project-specific runtime state belongs under <cwd>/.ly-pi.
+        """;
+    private static final String DEFAULT_MEMORY_INDEX = """
+        # ly-pi Memory Index
+
+        本文件是 L0 全局记忆入口，用于索引 L1 用户长期记忆。
+
+        ## L1 Memories
+
+        - `~/.ly-pi/memories/`: 用户跨项目长期指导、偏好和重要纠错。
+
+        ## Memory Discipline
+
+        - memory 是可演进经验源，不是稳定规范源。
+        - 写入前必须有用户确认、文件读取、命令执行、测试结果或其他可追溯证据。
+        - 不写临时状态、当前进度、未验证猜测或模型推理过程。
+        """;
     private final List<Path> userRoots;
     private final List<Path> explicitRoots;
 
@@ -84,7 +103,7 @@ class ResourceLocationResolver {
         if (home == null || home.isBlank()) {
             return List.of();
         }
-        return List.of(Path.of(home).resolve(".ly-pi"));
+        return List.of(ensureDefaultUserRoot(Path.of(home).resolve(".ly-pi")));
     }
 
     private static List<Path> normalizeExistingRoots(List<Path> roots) {
@@ -92,5 +111,26 @@ class ResourceLocationResolver {
             .map(path -> path.toAbsolutePath().normalize())
             .filter(Files::isDirectory)
             .toList();
+    }
+
+    private static Path ensureDefaultUserRoot(Path root) {
+        try {
+            Path normalized = root.toAbsolutePath().normalize();
+            Files.createDirectories(normalized);
+            Files.createDirectories(normalized.resolve("memories"));
+            Files.createDirectories(normalized.resolve("skills"));
+            Files.createDirectories(normalized.resolve("prompts"));
+            createFileIfMissing(normalized.resolve("application.yml"), DEFAULT_APPLICATION_YML);
+            createFileIfMissing(normalized.resolve("memory.md"), DEFAULT_MEMORY_INDEX);
+            return normalized;
+        } catch (Exception exception) {
+            return root;
+        }
+    }
+
+    private static void createFileIfMissing(Path file, String content) throws Exception {
+        if (Files.notExists(file)) {
+            Files.writeString(file, content);
+        }
     }
 }

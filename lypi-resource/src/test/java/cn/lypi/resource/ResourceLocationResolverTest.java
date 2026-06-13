@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Properties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -37,5 +38,33 @@ class ResourceLocationResolverTest {
         assertThat(plan.locations())
             .extracting(ResourceLocation::priority)
             .containsExactly(100, 200, 300, 301, 400);
+    }
+
+    @Test
+    void defaultResolverCreatesUserLyPiDefaultsWhenMissing() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Properties properties = System.getProperties();
+        String previousHome = properties.getProperty("user.home");
+        properties.setProperty("user.home", home.toString());
+        try {
+            ResourceDiscoveryPlan plan = new ResourceLocationResolver()
+                .resolve(Files.createDirectories(tempDir.resolve("repo")), tempDir.resolve("repo"));
+
+            Path userRoot = home.resolve(".ly-pi");
+            assertThat(plan.locations())
+                .extracting(ResourceLocation::root)
+                .contains(userRoot.toAbsolutePath().normalize());
+            assertThat(userRoot.resolve("application.yml")).exists();
+            assertThat(userRoot.resolve("memory.md")).exists();
+            assertThat(userRoot.resolve("memories")).isDirectory();
+            assertThat(userRoot.resolve("skills")).isDirectory();
+            assertThat(userRoot.resolve("prompts")).isDirectory();
+        } finally {
+            if (previousHome == null) {
+                properties.remove("user.home");
+            } else {
+                properties.setProperty("user.home", previousHome);
+            }
+        }
     }
 }
