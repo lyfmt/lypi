@@ -21,12 +21,16 @@ public interface AgentCenterPort {
     /**
      * 向已有 child session 发送一轮新输入。
      */
-    SubagentContinueResult continueRun(SubagentContinueRequest request);
+    default SubagentContinueResult continueRun(SubagentContinueRequest request) {
+        throw new UnsupportedOperationException("continueRun is not supported");
+    }
 
     /**
      * 等待指定 subagent run 完成。
      */
-    SubagentWaitResult waitFor(SubagentWaitRequest request);
+    default SubagentWaitResult waitFor(SubagentWaitRequest request) {
+        throw new UnsupportedOperationException("waitFor is not supported");
+    }
 
     /**
      * 中断运行中的 subagent。
