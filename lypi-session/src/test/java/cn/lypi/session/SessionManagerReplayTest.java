@@ -75,6 +75,35 @@ class SessionManagerReplayTest {
     }
 
     @Test
+    void reopenedSessionUsesInitialStateFromHeader() {
+        ChildSessionService childSessions = new ChildSessionService();
+        childSessions.create(new cn.lypi.contracts.session.ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            tempDir,
+            tempDir,
+            1,
+            Optional.empty(),
+            Optional.empty(),
+            Optional.of(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.PLAN),
+            Optional.of(PermissionMode.ACCEPT_EDITS),
+            cn.lypi.contracts.subagent.SubagentToolPolicy.empty()
+        ));
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_child");
+
+        SessionContext context = manager.context(null);
+
+        assertThat(context.model()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH));
+        assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
+        assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
+    }
+
+    @Test
     void reopenedSessionUsesCurrentConfiguredBaselineWhenBranchHasNoOverrides() {
         SessionManager firstManager = new SessionManagerImpl(
             tempDir,

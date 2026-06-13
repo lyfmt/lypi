@@ -322,6 +322,69 @@ class DefaultAgentCenterTest {
     }
 
     @Test
+    void waitForRealJsonSubagentProcessPublishesMailboxAndReadableResult() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("python3", "-c", """
+                import json, sys, time
+                data = json.load(sys.stdin)
+                time.sleep(0.2)
+                print(json.dumps({
+                    'childSessionId': data['childSessionId'],
+                    'status': 'SUCCEEDED',
+                    'summary': 'real wait ok',
+                    'finalEntryId': 'entry_real_final'
+                }))
+                """),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            new JsonSubagentProcessRunner(List.of("python3", "-c", """
+                import json, sys, time
+                data = json.load(sys.stdin)
+                time.sleep(0.2)
+                print(json.dumps({
+                    'childSessionId': data['childSessionId'],
+                    'status': 'SUCCEEDED',
+                    'summary': 'real wait ok',
+                    'finalEntryId': 'entry_real_final'
+                }))
+                """)),
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "真实 wait"));
+        SubagentWaitResult waited = center.waitFor(new SubagentWaitRequest(
+            Optional.of(spawned.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            5,
+            true
+        ));
+
+        assertThat(waited.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+        assertThat(waited.summary()).contains("real wait ok");
+        assertThat(waited.finalEntryId()).contains("entry_real_final");
+        assertThat(center.readResult(spawned.childSessionId()))
+            .hasValueSatisfying(output -> assertThat(output.summary()).isEqualTo("real wait ok"));
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
+            .singleElement()
+            .satisfies(message -> {
+                assertThat(message.summary()).isEqualTo("real wait ok");
+                assertThat(message.contentRef().finalEntryId()).isEqualTo("entry_real_final");
+            });
+    }
+
+    @Test
     void completionLifecycleDoesNotMoveParentSessionCurrentLeaf() {
         ChildSessionPort childSessions = request -> null;
         CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
