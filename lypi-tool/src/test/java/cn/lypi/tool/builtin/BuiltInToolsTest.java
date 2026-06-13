@@ -68,6 +68,7 @@ class BuiltInToolsTest {
         assertEquals(Set.of("read", "write", "edit", "bash", "grep", "glob"), defaultNames);
         assertEquals(Set.of(
             "spawn_agent",
+            "continue_agent",
             "wait_agent",
             "interrupt_agent",
             "read_agent_result",
@@ -93,6 +94,7 @@ class BuiltInToolsTest {
         BuiltInTools.registerSubagentTools(runtime, agentCenter(), mailbox());
 
         assertTrue(runtime.resolve("spawn_agent").isPresent());
+        assertTrue(runtime.resolve("continue_agent").isPresent());
         assertTrue(runtime.resolve("wait_agent").isPresent());
         assertTrue(runtime.resolve("read_mailbox").isPresent());
         assertTrue(runtime.resolve("accept_mailbox_message").isPresent());
@@ -108,6 +110,7 @@ class BuiltInToolsTest {
 
         assertEquals(Set.of(
             "spawn_agent",
+            "continue_agent",
             "wait_agent",
             "interrupt_agent",
             "read_agent_result",

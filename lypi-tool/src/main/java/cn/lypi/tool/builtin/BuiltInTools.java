@@ -7,6 +7,7 @@ import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.tool.builtin.subagent.AcceptMailboxMessageTool;
+import cn.lypi.tool.builtin.subagent.ContinueAgentTool;
 import cn.lypi.tool.builtin.subagent.DiscardMailboxMessageTool;
 import cn.lypi.tool.builtin.subagent.InterruptAgentTool;
 import cn.lypi.tool.builtin.subagent.ListAgentsTool;
@@ -73,6 +74,7 @@ public final class BuiltInTools {
         Objects.requireNonNull(mailbox, "mailbox must not be null");
         return List.of(
             new SpawnAgentTool(agentCenter),
+            new ContinueAgentTool(agentCenter),
             new WaitAgentTool(agentCenter),
             new InterruptAgentTool(agentCenter),
             new ReadAgentResultTool(agentCenter),

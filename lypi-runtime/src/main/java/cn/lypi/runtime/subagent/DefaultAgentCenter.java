@@ -11,11 +11,14 @@ import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
+import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
+import cn.lypi.contracts.subagent.SubagentContinueRequest;
+import cn.lypi.contracts.subagent.SubagentContinueResult;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
@@ -43,6 +46,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
     private final MailboxDeliveryService deliveryService;
     private final Clock clock;
     private final Map<String, RunningAgent> runningByAgentId = new ConcurrentHashMap<>();
+    private final Map<String, RunningAgent> agentsByChildSessionId = new ConcurrentHashMap<>();
     private final Map<String, String> agentIdByChildSessionId = new ConcurrentHashMap<>();
     private final Map<String, HeadlessSubagentOutput> resultsByChildSessionId = new ConcurrentHashMap<>();
     private final Map<String, String> latestRunIdByChildSessionId = new ConcurrentHashMap<>();
@@ -157,19 +161,18 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
                 Optional.ofNullable(exception.getMessage())
             );
         }
-        runningByAgentId.put(
+        RunningAgent running = new RunningAgent(
             agentId,
-            new RunningAgent(
-                agentId,
-                childSessionId,
-                request.parentSessionId(),
-                parentSpawnEntryId,
-                request.agentName(),
-                request.agentRole(),
-                parentCwd,
-                handle
-            )
+            childSessionId,
+            request.parentSessionId(),
+            parentSpawnEntryId,
+            request.agentName(),
+            request.agentRole(),
+            parentCwd,
+            handle
         );
+        runningByAgentId.put(agentId, running);
+        agentsByChildSessionId.put(childSessionId, running);
         agentIdByChildSessionId.put(childSessionId, agentId);
         latestRunIdByChildSessionId.put(childSessionId, parentSpawnEntryId);
         handle.completion().whenComplete((output, failure) -> complete(agentId, output, failure));
@@ -181,6 +184,61 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             SubagentRunStatus.STARTED,
             Optional.of("subagent started")
         );
+    }
+
+    @Override
+    public SubagentContinueResult continueRun(SubagentContinueRequest request) {
+        RunningAgent existing = agentsByChildSessionId.get(request.childSessionId());
+        if (existing == null) {
+            return failedContinue(request, "Unknown child session: " + request.childSessionId());
+        }
+        if (runningByAgentId.containsKey(existing.agentId())) {
+            return failedContinue(request, "Subagent is already running: " + existing.agentId());
+        }
+        String parentContinueEntryId = "entry_continue_" + randomId();
+        RunningAgent running = existing.withParentSpawnEntryId(parentContinueEntryId).withHandle(null);
+        parentSession.append(new AgentLifecycleEntry(
+            parentContinueEntryId,
+            request.parentEntryId(),
+            existing.agentId(),
+            existing.childSessionId(),
+            existing.parentSessionId(),
+            "continued",
+            Map.of("prompt", request.prompt()),
+            Instant.now(clock)
+        ));
+        HeadlessSubagentInput input = new HeadlessSubagentInput(
+            existing.childSessionId(),
+            existing.parentSessionId(),
+            parentContinueEntryId,
+            request.prompt(),
+            existing.parentCwd(),
+            request.cwd() == null ? parentCwd : request.cwd(),
+            request.allowedTools(),
+            request.toolPolicy(),
+            PermissionMode.DEFAULT_EXECUTE,
+            request.timeoutSeconds(),
+            HeadlessSubagentRunMode.CONTINUE
+        );
+        try {
+            SubagentProcessHandle handle = processRunner.start(input);
+            running = running.withHandle(handle);
+            runningByAgentId.put(existing.agentId(), running);
+            agentsByChildSessionId.put(existing.childSessionId(), running);
+            latestRunIdByChildSessionId.put(existing.childSessionId(), parentContinueEntryId);
+            handle.completion().whenComplete((output, failure) -> complete(existing.agentId(), output, failure));
+            return new SubagentContinueResult(
+                existing.agentId(),
+                existing.childSessionId(),
+                existing.parentSessionId(),
+                parentContinueEntryId,
+                parentContinueEntryId,
+                SubagentRunStatus.STARTED,
+                Optional.of("subagent continued")
+            );
+        } catch (RuntimeException exception) {
+            return failedContinue(request, exception.getMessage());
+        }
     }
 
     @Override
@@ -283,6 +341,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
 
     private void completeStartedAgent(RunningAgent running, HeadlessSubagentOutput safeOutput) {
         resultsByChildSessionId.put(running.childSessionId(), safeOutput);
+        agentsByChildSessionId.put(running.childSessionId(), running.withHandle(null));
         agentIdByChildSessionId.put(running.childSessionId(), running.agentId());
         latestRunIdByChildSessionId.put(running.childSessionId(), running.parentSpawnEntryId());
         SessionManagerPort lifecycleSession = sessionManagerFactory.open(running.parentCwd(), running.parentSessionId());
@@ -435,6 +494,18 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         );
     }
 
+    private SubagentContinueResult failedContinue(SubagentContinueRequest request, String message) {
+        return new SubagentContinueResult(
+            "",
+            request.childSessionId(),
+            request.parentSessionId(),
+            "",
+            "",
+            SubagentRunStatus.FAILED,
+            Optional.ofNullable(message)
+        );
+    }
+
     private String lifecycle(SubagentRunStatus status) {
         return switch (status) {
             case SUCCEEDED -> "finished";
@@ -457,5 +528,31 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         Optional<String> agentRole,
         Path parentCwd,
         SubagentProcessHandle handle
-    ) {}
+    ) {
+        private RunningAgent withHandle(SubagentProcessHandle handle) {
+            return new RunningAgent(
+                agentId,
+                childSessionId,
+                parentSessionId,
+                parentSpawnEntryId,
+                agentName,
+                agentRole,
+                parentCwd,
+                handle
+            );
+        }
+
+        private RunningAgent withParentSpawnEntryId(String parentSpawnEntryId) {
+            return new RunningAgent(
+                agentId,
+                childSessionId,
+                parentSessionId,
+                parentSpawnEntryId,
+                agentName,
+                agentRole,
+                parentCwd,
+                handle
+            );
+        }
+    }
 }

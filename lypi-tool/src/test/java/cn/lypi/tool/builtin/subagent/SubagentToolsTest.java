@@ -17,6 +17,8 @@ import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
+import cn.lypi.contracts.subagent.SubagentContinueRequest;
+import cn.lypi.contracts.subagent.SubagentContinueResult;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.subagent.SubagentWaitRequest;
@@ -121,6 +123,29 @@ class SubagentToolsTest {
 
         assertTrue(result.isError());
         assertTrue(result.output().contains("Subagent command is not configured"));
+    }
+
+    @Test
+    void continueAgentStartsNextRunOnExistingChildSession() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        ContinueAgentTool tool = new ContinueAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "childSessionId", "ses_child",
+            "prompt", "继续检查",
+            "timeoutSeconds", 45
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals("ses_parent", agentCenter.continueRequest.parentSessionId());
+        assertEquals("entry_tool_call", agentCenter.continueRequest.parentEntryId());
+        assertEquals("ses_child", agentCenter.continueRequest.childSessionId());
+        assertEquals("继续检查", agentCenter.continueRequest.prompt());
+        assertEquals(45, agentCenter.continueRequest.timeoutSeconds());
+        assertTrue(result.output().contains("run_2"));
+        assertTrue(result.output().contains("STARTED"));
+        assertFalse(tool.isReadOnly(Map.of()));
     }
 
     @Test
@@ -282,6 +307,7 @@ class SubagentToolsTest {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
 
         assertFalse(new SpawnAgentTool(agentCenter).validateInput(Map.of(), context()).valid());
+        assertFalse(new ContinueAgentTool(agentCenter).validateInput(Map.of("childSessionId", "ses_child"), context()).valid());
         assertFalse(new WaitAgentTool(agentCenter).validateInput(Map.of(), context()).valid());
         assertFalse(new InterruptAgentTool(agentCenter).validateInput(Map.of(), context()).valid());
         assertFalse(new ReadAgentResultTool(agentCenter).validateInput(Map.of(), context()).valid());
@@ -295,6 +321,7 @@ class SubagentToolsTest {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
 
         assertEquals(PermissionBehavior.ALLOW, new SpawnAgentTool(agentCenter).checkPermissions(Map.of(), context()).behavior());
+        assertEquals(PermissionBehavior.ALLOW, new ContinueAgentTool(agentCenter).checkPermissions(Map.of(), context()).behavior());
         assertEquals(PermissionBehavior.ALLOW, new WaitAgentTool(agentCenter).checkPermissions(Map.of(), context()).behavior());
         assertEquals(PermissionBehavior.ALLOW, new ReadAgentResultTool(agentCenter).checkPermissions(Map.of(), context()).behavior());
         assertEquals(PermissionBehavior.ALLOW, new ReadMailboxTool(new RecordingMailbox()).checkPermissions(Map.of(), context()).behavior());
@@ -332,6 +359,8 @@ class SubagentToolsTest {
     private final class RecordingAgentCenter implements AgentCenterPort {
         private SubagentSpawnRequest spawnRequest;
         private SubagentSpawnResult spawnResult;
+        private SubagentContinueRequest continueRequest;
+        private SubagentContinueResult continueResult;
         private SubagentWaitRequest waitRequest;
         private SubagentWaitResult waitResult;
         private String interruptedAgentId;
@@ -350,6 +379,23 @@ class SubagentToolsTest {
                 request.parentEntryId(),
                 SubagentRunStatus.STARTED,
                 Optional.of("started")
+            );
+        }
+
+        @Override
+        public SubagentContinueResult continueRun(SubagentContinueRequest request) {
+            this.continueRequest = request;
+            if (continueResult != null) {
+                return continueResult;
+            }
+            return new SubagentContinueResult(
+                "agent_1",
+                request.childSessionId(),
+                request.parentSessionId(),
+                "entry_continue",
+                "run_2",
+                SubagentRunStatus.STARTED,
+                Optional.of("continued")
             );
         }
 

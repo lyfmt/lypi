@@ -23,6 +23,8 @@ import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
+import cn.lypi.contracts.subagent.SubagentContinueRequest;
+import cn.lypi.contracts.subagent.SubagentContinueResult;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.subagent.SubagentWaitRequest;
@@ -115,6 +117,59 @@ class DefaultAgentCenterTest {
             .map(AgentLifecycleEntry.class::cast)
             .extracting(AgentLifecycleEntry::lifecycle)
             .containsExactly("spawned", "finished");
+    }
+
+    @Test
+    void continueRunStartsNewHeadlessContinueRunForExistingChildSession() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "第一轮"));
+        processRunner.complete(new HeadlessSubagentOutput(
+            spawned.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "第一轮完成",
+            Optional.of("entry_final_1"),
+            Optional.empty()
+        ));
+
+        SubagentContinueResult continued = center.continueRun(new SubagentContinueRequest(
+            "ses_parent",
+            "entry_parent_continue",
+            spawned.childSessionId(),
+            "第二轮",
+            tempDir,
+            List.of(),
+            30
+        ));
+
+        assertThat(continued.status()).isEqualTo(SubagentRunStatus.STARTED);
+        assertThat(continued.agentId()).isEqualTo(spawned.agentId());
+        assertThat(processRunner.input.childSessionId()).isEqualTo(spawned.childSessionId());
+        assertThat(processRunner.input.prompt()).isEqualTo("第二轮");
+        assertThat(processRunner.input.runMode()).isEqualTo(cn.lypi.contracts.subagent.HeadlessSubagentRunMode.CONTINUE);
+        assertThat(processRunner.input.parentSpawnEntryId()).isEqualTo(continued.parentContinueEntryId());
+        assertThat(parentSession.entries)
+            .filteredOn(AgentLifecycleEntry.class::isInstance)
+            .map(AgentLifecycleEntry.class::cast)
+            .extracting(AgentLifecycleEntry::lifecycle)
+            .contains("continued");
     }
 
     @Test

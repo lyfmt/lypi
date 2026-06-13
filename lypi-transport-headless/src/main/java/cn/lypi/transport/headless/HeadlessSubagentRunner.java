@@ -14,6 +14,7 @@ import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
+import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -59,10 +60,11 @@ public final class HeadlessSubagentRunner {
         try {
             SessionManagerPort childSessionManager = sessionManagerFactory.open(input.sessionCwd(), input.childSessionId());
             AgentCorePort agentCore = agentCoreFactory.create(input.cwd(), childSessionManager);
+            Optional<String> parentEntryId = turnParentEntryId(input, childSessionManager);
             TurnState state = agentCore.execute(new TurnRequest(
                 input.childSessionId(),
                 input.prompt(),
-                Optional.empty(),
+                parentEntryId,
                 neverAborted()
             ));
             SubagentRunStatus status = status(state.status());
@@ -88,7 +90,7 @@ public final class HeadlessSubagentRunner {
         if (blank(input.parentSessionId())) {
             throw new IllegalArgumentException("parentSessionId is required");
         }
-        if (blank(input.parentSpawnEntryId())) {
+        if (input.runMode() == HeadlessSubagentRunMode.START && blank(input.parentSpawnEntryId())) {
             throw new IllegalArgumentException("parentSpawnEntryId is required");
         }
         if (blank(input.prompt())) {
@@ -124,6 +126,17 @@ public final class HeadlessSubagentRunner {
 
     private AbortSignal neverAborted() {
         return () -> false;
+    }
+
+    private Optional<String> turnParentEntryId(HeadlessSubagentInput input, SessionManagerPort childSessionManager) {
+        if (input.runMode() != HeadlessSubagentRunMode.CONTINUE) {
+            return Optional.empty();
+        }
+        String leafId = childSessionManager.currentView().leafId();
+        if (leafId == null || leafId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(leafId);
     }
 
     private SubagentRunStatus status(TurnStatus status) {

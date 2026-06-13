@@ -21,7 +21,9 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
+import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -85,6 +87,29 @@ class HeadlessSubagentRunnerTest {
 
         assertThat(output.status()).isEqualTo(SubagentRunStatus.FAILED);
         assertThat(output.errorMessage()).isPresent();
+    }
+
+    @Test
+    void continueModeUsesCurrentLeafAsTurnParentEntryId() {
+        CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "继续后的结果");
+        CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_previous_leaf");
+        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCoreFactory, sessionFactory, new HeadlessSubagentJsonCodec());
+
+        HeadlessSubagentOutput output = runner.execute(new cn.lypi.contracts.subagent.HeadlessSubagentInput(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            "继续执行",
+            Path.of("/tmp/project/.lypi-store"),
+            Path.of("/tmp/project/work"),
+            new SubagentToolPolicy(List.of(), List.of()),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            HeadlessSubagentRunMode.CONTINUE
+        ));
+
+        assertThat(agentCoreFactory.agentCore.request.parentEntryId()).contains("entry_previous_leaf");
+        assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
     }
 
     private static final class CapturingAgentCoreFactory implements AgentCoreFactoryPort {
