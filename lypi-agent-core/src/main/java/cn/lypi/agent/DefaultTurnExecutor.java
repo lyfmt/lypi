@@ -115,16 +115,6 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 if (toolRequests.isEmpty()) {
                     break;
                 }
-                if (toolRound >= request.maxToolRounds()) {
-                    AgentMessage error = messageFactory.errorMessage(
-                        ids.newMessageId(),
-                        "max-tool-rounds-exceeded",
-                        "已达到工具调用轮数上限 " + request.maxToolRounds() + "，终止本轮执行以避免无限循环。"
-                    );
-                    appendNewMessage(request.sessionId(), error);
-                    newMessages.add(error);
-                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
-                }
                 toolRound++;
                 List<ToolResult<?>> toolResults = executeTools(
                     request.sessionId(),

@@ -636,7 +636,7 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
-    void failsTurnWhenMaxToolRoundsIsExceeded() {
+    void continuesToolIterationWithoutMaxToolRoundLimit() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
@@ -653,10 +653,21 @@ class DefaultTurnExecutorTest {
             new ToolCallDelta("toolu-2", "read", Map.of("path", "pom.xml"), true),
             new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
         ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("done"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
         tools.enqueue(List.of(new ToolResult<>(
             "ok",
             false,
             List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "content", false)),
+            Optional.empty()
+        )));
+        tools.enqueue(List.of(new ToolResult<>(
+            "ok",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result-2", "toolu-2", "content 2", false)),
             Optional.empty()
         )));
         ContextAssembler assembler = request -> new ContextAssembly(
@@ -677,19 +688,25 @@ class DefaultTurnExecutorTest {
                 new NoopCompactionCoordinator(),
                 memory
             ),
-            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2", "msg-error"),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2", "msg-fallback-3"),
             clock
         );
 
         TurnState state = executor.execute(new TurnRequest("session-1", "run tools", Optional.empty(), () -> false, 1));
 
-        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
-        assertThat(state.currentToolRound()).isEqualTo(1);
-        assertThat(tools.requests).hasSize(1);
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(state.currentToolRound()).isEqualTo(2);
+        assertThat(tools.requests).hasSize(2);
         assertThat(session.messages()).extracting(AgentMessage::id)
-            .containsExactly("msg-user", "msg-tool-call-1", "msg-tool-result", "msg-tool-call-2", "msg-error");
-        assertThat(session.messages().getLast().kind()).isEqualTo(cn.lypi.contracts.context.MessageKind.ERROR);
-        assertThat(session.messages().getLast().content().getFirst().text()).contains("工具调用轮数上限");
+            .containsExactly(
+                "msg-user",
+                "msg-tool-call-1",
+                "msg-tool-result",
+                "msg-tool-call-2",
+                "msg-tool-result-2",
+                "msg-final"
+            );
+        assertThat(session.messages().getLast().content().getFirst().text()).isEqualTo("done");
         assertThat(eventBus.events.stream()
             .filter(event -> event instanceof MessageStartEvent || event instanceof MessageEndEvent)
             .map(event -> event.getClass().getSimpleName() + ":" + messageId(event))
@@ -703,10 +720,12 @@ class DefaultTurnExecutorTest {
                 "MessageEndEvent:msg-tool-result",
                 "MessageStartEvent:msg-tool-call-2",
                 "MessageEndEvent:msg-tool-call-2",
-                "MessageStartEvent:msg-error",
-                "MessageEndEvent:msg-error"
+                "MessageStartEvent:msg-tool-result-2",
+                "MessageEndEvent:msg-tool-result-2",
+                "MessageStartEvent:msg-final",
+                "MessageEndEvent:msg-final"
             );
-        assertThat(memory.calls).isZero();
+        assertThat(memory.calls).isOne();
     }
 
     @Test
