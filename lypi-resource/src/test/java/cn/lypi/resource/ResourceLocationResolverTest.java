@@ -59,6 +59,10 @@ class ResourceLocationResolverTest {
             assertThat(userRoot.resolve("memories")).isDirectory();
             assertThat(userRoot.resolve("skills")).isDirectory();
             assertThat(userRoot.resolve("prompts")).isDirectory();
+            assertThat(userRoot.resolve("skills/memory-settlement/SKILL.md")).exists();
+            assertThat(Files.readString(userRoot.resolve("skills/memory-settlement/SKILL.md")))
+                .contains("name: memory-settlement")
+                .contains("No Verification, No Memory");
         } finally {
             if (previousHome == null) {
                 properties.remove("user.home");

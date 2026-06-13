@@ -31,6 +31,59 @@ class ResourceLocationResolver {
         - 写入前必须有用户确认、文件读取、命令执行、测试结果或其他可追溯证据。
         - 不写临时状态、当前进度、未验证猜测或模型推理过程。
         """;
+    private static final String DEFAULT_MEMORY_SETTLEMENT_SKILL = """
+        ---
+        name: memory-settlement
+        description: Use when a long task, important correction, repeated failure, project handoff, or reusable lesson may need durable memory.
+        allowed_tools:
+          - read
+          - edit
+          - write
+        ---
+
+        # Memory Settlement
+
+        Use this skill to decide whether verified experience should be written to long-term memory.
+
+        ## When To Run
+
+        Run this skill before finishing when any of these occurred:
+        - A long task or multi-step implementation produced reusable knowledge.
+        - The user gave an important correction or durable preference.
+        - Repeated failures revealed a non-obvious constraint or recovery path.
+        - A project handoff, restart, or future continuation would otherwise repeat work.
+        - A project memory item appeared often enough to become a reusable skill.
+
+        Skip if there is no verified future value. Report the skip reason briefly.
+
+        ## Gate
+
+        No Verification, No Memory.
+
+        Only write information backed by tool results, file reads, tests, command output, or explicit user confirmation. Do not write guesses, plans, temporary status, chat logs, current progress, timestamps, PIDs, generic knowledge, or model reasoning.
+
+        ## Procedure
+
+        1. Re-read the relevant current memory before editing:
+           - L0: `~/.ly-pi/memory.md`
+           - L1: the file pointed to by L0 when the memory is user-level.
+           - L2: `<cwd>/.ly-pi/memory.md` when the memory is project-level.
+           - L3: the relevant `<cwd>/.ly-pi/skills/*/SKILL.md` when updating reusable procedures.
+        2. Classify the memory:
+           - L1 for cross-project user guidance, preferences, important corrections, and collaboration rules.
+           - L2 for current-project facts, project corrections, architecture choices, and costly pitfalls.
+           - L3 for reusable SOPs, module knowledge, repeated workflows, and verified troubleshooting paths.
+        3. Ask the handoff question: if future context were reset, would missing this cause repeated investigation, repeated failure, or another user question?
+        4. Patch the smallest useful text. Prefer one reusable sentence, rule, pointer, or SOP update.
+        5. Keep indexes synchronized:
+           - If an L1 file is created, deleted, renamed, or rethemed, update L0.
+           - L2 does not need an L0 pointer.
+           - If a skill purpose or trigger changes, update its description or index metadata.
+
+        ## Output
+
+        After writing, state what changed and what verification justified it. If nothing was written, state why.
+        """;
     private final List<Path> userRoots;
     private final List<Path> explicitRoots;
 
@@ -122,6 +175,10 @@ class ResourceLocationResolver {
             Files.createDirectories(normalized.resolve("prompts"));
             createFileIfMissing(normalized.resolve("application.yml"), DEFAULT_APPLICATION_YML);
             createFileIfMissing(normalized.resolve("memory.md"), DEFAULT_MEMORY_INDEX);
+            createFileIfMissing(
+                normalized.resolve("skills").resolve("memory-settlement").resolve("SKILL.md"),
+                DEFAULT_MEMORY_SETTLEMENT_SKILL
+            );
             return normalized;
         } catch (Exception exception) {
             return root;
@@ -130,6 +187,10 @@ class ResourceLocationResolver {
 
     private static void createFileIfMissing(Path file, String content) throws Exception {
         if (Files.notExists(file)) {
+            Path parent = file.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
             Files.writeString(file, content);
         }
     }
