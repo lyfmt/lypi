@@ -8,6 +8,9 @@ import cn.lypi.agent.DefaultCompactionRuntime;
 import cn.lypi.agent.DefaultTurnExecutor;
 import cn.lypi.agent.NoopMemoryExtractionWorker;
 import cn.lypi.agent.TurnIds;
+import cn.lypi.agent.branch.AiBranchSummarizer;
+import cn.lypi.agent.branch.BranchSummaryContextBuilder;
+import cn.lypi.agent.branch.BranchSummaryInstructionFactory;
 import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.DefaultCompactionCoordinator;
@@ -16,6 +19,7 @@ import cn.lypi.boot.BootstrapService;
 import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
@@ -146,9 +150,14 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnMissingBean(ContextAssembler.class)
     public ContextAssembler contextAssembler(
         SessionManagerPort sessionManager,
-        ResourceRuntimePort resourceRuntime
+        ResourceRuntimePort resourceRuntime,
+        ObjectProvider<ModelCatalogPort> modelCatalog
     ) {
-        return new DefaultContextAssembler(sessionManager, resourceRuntime, new ContextBudgetEstimator());
+        return new DefaultContextAssembler(
+            sessionManager,
+            resourceRuntime,
+            new ContextBudgetEstimator(modelCatalog.getIfAvailable())
+        );
     }
 
     /**
@@ -259,6 +268,7 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         EventBus eventBus,
         ObjectProvider<CompactionSummarizer> compactionSummarizer,
+        ObjectProvider<ModelCatalogPort> modelCatalog,
         Clock clock
     ) {
         return new AgentCoreFactoryPort() {
@@ -280,7 +290,7 @@ public class LyPiRuntimeAutoConfiguration {
                 DefaultContextAssembler assembler = new DefaultContextAssembler(
                     sessionManager,
                     resolvedResourceRuntime,
-                    new ContextBudgetEstimator()
+                    new ContextBudgetEstimator(modelCatalog.getIfAvailable())
                 );
                 DefaultCompactionCoordinator compactionCoordinator = new DefaultCompactionCoordinator(
                     sessionManager,
@@ -408,9 +418,21 @@ public class LyPiRuntimeAutoConfiguration {
     public ResumeSessionController resumeSessionController(
         LyPiRuntimeProperties properties,
         SessionManagerPort sessionManager,
-        EventBus eventBus
+        EventBus eventBus,
+        ObjectProvider<AiProviderRuntimePort> aiProviderRuntime
     ) {
-        return new DefaultResumeSessionController(properties.getCwd(), sessionManager, eventBus);
+        AiProviderRuntimePort provider = aiProviderRuntime.getIfAvailable();
+        return new DefaultResumeSessionController(
+            properties.getCwd(),
+            sessionManager,
+            eventBus,
+            provider == null
+                ? null
+                : new AiBranchSummarizer(
+                    provider,
+                    new BranchSummaryContextBuilder(new BranchSummaryInstructionFactory())
+                )
+        );
     }
 
     /**

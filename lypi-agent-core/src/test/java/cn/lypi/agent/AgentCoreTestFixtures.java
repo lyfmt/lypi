@@ -37,6 +37,7 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.session.BranchSummaryEntry;
+import cn.lypi.contracts.session.BranchSummaryPlan;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.CompactionEntry;
@@ -428,6 +429,11 @@ final class AgentCoreTestFixtures {
         }
 
         @Override
+        public BranchSummaryPlan collectBranchSummaryPlan(String oldLeafId, String targetLeafId) {
+            return new BranchSummaryPlan(oldLeafId, targetLeafId, Optional.empty(), List.of());
+        }
+
+        @Override
         public SessionView currentView() {
             return view(leafId);
         }
@@ -493,6 +499,12 @@ final class AgentCoreTestFixtures {
             String entryId = "entry-" + message.id();
             append(new MessageEntry(entryId, leafId, message, message.timestamp()));
             return handle();
+        }
+
+        @Override
+        public SessionHandle appendBranchSummary(String parentId, String fromId, String summary) {
+            String entryId = "entry-branch-summary-" + entries.size();
+            return append(new BranchSummaryEntry(entryId, parentId, fromId, summary, NOW));
         }
 
         @Override

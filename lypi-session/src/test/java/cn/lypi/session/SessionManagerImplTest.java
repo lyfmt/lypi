@@ -13,6 +13,8 @@ import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
+import cn.lypi.contracts.session.BranchSummaryEntry;
+import cn.lypi.contracts.session.BranchSummaryPlan;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
@@ -407,6 +409,59 @@ class SessionManagerImplTest {
         assertThatThrownBy(() -> engine.switchLeaf("missing"))
             .isInstanceOf(SessionEngineException.class)
             .hasMessageContaining("Session entry does not exist");
+    }
+
+    @Test
+    void collectBranchSummaryPlanReturnsOldPathSuffixToCommonAncestor() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(new CustomMessageEntry("shared", "root", "shared", Instant.parse("2026-06-01T00:01:00Z")));
+        engine.append(new CustomMessageEntry("old-1", "shared", "old 1", Instant.parse("2026-06-01T00:02:00Z")));
+        engine.append(new MessageEntry("old-2", "old-1", textMessage("msg-old", "old 2"), Instant.parse("2026-06-01T00:03:00Z")));
+        engine.append(new CustomMessageEntry("target", "shared", "target", Instant.parse("2026-06-01T00:04:00Z")));
+
+        BranchSummaryPlan plan = engine.collectBranchSummaryPlan("old-2", "target");
+
+        assertThat(plan.oldLeafId()).isEqualTo("old-2");
+        assertThat(plan.targetLeafId()).isEqualTo("target");
+        assertThat(plan.commonAncestorId()).contains("shared");
+        assertThat(plan.entries()).extracting(SessionEntry::id).containsExactly("old-1", "old-2");
+        assertThat(plan.hasSummarizableContent()).isTrue();
+    }
+
+    @Test
+    void collectBranchSummaryPlanDoesNotOfferForDescendantNavigation() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(new CustomMessageEntry("child", "root", "child", Instant.parse("2026-06-01T00:01:00Z")));
+
+        BranchSummaryPlan plan = engine.collectBranchSummaryPlan("root", "child");
+
+        assertThat(plan.entries()).isEmpty();
+        assertThat(plan.hasSummarizableContent()).isFalse();
+    }
+
+    @Test
+    void appendBranchSummaryMovesLeafAndProjectsIntoContext() {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+        engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        engine.append(new CustomMessageEntry("target", "root", "target", Instant.parse("2026-06-01T00:01:00Z")));
+
+        SessionHandle handle = engine.appendBranchSummary("target", "old-leaf", "branch summary");
+
+        assertThat(handle.leafId()).isNotBlank();
+        assertThat(handle.byId().get(handle.leafId())).isInstanceOf(BranchSummaryEntry.class);
+        BranchSummaryEntry summary = (BranchSummaryEntry) handle.byId().get(handle.leafId());
+        assertThat(summary.parentId()).isEqualTo("target");
+        assertThat(summary.fromId()).isEqualTo("old-leaf");
+        assertThat(summary.summary()).isEqualTo("branch summary");
+        assertThat(engine.branch(handle.leafId())).extracting(SessionEntry::id).containsExactly("root", "target", handle.leafId());
+        assertThat(engine.context(handle.leafId()).messages())
+            .extracting(message -> message.content().getFirst().text())
+            .contains("branch summary");
     }
 
     @Test

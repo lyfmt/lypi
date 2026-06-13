@@ -2,6 +2,8 @@ package cn.lypi.boot.runtime;
 
 import cn.lypi.agent.compact.CompactSummaryResult;
 import cn.lypi.agent.compact.CompactionSummarizer;
+import cn.lypi.agent.ContextAssembler;
+import cn.lypi.agent.ContextBuildRequest;
 import cn.lypi.boot.BootstrapService;
 import cn.lypi.boot.ai.LyPiAiAutoConfiguration;
 import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
@@ -60,6 +62,7 @@ import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.tui.BranchSummaryOffer;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
@@ -67,6 +70,7 @@ import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxMessage;
@@ -162,6 +166,52 @@ class LyPiRuntimeAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasSingleBean(EventBus.class);
                 assertThat(context.getBean(EventBus.class)).isSameAs(customEventBus);
+            });
+    }
+
+    @Test
+    void contextAssemblerUsesConfiguredModelContextWindowForCompactThreshold() {
+        SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        sessionManager.openOrCreate("ses_budget");
+        SessionHandle parent = sessionManager.appendMessage(new AgentMessage(
+            "msg-user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new TextContentBlock("hello")),
+            Instant.EPOCH,
+            Optional.empty(),
+            Optional.empty()
+        ));
+        sessionManager.append(new ModelChangeEntry(
+            "entry-model",
+            parent.leafId(),
+            new ModelSelection("fixture", "fixture-model", ThinkingLevel.MEDIUM),
+            "test",
+            Instant.EPOCH
+        ));
+
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.ai.providers.fixture.enabled=true",
+                "lypi.ai.providers.fixture.api-style=openai_compatible",
+                "lypi.ai.providers.fixture.base-url=https://api.fixture.example/v1",
+                "lypi.ai.providers.fixture.models[0].model-id=fixture-model",
+                "lypi.ai.providers.fixture.models[0].context-window=64000",
+                "lypi.ai.providers.fixture.models[0].max-output-tokens=8192"
+            )
+            .withBean(SessionManagerPort.class, () -> sessionManager)
+            .run(context -> {
+                ContextAssembler assembler = context.getBean(ContextAssembler.class);
+
+                ContextBudget budget = assembler.build(new ContextBuildRequest(
+                    "ses_budget",
+                    Optional.of("entry-model"),
+                    tempDir,
+                    true
+                )).snapshot().budget();
+
+                assertThat(budget.effectiveContextWindow()).isEqualTo(64_000);
+                assertThat(budget.autoCompactThreshold()).isEqualTo(51_200);
             });
     }
 
@@ -596,6 +646,99 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(state.sessionId()).isEqualTo("ses_old");
                 assertThat(state.leafId()).isEqualTo(userLeaf.leafId());
             });
+    }
+
+    @Test
+    void resumeControllerOffersBranchSummaryOnlyForSameSessionSummarizableOldSuffix() {
+        SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        RecordingEventBus events = new RecordingEventBus();
+        sessionManager.openOrCreate("ses_old");
+        SessionHandle root = sessionManager.appendMessage(userMessage("msg_root", "root"));
+        SessionHandle oldMessage = sessionManager.appendMessage(assistantMessage("msg_old", "old branch"));
+        SessionHandle oldLeaf = sessionManager.append(new SessionInfoEntry(
+            "entry_old_info",
+            oldMessage.leafId(),
+            Map.of("ignored", true),
+            Instant.EPOCH
+        ));
+        SessionHandle target = sessionManager.append(new cn.lypi.contracts.session.CustomMessageEntry(
+            "entry_target",
+            root.leafId(),
+            "target branch",
+            Instant.EPOCH
+        ));
+        sessionManager.switchLeaf(oldLeaf.leafId());
+        ResumeSessionController controller = new DefaultResumeSessionController(
+            tempDir,
+            sessionManager,
+            events,
+            new cn.lypi.agent.branch.AiBranchSummarizer(
+                new RecordingAiProvider(List.of()),
+                new cn.lypi.agent.branch.BranchSummaryContextBuilder(new cn.lypi.agent.branch.BranchSummaryInstructionFactory())
+            )
+        );
+
+        Optional<BranchSummaryOffer> offer = controller.branchSummaryOffer("ses_old", target.leafId());
+
+        assertThat(offer).isPresent();
+        assertThat(offer.orElseThrow().oldLeafId()).isEqualTo(oldLeaf.leafId());
+        assertThat(offer.orElseThrow().targetLeafId()).isEqualTo(target.leafId());
+        assertThat(offer.orElseThrow().entriesToSummarize()).isEqualTo(1);
+        assertThat(controller.branchSummaryOffer("ses_other", target.leafId())).isEmpty();
+        assertThat(controller.branchSummaryOffer("ses_old", oldLeaf.leafId())).isEmpty();
+    }
+
+    @Test
+    void resumeWithBranchSummaryAppendsSummaryEntryAndReturnsSummaryLeafState() {
+        SessionManagerPort sessionManager = new SessionManagerImpl(tempDir);
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingAiProvider provider = new RecordingAiProvider(List.of(
+            new AssistantStart("msg-summary"),
+            new cn.lypi.contracts.model.TextDelta("## Goal\nKeep abandoned branch."),
+            new AssistantDone(Optional.of(new TokenUsage(4, 1, 3, 0)), Optional.of("stop"))
+        ));
+        sessionManager.openOrCreate("ses_old");
+        SessionHandle root = sessionManager.appendMessage(userMessage("msg_root", "root"));
+        SessionHandle oldLeaf = sessionManager.appendMessage(assistantMessage("msg_old", "old branch content"));
+        SessionHandle target = sessionManager.append(new cn.lypi.contracts.session.CustomMessageEntry(
+            "entry_target",
+            root.leafId(),
+            "target branch",
+            Instant.EPOCH
+        ));
+        sessionManager.switchLeaf(oldLeaf.leafId());
+        ResumeSessionController controller = new DefaultResumeSessionController(
+            tempDir,
+            sessionManager,
+            events,
+            new cn.lypi.agent.branch.AiBranchSummarizer(
+                provider,
+                new cn.lypi.agent.branch.BranchSummaryContextBuilder(new cn.lypi.agent.branch.BranchSummaryInstructionFactory())
+            )
+        );
+
+        SessionRuntimeState state = controller.resumeWithBranchSummary("ses_old", target.leafId());
+
+        assertThat(state.sessionId()).isEqualTo("ses_old");
+        assertThat(state.currentBranchLeafId()).isNotEqualTo(target.leafId());
+        assertThat(sessionManager.currentView().leafId()).isEqualTo(state.currentBranchLeafId());
+        assertThat(sessionManager.branch(state.currentBranchLeafId()))
+            .extracting(SessionEntry::id)
+            .contains(root.leafId(), target.leafId(), state.currentBranchLeafId())
+            .doesNotContain(oldLeaf.leafId());
+        assertThat(state.transcript())
+            .extracting(message -> message.content().getFirst().text())
+            .contains("target branch")
+            .anySatisfy(text -> assertThat(text).contains("Keep abandoned branch"));
+        assertThat(provider.context.get().messages())
+            .extracting(message -> message.content().getFirst().text())
+            .contains("old branch content")
+            .doesNotContain("target branch");
+        assertThat(provider.context.get().systemPrompt()).isNotNull();
+        assertThat(provider.context.get().systemPrompt().content()).isNotBlank();
+        assertThat(events.events).hasAtLeastOneElementOfType(SessionStateEvent.class);
+        SessionStateEvent event = (SessionStateEvent) events.events.getLast();
+        assertThat(event.leafId()).isEqualTo(state.currentBranchLeafId());
     }
 
     @Test
@@ -1710,6 +1853,26 @@ class LyPiRuntimeAutoConfigurationTest {
         public void close() {
             closed = true;
         }
+    }
+
+    private static AgentMessage userMessage(String id, String text) {
+        return textMessage(id, MessageRole.USER, text);
+    }
+
+    private static AgentMessage assistantMessage(String id, String text) {
+        return textMessage(id, MessageRole.ASSISTANT, text);
+    }
+
+    private static AgentMessage textMessage(String id, MessageRole role, String text) {
+        return new AgentMessage(
+            id,
+            role,
+            MessageKind.TEXT,
+            List.of(new TextContentBlock(text)),
+            Instant.EPOCH,
+            Optional.empty(),
+            Optional.empty()
+        );
     }
 
     private static final class SuccessTool implements Tool<Map<String, Object>, String> {
