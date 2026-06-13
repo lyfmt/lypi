@@ -7,6 +7,5 @@ lypi:
     default-provider:
     default-model:
     compaction-summary:
-      enabled: false
       fallback-policy: fallback_deterministic
     providers: {}

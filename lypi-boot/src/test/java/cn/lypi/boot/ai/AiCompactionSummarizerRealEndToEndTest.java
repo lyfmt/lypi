@@ -192,7 +192,7 @@ class AiCompactionSummarizerRealEndToEndTest {
         );
         handle = appendTurn(handle, session, 2,
             "我选择方案 2：接入 AI summary。model 不做单独设置，直接使用当前上下文的 model。",
-            "代码侧移除 summary 专用 provider/model/thinking 配置入口，只保留 compact-summary.enabled 和失败策略兼容字段。"
+            "代码侧移除 summary 专用 provider/model/thinking 配置入口，只保留 compact-summary 失败策略兼容字段。"
                 + "CompactSummaryContextBuilder 负责构造 summary 上下文。"
         );
         handle = appendTurn(handle, session, 3,
