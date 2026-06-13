@@ -58,6 +58,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class RuntimeTuiSubmitHandlerTest {
@@ -382,6 +383,57 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
+    void compactRunsInBackgroundAndRejectsUserInputUntilFinished() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        QueuedExecutor executor = new QueuedExecutor();
+        AtomicInteger compactionCalls = new AtomicInteger();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            executor,
+            new SlashCommandRouter(
+                "ses_1",
+                Path.of("/tmp/project"),
+                session,
+                emptyResources(),
+                request -> {
+                    compactionCalls.incrementAndGet();
+                    return new CompactionResult(true, Optional.of("entry-compact-1"), "compacted");
+                }
+            )
+        );
+
+        handler.submitUserInput("/compact");
+        handler.submitUserInput("hello while compacting");
+
+        assertEquals(0, compactionCalls.get());
+        assertEquals(1, executor.tasks.size());
+        assertTrue(core.requests.isEmpty());
+        ErrorEvent blocked = assertInstanceOf(ErrorEvent.class, events.published.getFirst());
+        assertTrue(blocked.message().contains("compaction is running"));
+
+        executor.runNext();
+
+        assertEquals(1, compactionCalls.get());
+        MessageDeltaEvent compactResult = events.published.stream()
+            .filter(MessageDeltaEvent.class::isInstance)
+            .map(MessageDeltaEvent.class::cast)
+            .filter(event -> event.delta().contains("compact: compacted"))
+            .findFirst()
+            .orElseThrow();
+        assertEquals("ses_1", compactResult.sessionId());
+
+        handler.submitUserInput("after compact");
+        assertEquals(1, executor.tasks.size());
+        executor.runNext();
+
+        assertEquals("after compact", core.requests.getFirst().userInput());
+    }
+
+    @Test
     void newSlashCommandSwitchesNextTurnSessionIdWithoutSubmittingTurn() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
@@ -440,6 +492,19 @@ class RuntimeTuiSubmitHandlerTest {
                 Thread.currentThread().interrupt();
             }
             return null;
+        }
+    }
+
+    private static final class QueuedExecutor implements java.util.concurrent.Executor {
+        private final List<Runnable> tasks = new ArrayList<>();
+
+        @Override
+        public void execute(Runnable command) {
+            tasks.add(command);
+        }
+
+        private void runNext() {
+            tasks.removeFirst().run();
         }
     }
 

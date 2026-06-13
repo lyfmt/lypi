@@ -150,6 +150,36 @@ final class SlashCommandRouter {
         return Optional.ofNullable(currentLeafId());
     }
 
+    SlashCommandResult compactValidation(String input) {
+        SlashCommandArguments arguments = SlashCommandArguments.parse(input);
+        if (!"/compact".equalsIgnoreCase(arguments.commandName())) {
+            return SlashCommandResult.notMatched();
+        }
+        if (!arguments.positionals().isEmpty() || !arguments.named().isEmpty()) {
+            return SlashCommandResult.error("usage: /compact");
+        }
+        if (compactionRuntime == null) {
+            return SlashCommandResult.error("compact: compaction runtime is unavailable");
+        }
+        return SlashCommandResult.consumedCommand();
+    }
+
+    Optional<CompactCommandInvocation> compactInvocation(String input) {
+        SlashCommandResult validation = compactValidation(input);
+        if (!validation.matched() || validation.message().isPresent()) {
+            return Optional.empty();
+        }
+        return Optional.of(new CompactCommandInvocation(
+            compactionRuntime,
+            new CompactionRequest(
+                sessionId,
+                Optional.of(currentLeafId()),
+                cwd,
+                () -> false
+            )
+        ));
+    }
+
     private CommandMatch matchCommand(String command) {
         String normalized = command.toLowerCase(Locale.ROOT);
         List<String> commands = candidateCommands();
@@ -207,12 +237,7 @@ final class SlashCommandRouter {
             return SlashCommandResult.error("compact: compaction runtime is unavailable");
         }
         try {
-            CompactionResult result = compactionRuntime.compact(new CompactionRequest(
-                sessionId,
-                Optional.of(currentLeafId()),
-                cwd,
-                () -> false
-            ));
+            CompactionResult result = compactionRuntime.compact(compactInvocation("/compact").orElseThrow().request());
             if (result.compacted()) {
                 return SlashCommandResult.notice("compact: " + result.message());
             }
