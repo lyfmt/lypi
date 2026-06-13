@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.tui.BranchSummaryOffer;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionBranchTreeView;
@@ -843,6 +844,89 @@ class TuiInputLoopTest {
 
         assertEquals(List.of("ses_old:assistant_parent"), submit.resumes);
         assertEquals("edit this again", loop.draft());
+    }
+
+    @Test
+    void resumeBranchSummaryOfferWaitsForConfirmationAndResumesSummaryLeafWhenAccepted() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        List<String> summaryResumes = new ArrayList<>();
+        MessageEntry assistant = new MessageEntry(
+            "assistant_old",
+            "user_old",
+            new AgentMessage(
+                "msg_assistant",
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                List.of(new TextContentBlock("old answer")),
+                Instant.EPOCH,
+                Optional.empty(),
+                Optional.empty()
+            ),
+            Instant.EPOCH
+        );
+        ResumeSessionController controller = new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("/tmp/ses_old.jsonl"),
+                    "ses_old",
+                    Path.of("/tmp/project"),
+                    Optional.empty(),
+                    "assistant_old",
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old session",
+                    "old session"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                return new SessionBranchTreeView(sessionId, "assistant_old", List.of(new SessionTreeNodeView(assistant, List.of())));
+            }
+
+            @Override
+            public Optional<BranchSummaryOffer> branchSummaryOffer(String sessionId, String targetLeafId) {
+                return Optional.of(new BranchSummaryOffer(sessionId, "current_leaf", targetLeafId, "common_leaf", 2));
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+
+            @Override
+            public SessionRuntimeState resumeWithBranchSummary(String sessionId, String targetLeafId) {
+                summaryResumes.add(sessionId + ":" + targetLeafId);
+                return runtimeState(sessionId, "summary_leaf");
+            }
+        };
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiRenderer(),
+            new TuiScreen(8),
+            new TuiLayout(80, 10),
+            null,
+            () -> new SlashCommandPicker(List.of("/resume")),
+            controller
+        );
+
+        loop.acceptText("/resume");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of(), submit.resumes);
+        assertTrue(frames.getLast().contains("Summarize abandoned branch before switching?"));
+        assertTrue(frames.getLast().contains("2 entries"));
+
+        loop.acceptText("y");
+
+        assertEquals(List.of("ses_old:assistant_old"), summaryResumes);
+        assertEquals(List.of("ses_old:summary_leaf"), submit.resumes);
     }
 
     @Test
