@@ -31,6 +31,8 @@ import java.util.Optional;
 abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String> {
     private static final int DEFAULT_MAX_RESULT_SIZE = 16_384;
     private static final List<String> BASE_READ_TOOLS = List.of("read", "grep", "glob");
+    private static final List<String> PERMISSION_MODE_VALUES = List.of("DEFAULT_EXECUTE", "ACCEPT_EDITS", "BYPASS");
+    private static final List<String> AGENT_MODE_VALUES = List.of("PLAN", "EXECUTE");
 
     @Override
     public List<String> aliases() {
@@ -167,7 +169,18 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
         if (value == null || value.toString().isBlank()) {
             return PermissionMode.DEFAULT_EXECUTE;
         }
-        return PermissionMode.valueOf(value.toString().trim().toUpperCase(Locale.ROOT));
+        String normalized = normalizeEnumToken(value.toString());
+        if (normalized.equals("USEDEFAULT") || normalized.equals("USE_DEFAULT") || normalized.equals("DEFAULT")) {
+            return PermissionMode.DEFAULT_EXECUTE;
+        }
+        try {
+            return PermissionMode.valueOf(normalized);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                "permissionMode 不支持: %s。允许值: %s。默认执行模式请省略该字段，或使用 DEFAULT_EXECUTE；兼容别名: useDefault/use_default。"
+                    .formatted(value, String.join(", ", PERMISSION_MODE_VALUES))
+            );
+        }
     }
 
     protected Optional<ModelSelection> model(Map<String, Object> input) {
@@ -194,7 +207,13 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
         if (value == null || value.toString().isBlank()) {
             return Optional.empty();
         }
-        return Optional.of(ThinkingLevel.valueOf(value.toString().trim().toUpperCase(Locale.ROOT)));
+        try {
+            return Optional.of(ThinkingLevel.valueOf(normalizeEnumToken(value.toString())));
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                "thinkingLevel 不支持: %s。允许值: LOW, MEDIUM, HIGH, MAX。".formatted(value)
+            );
+        }
     }
 
     protected Optional<AgentMode> agentMode(Map<String, Object> input) {
@@ -205,7 +224,49 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
         if (value == null || value.toString().isBlank()) {
             return Optional.empty();
         }
-        return Optional.of(AgentMode.valueOf(value.toString().trim().toUpperCase(Locale.ROOT)));
+        String normalized = normalizeEnumToken(value.toString());
+        if (normalized.equals("GENERAL") || normalized.equals("DEFAULT")) {
+            return Optional.of(AgentMode.EXECUTE);
+        }
+        try {
+            return Optional.of(AgentMode.valueOf(normalized));
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                "mode/agentMode 不支持: %s。允许值: %s。通用执行任务请省略该字段或使用 EXECUTE；兼容别名: general。"
+                    .formatted(value, String.join(", ", AGENT_MODE_VALUES))
+            );
+        }
+    }
+
+    protected Map<String, Object> permissionModeSchema() {
+        return Map.of(
+            "type", "string",
+            "enum", PERMISSION_MODE_VALUES,
+            "description", "子 Agent 权限模式。默认请省略或使用 DEFAULT_EXECUTE；兼容 useDefault/use_default。"
+        );
+    }
+
+    protected Map<String, Object> agentModeSchema() {
+        return Map.of(
+            "type", "string",
+            "enum", AGENT_MODE_VALUES,
+            "description", "子 Agent 模式。通用执行任务请省略或使用 EXECUTE；兼容 general。"
+        );
+    }
+
+    protected Map<String, Object> thinkingLevelSchema() {
+        return Map.of(
+            "type", "string",
+            "enum", List.of("LOW", "MEDIUM", "HIGH", "MAX"),
+            "description", "推理强度。可用值: LOW, MEDIUM, HIGH, MAX。"
+        );
+    }
+
+    private String normalizeEnumToken(String value) {
+        return value.trim()
+            .replace('-', '_')
+            .replaceAll("([a-z])([A-Z])", "$1_$2")
+            .toUpperCase(Locale.ROOT);
     }
 
     protected SubagentToolPolicy toolPolicy(Map<String, Object> input) {

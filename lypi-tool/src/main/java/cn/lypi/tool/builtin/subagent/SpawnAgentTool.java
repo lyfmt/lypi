@@ -47,12 +47,12 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
         properties.put("allowed_tools", Map.of("type", "array", "items", Map.of("type", "string")));
         properties.put("model", Map.of("type", "string"));
         properties.put("modelId", Map.of("type", "string"));
-        properties.put("thinkingLevel", Map.of("type", "string"));
-        properties.put("thinking", Map.of("type", "string"));
-        properties.put("mode", Map.of("type", "string"));
-        properties.put("agentMode", Map.of("type", "string"));
-        properties.put("permissionMode", Map.of("type", "string"));
-        properties.put("permission_mode", Map.of("type", "string"));
+        properties.put("thinkingLevel", thinkingLevelSchema());
+        properties.put("thinking", thinkingLevelSchema());
+        properties.put("mode", agentModeSchema());
+        properties.put("agentMode", agentModeSchema());
+        properties.put("permissionMode", permissionModeSchema());
+        properties.put("permission_mode", permissionModeSchema());
         return new JsonSchema(Map.of(
             "type", "object",
             "required", List.of("prompt"),

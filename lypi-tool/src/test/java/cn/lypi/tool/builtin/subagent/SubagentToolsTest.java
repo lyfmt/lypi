@@ -71,6 +71,10 @@ class SubagentToolsTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> permissionMode = (Map<String, Object>) properties.get("permissionMode");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> mode = (Map<String, Object>) properties.get("mode");
 
         assertTrue(properties.containsKey("role"));
         assertTrue(properties.containsKey("tools"));
@@ -79,6 +83,10 @@ class SubagentToolsTest {
         assertTrue(properties.containsKey("thinkingLevel"));
         assertTrue(properties.containsKey("mode"));
         assertTrue(properties.containsKey("permissionMode"));
+        assertEquals(List.of("DEFAULT_EXECUTE", "ACCEPT_EDITS", "BYPASS"), permissionMode.get("enum"));
+        assertTrue(permissionMode.get("description").toString().contains("useDefault"));
+        assertEquals(List.of("PLAN", "EXECUTE"), mode.get("enum"));
+        assertTrue(mode.get("description").toString().contains("general"));
     }
 
     @Test
@@ -119,6 +127,39 @@ class SubagentToolsTest {
         assertEquals(Optional.of(new ModelSelection("", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.spawnRequest.model());
         assertEquals(Optional.of(ThinkingLevel.HIGH), agentCenter.spawnRequest.thinkingLevel());
         assertEquals(Optional.of(AgentMode.PLAN), agentCenter.spawnRequest.agentMode());
+    }
+
+    @Test
+    void spawnAgentNormalizesModelFriendlyPermissionAndModeAliases() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        SpawnAgentTool tool = new SpawnAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "prompt", "检查测试失败原因",
+            "permissionMode", "useDefault",
+            "mode", "general"
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals(PermissionMode.DEFAULT_EXECUTE, agentCenter.spawnRequest.permissionMode());
+        assertEquals(Optional.of(AgentMode.EXECUTE), agentCenter.spawnRequest.agentMode());
+    }
+
+    @Test
+    void spawnAgentReturnsActionableErrorForUnknownPermissionMode() {
+        SpawnAgentTool tool = new SpawnAgentTool(new RecordingAgentCenter());
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "prompt", "检查测试失败原因",
+            "permissionMode", "use-default-now"
+        ), context(), ignored -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("permissionMode"));
+        assertTrue(result.output().contains("DEFAULT_EXECUTE"));
+        assertFalse(result.output().contains("No enum constant"));
     }
 
     @Test
@@ -187,6 +228,24 @@ class SubagentToolsTest {
         assertEquals(PermissionMode.ACCEPT_EDITS, agentCenter.continueRequest.permissionMode());
         assertEquals(Optional.of(new ModelSelection("", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.continueRequest.model());
         assertEquals(Optional.of(ThinkingLevel.HIGH), agentCenter.continueRequest.thinkingLevel());
+        assertEquals(Optional.of(AgentMode.EXECUTE), agentCenter.continueRequest.agentMode());
+    }
+
+    @Test
+    void continueAgentNormalizesModelFriendlyPermissionAndModeAliases() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        ContinueAgentTool tool = new ContinueAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "childSessionId", "ses_child",
+            "prompt", "继续检查",
+            "permission_mode", "use_default",
+            "agentMode", "general"
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals(PermissionMode.DEFAULT_EXECUTE, agentCenter.continueRequest.permissionMode());
         assertEquals(Optional.of(AgentMode.EXECUTE), agentCenter.continueRequest.agentMode());
     }
 
