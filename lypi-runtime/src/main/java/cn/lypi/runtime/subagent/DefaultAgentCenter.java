@@ -8,6 +8,7 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CustomEntry;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
@@ -17,6 +18,7 @@ import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -73,6 +75,8 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         String childSessionId = "ses_child_" + randomId();
         String parentSpawnEntryId = "entry_spawn_" + randomId();
         Instant now = Instant.now(clock);
+        SessionContext parentContext = parentSession.context(request.parentEntryId());
+        SubagentToolPolicy toolPolicy = request.toolPolicy();
         childSessions.create(new ChildSessionRequest(
             childSessionId,
             request.parentSessionId(),
@@ -81,7 +85,12 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             request.cwd(),
             1,
             request.agentName(),
-            request.agentRole()
+            request.agentRole(),
+            Optional.ofNullable(parentContext.model()),
+            Optional.ofNullable(parentContext.thinkingLevel()),
+            Optional.ofNullable(parentContext.mode()),
+            Optional.ofNullable(parentContext.permissionMode()),
+            toolPolicy
         ));
         parentSession.append(new AgentLifecycleEntry(
             parentSpawnEntryId,
@@ -104,8 +113,10 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             parentCwd,
             request.cwd(),
             request.allowedTools(),
+            toolPolicy,
             request.permissionMode(),
-            request.timeoutSeconds()
+            request.timeoutSeconds(),
+            null
         );
         SubagentProcessHandle handle;
         try {

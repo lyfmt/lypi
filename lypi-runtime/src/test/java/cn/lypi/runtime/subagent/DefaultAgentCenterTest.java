@@ -3,9 +3,12 @@ package cn.lypi.runtime.subagent;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
@@ -152,6 +155,46 @@ class DefaultAgentCenterTest {
             .map(AgentLifecycleEntry.class::cast)
             .extracting(AgentLifecycleEntry::lifecycle)
             .containsExactly("finished");
+    }
+
+    @Test
+    void spawnPassesParentModelContextToChildSessionRequest() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        parentSession.sessionContext = new SessionContext(
+            List.of(),
+            List.of("entry_parent"),
+            List.of(),
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        );
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        center.spawn(request("ses_parent", "entry_parent", "请继承模型上下文"));
+
+        assertThat(childSessions.request.initialModel())
+            .contains(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH));
+        assertThat(childSessions.request.initialThinkingLevel()).contains(ThinkingLevel.HIGH);
+        assertThat(childSessions.request.initialAgentMode()).contains(AgentMode.EXECUTE);
+        assertThat(childSessions.request.initialPermissionMode()).contains(PermissionMode.DEFAULT_EXECUTE);
     }
 
     @Test
@@ -565,6 +608,15 @@ class DefaultAgentCenterTest {
         private final String sessionId;
         private String leafId;
         private final List<SessionEntry> entries = new ArrayList<>();
+        private SessionContext sessionContext = new SessionContext(
+            List.of(),
+            List.of(),
+            List.of(),
+            new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        );
 
         private CapturingParentSession(String sessionId, String leafId) {
             this.sessionId = sessionId;
@@ -611,7 +663,7 @@ class DefaultAgentCenterTest {
 
         @Override
         public SessionContext context(String leafId) {
-            throw new UnsupportedOperationException();
+            return sessionContext;
         }
 
         @Override
