@@ -38,6 +38,8 @@ import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.memory.MemoryScope;
+import cn.lypi.contracts.resource.MemorySource;
 import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
@@ -185,6 +187,26 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"executorName\":\"bubblewrap\""));
         assertEquals(true, restored.metadata().sandboxed());
         assertEquals("bubblewrap", restored.metadata().executorName());
+    }
+
+    @Test
+    void memorySourceRoundTripKeepsScopeContentAndHash() throws Exception {
+        MemorySource source = new MemorySource(
+            MemoryScope.USER,
+            Path.of("memory.md"),
+            "L0 index body",
+            "sha256:memory"
+        );
+
+        String json = mapper.writeValueAsString(source);
+        MemorySource restored = mapper.readValue(json, MemorySource.class);
+
+        assertTrue(json.contains("\"scope\":\"USER\""));
+        assertTrue(json.contains("\"content\":\"L0 index body\""));
+        assertEquals(MemoryScope.USER, restored.scope());
+        assertEquals(Path.of("memory.md"), restored.path().getFileName());
+        assertEquals(source.content(), restored.content());
+        assertEquals(source.contentHash(), restored.contentHash());
     }
 
     @Test

@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.Properties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -134,6 +135,73 @@ class DefaultResourceLoaderTest {
             assertThat(server.callTimeout()).isEqualTo(Duration.ofSeconds(9));
         });
         assertThat(snapshot.diagnostics()).isEmpty();
+    }
+
+    @Test
+    void loadDiscoversGlobalMemoryIndexButDoesNotScanL1Memories() throws Exception {
+        Path user = Files.createDirectories(tempDir.resolve("user/.ly-pi"));
+        Path project = Files.createDirectories(tempDir.resolve("repo"));
+        Files.writeString(project.resolve(".git"), "gitdir: /tmp/repo.git");
+
+        Files.createDirectories(user.resolve("memories"));
+        Files.writeString(user.resolve("memory.md"), "L0 index");
+        Files.writeString(user.resolve("memories/guidance.md"), "L1 guidance");
+
+        ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(user), List.of()).load(project);
+
+        assertThat(snapshot.memorySources())
+            .extracting(source -> source.path())
+            .anySatisfy(path -> assertThat(path).endsWith(Path.of("memory.md")))
+            .noneSatisfy(path -> assertThat(path).endsWith(Path.of("memories", "guidance.md")));
+    }
+
+    @Test
+    void loadDiscoversUserLevelSkills() throws Exception {
+        Path user = Files.createDirectories(tempDir.resolve("user/.ly-pi"));
+        Path project = Files.createDirectories(tempDir.resolve("repo"));
+        Files.writeString(project.resolve(".git"), "gitdir: /tmp/repo.git");
+        Path skillDir = Files.createDirectories(user.resolve("skills/memory-settlement"));
+        Files.writeString(skillDir.resolve("SKILL.md"), """
+            ---
+            name: memory-settlement
+            description: Use when a long task, important correction, repeated failure, project handoff, or reusable lesson may need durable memory.
+            ---
+            Body should not enter the resource index.
+            """);
+
+        ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(user), List.of()).load(project);
+
+        assertThat(snapshot.skillIndex().skills()).singleElement().satisfies(skill -> {
+            assertThat(skill.name()).isEqualTo("memory-settlement");
+            assertThat(skill.source()).isEqualTo(SkillSource.USER);
+            assertThat(skill.skillFile()).isEqualTo(skillDir.resolve("SKILL.md").toAbsolutePath().normalize());
+        });
+    }
+
+    @Test
+    void defaultLoaderDiscoversInitializedMemorySettlementSkill() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path project = Files.createDirectories(tempDir.resolve("repo"));
+        Files.writeString(project.resolve(".git"), "gitdir: /tmp/repo.git");
+        Properties properties = System.getProperties();
+        String previousHome = properties.getProperty("user.home");
+        properties.setProperty("user.home", home.toString());
+        try {
+            ResourceSnapshot snapshot = new DefaultResourceLoader().load(project);
+
+            assertThat(snapshot.skillIndex().skills())
+                .anySatisfy(skill -> {
+                    assertThat(skill.name()).isEqualTo("memory-settlement");
+                    assertThat(skill.source()).isEqualTo(SkillSource.USER);
+                    assertThat(skill.skillFile()).isEqualTo(home.resolve(".ly-pi/skills/memory-settlement/SKILL.md").toAbsolutePath().normalize());
+                });
+        } finally {
+            if (previousHome == null) {
+                properties.remove("user.home");
+            } else {
+                properties.setProperty("user.home", previousHome);
+            }
+        }
     }
 
     @Test
