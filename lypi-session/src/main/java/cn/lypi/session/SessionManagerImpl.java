@@ -7,6 +7,8 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.BranchSummaryEntry;
+import cn.lypi.contracts.session.BranchSummaryPlan;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionContext;
@@ -21,6 +23,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * SessionManager 的默认实现。
@@ -143,6 +147,39 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
         return index.branch(leafId);
     }
 
+    /**
+     * 收集从旧 leaf 离开时需要总结的旧路径后缀。
+     */
+    @Override
+    public BranchSummaryPlan collectBranchSummaryPlan(String oldLeafId, String targetLeafId) {
+        ensureOpen();
+        if (oldLeafId == null || oldLeafId.isBlank()) {
+            return new BranchSummaryPlan(oldLeafId, targetLeafId, Optional.empty(), List.of());
+        }
+        List<SessionEntry> oldBranch = branch(oldLeafId);
+        List<SessionEntry> targetBranch = branch(targetLeafId);
+        Set<String> oldIds = oldBranch.stream().map(SessionEntry::id).collect(Collectors.toUnmodifiableSet());
+        Optional<String> commonAncestorId = Optional.empty();
+        for (int index = targetBranch.size() - 1; index >= 0; index--) {
+            String candidate = targetBranch.get(index).id();
+            if (oldIds.contains(candidate)) {
+                commonAncestorId = Optional.of(candidate);
+                break;
+            }
+        }
+
+        List<SessionEntry> entries = new java.util.ArrayList<>();
+        for (int index = oldBranch.size() - 1; index >= 0; index--) {
+            SessionEntry entry = oldBranch.get(index);
+            if (commonAncestorId.isPresent() && commonAncestorId.orElseThrow().equals(entry.id())) {
+                break;
+            }
+            entries.add(entry);
+        }
+        java.util.Collections.reverse(entries);
+        return new BranchSummaryPlan(oldLeafId, targetLeafId, commonAncestorId, entries);
+    }
+
     List<SessionEntry> leafToRootPath(String leafId) {
         ensureOpen();
         return index.leafToRootPath(leafId);
@@ -195,6 +232,19 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
         String entryId = SessionEntryIds.newEntryId();
         MessageEntry entry = new MessageEntry(entryId, index.leafId(), message, message.timestamp());
         return append(entry);
+    }
+
+    /**
+     * 追加 branch summary entry。
+     */
+    @Override
+    public SessionHandle appendBranchSummary(String parentId, String fromId, String summary) {
+        ensureOpen();
+        if (summary == null || summary.isBlank()) {
+            throw new SessionEngineException("Branch summary must not be blank");
+        }
+        String entryId = SessionEntryIds.newEntryId();
+        return append(new BranchSummaryEntry(entryId, parentId, fromId, summary, Instant.now(clock)));
     }
 
     /**

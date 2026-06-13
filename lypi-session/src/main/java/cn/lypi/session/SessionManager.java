@@ -2,6 +2,7 @@ package cn.lypi.session;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.session.BranchSummaryPlan;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
@@ -53,6 +54,12 @@ public interface SessionManager extends SessionManagerPort {
     List<SessionEntry> branch(String leafId);
 
     /**
+     * 收集从旧 leaf 离开时需要总结的旧路径后缀。
+     */
+    @Override
+    BranchSummaryPlan collectBranchSummaryPlan(String oldLeafId, String targetLeafId);
+
+    /**
      * 返回当前 session 最小视图。
      */
     @Override
@@ -86,6 +93,12 @@ public interface SessionManager extends SessionManagerPort {
      */
     @Override
     SessionHandle appendMessage(AgentMessage message);
+
+    /**
+     * 追加 branch summary entry。
+     */
+    @Override
+    SessionHandle appendBranchSummary(String parentId, String fromId, String summary);
 
     /**
      * 从指定 entry 派生一个新的 session。

@@ -8,6 +8,9 @@ import cn.lypi.agent.DefaultCompactionRuntime;
 import cn.lypi.agent.DefaultTurnExecutor;
 import cn.lypi.agent.NoopMemoryExtractionWorker;
 import cn.lypi.agent.TurnIds;
+import cn.lypi.agent.branch.AiBranchSummarizer;
+import cn.lypi.agent.branch.BranchSummaryContextBuilder;
+import cn.lypi.agent.branch.BranchSummaryInstructionFactory;
 import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.DefaultCompactionCoordinator;
@@ -406,9 +409,21 @@ public class LyPiRuntimeAutoConfiguration {
     public ResumeSessionController resumeSessionController(
         LyPiRuntimeProperties properties,
         SessionManagerPort sessionManager,
-        EventBus eventBus
+        EventBus eventBus,
+        ObjectProvider<AiProviderRuntimePort> aiProviderRuntime
     ) {
-        return new DefaultResumeSessionController(properties.getCwd(), sessionManager, eventBus);
+        AiProviderRuntimePort provider = aiProviderRuntime.getIfAvailable();
+        return new DefaultResumeSessionController(
+            properties.getCwd(),
+            sessionManager,
+            eventBus,
+            provider == null
+                ? null
+                : new AiBranchSummarizer(
+                    provider,
+                    new BranchSummaryContextBuilder(new BranchSummaryInstructionFactory())
+                )
+        );
     }
 
     /**
