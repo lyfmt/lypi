@@ -24,6 +24,9 @@ class GrepResultFormatterTest {
     void filesWithMatchesReportsRelativeFiles() throws Exception {
         Path first = writeFile("a.java");
         Path second = writeFile("b.java");
+        FileTime sameTime = FileTime.from(Instant.parse("2026-06-14T00:00:00Z"));
+        Files.setLastModifiedTime(first, sameTime);
+        Files.setLastModifiedTime(second, sameTime);
         GrepQuery query = GrepQuery.fromInput(Map.of("pattern", "needle"));
 
         String output = formatter.format(query, List.of(first.toString(), second.toString()), context());
