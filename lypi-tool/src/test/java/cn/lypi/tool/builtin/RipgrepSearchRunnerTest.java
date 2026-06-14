@@ -46,6 +46,9 @@ class RipgrepSearchRunnerTest {
         assertEquals(binary.toString(), executor.request.command().getFirst());
         assertEquals(tempDir, executor.request.cwd());
         assertEquals(Duration.ofSeconds(20), executor.request.timeout());
+        assertTrue(executor.request.sandboxPolicy().allowRead().contains(tempDir));
+        assertTrue(executor.request.sandboxPolicy().allowRead().contains(Path.of("/bin")));
+        assertTrue(executor.request.sandboxPolicy().allowRead().contains(binary.getParent()));
     }
 
     @Test

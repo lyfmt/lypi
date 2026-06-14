@@ -50,7 +50,7 @@ final class RipgrepSearchRunner {
             searchRoot,
             Map.of(),
             timeout,
-            readOnlyPolicy(searchRoot)
+            readOnlyPolicy(searchRoot, binary)
         );
         ExecutionResult result = executor.execute(request, progress, abortSignal(context));
         if (result.timedOut()) {
@@ -66,9 +66,9 @@ final class RipgrepSearchRunner {
         return RipgrepSearchResult.error(message);
     }
 
-    private SandboxRuntimePolicy readOnlyPolicy(Path searchRoot) {
+    private SandboxRuntimePolicy readOnlyPolicy(Path searchRoot, RipgrepBinary binary) {
         return new SandboxRuntimePolicy(
-            List.of(searchRoot),
+            readOnlyPaths(searchRoot, binary),
             List.of(),
             List.of(),
             List.of(),
@@ -76,6 +76,33 @@ final class RipgrepSearchRunner {
             false,
             true
         );
+    }
+
+    private List<Path> readOnlyPaths(Path searchRoot, RipgrepBinary binary) {
+        List<Path> paths = new ArrayList<>();
+        paths.add(Path.of("/usr"));
+        paths.add(Path.of("/bin"));
+        paths.add(Path.of("/sbin"));
+        paths.add(Path.of("/lib"));
+        paths.add(Path.of("/lib64"));
+        paths.add(Path.of("/etc"));
+        paths.add(Path.of("/nix/store"));
+        paths.add(Path.of("/run/current-system/sw"));
+        paths.add(searchRoot);
+        Path binaryParent = binaryParent(binary);
+        if (binaryParent != null) {
+            paths.add(binaryParent);
+        }
+        return List.copyOf(paths);
+    }
+
+    private Path binaryParent(RipgrepBinary binary) {
+        if (binary == null || binary.command() == null || binary.command().isBlank() || "system".equals(binary.mode())) {
+            return null;
+        }
+        Path command = Path.of(binary.command());
+        Path parent = command.getParent();
+        return parent == null ? null : parent.toAbsolutePath().normalize();
     }
 
     private AbortSignal abortSignal(ToolUseContext context) {
