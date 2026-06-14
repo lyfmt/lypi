@@ -69,6 +69,33 @@ class RipgrepBinaryResolverTest {
     }
 
     @Test
+    void reusesExistingCachedRipgrepWithoutOverwritingRunningBinary() throws Exception {
+        Path jar = tempDir.resolve("ripgrep-test.jar");
+        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar))) {
+            output.putNextEntry(new JarEntry("ripgrep/x86_64-linux/rg"));
+            output.write("first\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            output.closeEntry();
+        }
+        Path cacheRoot = tempDir.resolve("cache");
+        try (URLClassLoader classLoader = new URLClassLoader(new URL[] {jar.toUri().toURL()}, null)) {
+            RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
+                new RipgrepPlatform("linux", "x86_64"),
+                tempDir.resolve("missing-resources"),
+                cacheRoot,
+                classLoader
+            );
+            Path extracted = Path.of(resolver.resolve(Map.of()).command());
+            Files.writeString(extracted, "running\n");
+            extracted.toFile().setExecutable(true);
+
+            Path second = Path.of(resolver.resolve(Map.of()).command());
+
+            assertEquals(extracted, second);
+            assertEquals("running\n", Files.readString(second));
+        }
+    }
+
+    @Test
     void systemModeUsesCommandNameOnly() {
         RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
             new RipgrepPlatform("linux", "x86_64"),

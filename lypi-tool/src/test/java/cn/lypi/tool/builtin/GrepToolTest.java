@@ -164,6 +164,22 @@ class GrepToolTest {
     }
 
     @Test
+    void rejectsUnsupportedTypeBeforeRunningRipgrep() throws Exception {
+        vendorBinary();
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        GrepTool tool = tool(executor);
+
+        ToolResult<String> result = tool.execute(Map.of("pattern", "needle", "type", "file"), context(), message -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("不支持的 type"));
+        assertTrue(result.output().contains("java"));
+        assertTrue(result.output().contains("json"));
+        assertEquals(null, executor.request);
+    }
+
+    @Test
     void isReadOnlyAndConcurrencySafe() {
         GrepTool tool = tool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
 

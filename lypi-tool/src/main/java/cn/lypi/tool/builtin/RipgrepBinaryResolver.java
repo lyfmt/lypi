@@ -83,6 +83,9 @@ final class RipgrepBinaryResolver {
             return direct;
         }
         Path cached = cacheRoot.resolve("current").resolve(platform.platformId()).resolve(platform.executableName());
+        if (Files.isRegularFile(cached) && Files.isExecutable(cached)) {
+            return cached;
+        }
         try {
             Files.createDirectories(cached.getParent());
             try (InputStream input = resource.openStream()) {

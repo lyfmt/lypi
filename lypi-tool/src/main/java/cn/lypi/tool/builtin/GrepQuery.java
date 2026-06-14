@@ -1,6 +1,7 @@
 package cn.lypi.tool.builtin;
 
 import java.util.Map;
+import java.util.Set;
 
 record GrepQuery(
     String pattern,
@@ -18,6 +19,11 @@ record GrepQuery(
     int offset,
     boolean multiline
 ) {
+    private static final Set<String> SUPPORTED_TYPES = Set.of(
+        "c", "cpp", "cs", "css", "go", "html", "java", "js", "json", "kotlin",
+        "md", "py", "rb", "rs", "scala", "sh", "swift", "toml", "ts", "xml", "yaml"
+    );
+
     static GrepQuery fromInput(Map<String, Object> input) {
         Object patternValue = input == null ? null : input.get("pattern");
         String pattern = patternValue == null ? "" : patternValue.toString();
@@ -32,7 +38,7 @@ record GrepQuery(
             pattern,
             stringInput(input, "path"),
             stringInput(input, "glob"),
-            stringInput(input, "type"),
+            typeInput(input),
             GrepOutputMode.fromInput(input == null ? null : input.get("output_mode")),
             integerInput(input, "-B", null, 0, Integer.MAX_VALUE),
             integerInput(input, "-A", null, 0, Integer.MAX_VALUE),
@@ -44,6 +50,20 @@ record GrepQuery(
             integerInput(input, "offset", 0, 0, Integer.MAX_VALUE),
             booleanInput(input, "multiline", false)
         );
+    }
+
+    private static String typeInput(Map<String, Object> input) {
+        String type = stringInput(input, "type");
+        if (type == null) {
+            return null;
+        }
+        String normalized = type.toLowerCase(java.util.Locale.ROOT);
+        if (!SUPPORTED_TYPES.contains(normalized)) {
+            throw new IllegalArgumentException("不支持的 type: " + type
+                + "。type 使用 ripgrep 文件类型，例如 java、json、md、ts、py、sh、xml、yaml；"
+                + "如果不确定，请省略 type。");
+        }
+        return normalized;
     }
 
     private static String stringInput(Map<String, Object> input, String fieldName) {
