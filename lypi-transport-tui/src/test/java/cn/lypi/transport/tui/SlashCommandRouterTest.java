@@ -10,6 +10,7 @@ import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
+import cn.lypi.contracts.prompt.PromptRenderRequest;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.PromptTemplateSource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -31,6 +32,8 @@ import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.resource.PromptRenderResult;
+import cn.lypi.resource.PromptRenderer;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -411,6 +414,29 @@ class SlashCommandRouterTest {
     }
 
     @Test
+    void promptTemplateSlashCommandUsesPromptRenderer() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter(
+            "ses_1",
+            Path.of("."),
+            session,
+            resourcesWith(reviewTemplate()),
+            new StubPromptRenderer("rendered by renderer")
+        );
+
+        SlashCommandResult result = router.route("/review scope=worktree");
+
+        assertTrue(result.matched());
+        assertFalse(result.consumed());
+        assertEquals("rendered by renderer", result.prompt().orElseThrow());
+    }
+
+    @Test
     void rendersPromptTemplateWhoseNameAlreadyStartsWithSlash() {
         RecordingSessionManager session = new RecordingSessionManager(context(
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
@@ -495,6 +521,13 @@ class SlashCommandRouterTest {
             "Review {{scope}}.",
             "sha256:review"
         );
+    }
+
+    private record StubPromptRenderer(String content) implements PromptRenderer {
+        @Override
+        public PromptRenderResult render(PromptTemplate template, PromptRenderRequest request) {
+            return new PromptRenderResult(content, List.of());
+        }
     }
 
     private static SessionRuntimeState runtimeState(String sessionId, String leafId) {

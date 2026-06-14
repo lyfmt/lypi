@@ -4,6 +4,7 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.prompt.PromptParameter;
+import cn.lypi.contracts.prompt.PromptRenderRequest;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.CompactionRequest;
@@ -21,6 +22,9 @@ import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SlashCommand;
+import cn.lypi.resource.DefaultPromptRenderer;
+import cn.lypi.resource.PromptRenderResult;
+import cn.lypi.resource.PromptRenderer;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.time.Instant;
@@ -30,11 +34,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 final class SlashCommandRouter {
-    private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{([A-Za-z0-9_.-]+)}}");
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/compact",
         "/model",
@@ -51,6 +52,7 @@ final class SlashCommandRouter {
     private final CompactionRuntimePort compactionRuntime;
     private final NewSessionController newSessionController;
     private final List<SlashCommand> slashCommands;
+    private final PromptRenderer promptRenderer;
 
     SlashCommandRouter(
         String sessionId,
@@ -91,6 +93,29 @@ final class SlashCommandRouter {
         NewSessionController newSessionController,
         List<SlashCommand> slashCommands
     ) {
+        this(sessionId, cwd, sessionManager, resourceRuntime, compactionRuntime, newSessionController, slashCommands, new DefaultPromptRenderer());
+    }
+
+    SlashCommandRouter(
+        String sessionId,
+        Path cwd,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        PromptRenderer promptRenderer
+    ) {
+        this(sessionId, cwd, sessionManager, resourceRuntime, null, null, List.of(), promptRenderer);
+    }
+
+    private SlashCommandRouter(
+        String sessionId,
+        Path cwd,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        NewSessionController newSessionController,
+        List<SlashCommand> slashCommands,
+        PromptRenderer promptRenderer
+    ) {
         this.sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
         this.cwd = cwd == null ? Path.of(".") : cwd;
         this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
@@ -98,6 +123,7 @@ final class SlashCommandRouter {
         this.compactionRuntime = compactionRuntime;
         this.newSessionController = newSessionController;
         this.slashCommands = safeSlashCommands(slashCommands);
+        this.promptRenderer = Objects.requireNonNull(promptRenderer, "promptRenderer must not be null");
     }
 
     SlashCommandRouter(List<SlashCommand> slashCommands) {
@@ -108,6 +134,7 @@ final class SlashCommandRouter {
         this.compactionRuntime = null;
         this.newSessionController = null;
         this.slashCommands = safeSlashCommands(slashCommands);
+        this.promptRenderer = new DefaultPromptRenderer();
     }
 
     SlashCommandResult route(String input) {
@@ -291,7 +318,15 @@ final class SlashCommandRouter {
                 return SlashCommandResult.error("missing required parameter: " + parameter.name());
             }
         }
-        return SlashCommandResult.submitPrompt(renderTemplate(template, arguments.named()));
+        PromptRenderResult rendered = promptRenderer.render(
+            template,
+            new PromptRenderRequest(template.name(), arguments.named(), arguments.commandName())
+        );
+        Optional<String> warning = firstWarning(rendered);
+        if (warning.isPresent()) {
+            return SlashCommandResult.error(warning.orElseThrow());
+        }
+        return SlashCommandResult.submitPrompt(rendered.content());
     }
 
     private SlashCommandResult routeExternalOrPromptTemplate(String commandName, SlashCommandArguments arguments) {
@@ -454,32 +489,15 @@ final class SlashCommandRouter {
         return "entry_" + UUID.randomUUID().toString().replace("-", "");
     }
 
-    private String renderTemplate(PromptTemplate template, Map<String, String> arguments) {
-        Matcher matcher = PLACEHOLDER_PATTERN.matcher(template.templateBody());
-        StringBuilder rendered = new StringBuilder();
-        while (matcher.find()) {
-            String name = matcher.group(1);
-            String replacement = valueFor(template, arguments, name);
-            matcher.appendReplacement(rendered, Matcher.quoteReplacement(replacement));
-        }
-        matcher.appendTail(rendered);
-        return rendered.toString();
-    }
-
-    private String valueFor(PromptTemplate template, Map<String, String> arguments, String name) {
-        if (arguments.containsKey(name)) {
-            return arguments.get(name);
-        }
-        return template.parameters().stream()
-            .filter(parameter -> parameter.name().equals(name))
-            .flatMap(parameter -> parameter.defaultValue().stream())
-            .findFirst()
-            .orElse("{{" + name + "}}");
-    }
-
     private String normalizedTemplateName(PromptTemplate template) {
         String name = template.name() == null ? "" : template.name();
         return name.startsWith("/") ? name.substring(1) : name;
+    }
+
+    private Optional<String> firstWarning(PromptRenderResult rendered) {
+        return rendered.diagnostics().stream()
+            .findFirst()
+            .map(diagnostic -> diagnostic.message());
     }
 
     private String errorMessage(RuntimeException exception) {
