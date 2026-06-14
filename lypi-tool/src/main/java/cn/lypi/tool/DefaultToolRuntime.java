@@ -17,6 +17,7 @@ import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.InterruptBehavior;
@@ -1010,8 +1011,22 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         if (decision.behavior() == PermissionBehavior.ALLOW) {
             return PermissionGateResult.allow();
         }
+        if (decision.behavior() == PermissionBehavior.ASK && isBypassPermissionMode(context)) {
+            return PermissionGateResult.allow();
+        }
         PermissionGateResult result = permissionGate.request(request, tool, context, decision);
         return result == null ? PermissionGateResult.deny("权限请求未获允许。") : result;
+    }
+
+    private boolean isBypassPermissionMode(ToolUseContext context) {
+        Object value = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_MODE);
+        if (value instanceof PermissionMode permissionMode) {
+            return permissionMode == PermissionMode.BYPASS;
+        }
+        if (value instanceof String permissionMode) {
+            return PermissionMode.valueOf(permissionMode) == PermissionMode.BYPASS;
+        }
+        return false;
     }
 
     private PermissionDecision effectiveDecision(PermissionDecision toolDecision, PermissionDecision securityDecision) {

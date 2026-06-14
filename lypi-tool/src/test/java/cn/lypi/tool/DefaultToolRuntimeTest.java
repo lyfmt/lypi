@@ -925,6 +925,71 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void bypassAutoAllowsToolSpecificAskWithoutPermissionGate() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("should not ask");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.permissionCountingTool("edit", PermissionBehavior.ASK, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "edit", Map.of("text", "bypass"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executeCalls.get());
+    }
+
+    @Test
+    void bypassAutoAllowsSecurityAskWithoutPermissionGate() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("should not ask");
+        };
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security asks");
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("write", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "bypass"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executeCalls.get());
+    }
+
+    @Test
+    void bypassDoesNotAutoAllowDenyDecision() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.DENY, "hard deny");
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("write", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "blocked"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, executeCalls.get());
+    }
+
+    @Test
     void securityDenyShortCircuitsBeforeToolAskPermissionGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.DENY, "hard deny");
