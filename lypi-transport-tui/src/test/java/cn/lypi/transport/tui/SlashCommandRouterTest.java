@@ -10,6 +10,8 @@ import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
+import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.PromptTemplateSource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -411,6 +413,28 @@ class SlashCommandRouterTest {
     }
 
     @Test
+    void promptTemplateSlashCommandUsesPromptRenderer() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter(
+            "ses_1",
+            Path.of("."),
+            session,
+            resourcesWithRendered("rendered by renderer", reviewTemplate())
+        );
+
+        SlashCommandResult result = router.route("/review scope=worktree");
+
+        assertTrue(result.matched());
+        assertFalse(result.consumed());
+        assertEquals("rendered by renderer", result.prompt().orElseThrow());
+    }
+
+    @Test
     void rendersPromptTemplateWhoseNameAlreadyStartsWithSlash() {
         RecordingSessionManager session = new RecordingSessionManager(context(
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
@@ -459,6 +483,119 @@ class SlashCommandRouterTest {
         assertEquals(List.of(), session.entries);
     }
 
+    @Test
+    void memoryLintDefaultsToProjectLayers() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
+
+        SlashCommandResult result = router.route("/memory-lint");
+
+        assertTrue(result.matched());
+        assertFalse(result.consumed());
+        assertEquals("Lint L2,L3 with $memory-lint.", result.prompt().orElseThrow());
+    }
+
+    @Test
+    void memoryLintAcceptsExplicitLayers() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
+
+        assertEquals("Lint L0,L3 with $memory-lint.", router.route("/memory-lint L0,L3").prompt().orElseThrow());
+        assertEquals("Lint L1,L2 with $memory-lint.", router.route("/memory-lint l1,l2").prompt().orElseThrow());
+    }
+
+    @Test
+    void memoryLintRejectsInvalidLayers() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
+
+        SlashCommandResult result = router.route("/memory-lint L5");
+
+        assertTrue(result.matched());
+        assertTrue(result.consumed());
+        assertEquals("usage: /memory-lint [L0,L1,L2,L3]", result.message().orElseThrow());
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void memoryLintRejectsNamedArgumentsEmptyLayersAndSpaceSeparatedLayers() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
+
+        SlashCommandResult unknownNamed = router.route("/memory-lint layers=L1,L2");
+        SlashCommandResult emptyLayers = router.route("/memory-lint ,");
+        SlashCommandResult spaceSeparated = router.route("/memory-lint L1 L2");
+
+        assertTrue(unknownNamed.matched());
+        assertTrue(unknownNamed.consumed());
+        assertEquals("usage: /memory-lint [L0,L1,L2,L3]", unknownNamed.message().orElseThrow());
+        assertTrue(emptyLayers.matched());
+        assertTrue(emptyLayers.consumed());
+        assertEquals("usage: /memory-lint [L0,L1,L2,L3]", emptyLayers.message().orElseThrow());
+        assertTrue(spaceSeparated.matched());
+        assertTrue(spaceSeparated.consumed());
+        assertEquals("usage: /memory-lint [L0,L1,L2,L3]", spaceSeparated.message().orElseThrow());
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void memoryLintRequiresPromptTemplate() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith());
+
+        SlashCommandResult result = router.route("/memory-lint");
+
+        assertTrue(result.matched());
+        assertTrue(result.consumed());
+        assertTrue(result.message().orElseThrow().contains("memory-lint: prompt template memory-lint is unavailable"));
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void memoryLintIsTheOnlyMemoryLintSlashCommand() {
+        SlashCommandRouter router = new SlashCommandRouter(
+            "ses_1",
+            Path.of("."),
+            new RecordingSessionManager(context(
+                new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+                ThinkingLevel.MEDIUM,
+                AgentMode.EXECUTE,
+                PermissionMode.DEFAULT_EXECUTE
+            )),
+            resourcesWith(memoryLintTemplate())
+        );
+
+        List<String> commands = router.commandNames();
+
+        assertTrue(commands.contains("/memory-lint"));
+        assertFalse(commands.contains("/memory"));
+    }
+
     private static SessionContext context(
         ModelSelection model,
         ThinkingLevel thinking,
@@ -483,6 +620,47 @@ class SlashCommandRouterTest {
             public cn.lypi.contracts.prompt.SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
                 return null;
             }
+
+            @Override
+            public PromptRenderResult renderPrompt(PromptTemplate template, PromptRenderRequest request) {
+                String content = template.templateBody();
+                for (PromptParameter parameter : template.parameters()) {
+                    String value = request.arguments().get(parameter.name());
+                    if (value == null) {
+                        value = parameter.defaultValue().orElse(null);
+                    }
+                    if (value == null && parameter.required()) {
+                        return new PromptRenderResult("", List.of(new cn.lypi.contracts.resource.ResourceDiagnostic(
+                            cn.lypi.contracts.resource.ResourceDiagnosticLevel.WARNING,
+                            "missing required parameter: " + parameter.name(),
+                            Optional.empty()
+                        )));
+                    }
+                    if (value != null) {
+                        content = content.replace("{{" + parameter.name() + "}}", value);
+                    }
+                }
+                return new PromptRenderResult(content, List.of());
+            }
+        };
+    }
+
+    private static ResourceRuntimePort resourcesWithRendered(String rendered, PromptTemplate... templates) {
+        return new ResourceRuntimePort() {
+            @Override
+            public ResourceSnapshot load(Path cwd) {
+                return new ResourceSnapshot(List.of(), List.of(), new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()), List.of(templates), List.of(), List.of());
+            }
+
+            @Override
+            public cn.lypi.contracts.prompt.SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
+                return null;
+            }
+
+            @Override
+            public PromptRenderResult renderPrompt(PromptTemplate template, PromptRenderRequest request) {
+                return new PromptRenderResult(rendered, List.of());
+            }
         };
     }
 
@@ -494,6 +672,17 @@ class SlashCommandRouterTest {
             List.of(new PromptParameter("scope", "Review scope", true, Optional.empty())),
             "Review {{scope}}.",
             "sha256:review"
+        );
+    }
+
+    private static PromptTemplate memoryLintTemplate() {
+        return new PromptTemplate(
+            "memory-lint",
+            "Memory lint",
+            PromptTemplateSource.USER,
+            List.of(new PromptParameter("layers", "Layers", true, Optional.empty())),
+            "Lint {{layers}} with $memory-lint.",
+            "sha256:memory-lint"
         );
     }
 

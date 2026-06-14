@@ -25,6 +25,8 @@ import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
+import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.PromptTemplateSource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -239,6 +241,29 @@ class RuntimeTuiSubmitHandlerTest {
         handler.submitUserInput("/review scope=staged");
 
         assertEquals("Review staged.", core.requests.getFirst().userInput());
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void memoryLintSlashCommandSubmitsPromptAndActivatesSkillMention() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            new SlashCommandRouter("ses_1", Path.of("."), session, resources(List.of(memoryLintTemplate()))),
+            null,
+            skills("memory-lint")
+        );
+
+        handler.submitUserInput("/memory-lint");
+
+        TurnRequest request = core.requests.getFirst();
+        assertEquals("Lint L2,L3 with $memory-lint.", request.userInput());
+        assertEquals(List.of(new SkillMention("memory-lint", Path.of("/tmp/memory-lint/SKILL.md"))), request.skillMentions());
         assertEquals(List.of(), session.entries);
     }
 
@@ -627,6 +652,17 @@ class RuntimeTuiSubmitHandlerTest {
         return resources(List.of(review));
     }
 
+    private static PromptTemplate memoryLintTemplate() {
+        return new PromptTemplate(
+            "memory-lint",
+            "Memory lint",
+            PromptTemplateSource.USER,
+            List.of(new PromptParameter("layers", "Layers", true, Optional.empty())),
+            "Lint {{layers}} with $memory-lint.",
+            "sha256:memory-lint"
+        );
+    }
+
     private static ResourceRuntimePort resources(List<PromptTemplate> templates) {
         return new ResourceRuntimePort() {
             @Override
@@ -637,6 +673,28 @@ class RuntimeTuiSubmitHandlerTest {
             @Override
             public cn.lypi.contracts.prompt.SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
                 return null;
+            }
+
+            @Override
+            public PromptRenderResult renderPrompt(PromptTemplate template, PromptRenderRequest request) {
+                String content = template.templateBody();
+                for (PromptParameter parameter : template.parameters()) {
+                    String value = request.arguments().get(parameter.name());
+                    if (value == null) {
+                        value = parameter.defaultValue().orElse(null);
+                    }
+                    if (value == null && parameter.required()) {
+                        return new PromptRenderResult("", List.of(new cn.lypi.contracts.resource.ResourceDiagnostic(
+                            cn.lypi.contracts.resource.ResourceDiagnosticLevel.WARNING,
+                            "missing required parameter: " + parameter.name(),
+                            Optional.empty()
+                        )));
+                    }
+                    if (value != null) {
+                        content = content.replace("{{" + parameter.name() + "}}", value);
+                    }
+                }
+                return new PromptRenderResult(content, List.of());
             }
         };
     }

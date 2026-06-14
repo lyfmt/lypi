@@ -4,6 +4,8 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.prompt.PromptParameter;
+import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.CompactionRequest;
@@ -22,6 +24,8 @@ import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.time.Instant;
 import java.util.List;
@@ -30,13 +34,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 final class SlashCommandRouter {
-    private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{([A-Za-z0-9_.-]+)}}");
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/compact",
+        "/memory-lint",
         "/model",
         "/new",
         "/permission-mode",
@@ -129,6 +131,7 @@ final class SlashCommandRouter {
             case "/permission-mode" -> routePermissionMode(arguments, input);
             case "/plan" -> routePlan(arguments, input);
             case "/compact" -> routeCompact(arguments);
+            case "/memory-lint" -> routeMemoryLint(arguments);
             case "/new" -> routeNew(arguments);
             default -> routeExternalOrPromptTemplate(match.command().orElseThrow(), arguments);
         };
@@ -272,15 +275,58 @@ final class SlashCommandRouter {
         }
     }
 
+    private SlashCommandResult routeMemoryLint(SlashCommandArguments arguments) {
+        List<String> layers;
+        try {
+            layers = memoryLintLayers(arguments);
+        } catch (IllegalArgumentException exception) {
+            return SlashCommandResult.error(exception.getMessage());
+        }
+        Optional<PromptTemplate> template = findPromptTemplate("memory-lint");
+        if (template.isEmpty()) {
+            return SlashCommandResult.error("memory-lint: prompt template memory-lint is unavailable");
+        }
+        PromptRenderResult rendered = resourceRuntime.renderPrompt(
+            template.orElseThrow(),
+            new PromptRenderRequest("memory-lint", Map.of("layers", String.join(",", layers)), arguments.commandName())
+        );
+        Optional<String> warning = firstWarning(rendered);
+        if (warning.isPresent()) {
+            return SlashCommandResult.error("memory-lint: " + warning.orElseThrow());
+        }
+        return SlashCommandResult.submitPrompt(rendered.content());
+    }
+
+    private List<String> memoryLintLayers(SlashCommandArguments arguments) {
+        if (!arguments.named().isEmpty() || arguments.positionals().size() > 1) {
+            throw new IllegalArgumentException(memoryLintUsage());
+        }
+        List<String> raw = arguments.positionals().isEmpty()
+            ? List.of()
+            : Arrays.asList(arguments.positionals().getFirst().split(",", -1));
+        if (raw.isEmpty()) {
+            raw = List.of("L2", "L3");
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String layer : raw) {
+            String value = layer == null ? "" : layer.trim().toUpperCase(Locale.ROOT);
+            if (!List.of("L0", "L1", "L2", "L3").contains(value)) {
+                throw new IllegalArgumentException(memoryLintUsage());
+            }
+            normalized.add(value);
+        }
+        return List.copyOf(normalized);
+    }
+
+    private String memoryLintUsage() {
+        return "usage: /memory-lint [L0,L1,L2,L3]";
+    }
+
     private SlashCommandResult routePromptTemplate(String templateName, SlashCommandArguments arguments) {
         if (resourceRuntime == null) {
             return SlashCommandResult.notMatched();
         }
-        ResourceSnapshot resources = resourceRuntime.load(cwd);
-        PromptTemplate template = resources.promptTemplates().stream()
-            .filter(candidate -> normalizedTemplateName(candidate).equals(templateName))
-            .findFirst()
-            .orElse(null);
+        PromptTemplate template = findPromptTemplate(templateName).orElse(null);
         if (template == null) {
             return SlashCommandResult.notMatched();
         }
@@ -291,7 +337,25 @@ final class SlashCommandRouter {
                 return SlashCommandResult.error("missing required parameter: " + parameter.name());
             }
         }
-        return SlashCommandResult.submitPrompt(renderTemplate(template, arguments.named()));
+        PromptRenderResult rendered = resourceRuntime.renderPrompt(
+            template,
+            new PromptRenderRequest(template.name(), arguments.named(), arguments.commandName())
+        );
+        Optional<String> warning = firstWarning(rendered);
+        if (warning.isPresent()) {
+            return SlashCommandResult.error(warning.orElseThrow());
+        }
+        return SlashCommandResult.submitPrompt(rendered.content());
+    }
+
+    private Optional<PromptTemplate> findPromptTemplate(String templateName) {
+        if (resourceRuntime == null) {
+            return Optional.empty();
+        }
+        ResourceSnapshot resources = resourceRuntime.load(cwd);
+        return resources.promptTemplates().stream()
+            .filter(candidate -> normalizedTemplateName(candidate).equals(templateName))
+            .findFirst();
     }
 
     private SlashCommandResult routeExternalOrPromptTemplate(String commandName, SlashCommandArguments arguments) {
@@ -454,32 +518,15 @@ final class SlashCommandRouter {
         return "entry_" + UUID.randomUUID().toString().replace("-", "");
     }
 
-    private String renderTemplate(PromptTemplate template, Map<String, String> arguments) {
-        Matcher matcher = PLACEHOLDER_PATTERN.matcher(template.templateBody());
-        StringBuilder rendered = new StringBuilder();
-        while (matcher.find()) {
-            String name = matcher.group(1);
-            String replacement = valueFor(template, arguments, name);
-            matcher.appendReplacement(rendered, Matcher.quoteReplacement(replacement));
-        }
-        matcher.appendTail(rendered);
-        return rendered.toString();
-    }
-
-    private String valueFor(PromptTemplate template, Map<String, String> arguments, String name) {
-        if (arguments.containsKey(name)) {
-            return arguments.get(name);
-        }
-        return template.parameters().stream()
-            .filter(parameter -> parameter.name().equals(name))
-            .flatMap(parameter -> parameter.defaultValue().stream())
-            .findFirst()
-            .orElse("{{" + name + "}}");
-    }
-
     private String normalizedTemplateName(PromptTemplate template) {
         String name = template.name() == null ? "" : template.name();
         return name.startsWith("/") ? name.substring(1) : name;
+    }
+
+    private Optional<String> firstWarning(PromptRenderResult rendered) {
+        return rendered.diagnostics().stream()
+            .findFirst()
+            .map(diagnostic -> diagnostic.message());
     }
 
     private String errorMessage(RuntimeException exception) {

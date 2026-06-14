@@ -1,5 +1,8 @@
 package cn.lypi.resource;
 
+import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
+import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
@@ -13,14 +16,20 @@ import java.nio.file.Path;
 public class DefaultResourceRuntime implements ResourceRuntimePort {
     private final ResourceLoader resourceLoader;
     private final SystemPromptBuilder systemPromptBuilder;
+    private final PromptRenderer promptRenderer;
 
     public DefaultResourceRuntime() {
         this(new DefaultResourceLoader(), new DefaultSystemPromptBuilder());
     }
 
     public DefaultResourceRuntime(ResourceLoader resourceLoader, SystemPromptBuilder systemPromptBuilder) {
+        this(resourceLoader, systemPromptBuilder, new DefaultPromptRenderer());
+    }
+
+    DefaultResourceRuntime(ResourceLoader resourceLoader, SystemPromptBuilder systemPromptBuilder, PromptRenderer promptRenderer) {
         this.resourceLoader = resourceLoader;
         this.systemPromptBuilder = systemPromptBuilder;
+        this.promptRenderer = promptRenderer;
     }
 
     /**
@@ -37,5 +46,10 @@ public class DefaultResourceRuntime implements ResourceRuntimePort {
     @Override
     public SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
         return systemPromptBuilder.build(resources);
+    }
+
+    @Override
+    public PromptRenderResult renderPrompt(PromptTemplate template, PromptRenderRequest request) {
+        return promptRenderer.render(template, request);
     }
 }

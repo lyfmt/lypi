@@ -84,6 +84,94 @@ class ResourceLocationResolver {
 
         After writing, state what changed and what verification justified it. If nothing was written, state why.
         """;
+    private static final String DEFAULT_MEMORY_LINT_SKILL = """
+        ---
+        name: memory-lint
+        description: Use when the user asks to lint, audit, clean up, repair, or self-heal layered memory across L0, L1, L2, or L3.
+        allowed_tools:
+          - read
+          - edit
+          - write
+          - bash
+        ---
+
+        # Memory Lint
+
+        Use this skill to audit and repair memory structure without turning memory into a transcript dump.
+
+        ## Core Rules
+
+        - No Verification, No Memory.
+        - Never rewrite a whole memory file when a small patch is enough.
+        - If a claim is not backed by file reads, command output, tests, or explicit user confirmation, report it as a suggestion instead of writing it.
+        - Do not store volatile state, current progress, timestamps, PIDs, temporary paths, model reasoning, secrets, private data, long logs, or generic knowledge.
+        - Keep upper layers as minimum sufficient pointers. Details belong in lower layers.
+
+        ## Layer Contract
+
+        - L0 `~/.ly-pi/memory.md`: global memory index and governance entry. It points to L1 and contains only triggers, indexes, and a few high-frequency red lines. It must not contain project facts or detailed SOPs.
+        - L1 `~/.ly-pi/memories/*`: cross-project user preferences, collaboration rules, durable corrections, and reusable guidance. It is read on demand through L0.
+        - L2 `<cwd>/.ly-pi/memory.md` or project `MEMORY.md`: project direction, goals, boundaries, user corrections, principle-level facts, and indexes pointing to L3 skills. It should not hold module how-to details.
+        - L3 `<cwd>/.ly-pi/skills/*/SKILL.md`: concrete project knowledge, module workflows, troubleshooting steps, implementation tradeoffs, and verification methods.
+
+        ## Lint Checklist
+
+        For each selected layer:
+
+        1. Locate candidate files. If a selected layer has no file, report it as missing only when the layer is expected for the current project.
+        2. Read the current content before judging it.
+        3. Classify every issue:
+           - Duplicate content.
+           - Conflicting facts.
+           - Stale or unverifiable claims.
+           - Wrong layer placement.
+           - Missing upper-layer pointer.
+           - Upper-layer entry containing how-to details.
+           - L3 skill description not matching its trigger or body.
+           - Content that should be deleted because it is volatile, sensitive, or purely session-local.
+        4. Decide repair action:
+           - Patch immediately only when evidence is clear and the patch is local.
+           - Move content down a layer when upper-layer text contains concrete procedure.
+           - Keep content but add conditions when both old and new facts are valid under different contexts.
+           - Leave a recommendation when evidence is incomplete.
+        5. After editing, re-read touched files and verify that duplicates, broken pointers, and formatting regressions were not introduced.
+
+        ## Output Format
+
+        Respond with:
+
+        - `Checked`: selected layers and files read.
+        - `Findings`: concise issue list.
+        - `Changes`: files patched and evidence for each patch.
+        - `Deferred`: suggestions not applied and why.
+        """;
+    private static final String DEFAULT_MEMORY_LINT_PROMPT = """
+        ---
+        name: memory-lint
+        description: Lint and repair layered memory using the memory-lint skill.
+        parameters:
+          - name: layers
+            description: Comma-separated memory layers to lint, such as L2,L3.
+            required: true
+        ---
+        请使用 $memory-lint 对当前会话可访问的 memory 进行 lint 和必要的最小修补。
+
+        目标层级：{{layers}}
+
+        要求：
+
+        1. 先按 `memory-lint` skill 的流程识别每个目标层级的文件位置和职责。
+        2. 先读取目标文件，再判断问题；不要基于猜测修改 memory。
+        3. 检查重复、冲突、过期、错层、缺少索引、索引失效、skill 描述与正文不一致、以及上层包含过多 how-to 细节的问题。
+        4. 只修补已由文件读取、测试、命令输出或用户明确确认支持的问题。
+        5. 修改必须是最小增量 patch；不确定是否该改时，列为建议，不写文件。
+        6. 不写当前会话进度、临时状态、未验证猜测、模型推理过程、大段日志、密钥或隐私数据。
+        7. 结束时输出：
+           - 已检查层级。
+           - 发现的问题。
+           - 已修补内容及证据。
+           - 未修补建议及原因。
+        """;
     private final List<Path> userRoots;
     private final List<Path> explicitRoots;
 
@@ -178,6 +266,14 @@ class ResourceLocationResolver {
             createFileIfMissing(
                 normalized.resolve("skills").resolve("memory-settlement").resolve("SKILL.md"),
                 DEFAULT_MEMORY_SETTLEMENT_SKILL
+            );
+            createFileIfMissing(
+                normalized.resolve("skills").resolve("memory-lint").resolve("SKILL.md"),
+                DEFAULT_MEMORY_LINT_SKILL
+            );
+            createFileIfMissing(
+                normalized.resolve("prompts").resolve("memory-lint.md"),
+                DEFAULT_MEMORY_LINT_PROMPT
             );
             return normalized;
         } catch (Exception exception) {

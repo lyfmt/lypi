@@ -1,5 +1,8 @@
 package cn.lypi.contracts.runtime;
 
+import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
+import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import java.nio.file.Path;
@@ -18,4 +21,13 @@ public interface ResourceRuntimePort {
      * NOTE: 构建过程只消费 ResourceSnapshot，不直接读取文件系统。
      */
     SystemPrompt buildSystemPrompt(ResourceSnapshot resources);
+
+    /**
+     * 渲染 Prompt Template。
+     *
+     * NOTE: 渲染只做参数替换和诊断，不读取额外文件、不执行工具、不授予权限。
+     */
+    default PromptRenderResult renderPrompt(PromptTemplate template, PromptRenderRequest request) {
+        throw new UnsupportedOperationException("prompt rendering is unavailable");
+    }
 }
