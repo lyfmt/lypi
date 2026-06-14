@@ -12,6 +12,7 @@ import cn.lypi.session.SessionManagerImpl;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * Boot 层后台记忆沉淀执行器。
@@ -23,6 +24,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
     private final SessionManagerPort mainSessionManager;
     private final AgentCoreFactoryPort agentCoreFactory;
     private final MemoryConsolidationPromptFactory promptFactory;
+    private final Function<Path, SessionManagerPort> forkSessionManagerFactory;
 
     public BootMemoryConsolidationRunner(
         Path cwd,
@@ -30,10 +32,21 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
         AgentCoreFactoryPort agentCoreFactory,
         MemoryConsolidationPromptFactory promptFactory
     ) {
+        this(cwd, mainSessionManager, agentCoreFactory, promptFactory, SessionManagerImpl::new);
+    }
+
+    BootMemoryConsolidationRunner(
+        Path cwd,
+        SessionManagerPort mainSessionManager,
+        AgentCoreFactoryPort agentCoreFactory,
+        MemoryConsolidationPromptFactory promptFactory,
+        Function<Path, SessionManagerPort> forkSessionManagerFactory
+    ) {
         this.cwd = Objects.requireNonNull(cwd, "cwd must not be null").toAbsolutePath().normalize();
         this.mainSessionManager = Objects.requireNonNull(mainSessionManager, "mainSessionManager must not be null");
         this.agentCoreFactory = Objects.requireNonNull(agentCoreFactory, "agentCoreFactory must not be null");
         this.promptFactory = Objects.requireNonNull(promptFactory, "promptFactory must not be null");
+        this.forkSessionManagerFactory = Objects.requireNonNull(forkSessionManagerFactory, "forkSessionManagerFactory must not be null");
     }
 
     /**
@@ -50,9 +63,9 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
             cwd,
             FORK_REASON
         ));
-        SessionManagerPort forkSessionManager = new SessionManagerImpl(cwd);
-        forkSessionManager.openOrCreate(forked.sessionId());
+        SessionManagerPort forkSessionManager = forkSessionManagerFactory.apply(cwd);
         try {
+            forkSessionManager.openOrCreate(forked.sessionId());
             agentCoreFactory.create(cwd, forkSessionManager)
                 .execute(new TurnRequest(
                     forked.sessionId(),

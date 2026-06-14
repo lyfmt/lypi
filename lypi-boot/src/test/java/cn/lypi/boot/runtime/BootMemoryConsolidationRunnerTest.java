@@ -1,6 +1,7 @@
 package cn.lypi.boot.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
@@ -18,6 +19,12 @@ import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.CustomMessageEntry;
+import cn.lypi.contracts.session.BranchSummaryPlan;
+import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.SessionContext;
+import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.SessionView;
 import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
 import cn.lypi.runtime.memory.MemoryConsolidationRequest;
 import cn.lypi.session.SessionManagerImpl;
@@ -80,6 +87,27 @@ class BootMemoryConsolidationRunnerTest {
         assertThat(factory.forkSessionFile.get()).doesNotExist();
     }
 
+    @Test
+    void cleansTemporarySessionWhenOpeningForkSessionFails() {
+        SessionManagerImpl mainSession = new SessionManagerImpl(tempDir);
+        mainSession.openOrCreate("ses_main");
+        mainSession.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        FailingOpenSessionManager forkSessionManager = new FailingOpenSessionManager();
+        BootMemoryConsolidationRunner runner = new BootMemoryConsolidationRunner(
+            tempDir,
+            mainSession,
+            new RecordingAgentCoreFactory(new RecordingAgentCore(TurnStatus.COMPLETED)),
+            new MemoryConsolidationPromptFactory(),
+            cwd -> forkSessionManager
+        );
+
+        assertThatThrownBy(() -> runner.run(new MemoryConsolidationRequest("ses_main", "root")))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("open failed");
+
+        assertThat(forkSessionManager.deletedSessionId.get()).startsWith("ses_");
+    }
+
     private static final class RecordingAgentCoreFactory implements AgentCoreFactoryPort {
         private final RecordingAgentCore core;
         private Path cwd;
@@ -139,6 +167,75 @@ class BootMemoryConsolidationRunnerTest {
                 0,
                 status
             );
+        }
+    }
+
+    private static final class FailingOpenSessionManager implements SessionManagerPort {
+        private final AtomicReference<String> deletedSessionId = new AtomicReference<>();
+
+        @Override
+        public SessionHandle openOrCreate(String sessionId) {
+            throw new IllegalStateException("open failed");
+        }
+
+        @Override
+        public SessionHandle append(SessionEntry entry) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle switchLeaf(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<SessionEntry> branch(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public BranchSummaryPlan collectBranchSummaryPlan(String oldLeafId, String targetLeafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionView currentView() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionView view(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<AgentMessage> transcript(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionContext context(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle appendMessage(AgentMessage message) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle appendBranchSummary(String parentId, String fromId, String summary) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle fork(ForkRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void deleteSession(String sessionId) {
+            deletedSessionId.set(sessionId);
         }
     }
 }
