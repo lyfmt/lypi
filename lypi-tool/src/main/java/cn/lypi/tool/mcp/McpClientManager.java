@@ -2,7 +2,10 @@ package cn.lypi.tool.mcp;
 
 import cn.lypi.contracts.mcp.McpServerConfig;
 import cn.lypi.contracts.mcp.McpToolSchema;
+import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.tool.ToolUseContext;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -16,11 +19,17 @@ import java.util.Objects;
 public final class McpClientManager implements AutoCloseable {
     private final Path cwd;
     private final McpClientFactory clientFactory;
+    private final McpToolResultMapper resultMapper;
     private final Map<String, McpClient> clients = new LinkedHashMap<>();
 
     public McpClientManager(Path cwd, McpClientFactory clientFactory) {
+        this(cwd, clientFactory, new McpToolResultMapper(new ObjectMapper()));
+    }
+
+    public McpClientManager(Path cwd, McpClientFactory clientFactory, McpToolResultMapper resultMapper) {
         this.cwd = cwd;
         this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory must not be null");
+        this.resultMapper = Objects.requireNonNull(resultMapper, "resultMapper must not be null");
     }
 
     /**
@@ -59,6 +68,19 @@ public final class McpClientManager implements AutoCloseable {
                 ? exception
                 : new McpClientException("MCP tool call failed: " + serverName + "/" + toolName, exception);
         }
+    }
+
+    /**
+     * 调用已连接端点中的指定 tool，并映射为 ly-pi tool result 输出。
+     */
+    public Object invoke(
+        String serverName,
+        String toolName,
+        Map<String, Object> arguments,
+        ToolUseContext context,
+        ProgressSink progress
+    ) {
+        return resultMapper.map(invoke(serverName, toolName, arguments));
     }
 
     @Override

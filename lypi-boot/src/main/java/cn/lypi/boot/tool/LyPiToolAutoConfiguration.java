@@ -3,8 +3,10 @@ package cn.lypi.boot.tool;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionResponse;
@@ -19,6 +21,11 @@ import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.PermissionResponseGate;
 import cn.lypi.tool.ToolRuntimeOptions;
 import cn.lypi.tool.builtin.BuiltInTools;
+import cn.lypi.tool.mcp.McpClientManager;
+import cn.lypi.tool.mcp.McpClientManagerFactory;
+import cn.lypi.tool.mcp.McpToolAdapter;
+import cn.lypi.tool.mcp.McpToolResultMapper;
+import cn.lypi.tool.mcp.stdio.StdioMcpClient;
 import cn.lypi.tool.shell.BubblewrapExecutor;
 import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.ExecutorRegistry;
@@ -26,6 +33,7 @@ import cn.lypi.tool.shell.HostExecutor;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import cn.lypi.transport.headless.HeadlessTransport;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import java.time.Instant;
 import org.springframework.beans.factory.ObjectProvider;
@@ -106,9 +114,13 @@ public class LyPiToolAutoConfiguration {
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionResponseGate> responseGate,
         ObjectProvider<PermissionPromptPort> promptPort,
+        ObjectProvider<ResourceRuntimePort> resourceRuntime,
+        ObjectProvider<McpClientManagerFactory> mcpClientManagerFactory,
         Environment environment
     ) {
         EventBus resolvedEventBus = eventBus.getIfAvailable();
+        ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getIfAvailable();
+        McpClientManagerFactory resolvedMcpClientManagerFactory = mcpClientManagerFactory.getIfAvailable();
         String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
         return new ToolRuntimeFactoryPort() {
             @Override
@@ -151,9 +163,30 @@ public class LyPiToolAutoConfiguration {
                         BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox, resolvedAgentRegistry);
                     }
                 }
+                registerMcpTools(runtime, runtimeCwd, resolvedResourceRuntime, resolvedMcpClientManagerFactory);
                 return runtime;
             }
         };
+    }
+
+    /**
+     * 创建默认 MCP client manager factory。
+     */
+    @Bean
+    @ConditionalOnMissingBean(McpClientManagerFactory.class)
+    public McpClientManagerFactory mcpClientManagerFactory(ObjectProvider<ObjectMapper> objectMapper) {
+        ObjectMapper resolvedObjectMapper = objectMapper.getIfAvailable(ObjectMapper::new);
+        return cwd -> new McpClientManager(
+            cwd,
+            (config, runtimeCwd) -> {
+                if (config.transport() != McpTransport.STDIO) {
+                    throw new IllegalArgumentException("Unsupported MCP transport: " + config.transport());
+                }
+                return new StdioMcpClient(config, runtimeCwd, resolvedObjectMapper, message -> {
+                });
+            },
+            new McpToolResultMapper(resolvedObjectMapper)
+        );
     }
 
     /**
@@ -248,5 +281,28 @@ public class LyPiToolAutoConfiguration {
             return blockingGate;
         }
         return new EventPublishingPermissionGate(eventBus, blockingGate);
+    }
+
+    private void registerMcpTools(
+        ToolRuntimePort runtime,
+        Path cwd,
+        ResourceRuntimePort resourceRuntime,
+        McpClientManagerFactory managerFactory
+    ) {
+        if (resourceRuntime == null || managerFactory == null) {
+            return;
+        }
+        try {
+            cn.lypi.contracts.resource.ResourceSnapshot resources = resourceRuntime.load(cwd);
+            if (resources == null || resources.mcpServers() == null || resources.mcpServers().isEmpty()) {
+                return;
+            }
+            McpClientManager manager = managerFactory.create(cwd);
+            manager.connectAll(resources.mcpServers()).forEach(schema ->
+                runtime.register(new McpToolAdapter(schema, manager::invoke))
+            );
+        } catch (RuntimeException exception) {
+            // NOTE: MCP 注册失败不能阻断内置工具可用性。
+        }
     }
 }

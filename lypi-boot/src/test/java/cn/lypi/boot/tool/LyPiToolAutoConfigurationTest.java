@@ -21,12 +21,18 @@ import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.mcp.McpServerConfig;
+import cn.lypi.contracts.mcp.McpStdioServerConfig;
+import cn.lypi.contracts.mcp.McpToolSchema;
+import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.prompt.SystemPrompt;
+import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.security.AgentMode;
@@ -39,6 +45,7 @@ import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
@@ -49,6 +56,9 @@ import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
+import cn.lypi.tool.mcp.McpClient;
+import cn.lypi.tool.mcp.McpClientManager;
+import cn.lypi.tool.mcp.McpClientManagerFactory;
 import cn.lypi.runtime.event.InMemoryEventBus;
 import cn.lypi.tool.shell.BubblewrapExecutor;
 import cn.lypi.tool.shell.ExecutorRegistry;
@@ -56,6 +66,7 @@ import cn.lypi.tool.shell.HostExecutor;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -365,6 +376,85 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
+    void registersMcpToolsFromResourceRuntime() {
+        RecordingMcpClientFactory mcpClients = new RecordingMcpClientFactory();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(ResourceRuntimePort.class, () -> resourceRuntimeWith(mcpServerConfig()))
+            .withBean(McpClientManagerFactory.class, () -> cwd -> mcpClients.manager(cwd))
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(runtime.resolve("mcp__fake__echo")).isPresent();
+                assertThat(mcpClients.connectedConfigs).extracting(McpServerConfig::name).containsExactly("fake");
+            });
+    }
+
+    @Test
+    void mcpConnectionFailureDoesNotBlockBuiltInTools() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(ResourceRuntimePort.class, () -> resourceRuntimeWith(mcpServerConfig()))
+            .withBean(McpClientManagerFactory.class, () -> cwd -> {
+                throw new IllegalStateException("offline");
+            })
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(runtime.resolve("bash")).isPresent();
+                assertThat(runtime.resolve("mcp__fake__echo")).isEmpty();
+            });
+    }
+
+    @Test
+    void headlessRuntimeDeniesMcpToolBeforeInvokingManager() {
+        RecordingMcpClientFactory mcpClients = new RecordingMcpClientFactory();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(ResourceRuntimePort.class, () -> resourceRuntimeWith(mcpServerConfig()))
+            .withBean(McpClientManagerFactory.class, () -> cwd -> mcpClients.manager(cwd))
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest("toolu_mcp", "mcp__fake__echo", Map.of("text", "hi"), "msg_1")),
+                    context()
+                ).getFirst();
+
+                assertThat(result.isError()).isTrue();
+                assertThat(((ToolResultContentBlock) result.newMessages().getFirst().content().getFirst()).text())
+                    .contains("权限请求未获允许");
+                assertThat(mcpClients.invocations).isEmpty();
+            });
+    }
+
+    @Test
+    void subagentToolPolicyFiltersMcpToolsByCanonicalName() {
+        RecordingMcpClientFactory mcpClients = new RecordingMcpClientFactory();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(ResourceRuntimePort.class, () -> resourceRuntimeWith(mcpServerConfig()))
+            .withBean(McpClientManagerFactory.class, () -> cwd -> mcpClients.manager(cwd))
+            .run(context -> {
+                ToolRuntimeFactoryPort factory = context.getBean(ToolRuntimeFactoryPort.class);
+                ToolRuntimePort denied = factory.create(Path.of("."), new SubagentToolPolicy(List.of(), List.of("read")));
+                ToolRuntimePort allowed = factory.create(Path.of("."), new SubagentToolPolicy(List.of("mcp__fake__echo"), List.of("mcp__fake__echo")));
+
+                assertThat(denied.resolve("mcp__fake__echo")).isEmpty();
+                assertThat(denied.snapshot().tools()).extracting("name").doesNotContain("mcp__fake__echo");
+                assertThat(allowed.resolve("mcp__fake__echo")).isPresent();
+                assertThat(allowed.snapshot().tools()).extracting("name").contains("mcp__fake__echo");
+            });
+    }
+
+    @Test
     void defaultToolRuntimeFactoryBacksOffWhenCustomToolRuntimeExists() {
         ToolRuntimePort customRuntime = new ToolRuntimePort() {
             @Override
@@ -422,6 +512,48 @@ class LyPiToolAutoConfigurationTest {
             AgentMode.EXECUTE,
             PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO)
+        );
+    }
+
+    private static ResourceRuntimePort resourceRuntimeWith(McpServerConfig config) {
+        return new ResourceRuntimePort() {
+            @Override
+            public ResourceSnapshot load(Path cwd) {
+                return new ResourceSnapshot(
+                    List.of(),
+                    List.of(),
+                    new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()),
+                    List.of(),
+                    List.of(config),
+                    List.of()
+                );
+            }
+
+            @Override
+            public SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
+                return new SystemPrompt("system", List.of(), "hash");
+            }
+        };
+    }
+
+    private static McpServerConfig mcpServerConfig() {
+        return new McpServerConfig(
+            "fake",
+            McpTransport.STDIO,
+            new McpStdioServerConfig(List.of("fake"), Map.of()),
+            null,
+            Duration.ofSeconds(1),
+            Duration.ofSeconds(1)
+        );
+    }
+
+    private static McpToolSchema mcpToolSchema() {
+        return new McpToolSchema(
+            "fake",
+            "echo",
+            "mcp__fake__echo",
+            new cn.lypi.contracts.common.JsonSchema(Map.of("type", "object")),
+            "Echo"
         );
     }
 
@@ -502,6 +634,34 @@ class LyPiToolAutoConfigurationTest {
         public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
             return () -> {
             };
+        }
+    }
+
+    private static final class RecordingMcpClientFactory {
+        private final List<McpServerConfig> connectedConfigs = new ArrayList<>();
+        private final List<Map<String, Object>> invocations = new ArrayList<>();
+
+        private McpClientManager manager(Path cwd) {
+            return new McpClientManager(cwd, (config, runtimeCwd) -> new McpClient() {
+                @Override
+                public List<McpToolSchema> connect() {
+                    connectedConfigs.add(config);
+                    return List.of(mcpToolSchema());
+                }
+
+                @Override
+                public com.fasterxml.jackson.databind.JsonNode callTool(String toolName, Map<String, Object> arguments) {
+                    invocations.add(Map.of("serverName", config.name(), "toolName", toolName, "arguments", arguments));
+                    return new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(Map.of(
+                        "content", List.of(Map.of("type", "text", "text", arguments.get("text"))),
+                        "isError", false
+                    ));
+                }
+
+                @Override
+                public void close() {
+                }
+            });
         }
     }
 
