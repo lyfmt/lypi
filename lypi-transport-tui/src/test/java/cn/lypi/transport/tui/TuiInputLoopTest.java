@@ -441,7 +441,7 @@ class TuiInputLoopTest {
             new TuiScreen(5),
             new TuiLayout(40, 9),
             () -> permissionViewWithOptions("allow_once", "escape_cancel"),
-            () -> new SlashCommandPicker(List.of("/model", "/mode"))
+            () -> new SlashCommandPicker(List.of("/model", "/plan"))
         );
 
         loop.acceptText("/");
@@ -614,7 +614,7 @@ class TuiInputLoopTest {
             new TuiScreen(3),
             new TuiLayout(40, 5),
             null,
-            () -> new SlashCommandPicker(List.of("/model", "/mode", "/compact"))
+            () -> new SlashCommandPicker(List.of("/model", "/plan", "/compact"))
         );
 
         loop.acceptText("first");
@@ -623,7 +623,7 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.DOWN);
         loop.acceptKey(TerminalKey.TAB);
 
-        assertEquals("/mode ", loop.draft());
+        assertEquals("/plan ", loop.draft());
 
         loop.acceptKey(TerminalKey.CTRL_U);
         loop.acceptText("/");
@@ -631,6 +631,27 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.UP);
 
         assertEquals("/", loop.draft());
+    }
+
+    @Test
+    void removedModeCommandIsNotAcceptedAsModelPrefix() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiRenderer(),
+            new TuiScreen(3),
+            new TuiLayout(40, 5),
+            null,
+            () -> new SlashCommandPicker(List.of("/model", "/plan", "/compact"))
+        );
+
+        loop.acceptText("/mode");
+        loop.acceptKey(TerminalKey.TAB);
+
+        assertEquals("/mode", loop.draft());
+        assertEquals(List.of(), submit.submitted);
     }
 
     @Test
@@ -724,7 +745,7 @@ class TuiInputLoopTest {
             () -> new SlashCommandPicker(List.of(
                 "/model",
                 "/thinking",
-                "/mode",
+                "/plan",
                 "/permission-mode",
                 "/compact",
                 "/review"

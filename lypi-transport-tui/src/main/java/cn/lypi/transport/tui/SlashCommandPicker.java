@@ -8,10 +8,11 @@ final class SlashCommandPicker {
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/model",
         "/thinking",
-        "/mode",
+        "/plan",
         "/permission-mode",
         "/compact"
     );
+    private static final List<String> REMOVED_COMMANDS = List.of("/mode");
 
     private final List<String> commands;
     private String filter = "";
@@ -47,6 +48,9 @@ final class SlashCommandPicker {
         String normalized = normalize(filter);
         if (normalized.isBlank()) {
             return commands;
+        }
+        if (REMOVED_COMMANDS.stream().map(this::normalize).anyMatch(normalized::equals)) {
+            return List.of();
         }
         List<String> prefixMatches = commands.stream()
             .filter(command -> normalize(command).startsWith(normalized))
