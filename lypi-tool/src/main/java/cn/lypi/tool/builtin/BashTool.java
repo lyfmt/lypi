@@ -29,6 +29,9 @@ public final class BashTool extends AbstractFileTool {
     private static final AbortSignal NOT_ABORTED = () -> false;
     private static final String INPUT_SANDBOX_PERMISSIONS = "sandboxPermissions";
     private static final String INPUT_JUSTIFICATION = "justification";
+    private static final String INPUT_SHELL = "shell";
+    private static final String INPUT_LOGIN_SHELL = "loginShell";
+    private static final List<String> ALLOWED_SHELLS = List.of("bash", "sh", "zsh");
 
     private final Executor executor;
     private final SandboxPolicyResolver sandboxPolicyResolver;
@@ -57,6 +60,8 @@ public final class BashTool extends AbstractFileTool {
             "properties", Map.of(
                 "command", Map.of("type", "string"),
                 "cwd", Map.of("type", "string"),
+                INPUT_SHELL, Map.of("type", "string"),
+                INPUT_LOGIN_SHELL, Map.of("type", "boolean"),
                 "timeoutSeconds", Map.of("type", "integer", "minimum", 1),
                 INPUT_SANDBOX_PERMISSIONS, Map.of(
                     "type", "string",
@@ -82,6 +87,10 @@ public final class BashTool extends AbstractFileTool {
         if (sandboxPermissions == SandboxPermissions.REQUIRE_ESCALATED && justification.isBlank()) {
             return new ValidationResult(false, List.of("sandboxPermissions=requireEscalated 时 justification 不能为空。"));
         }
+        String shell = stringInput(input, INPUT_SHELL);
+        if (!shell.isBlank() && !isAllowedShell(shell)) {
+            return new ValidationResult(false, List.of("shell 仅支持 bash、sh、zsh 或 basename 为这些值的绝对路径。"));
+        }
         return new ValidationResult(true, List.of());
     }
 
@@ -106,7 +115,7 @@ public final class BashTool extends AbstractFileTool {
             SandboxRuntimePolicy sandboxPolicy = sandboxPolicyResolver.resolve(context.cwd(), cwd);
             SandboxPermissions sandboxPermissions = sandboxPermissions(input);
             ExecutionRequest request = new ExecutionRequest(
-                List.of("bash", "-lc", input.get("command").toString()),
+                shellCommand(input),
                 cwd,
                 Map.of(),
                 timeout,
@@ -188,6 +197,33 @@ public final class BashTool extends AbstractFileTool {
 
     private SandboxPermissions sandboxPermissions(Map<String, Object> input) {
         return SandboxPermissions.fromToolValue(stringInput(input, INPUT_SANDBOX_PERMISSIONS));
+    }
+
+    private List<String> shellCommand(Map<String, Object> input) {
+        String shell = stringInput(input, INPUT_SHELL);
+        String resolvedShell = shell.isBlank() ? "bash" : shell;
+        boolean loginShell = booleanInput(input, INPUT_LOGIN_SHELL, true);
+        return List.of(resolvedShell, loginShell ? "-lc" : "-c", input.get("command").toString());
+    }
+
+    private boolean isAllowedShell(String shell) {
+        Path path = Path.of(shell);
+        String shellName = path.getFileName() == null ? shell : path.getFileName().toString();
+        if (path.isAbsolute()) {
+            return ALLOWED_SHELLS.contains(shellName);
+        }
+        return ALLOWED_SHELLS.contains(shell);
+    }
+
+    private boolean booleanInput(Map<String, Object> input, String key, boolean defaultValue) {
+        Object value = input == null ? null : input.get(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        return Boolean.parseBoolean(value.toString());
     }
 
     private String stringInput(Map<String, Object> input, String key) {

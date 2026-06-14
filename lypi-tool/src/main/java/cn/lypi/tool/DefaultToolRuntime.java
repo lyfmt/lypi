@@ -14,6 +14,7 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.BashRiskAnalysis;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -617,7 +618,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
             PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
             PermissionDecision effectiveDecision;
-            if (isDefaultSandboxBashRequest(request)) {
+            if (isDefaultSandboxBashRequest(request) && canEnterDefaultSandbox(securityDecision)) {
                 effectiveDecision = isDeny(securityDecision)
                     ? securityDecision
                     : allowDecision("默认 Bash 请求先进入沙箱执行。");
@@ -988,6 +989,14 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             && "bash".equals(request.toolName())
             && !hasPrefixRule(request.input())
             && SandboxPermissions.fromToolValue(stringInput(request.input(), "sandboxPermissions")) == SandboxPermissions.USE_DEFAULT;
+    }
+
+    private boolean canEnterDefaultSandbox(PermissionDecision securityDecision) {
+        if (securityDecision == null || securityDecision.behavior() != PermissionBehavior.ASK) {
+            return true;
+        }
+        Object bashRisk = securityDecision.metadata().get("bashRisk");
+        return !(bashRisk instanceof BashRiskAnalysis risk) || risk.redirectTargets().isEmpty();
     }
 
     private boolean hasPrefixRule(Map<String, Object> input) {

@@ -78,6 +78,9 @@ public final class McpToolAdapter implements Tool<Map<String, Object>, Object> {
                 Map.of("serverName", schema.serverName(), "toolName", schema.toolName())
             ));
             Object output = invoker.invoke(schema.serverName(), schema.toolName(), arguments, context, progress);
+            if (output instanceof McpToolCallResult callResult) {
+                return result(toolUseId, callResult.output(), callResult.error());
+            }
             return result(toolUseId, output, false);
         } catch (RuntimeException exception) {
             return result(toolUseId, "MCP 工具调用失败: " + exception.getMessage(), true);

@@ -81,6 +81,7 @@ import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.ToolDescriptor;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -94,6 +95,10 @@ import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.runtime.event.InMemoryEventBus;
+import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
+import cn.lypi.runtime.memory.MemoryConsolidationRunner;
+import cn.lypi.runtime.memory.MemoryConsolidationTrigger;
+import cn.lypi.runtime.memory.MemoryConsolidationTurnEndListener;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
@@ -106,6 +111,7 @@ import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
+import cn.lypi.tool.MemoryConsolidationToolRuntime;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -1135,6 +1141,60 @@ class LyPiRuntimeAutoConfigurationTest {
                 new TokenUsage(0, 0, 0, 0)
             ))
             .run(context -> assertThat(context).hasSingleBean(AgentCoreFactoryPort.class));
+    }
+
+    @Test
+    void createsBackgroundMemoryConsolidationBeansWhenRuntimePortsExist() {
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(
+                LyPiToolAutoConfiguration.class,
+                LyPiRuntimeAutoConfiguration.class
+            ))
+            .withPropertyValues("lypi.runtime.cwd=" + tempDir)
+            .withBean(AiProviderRuntimePort.class, () -> new ScriptedAiProvider(List.of(
+                List.of(
+                    new AssistantStart("msg-final"),
+                    new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+                )
+            )))
+            .withBean(CompactionSummarizer.class, () -> request -> new CompactSummaryResult(
+                "summary",
+                new TokenUsage(0, 0, 0, 0)
+            ))
+            .run(context -> {
+                assertThat(context).hasSingleBean(MemoryConsolidationTrigger.class);
+                assertThat(context).hasSingleBean(MemoryConsolidationPromptFactory.class);
+                assertThat(context).hasSingleBean(MemoryConsolidationRunner.class);
+                assertThat(context).hasSingleBean(MemoryConsolidationTurnEndListener.class);
+                assertThat(context).hasBean("memoryConsolidationExecutor");
+            });
+    }
+
+    @Test
+    void toolFactoryCreatesRestrictedMemoryConsolidationRuntime() {
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(
+                LyPiToolAutoConfiguration.class,
+                LyPiRuntimeAutoConfiguration.class
+            ))
+            .withPropertyValues("lypi.runtime.cwd=" + tempDir)
+            .withBean(AiProviderRuntimePort.class, () -> (snapshot, signal) -> {
+                throw new UnsupportedOperationException("not used");
+            })
+            .withBean(CompactionSummarizer.class, () -> request -> new CompactSummaryResult(
+                "summary",
+                new TokenUsage(0, 0, 0, 0)
+            ))
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(cn.lypi.boot.tool.ToolRuntimeFactoryPort.class)
+                    .createMemoryConsolidation(tempDir, context.getBean(EventBus.class));
+
+                assertThat(runtime).isInstanceOf(MemoryConsolidationToolRuntime.class);
+                assertThat(runtime.snapshot().tools())
+                    .extracting(ToolDescriptor::name)
+                    .contains("read", "grep", "glob", "edit", "write")
+                    .doesNotContain("bash");
+            });
     }
 
     @Test

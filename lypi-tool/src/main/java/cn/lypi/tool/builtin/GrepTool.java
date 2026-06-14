@@ -4,17 +4,40 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public final class GrepTool extends AbstractFileTool {
+    private final RipgrepSearchRunner runner;
+    private final GrepResultFormatter formatter;
+
+    public GrepTool(Executor executor) {
+        this(
+            executor,
+            new RipgrepSearchRunner(
+                executor,
+                new RipgrepCommandBuilder(),
+                RipgrepBinaryResolver.defaults(),
+                Duration.ofSeconds(20)
+            ),
+            new GrepResultFormatter()
+        );
+    }
+
+    GrepTool(Executor executor, RipgrepSearchRunner runner, GrepResultFormatter formatter) {
+        Objects.requireNonNull(executor, "executor must not be null");
+        this.runner = Objects.requireNonNull(runner, "runner must not be null");
+        this.formatter = Objects.requireNonNull(formatter, "formatter must not be null");
+    }
+
     @Override
     public String name() {
         return "grep";
@@ -25,10 +48,22 @@ public final class GrepTool extends AbstractFileTool {
         return new JsonSchema(Map.of(
             "type", "object",
             "required", List.of("pattern"),
-            "properties", Map.of(
-                "pattern", Map.of("type", "string"),
-                "path", Map.of("type", "string"),
-                "maxResults", Map.of("type", "integer", "minimum", 1)
+            "properties", Map.ofEntries(
+                Map.entry("pattern", Map.of("type", "string")),
+                Map.entry("path", Map.of("type", "string")),
+                Map.entry("glob", Map.of("type", "string")),
+                Map.entry("output_mode", Map.of("type", "string", "enum", List.of("content", "files_with_matches", "count"))),
+                Map.entry("-A", Map.of("type", "integer", "minimum", 0)),
+                Map.entry("-B", Map.of("type", "integer", "minimum", 0)),
+                Map.entry("-C", Map.of("type", "integer", "minimum", 0)),
+                Map.entry("context", Map.of("type", "integer", "minimum", 0)),
+                Map.entry("-n", Map.of("type", "boolean")),
+                Map.entry("-i", Map.of("type", "boolean")),
+                Map.entry("type", Map.of("type", "string")),
+                Map.entry("head_limit", Map.of("type", "integer", "minimum", 0)),
+                Map.entry("offset", Map.of("type", "integer", "minimum", 0)),
+                Map.entry("multiline", Map.of("type", "boolean")),
+                Map.entry("maxResults", Map.of("type", "integer", "minimum", 1))
             )
         ));
     }
@@ -38,55 +73,35 @@ public final class GrepTool extends AbstractFileTool {
         if (input.get("pattern") == null || input.get("pattern").toString().isBlank()) {
             return new ValidationResult(false, List.of("pattern 不能为空。"));
         }
+        try {
+            GrepQuery.fromInput(input);
+        } catch (RuntimeException exception) {
+            return new ValidationResult(false, List.of(exception.getMessage()));
+        }
         return new ValidationResult(true, List.of());
     }
 
     @Override
     public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
         String toolUseId = toolUseId(context);
-        String pattern = input.get("pattern").toString();
-        int maxResults = intInput(input, "maxResults", 100, 1, 1_000);
         try {
+            GrepQuery query = GrepQuery.fromInput(input);
             Path root = resolvePath(input, context, "path");
             if (!Files.exists(root)) {
                 return error(toolUseId, "搜索路径不存在: " + relativePath(root, context));
             }
+            requireRealPathInsideWorkspace(root, context);
             progress.progress(ToolProgress.phase("scanning", "扫描文件"));
-            StringBuilder output = new StringBuilder();
-            int count = 0;
-            List<Path> files;
-            try (var walk = Files.walk(root)) {
-                files = walk.filter(Files::isRegularFile)
-                    .filter(path -> realPathInsideWorkspace(path, context))
-                    .filter(path -> !ignored(path))
-                    .sorted(Comparator.comparing(Path::toString))
-                    .toList();
+            RipgrepSearchResult searchResult = runner.search(query, root, context, progress);
+            if (searchResult.isError()) {
+                return error(toolUseId, searchResult.message());
             }
-            progress.progress(ToolProgress.counter("files", files.size(), files.size()));
-            for (Path file : files) {
-                List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-                for (int index = 0; index < lines.size(); index++) {
-                    if (!lines.get(index).contains(pattern)) {
-                        continue;
-                    }
-                    output.append(relativePath(file, context))
-                        .append(':')
-                        .append(index + 1)
-                        .append(':')
-                        .append(lines.get(index))
-                        .append('\n');
-                    count++;
-                    progress.progress(ToolProgress.status("matched", relativePath(file, context)));
-                    if (count >= maxResults) {
-                        return success(toolUseId, trimTrailingNewline(output));
-                    }
-                }
-            }
-            return success(toolUseId, trimTrailingNewline(output));
+            progress.progress(ToolProgress.status("matched", Integer.toString(searchResult.lines().size())));
+            return success(toolUseId, formatter.format(query, searchResult.lines(), context));
         } catch (IllegalArgumentException exception) {
             return error(toolUseId, exception.getMessage());
         } catch (IOException exception) {
-            return error(toolUseId, "搜索失败: " + exception.getMessage());
+            return error(toolUseId, "搜索路径安全检查失败: " + exception.getMessage());
         }
     }
 
@@ -107,32 +122,8 @@ public final class GrepTool extends AbstractFileTool {
 
     @Override
     public String renderForUser(Map<String, Object> input) {
-        return "grep " + input;
-    }
-
-    private boolean ignored(Path path) {
-        boolean insideLypi = false;
-        for (Path part : path) {
-            String value = part.toString();
-            if ("target".equals(value)) {
-                return true;
-            }
-            if (".lypi".equals(value)) {
-                insideLypi = true;
-                continue;
-            }
-            if (insideLypi && "sessions".equals(value)) {
-                return true;
-            }
-            insideLypi = false;
-        }
-        return false;
-    }
-
-    private String trimTrailingNewline(StringBuilder output) {
-        if (!output.isEmpty() && output.charAt(output.length() - 1) == '\n') {
-            output.deleteCharAt(output.length() - 1);
-        }
-        return output.toString();
+        Object pattern = input.getOrDefault("pattern", "");
+        Object path = input.getOrDefault("path", ".");
+        return "grep pattern=" + pattern + " path=" + path;
     }
 }

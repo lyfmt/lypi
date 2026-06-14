@@ -156,7 +156,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         if (status == TurnStatus.COMPLETED) {
             extractMemorySafely(state);
         }
-        publishTurnEnd(request.sessionId(), turnId, status, startedAt);
+        publishTurnEnd(request.sessionId(), turnId, status, startedAt, toolRound);
         return state;
     }
 
@@ -229,11 +229,11 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             toolRound,
             TurnStatus.FAILED
         );
-        publishTurnEnd(sessionId, turnId, TurnStatus.FAILED, startedAt);
+        publishTurnEnd(sessionId, turnId, TurnStatus.FAILED, startedAt, toolRound);
         return state;
     }
 
-    private void publishTurnEnd(String sessionId, String turnId, TurnStatus status, Instant startedAt) {
+    private void publishTurnEnd(String sessionId, String turnId, TurnStatus status, Instant startedAt, int toolRound) {
         Instant endedAt = clock.instant();
         long durationMillis = Math.max(0L, Duration.between(startedAt, endedAt).toMillis());
         ports.eventBus().publish(new TurnEndEvent(
@@ -243,6 +243,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             startedAt,
             endedAt,
             durationMillis,
+            toolRound,
             endedAt
         ));
     }

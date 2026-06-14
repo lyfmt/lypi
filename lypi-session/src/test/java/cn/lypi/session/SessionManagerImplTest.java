@@ -684,6 +684,25 @@ class SessionManagerImplTest {
     }
 
     @Test
+    void deleteSessionRemovesForkFileWithoutTouchingMainSession() throws Exception {
+        SessionManager engine = new SessionManagerImpl(tempDir);
+        SessionHandle main = engine.openOrCreate("ses_main");
+        engine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        Path targetCwd = tempDir.resolve("fork-cwd");
+        SessionHandle forked = engine.fork(new ForkRequest("ses_main", "root", targetCwd, "memory_consolidation"));
+        SessionManager targetEngine = new SessionManagerImpl(targetCwd);
+        targetEngine.openOrCreate(forked.sessionId());
+        assertThat(forked.sessionFile()).exists();
+
+        targetEngine.deleteSession(forked.sessionId());
+
+        assertThat(forked.sessionFile()).doesNotExist();
+        assertThat(main.sessionFile()).exists();
+        SessionHandle afterAppend = engine.appendMessage(textMessage("msg_after_delete", "continue"));
+        assertThat(afterAppend.sessionFile()).exists();
+    }
+
+    @Test
     void forkRejectsBlankReasonWithSessionEngineException() {
         SessionManager engine = new SessionManagerImpl(tempDir);
         engine.openOrCreate("ses_main");

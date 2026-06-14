@@ -44,7 +44,7 @@ public final class BuiltInTools {
             new WriteTool(),
             new EditTool(),
             new BashTool(executor, sandboxPolicyResolver),
-            new GrepTool(),
+            new GrepTool(executor),
             new GlobTool()
         );
     }

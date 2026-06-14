@@ -129,8 +129,9 @@ class DefaultResourceLoaderTest {
         assertThat(snapshot.mcpServers()).singleElement().satisfies(server -> {
             assertThat(server.name()).isEqualTo("filesystem");
             assertThat(server.transport()).isEqualTo(McpTransport.STDIO);
-            assertThat(server.command()).containsExactly("node", "server.js");
-            assertThat(server.env()).containsEntry("ROOT", "/tmp");
+            assertThat(server.stdio().command()).containsExactly("node", "server.js");
+            assertThat(server.stdio().env()).containsEntry("ROOT", "/tmp");
+            assertThat(server.http()).isNull();
             assertThat(server.startupTimeout()).isEqualTo(Duration.ofSeconds(3));
             assertThat(server.callTimeout()).isEqualTo(Duration.ofSeconds(9));
         });
