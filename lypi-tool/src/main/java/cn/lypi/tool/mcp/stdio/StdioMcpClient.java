@@ -1,17 +1,14 @@
 package cn.lypi.tool.mcp.stdio;
 
-import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.mcp.McpServerConfig;
 import cn.lypi.contracts.mcp.McpToolSchema;
 import cn.lypi.tool.mcp.McpClient;
 import cn.lypi.tool.mcp.McpClientException;
-import cn.lypi.tool.mcp.McpToolName;
+import cn.lypi.tool.mcp.McpToolSchemaMapper;
 import cn.lypi.tool.mcp.jsonrpc.LineDelimitedJsonRpcEndpoint;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -23,13 +20,11 @@ import java.util.function.Consumer;
  * 基于 STDIO transport 的 MCP Client。
  */
 public final class StdioMcpClient implements McpClient {
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
-    };
-
     private final McpServerConfig config;
     private final Path cwd;
     private final ObjectMapper jsonMapper;
     private final Consumer<String> diagnostics;
+    private final McpToolSchemaMapper schemaMapper;
     private StdioMcpProcess process;
     private LineDelimitedJsonRpcEndpoint endpoint;
 
@@ -42,6 +37,7 @@ public final class StdioMcpClient implements McpClient {
         this.config = Objects.requireNonNull(config, "config must not be null");
         this.cwd = cwd;
         this.jsonMapper = Objects.requireNonNull(jsonMapper, "jsonMapper must not be null");
+        this.schemaMapper = new McpToolSchemaMapper(jsonMapper);
         this.diagnostics = diagnostics == null ? message -> {
         } : diagnostics;
     }
@@ -65,7 +61,7 @@ public final class StdioMcpClient implements McpClient {
         )), config.startupTimeout(), "initialize");
         endpoint.notify("notifications/initialized", Map.of());
         JsonNode toolsResult = await(endpoint.request("tools/list", Map.of()), config.startupTimeout(), "tools/list");
-        return toolSchemas(toolsResult);
+        return schemaMapper.map(config.name(), toolsResult);
     }
 
     @Override
@@ -87,25 +83,6 @@ public final class StdioMcpClient implements McpClient {
         if (process != null) {
             process.close();
         }
-    }
-
-    private List<McpToolSchema> toolSchemas(JsonNode toolsResult) {
-        List<McpToolSchema> schemas = new ArrayList<>();
-        for (JsonNode tool : toolsResult.path("tools")) {
-            JsonNode inputSchema = tool.path("inputSchema");
-            Map<String, Object> schema = inputSchema.isMissingNode() || inputSchema.isNull()
-                ? Map.of("type", "object")
-                : jsonMapper.convertValue(inputSchema, MAP_TYPE);
-            String toolName = tool.path("name").asText("");
-            schemas.add(new McpToolSchema(
-                config.name(),
-                toolName,
-                McpToolName.format(config.name(), toolName),
-                new JsonSchema(schema),
-                tool.path("description").asText("")
-            ));
-        }
-        return schemas;
     }
 
     private JsonNode await(CompletableFuture<JsonNode> future, java.time.Duration timeout, String method) {

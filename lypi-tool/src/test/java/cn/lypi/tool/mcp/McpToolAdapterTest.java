@@ -9,6 +9,9 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.mcp.McpToolSchema;
+import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.nio.file.Path;
@@ -68,6 +71,24 @@ class McpToolAdapterTest {
         assertFalse(adapter.isReadOnly(Map.of()));
         assertFalse(adapter.isConcurrencySafe(Map.of()));
         assertTrue(adapter.isDestructive(Map.of()));
+    }
+
+    @Test
+    void alwaysRequiresPermissionConfirmation() {
+        McpToolAdapter adapter = new McpToolAdapter(
+            new McpToolSchema("filesystem", "read_file", "", new JsonSchema(Map.of()), ""),
+            (serverName, toolName, arguments, context, progress) -> "ok"
+        );
+
+        PermissionDecision decision = adapter.checkPermissions(Map.of("path", "/tmp/a"), context());
+
+        assertEquals(PermissionBehavior.ASK, decision.behavior());
+        assertEquals(PermissionDecisionReason.TOOL_SPECIFIC, decision.reason());
+        assertEquals("filesystem", decision.metadata().get("serverName"));
+        assertEquals("read_file", decision.metadata().get("toolName"));
+        assertFalse(adapter.isReadOnly(Map.of()));
+        assertTrue(adapter.isDestructive(Map.of()));
+        assertFalse(adapter.isConcurrencySafe(Map.of()));
     }
 
     private ToolUseContext context() {
