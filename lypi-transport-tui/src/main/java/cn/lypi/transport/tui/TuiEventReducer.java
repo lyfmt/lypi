@@ -37,6 +37,7 @@ import cn.lypi.contracts.tui.TuiThinkingBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
+import java.time.Instant;
 
 public final class TuiEventReducer {
     private final TuiRenderState state;
@@ -97,8 +98,8 @@ public final class TuiEventReducer {
             case PermissionRequestEvent request -> reducePermissionRequest(request);
             case PermissionDecisionEvent decision -> reducePermissionDecision(decision);
             case ErrorEvent error -> reduceError(error);
-            case TurnStartEvent start -> state.turnStarted(start.turnId());
-            case TurnEndEvent ignored -> state.turnEnded();
+            case TurnStartEvent start -> state.turnStarted(start.turnId(), start.startedAt(), start.timestamp());
+            case TurnEndEvent end -> state.turnEnded(end.durationMillis());
             case RetryStartEvent start -> state.retryStarted(start.attempt(), start.reason());
             case RetryEndEvent ignored -> state.retryEnded();
             case CompactStartEvent start -> state.compactStarted(start.kind());
@@ -118,6 +119,14 @@ public final class TuiEventReducer {
 
     public TuiViewModel view() {
         return state.view();
+    }
+
+    void observeRuntimeAt(Instant observedAt) {
+        state.observeTurnAt(observedAt);
+    }
+
+    boolean hasActiveTurn() {
+        return state.hasActiveTurn();
     }
 
     public void showDiff(DiffView diffView) {

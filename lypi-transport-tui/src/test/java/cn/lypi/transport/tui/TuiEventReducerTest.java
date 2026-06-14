@@ -366,28 +366,63 @@ class TuiEventReducerTest {
         TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
 
         reducer.reduce(new TurnStartEvent("ses_1", "turn_1", NOW));
-        assertEquals("turn running turn_1", reducer.view().runtimeLine());
+        assertEquals("working (0s)", reducer.view().runtimeLine());
         assertEquals(0, reducer.view().blocks().size());
 
         reducer.reduce(new RetryStartEvent("ses_1", 2, "rate limit", NOW));
         assertEquals("retrying attempt 2 rate limit", reducer.view().runtimeLine());
 
         reducer.reduce(new RetryEndEvent("ses_1", 2, true, NOW));
-        assertEquals("turn running turn_1", reducer.view().runtimeLine());
+        assertEquals("working (0s)", reducer.view().runtimeLine());
 
         reducer.reduce(new CompactStartEvent("ses_1", "session", NOW));
         assertEquals("compacting session", reducer.view().runtimeLine());
 
         reducer.reduce(new CompactEndEvent("ses_1", "compact_1", NOW));
-        assertEquals("turn running turn_1", reducer.view().runtimeLine());
+        assertEquals("working (0s)", reducer.view().runtimeLine());
 
         reducer.reduce(new InterruptEvent("ses_1", "user cancelled", NOW));
         assertEquals("interrupted user cancelled", reducer.view().runtimeLine());
 
         reducer.reduce(new TurnEndEvent("ses_1", "turn_1", "completed", NOW));
-        assertEquals("", reducer.view().runtimeLine());
+        assertEquals("worked 0s", reducer.view().runtimeLine());
         assertEquals("EXECUTE", reducer.view().statusBar().mode());
         assertEquals(0, reducer.view().blocks().size());
+    }
+
+    @Test
+    void turnRuntimeLineShowsWorkingElapsedTime() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+        Instant startedAt = Instant.parse("2026-06-01T12:00:00Z");
+
+        reducer.reduce(new TurnStartEvent("ses_1", "turn_1", startedAt, startedAt.plusSeconds(65)));
+
+        assertEquals("working (1m5s)", reducer.view().runtimeLine());
+        assertEquals(0, reducer.view().blocks().size());
+    }
+
+    @Test
+    void turnRuntimeLineShowsWorkedDurationAfterTurnEnd() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+        Instant startedAt = Instant.parse("2026-06-01T12:00:00Z");
+        Instant endedAt = Instant.parse("2026-06-01T13:02:03Z");
+
+        reducer.reduce(new TurnStartEvent("ses_1", "turn_1", startedAt, startedAt));
+        reducer.reduce(new TurnEndEvent("ses_1", "turn_1", "COMPLETED", startedAt, endedAt, 3_723_000L, endedAt));
+
+        assertEquals("worked 1h2m3s", reducer.view().runtimeLine());
+        assertEquals("EXECUTE", reducer.view().statusBar().mode());
+        assertEquals(0, reducer.view().blocks().size());
+    }
+
+    @Test
+    void turnRuntimeLineFormatsSecondsMinutesAndHours() {
+        assertEquals("0s", TuiRenderState.formatTurnDuration(0L));
+        assertEquals("59s", TuiRenderState.formatTurnDuration(59_000L));
+        assertEquals("1m0s", TuiRenderState.formatTurnDuration(60_000L));
+        assertEquals("59m59s", TuiRenderState.formatTurnDuration(3_599_000L));
+        assertEquals("1h0m0s", TuiRenderState.formatTurnDuration(3_600_000L));
+        assertEquals("2h3m4s", TuiRenderState.formatTurnDuration(7_384_000L));
     }
 
     @Test

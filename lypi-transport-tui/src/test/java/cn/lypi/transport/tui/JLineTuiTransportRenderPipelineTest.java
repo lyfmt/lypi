@@ -19,7 +19,9 @@ import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
@@ -506,6 +508,31 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
+    void idleTickRefreshesWorkingTurnElapsedTime() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        MutableClock clock = new MutableClock(Instant.parse("2026-06-09T00:00:00Z"));
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            80,
+            5,
+            new QueueInputSource(),
+            new RecordingSubmitHandler(),
+            clock
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new TurnStartEvent("ses_1", "turn_1", clock.instant()));
+
+        assertTrue(frames.getLast().contains("· working (0s)"));
+
+        clock.advanceSeconds(2);
+        transport.renderRuntimeTickForTest();
+
+        assertTrue(frames.getLast().contains("· working (2s)"));
+    }
+
+    @Test
     void ctrlCRequestsExitAfterToolEndEvent() throws Exception {
         RecordingEventBus events = new RecordingEventBus();
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
@@ -731,6 +758,33 @@ class JLineTuiTransportRenderPipelineTest {
 
         void triggerInterrupt() {
             interruptCallback.run();
+        }
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant current;
+
+        private MutableClock(Instant current) {
+            this.current = current;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneId.of("UTC");
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return current;
+        }
+
+        void advanceSeconds(long seconds) {
+            current = current.plusSeconds(seconds);
         }
     }
 }
