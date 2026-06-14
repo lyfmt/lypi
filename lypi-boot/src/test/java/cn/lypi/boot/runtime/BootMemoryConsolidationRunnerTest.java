@@ -27,6 +27,9 @@ import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
 import cn.lypi.runtime.memory.MemoryConsolidationRequest;
+import cn.lypi.runtime.memory.MemoryConsolidationAuditRecord;
+import cn.lypi.runtime.memory.MemoryConsolidationAuditSink;
+import cn.lypi.runtime.memory.MemoryConsolidationAuditStage;
 import cn.lypi.session.SessionManagerImpl;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -50,11 +53,13 @@ class BootMemoryConsolidationRunnerTest {
         mainSession.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         RecordingAgentCore core = new RecordingAgentCore(TurnStatus.COMPLETED);
         RecordingAgentCoreFactory factory = new RecordingAgentCoreFactory(core);
+        RecordingAuditSink auditSink = new RecordingAuditSink();
         BootMemoryConsolidationRunner runner = new BootMemoryConsolidationRunner(
             tempDir,
             mainSession,
             factory,
-            new MemoryConsolidationPromptFactory()
+            new MemoryConsolidationPromptFactory(),
+            auditSink
         );
 
         runner.run(new MemoryConsolidationRequest("ses_main", "root"));
@@ -65,6 +70,14 @@ class BootMemoryConsolidationRunnerTest {
         assertThat(core.request.get().parentEntryId()).contains("root");
         assertThat(core.request.get().userInput()).contains("memory-settlement");
         assertThat(factory.forkSessionFile.get()).doesNotExist();
+        assertThat(auditSink.stages()).containsExactly(
+            MemoryConsolidationAuditStage.RUN_STARTED,
+            MemoryConsolidationAuditStage.FORK_CREATED,
+            MemoryConsolidationAuditStage.TURN_COMPLETED,
+            MemoryConsolidationAuditStage.CLEANED
+        );
+        assertThat(auditSink.record(MemoryConsolidationAuditStage.FORK_CREATED).forkSessionId())
+            .isEqualTo(core.request.get().sessionId());
     }
 
     @Test
@@ -74,17 +87,21 @@ class BootMemoryConsolidationRunnerTest {
         mainSession.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         RecordingAgentCore core = new RecordingAgentCore(TurnStatus.FAILED);
         RecordingAgentCoreFactory factory = new RecordingAgentCoreFactory(core);
+        RecordingAuditSink auditSink = new RecordingAuditSink();
         BootMemoryConsolidationRunner runner = new BootMemoryConsolidationRunner(
             tempDir,
             mainSession,
             factory,
-            new MemoryConsolidationPromptFactory()
+            new MemoryConsolidationPromptFactory(),
+            auditSink
         );
 
         runner.run(new MemoryConsolidationRequest("ses_main", "root"));
 
         assertThat(core.executed.get()).isTrue();
         assertThat(factory.forkSessionFile.get()).doesNotExist();
+        assertThat(auditSink.stages()).contains(MemoryConsolidationAuditStage.TURN_COMPLETED);
+        assertThat(auditSink.record(MemoryConsolidationAuditStage.TURN_COMPLETED).reason()).contains("FAILED");
     }
 
     @Test
@@ -93,11 +110,13 @@ class BootMemoryConsolidationRunnerTest {
         mainSession.openOrCreate("ses_main");
         mainSession.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
         FailingOpenSessionManager forkSessionManager = new FailingOpenSessionManager();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
         BootMemoryConsolidationRunner runner = new BootMemoryConsolidationRunner(
             tempDir,
             mainSession,
             new RecordingAgentCoreFactory(new RecordingAgentCore(TurnStatus.COMPLETED)),
             new MemoryConsolidationPromptFactory(),
+            auditSink,
             cwd -> forkSessionManager
         );
 
@@ -106,6 +125,35 @@ class BootMemoryConsolidationRunnerTest {
             .hasMessage("open failed");
 
         assertThat(forkSessionManager.deletedSessionId.get()).startsWith("ses_");
+        assertThat(auditSink.stages()).contains(
+            MemoryConsolidationAuditStage.RUN_STARTED,
+            MemoryConsolidationAuditStage.FORK_CREATED,
+            MemoryConsolidationAuditStage.RUN_FAILED,
+            MemoryConsolidationAuditStage.CLEANED
+        );
+        assertThat(auditSink.record(MemoryConsolidationAuditStage.RUN_FAILED).error()).contains("IllegalStateException");
+    }
+
+    private static final class RecordingAuditSink implements MemoryConsolidationAuditSink {
+        private final List<MemoryConsolidationAuditRecord> records = new ArrayList<>();
+
+        @Override
+        public void record(MemoryConsolidationAuditRecord record) {
+            records.add(record);
+        }
+
+        private List<MemoryConsolidationAuditStage> stages() {
+            return records.stream()
+                .map(MemoryConsolidationAuditRecord::stage)
+                .toList();
+        }
+
+        private MemoryConsolidationAuditRecord record(MemoryConsolidationAuditStage stage) {
+            return records.stream()
+                .filter(record -> record.stage() == stage)
+                .findFirst()
+                .orElseThrow();
+        }
     }
 
     private static final class RecordingAgentCoreFactory implements AgentCoreFactoryPort {

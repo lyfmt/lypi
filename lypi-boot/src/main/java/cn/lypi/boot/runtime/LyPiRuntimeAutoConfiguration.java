@@ -47,6 +47,8 @@ import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.resource.DefaultResourceRuntime;
 import cn.lypi.runtime.event.InMemoryEventBus;
+import cn.lypi.runtime.memory.JsonlMemoryConsolidationAuditSink;
+import cn.lypi.runtime.memory.MemoryConsolidationAuditSink;
 import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
 import cn.lypi.runtime.memory.MemoryConsolidationRunner;
 import cn.lypi.runtime.memory.MemoryConsolidationTrigger;
@@ -366,6 +368,15 @@ public class LyPiRuntimeAutoConfiguration {
     }
 
     /**
+     * 创建后台记忆沉淀审计 sink。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public MemoryConsolidationAuditSink memoryConsolidationAuditSink(LyPiRuntimeProperties properties) {
+        return new JsonlMemoryConsolidationAuditSink(properties.getCwd());
+    }
+
+    /**
      * 创建后台记忆沉淀 executor。
      */
     @Bean(destroyMethod = "shutdown")
@@ -389,7 +400,8 @@ public class LyPiRuntimeAutoConfiguration {
         SessionManagerPort sessionManager,
         AgentCoreFactoryPort agentCoreFactory,
         ToolRuntimeFactoryPort toolRuntimeFactory,
-        MemoryConsolidationPromptFactory promptFactory
+        MemoryConsolidationPromptFactory promptFactory,
+        MemoryConsolidationAuditSink auditSink
     ) {
         return request -> {
             QuietEventBus quietEventBus = new QuietEventBus();
@@ -403,7 +415,8 @@ public class LyPiRuntimeAutoConfiguration {
                         return agentCoreFactory.create(cwd, forkSessionManager, restrictedToolRuntime, quietEventBus);
                     }
                 },
-                promptFactory
+                promptFactory,
+                auditSink
             ).run(request);
         };
     }
@@ -419,9 +432,10 @@ public class LyPiRuntimeAutoConfiguration {
         SessionManagerPort sessionManager,
         MemoryConsolidationTrigger trigger,
         MemoryConsolidationRunner runner,
-        java.util.concurrent.Executor executor
+        java.util.concurrent.Executor executor,
+        MemoryConsolidationAuditSink auditSink
     ) {
-        return new MemoryConsolidationTurnEndListener(eventBus, sessionManager, trigger, runner, executor);
+        return new MemoryConsolidationTurnEndListener(eventBus, sessionManager, trigger, runner, executor, auditSink);
     }
 
     /**

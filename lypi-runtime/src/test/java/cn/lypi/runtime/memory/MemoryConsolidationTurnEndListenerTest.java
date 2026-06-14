@@ -28,6 +28,7 @@ class MemoryConsolidationTurnEndListenerTest {
         InMemoryEventBus eventBus = new InMemoryEventBus();
         MutableSessionManager sessionManager = new MutableSessionManager("ses_main", "leaf-1");
         RecordingRunner runner = new RecordingRunner();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
         Executor inlineExecutor = command -> {
             sessionManager.leafId = "leaf-2";
             command.run();
@@ -37,13 +38,17 @@ class MemoryConsolidationTurnEndListenerTest {
             sessionManager,
             new MemoryConsolidationTrigger(1_200_000L, 30),
             runner,
-            inlineExecutor
+            inlineExecutor,
+            auditSink
         ).start();
 
         eventBus.publish(completedEvent(1_200_000L, 0));
 
         assertThat(runner.requests)
             .containsExactly(new MemoryConsolidationRequest("ses_main", "leaf-1"));
+        assertThat(auditSink.stages())
+            .containsExactly(MemoryConsolidationAuditStage.ELIGIBLE, MemoryConsolidationAuditStage.SUBMITTED);
+        assertThat(auditSink.record(MemoryConsolidationAuditStage.SUBMITTED).forkPointEntryId()).isEqualTo("leaf-1");
     }
 
     @Test
@@ -73,6 +78,24 @@ class MemoryConsolidationTurnEndListenerTest {
     }
 
     @Test
+    void auditsThresholdSkip() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new MutableSessionManager("ses_main", "leaf-1"),
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new RecordingRunner(),
+            Runnable::run,
+            auditSink
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 30));
+
+        assertThat(auditSink.stages()).containsExactly(MemoryConsolidationAuditStage.SKIPPED_THRESHOLD);
+    }
+
+    @Test
     void skipsTurnFromAnotherSession() {
         InMemoryEventBus eventBus = new InMemoryEventBus();
         RecordingRunner runner = new RecordingRunner();
@@ -99,26 +122,83 @@ class MemoryConsolidationTurnEndListenerTest {
     }
 
     @Test
+    void auditsSessionMismatch() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new MutableSessionManager("ses_main", "leaf-1"),
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new RecordingRunner(),
+            Runnable::run,
+            auditSink
+        ).start();
+
+        eventBus.publish(new TurnEndEvent(
+            "ses_other",
+            "turn_1",
+            "COMPLETED",
+            NOW,
+            NOW.plusMillis(1_500_000L),
+            1_500_000L,
+            31,
+            NOW.plusMillis(1_500_000L)
+        ));
+
+        assertThat(auditSink.stages())
+            .containsExactly(MemoryConsolidationAuditStage.ELIGIBLE, MemoryConsolidationAuditStage.SKIPPED_SESSION_MISMATCH);
+    }
+
+    @Test
+    void auditsMissingForkPoint() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new MutableSessionManager("ses_main", ""),
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new RecordingRunner(),
+            Runnable::run,
+            auditSink
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 31));
+
+        assertThat(auditSink.stages())
+            .containsExactly(MemoryConsolidationAuditStage.ELIGIBLE, MemoryConsolidationAuditStage.SKIPPED_NO_FORK_POINT);
+    }
+
+    @Test
     void runnerFailureDoesNotEscapeEventPublish() {
         InMemoryEventBus eventBus = new InMemoryEventBus();
         MemoryConsolidationRunner runner = request -> {
             throw new IllegalStateException("background failure");
         };
+        RecordingAuditSink auditSink = new RecordingAuditSink();
         new MemoryConsolidationTurnEndListener(
             eventBus,
             new MutableSessionManager("ses_main", "leaf-1"),
             new MemoryConsolidationTrigger(1_200_000L, 30),
             runner,
-            Runnable::run
+            Runnable::run,
+            auditSink
         ).start();
 
         eventBus.publish(completedEvent(1_000L, 31));
+
+        assertThat(auditSink.stages()).contains(
+            MemoryConsolidationAuditStage.ELIGIBLE,
+            MemoryConsolidationAuditStage.SUBMITTED,
+            MemoryConsolidationAuditStage.RUNNER_FAILED
+        );
+        assertThat(auditSink.record(MemoryConsolidationAuditStage.RUNNER_FAILED).error()).contains("IllegalStateException");
     }
 
     @Test
     void executorRejectionDoesNotEscapeEventPublish() {
         InMemoryEventBus eventBus = new InMemoryEventBus();
         RecordingRunner runner = new RecordingRunner();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
         new MemoryConsolidationTurnEndListener(
             eventBus,
             new MutableSessionManager("ses_main", "leaf-1"),
@@ -126,12 +206,17 @@ class MemoryConsolidationTurnEndListenerTest {
             runner,
             command -> {
                 throw new java.util.concurrent.RejectedExecutionException("closed");
-            }
+            },
+            auditSink
         ).start();
 
         eventBus.publish(completedEvent(1_000L, 31));
 
         assertThat(runner.requests).isEmpty();
+        assertThat(auditSink.stages()).contains(
+            MemoryConsolidationAuditStage.ELIGIBLE,
+            MemoryConsolidationAuditStage.SUBMIT_REJECTED
+        );
     }
 
     @Test
@@ -164,6 +249,28 @@ class MemoryConsolidationTurnEndListenerTest {
         @Override
         public void run(MemoryConsolidationRequest request) {
             requests.add(request);
+        }
+    }
+
+    private static final class RecordingAuditSink implements MemoryConsolidationAuditSink {
+        private final List<MemoryConsolidationAuditRecord> records = new ArrayList<>();
+
+        @Override
+        public void record(MemoryConsolidationAuditRecord record) {
+            records.add(record);
+        }
+
+        private List<MemoryConsolidationAuditStage> stages() {
+            return records.stream()
+                .map(MemoryConsolidationAuditRecord::stage)
+                .toList();
+        }
+
+        private MemoryConsolidationAuditRecord record(MemoryConsolidationAuditStage stage) {
+            return records.stream()
+                .filter(record -> record.stage() == stage)
+                .findFirst()
+                .orElseThrow();
         }
     }
 
