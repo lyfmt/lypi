@@ -1,6 +1,7 @@
 package cn.lypi.resource;
 
 import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
 import cn.lypi.contracts.prompt.PromptTemplate;
 
 /**

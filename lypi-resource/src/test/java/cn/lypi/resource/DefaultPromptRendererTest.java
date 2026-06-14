@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.PromptTemplateSource;
 import java.util.List;

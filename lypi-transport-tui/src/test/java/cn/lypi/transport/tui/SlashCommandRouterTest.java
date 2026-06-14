@@ -11,6 +11,7 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.PromptTemplateSource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -32,8 +33,6 @@ import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
-import cn.lypi.resource.PromptRenderResult;
-import cn.lypi.resource.PromptRenderer;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -425,8 +424,7 @@ class SlashCommandRouterTest {
             "ses_1",
             Path.of("."),
             session,
-            resourcesWith(reviewTemplate()),
-            new StubPromptRenderer("rendered by renderer")
+            resourcesWithRendered("rendered by renderer", reviewTemplate())
         );
 
         SlashCommandResult result = router.route("/review scope=worktree");
@@ -535,6 +533,28 @@ class SlashCommandRouterTest {
     }
 
     @Test
+    void memoryLintRejectsUnknownNamedArgumentsAndEmptyLayers() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
+
+        SlashCommandResult unknownNamed = router.route("/memory lint foo=bar");
+        SlashCommandResult emptyLayers = router.route("/memory lint --layers=");
+
+        assertTrue(unknownNamed.matched());
+        assertTrue(unknownNamed.consumed());
+        assertTrue(unknownNamed.message().orElseThrow().contains("usage: /memory lint"));
+        assertTrue(emptyLayers.matched());
+        assertTrue(emptyLayers.consumed());
+        assertTrue(emptyLayers.message().orElseThrow().contains("usage: /memory lint"));
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
     void memoryLintRequiresPromptTemplate() {
         RecordingSessionManager session = new RecordingSessionManager(context(
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
@@ -576,6 +596,47 @@ class SlashCommandRouterTest {
             public cn.lypi.contracts.prompt.SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
                 return null;
             }
+
+            @Override
+            public PromptRenderResult renderPrompt(PromptTemplate template, PromptRenderRequest request) {
+                String content = template.templateBody();
+                for (PromptParameter parameter : template.parameters()) {
+                    String value = request.arguments().get(parameter.name());
+                    if (value == null) {
+                        value = parameter.defaultValue().orElse(null);
+                    }
+                    if (value == null && parameter.required()) {
+                        return new PromptRenderResult("", List.of(new cn.lypi.contracts.resource.ResourceDiagnostic(
+                            cn.lypi.contracts.resource.ResourceDiagnosticLevel.WARNING,
+                            "missing required parameter: " + parameter.name(),
+                            Optional.empty()
+                        )));
+                    }
+                    if (value != null) {
+                        content = content.replace("{{" + parameter.name() + "}}", value);
+                    }
+                }
+                return new PromptRenderResult(content, List.of());
+            }
+        };
+    }
+
+    private static ResourceRuntimePort resourcesWithRendered(String rendered, PromptTemplate... templates) {
+        return new ResourceRuntimePort() {
+            @Override
+            public ResourceSnapshot load(Path cwd) {
+                return new ResourceSnapshot(List.of(), List.of(), new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()), List.of(templates), List.of(), List.of());
+            }
+
+            @Override
+            public cn.lypi.contracts.prompt.SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
+                return null;
+            }
+
+            @Override
+            public PromptRenderResult renderPrompt(PromptTemplate template, PromptRenderRequest request) {
+                return new PromptRenderResult(rendered, List.of());
+            }
         };
     }
 
@@ -599,13 +660,6 @@ class SlashCommandRouterTest {
             "Lint {{layers}} with $memory-lint.",
             "sha256:memory-lint"
         );
-    }
-
-    private record StubPromptRenderer(String content) implements PromptRenderer {
-        @Override
-        public PromptRenderResult render(PromptTemplate template, PromptRenderRequest request) {
-            return new PromptRenderResult(content, List.of());
-        }
     }
 
     private static SessionRuntimeState runtimeState(String sessionId, String leafId) {

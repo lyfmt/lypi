@@ -5,6 +5,7 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.CompactionRequest;
@@ -22,9 +23,6 @@ import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SlashCommand;
-import cn.lypi.resource.DefaultPromptRenderer;
-import cn.lypi.resource.PromptRenderResult;
-import cn.lypi.resource.PromptRenderer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -56,7 +54,6 @@ final class SlashCommandRouter {
     private final CompactionRuntimePort compactionRuntime;
     private final NewSessionController newSessionController;
     private final List<SlashCommand> slashCommands;
-    private final PromptRenderer promptRenderer;
 
     SlashCommandRouter(
         String sessionId,
@@ -97,29 +94,6 @@ final class SlashCommandRouter {
         NewSessionController newSessionController,
         List<SlashCommand> slashCommands
     ) {
-        this(sessionId, cwd, sessionManager, resourceRuntime, compactionRuntime, newSessionController, slashCommands, new DefaultPromptRenderer());
-    }
-
-    SlashCommandRouter(
-        String sessionId,
-        Path cwd,
-        SessionManagerPort sessionManager,
-        ResourceRuntimePort resourceRuntime,
-        PromptRenderer promptRenderer
-    ) {
-        this(sessionId, cwd, sessionManager, resourceRuntime, null, null, List.of(), promptRenderer);
-    }
-
-    private SlashCommandRouter(
-        String sessionId,
-        Path cwd,
-        SessionManagerPort sessionManager,
-        ResourceRuntimePort resourceRuntime,
-        CompactionRuntimePort compactionRuntime,
-        NewSessionController newSessionController,
-        List<SlashCommand> slashCommands,
-        PromptRenderer promptRenderer
-    ) {
         this.sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
         this.cwd = cwd == null ? Path.of(".") : cwd;
         this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
@@ -127,7 +101,6 @@ final class SlashCommandRouter {
         this.compactionRuntime = compactionRuntime;
         this.newSessionController = newSessionController;
         this.slashCommands = safeSlashCommands(slashCommands);
-        this.promptRenderer = Objects.requireNonNull(promptRenderer, "promptRenderer must not be null");
     }
 
     SlashCommandRouter(List<SlashCommand> slashCommands) {
@@ -138,7 +111,6 @@ final class SlashCommandRouter {
         this.compactionRuntime = null;
         this.newSessionController = null;
         this.slashCommands = safeSlashCommands(slashCommands);
-        this.promptRenderer = new DefaultPromptRenderer();
     }
 
     SlashCommandResult route(String input) {
@@ -322,7 +294,7 @@ final class SlashCommandRouter {
         if (template.isEmpty()) {
             return SlashCommandResult.error("memory lint: prompt template memory-lint is unavailable");
         }
-        PromptRenderResult rendered = promptRenderer.render(
+        PromptRenderResult rendered = resourceRuntime.renderPrompt(
             template.orElseThrow(),
             new PromptRenderRequest("memory-lint", Map.of("layers", String.join(",", layers)), arguments.commandName())
         );
@@ -335,11 +307,19 @@ final class SlashCommandRouter {
 
     private List<String> memoryLintLayers(SlashCommandArguments arguments) {
         List<String> raw = new ArrayList<>();
+        for (String name : arguments.named().keySet()) {
+            if (!"layers".equals(name) && !"--layers".equals(name)) {
+                throw new IllegalArgumentException(memoryLintUsage());
+            }
+        }
         String namedLayers = arguments.named().get("layers");
         if (namedLayers == null) {
             namedLayers = arguments.named().get("--layers");
         }
-        if (namedLayers != null && !namedLayers.isBlank()) {
+        if (namedLayers != null && namedLayers.isBlank()) {
+            throw new IllegalArgumentException(memoryLintUsage());
+        }
+        if (namedLayers != null) {
             raw.addAll(Arrays.asList(namedLayers.split(",")));
         }
         raw.addAll(arguments.positionals().stream().skip(1).toList());
@@ -376,7 +356,7 @@ final class SlashCommandRouter {
                 return SlashCommandResult.error("missing required parameter: " + parameter.name());
             }
         }
-        PromptRenderResult rendered = promptRenderer.render(
+        PromptRenderResult rendered = resourceRuntime.renderPrompt(
             template,
             new PromptRenderRequest(template.name(), arguments.named(), arguments.commandName())
         );

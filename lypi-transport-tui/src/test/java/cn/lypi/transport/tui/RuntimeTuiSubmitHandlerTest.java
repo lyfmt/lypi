@@ -25,6 +25,8 @@ import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
+import cn.lypi.contracts.prompt.PromptRenderRequest;
+import cn.lypi.contracts.prompt.PromptRenderResult;
 import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.PromptTemplateSource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
@@ -671,6 +673,28 @@ class RuntimeTuiSubmitHandlerTest {
             @Override
             public cn.lypi.contracts.prompt.SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
                 return null;
+            }
+
+            @Override
+            public PromptRenderResult renderPrompt(PromptTemplate template, PromptRenderRequest request) {
+                String content = template.templateBody();
+                for (PromptParameter parameter : template.parameters()) {
+                    String value = request.arguments().get(parameter.name());
+                    if (value == null) {
+                        value = parameter.defaultValue().orElse(null);
+                    }
+                    if (value == null && parameter.required()) {
+                        return new PromptRenderResult("", List.of(new cn.lypi.contracts.resource.ResourceDiagnostic(
+                            cn.lypi.contracts.resource.ResourceDiagnosticLevel.WARNING,
+                            "missing required parameter: " + parameter.name(),
+                            Optional.empty()
+                        )));
+                    }
+                    if (value != null) {
+                        content = content.replace("{{" + parameter.name() + "}}", value);
+                    }
+                }
+                return new PromptRenderResult(content, List.of());
             }
         };
     }

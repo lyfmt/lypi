@@ -1,4 +1,4 @@
-package cn.lypi.resource;
+package cn.lypi.contracts.prompt;
 
 import cn.lypi.contracts.resource.ResourceDiagnostic;
 import java.util.List;
