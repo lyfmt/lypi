@@ -1,7 +1,11 @@
 package cn.lypi.tool.builtin;
 
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.util.Comparator;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,7 +21,7 @@ final class GrepResultFormatter {
     }
 
     private String formatFiles(GrepQuery query, List<String> rawLines, ToolUseContext context) {
-        Page page = page(rawLines, query);
+        Page page = page(sortFiles(rawLines, context), query);
         if (page.items().isEmpty()) {
             return "No files found";
         }
@@ -106,6 +110,31 @@ final class GrepResultFormatter {
             parts.add("offset: " + offset);
         }
         return String.join(", ", parts);
+    }
+
+    private List<String> sortFiles(List<String> rawLines, ToolUseContext context) {
+        List<String> lines = rawLines == null ? List.of() : rawLines;
+        return lines.stream()
+            .sorted(Comparator
+                .comparing((String line) -> lastModified(resolveRawPath(line, context))).reversed()
+                .thenComparing(line -> relativePath(line, context)))
+            .toList();
+    }
+
+    private Path resolveRawPath(String rawPath, ToolUseContext context) {
+        Path path = Path.of(rawPath);
+        if (path.isAbsolute() || context == null) {
+            return path.toAbsolutePath().normalize();
+        }
+        return context.cwd().resolve(path).toAbsolutePath().normalize();
+    }
+
+    private FileTime lastModified(Path path) {
+        try {
+            return Files.getLastModifiedTime(path);
+        } catch (IOException exception) {
+            return FileTime.fromMillis(0);
+        }
     }
 
     private String relativePrefix(String line, ToolUseContext context, boolean lastColon) {

@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,23 @@ class GrepResultFormatterTest {
         String output = formatter.format(query, List.of(first.toString(), second.toString()), context());
 
         assertEquals("Found 2 files\na.java\nb.java", output);
+    }
+
+    @Test
+    void filesWithMatchesSortsByModifiedTimeDescendingThenName() throws Exception {
+        Path older = writeFile("a.java");
+        Path newer = writeFile("b.java");
+        Path sameTimeEarlier = writeFile("c.java");
+        Path sameTimeLater = writeFile("d.java");
+        Files.setLastModifiedTime(older, FileTime.from(Instant.parse("2026-06-14T00:00:00Z")));
+        Files.setLastModifiedTime(newer, FileTime.from(Instant.parse("2026-06-14T00:00:02Z")));
+        Files.setLastModifiedTime(sameTimeEarlier, FileTime.from(Instant.parse("2026-06-14T00:00:01Z")));
+        Files.setLastModifiedTime(sameTimeLater, FileTime.from(Instant.parse("2026-06-14T00:00:01Z")));
+        GrepQuery query = GrepQuery.fromInput(Map.of("pattern", "needle"));
+
+        String output = formatter.format(query, List.of(older.toString(), newer.toString(), sameTimeLater.toString(), sameTimeEarlier.toString()), context());
+
+        assertEquals("Found 4 files\nb.java\nc.java\nd.java\na.java", output);
     }
 
     @Test
@@ -69,7 +88,7 @@ class GrepResultFormatterTest {
         String output = formatter.format(query, files, context());
 
         assertTrue(output.contains("Found 250 files limit: 250"));
-        assertFalse(output.contains("file251.java"));
+        assertEquals(251, output.lines().count());
     }
 
     @Test
@@ -87,7 +106,7 @@ class GrepResultFormatterTest {
 
         String output = formatter.format(query, List.of("one.java", "two.java", "three.java"), context());
 
-        assertEquals("Found 1 file limit: 1, offset: 1\ntwo.java", output);
+        assertEquals("Found 1 file limit: 1, offset: 1\nthree.java", output);
     }
 
     private Path writeFile(String relativePath) throws Exception {
