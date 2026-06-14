@@ -14,7 +14,7 @@ class SlashCommandPickerTest {
         picker.updateFilter("/");
 
         assertEquals(
-            List.of("/model", "/thinking", "/mode", "/permission-mode", "/compact", "/review", "/commit"),
+            List.of("/model", "/thinking", "/plan", "/permission-mode", "/compact", "/review", "/commit"),
             picker.visibleCommands()
         );
     }
@@ -52,17 +52,27 @@ class SlashCommandPickerTest {
     }
 
     @Test
+    void removedModeCommandDoesNotPrefixMatchModelCommand() {
+        SlashCommandPicker picker = new SlashCommandPicker(List.of("/model", "/plan", "/compact"));
+
+        picker.updateFilter("/mode");
+
+        assertEquals(List.of(), picker.visibleCommands());
+        assertTrue(picker.accept().isEmpty());
+    }
+
+    @Test
     void prefixMatchesCommandsAndMovesSelection() {
         SlashCommandPicker picker = SlashCommandPicker.withTemplates(List.of("memory", "review"));
 
         picker.updateFilter("/m");
 
-        assertEquals(List.of("/model", "/mode", "/memory"), picker.visibleCommands());
-        assertEquals("(1/3)", picker.title());
+        assertEquals(List.of("/model", "/memory"), picker.visibleCommands());
+        assertEquals("(1/2)", picker.title());
         picker.moveDown();
-        assertEquals("(2/3)", picker.title());
-        assertEquals("/mode", picker.accept().orElseThrow());
+        assertEquals("(2/2)", picker.title());
+        assertEquals("/memory", picker.accept().orElseThrow());
         picker.moveUp();
-        assertEquals("(1/3)", picker.title());
+        assertEquals("(1/2)", picker.title());
     }
 }

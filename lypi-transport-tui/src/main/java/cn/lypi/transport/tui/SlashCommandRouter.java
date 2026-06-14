@@ -37,12 +37,13 @@ final class SlashCommandRouter {
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{([A-Za-z0-9_.-]+)}}");
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/compact",
-        "/mode",
         "/model",
         "/new",
         "/permission-mode",
+        "/plan",
         "/thinking"
     );
+    private static final List<String> REMOVED_COMMANDS = List.of("/mode");
     private final String sessionId;
     private final Path cwd;
     private final SessionManagerPort sessionManager;
@@ -125,8 +126,8 @@ final class SlashCommandRouter {
         return switch (match.command().orElseThrow()) {
             case "/model" -> routeModel(arguments, input);
             case "/thinking" -> routeThinking(arguments, input);
-            case "/mode" -> routeMode(arguments, input);
             case "/permission-mode" -> routePermissionMode(arguments, input);
+            case "/plan" -> routePlan(arguments, input);
             case "/compact" -> routeCompact(arguments);
             case "/new" -> routeNew(arguments);
             default -> routeExternalOrPromptTemplate(match.command().orElseThrow(), arguments);
@@ -189,6 +190,9 @@ final class SlashCommandRouter {
 
     private CommandMatch matchCommand(String command) {
         String normalized = command.toLowerCase(Locale.ROOT);
+        if (REMOVED_COMMANDS.contains(normalized)) {
+            return CommandMatch.none();
+        }
         List<String> commands = candidateCommands();
         Optional<String> exact = commands.stream()
             .filter(candidate -> candidate.equalsIgnoreCase(normalized))
@@ -401,15 +405,14 @@ final class SlashCommandRouter {
         return SlashCommandResult.stateChangedNotice("thinking: " + level.name());
     }
 
-    private SlashCommandResult routeMode(SlashCommandArguments arguments, String reason) {
-        if (arguments.positionals().size() != 1) {
-            return SlashCommandResult.error("usage: /mode <plan|execute>");
+    private SlashCommandResult routePlan(SlashCommandArguments arguments, String reason) {
+        if (!arguments.positionals().isEmpty() || !arguments.named().isEmpty()) {
+            return SlashCommandResult.error("usage: /plan");
         }
-        AgentMode mode = parseEnum(AgentMode.class, arguments.positionals().getFirst());
-        if (mode == null) {
-            return SlashCommandResult.error("unknown agent mode: " + arguments.positionals().getFirst());
-        }
-        append(new ModeChangeEntry(newEntryId(), currentLeafId(), mode, reason, Instant.now()));
+        String leafId = currentLeafId();
+        SessionContext context = currentContext(leafId);
+        AgentMode mode = context.mode() == AgentMode.PLAN ? AgentMode.EXECUTE : AgentMode.PLAN;
+        append(new ModeChangeEntry(newEntryId(), leafId, mode, reason, Instant.now()));
         return SlashCommandResult.stateChangedNotice("mode: " + mode.name());
     }
 

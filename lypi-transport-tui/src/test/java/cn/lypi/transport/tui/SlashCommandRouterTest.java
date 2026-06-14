@@ -73,7 +73,7 @@ class SlashCommandRouterTest {
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
-        router.route("/mode plan");
+        router.route("/plan");
         router.route("/permission-mode accept-edits");
         router.route("/model anthropic/claude-sonnet-4");
 
@@ -83,6 +83,27 @@ class SlashCommandRouterTest {
         assertEquals(AgentMode.PLAN, mode.agentMode());
         assertEquals(PermissionMode.ACCEPT_EDITS, permission.permissionMode());
         assertEquals(new ModelSelection("anthropic", "claude-sonnet-4", ThinkingLevel.LOW), model.model());
+    }
+
+    @Test
+    void planCommandTogglesPlanBackToExecute() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.PLAN,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
+
+        SlashCommandResult result = router.route("/plan");
+
+        assertTrue(result.matched());
+        assertTrue(result.consumed());
+        assertEquals("mode: EXECUTE", result.notice().orElseThrow());
+        ModeChangeEntry mode = assertInstanceOf(ModeChangeEntry.class, session.entries.getFirst());
+        assertEquals("root", mode.parentId());
+        assertEquals(AgentMode.EXECUTE, mode.agentMode());
+        assertEquals("/plan", mode.reason());
     }
 
     @Test
@@ -129,10 +150,10 @@ class SlashCommandRouterTest {
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
-        SlashCommandResult modeResult = router.route("/mode");
+        SlashCommandResult modeResult = router.route("/plan execute");
         SlashCommandResult permissionModeResult = router.route("/permission-mode");
 
-        assertEquals("usage: /mode <plan|execute>", modeResult.message().orElseThrow());
+        assertEquals("usage: /plan", modeResult.message().orElseThrow());
         assertEquals(
             "usage: /permission-mode <default-execute|accept-edits|bypass>",
             permissionModeResult.message().orElseThrow()
@@ -188,6 +209,23 @@ class SlashCommandRouterTest {
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
         SlashCommandResult result = router.route("/unknown text");
+
+        assertFalse(result.matched());
+        assertFalse(result.consumed());
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void removedModeCommandDoesNotPrefixMatchModelCommand() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
+
+        SlashCommandResult result = router.route("/mode");
 
         assertFalse(result.matched());
         assertFalse(result.consumed());
