@@ -651,6 +651,7 @@ class ContractSerializationTest {
             startedAt,
             endedAt,
             3000L,
+            31,
             endedAt
         );
 
@@ -663,6 +664,7 @@ class ContractSerializationTest {
         assertEquals(startedAt, end.startedAt());
         assertEquals(endedAt, end.endedAt());
         assertEquals(3000L, end.durationMillis());
+        assertEquals(31, end.toolRounds());
         assertEquals(end.endedAt(), end.timestamp());
     }
 

@@ -48,6 +48,20 @@ final class JsonlSessionStore {
     }
 
     /**
+     * 删除指定 session 的 JSONL 文件。
+     *
+     * NOTE: 删除不存在的 session 是幂等 no-op。
+     */
+    void delete(String sessionId) {
+        Path file = sessionFile(sessionId);
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            throw new SessionEngineException("Failed to delete session file: " + file, e);
+        }
+    }
+
+    /**
      * 创建新的 session 文件并写入 header。
      */
     void create(SessionHeader header) {

@@ -47,6 +47,13 @@ import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.resource.DefaultResourceRuntime;
 import cn.lypi.runtime.event.InMemoryEventBus;
+import cn.lypi.runtime.memory.JsonlMemoryConsolidationAuditSink;
+import cn.lypi.runtime.memory.MemoryConsolidationAuditSink;
+import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
+import cn.lypi.runtime.memory.MemoryConsolidationRunner;
+import cn.lypi.runtime.memory.MemoryConsolidationTrigger;
+import cn.lypi.runtime.memory.MemoryConsolidationTurnEndListener;
+import cn.lypi.runtime.memory.QuietEventBus;
 import cn.lypi.runtime.subagent.ChildAgentSnapshot;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.DefaultAgentCenter;
@@ -75,6 +82,8 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -279,11 +288,30 @@ public class LyPiRuntimeAutoConfiguration {
 
             @Override
             public AgentCorePort create(Path cwd, SessionManagerPort sessionManager, SubagentToolPolicy toolPolicy) {
-                AiProviderRuntimePort resolvedAiProvider = aiProvider.getObject();
                 ToolRuntimeFactoryPort resolvedToolRuntimeFactory = toolRuntimeFactory.getIfAvailable();
                 ToolRuntimePort resolvedToolRuntime = resolvedToolRuntimeFactory == null
                     ? toolRuntime.getObject()
                     : resolvedToolRuntimeFactory.create(cwd, toolPolicy);
+                return createWithPorts(cwd, sessionManager, resolvedToolRuntime, eventBus);
+            }
+
+            @Override
+            public AgentCorePort create(
+                Path cwd,
+                SessionManagerPort sessionManager,
+                ToolRuntimePort toolRuntime,
+                EventBus eventBus
+            ) {
+                return createWithPorts(cwd, sessionManager, toolRuntime, eventBus);
+            }
+
+            private AgentCorePort createWithPorts(
+                Path cwd,
+                SessionManagerPort sessionManager,
+                ToolRuntimePort resolvedToolRuntime,
+                EventBus resolvedEventBus
+            ) {
+                AiProviderRuntimePort resolvedAiProvider = aiProvider.getObject();
                 SecurityRuntimePort resolvedSecurityRuntime = securityRuntime.getObject();
                 ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getObject();
                 CompactionSummarizer resolvedCompactionSummarizer = compactionSummarizer.getObject();
@@ -295,7 +323,7 @@ public class LyPiRuntimeAutoConfiguration {
                 DefaultCompactionCoordinator compactionCoordinator = new DefaultCompactionCoordinator(
                     sessionManager,
                     assembler,
-                    eventBus,
+                    resolvedEventBus,
                     new DefaultCompactionPlanner(),
                     resolvedCompactionSummarizer,
                     clock
@@ -308,7 +336,7 @@ public class LyPiRuntimeAutoConfiguration {
                         resolvedToolRuntime,
                         resolvedSecurityRuntime,
                         resolvedResourceRuntime,
-                        eventBus,
+                        resolvedEventBus,
                         assembler,
                         null,
                         compactionCoordinator,
@@ -319,6 +347,95 @@ public class LyPiRuntimeAutoConfiguration {
                 );
             }
         };
+    }
+
+    /**
+     * 创建后台记忆沉淀触发器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public MemoryConsolidationTrigger memoryConsolidationTrigger() {
+        return new MemoryConsolidationTrigger();
+    }
+
+    /**
+     * 创建后台记忆沉淀 prompt factory。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public MemoryConsolidationPromptFactory memoryConsolidationPromptFactory() {
+        return new MemoryConsolidationPromptFactory();
+    }
+
+    /**
+     * 创建后台记忆沉淀审计 sink。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public MemoryConsolidationAuditSink memoryConsolidationAuditSink(LyPiRuntimeProperties properties) {
+        return new JsonlMemoryConsolidationAuditSink(properties.getCwd());
+    }
+
+    /**
+     * 创建后台记忆沉淀 executor。
+     */
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnMissingBean(name = "memoryConsolidationExecutor")
+    public ExecutorService memoryConsolidationExecutor() {
+        return Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "lypi-memory-consolidation");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    /**
+     * 创建后台记忆沉淀 runner。
+     */
+    @Bean
+    @ConditionalOnMissingBean(MemoryConsolidationRunner.class)
+    @ConditionalOnBean({AgentCoreFactoryPort.class, ToolRuntimeFactoryPort.class})
+    public MemoryConsolidationRunner memoryConsolidationRunner(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        AgentCoreFactoryPort agentCoreFactory,
+        ToolRuntimeFactoryPort toolRuntimeFactory,
+        MemoryConsolidationPromptFactory promptFactory,
+        MemoryConsolidationAuditSink auditSink
+    ) {
+        return request -> {
+            QuietEventBus quietEventBus = new QuietEventBus();
+            ToolRuntimePort restrictedToolRuntime = toolRuntimeFactory.createMemoryConsolidation(properties.getCwd(), quietEventBus);
+            new BootMemoryConsolidationRunner(
+                properties.getCwd(),
+                sessionManager,
+                new AgentCoreFactoryPort() {
+                    @Override
+                    public AgentCorePort create(Path cwd, SessionManagerPort forkSessionManager) {
+                        return agentCoreFactory.create(cwd, forkSessionManager, restrictedToolRuntime, quietEventBus);
+                    }
+                },
+                promptFactory,
+                auditSink
+            ).run(request);
+        };
+    }
+
+    /**
+     * 创建 turn end 后台记忆沉淀监听器。
+     */
+    @Bean(initMethod = "start", destroyMethod = "close")
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(MemoryConsolidationRunner.class)
+    public MemoryConsolidationTurnEndListener memoryConsolidationTurnEndListener(
+        EventBus eventBus,
+        SessionManagerPort sessionManager,
+        MemoryConsolidationTrigger trigger,
+        MemoryConsolidationRunner runner,
+        java.util.concurrent.Executor executor,
+        MemoryConsolidationAuditSink auditSink
+    ) {
+        return new MemoryConsolidationTurnEndListener(eventBus, sessionManager, trigger, runner, executor, auditSink);
     }
 
     /**

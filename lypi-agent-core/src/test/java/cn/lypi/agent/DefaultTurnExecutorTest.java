@@ -752,6 +752,7 @@ class DefaultTurnExecutorTest {
 
         assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
         assertThat(state.currentToolRound()).isEqualTo(2);
+        assertThat(((TurnEndEvent) eventBus.events.getLast()).toolRounds()).isEqualTo(2);
         assertThat(tools.requests).hasSize(2);
         assertThat(session.messages()).extracting(AgentMessage::id)
             .containsExactly(

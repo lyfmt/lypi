@@ -511,6 +511,18 @@ class LyPiToolAutoConfigurationTest {
             });
     }
 
+    @Test
+    void memoryConsolidationToolRuntimeDefaultFailsFastWhenFactoryDoesNotSupportIt() {
+        ToolRuntimeFactoryPort factory = cwd -> {
+            throw new AssertionError("ordinary factory must not be used");
+        };
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+            UnsupportedOperationException.class,
+            () -> factory.createMemoryConsolidation(Path.of("."), new RecordingEventBus())
+        );
+    }
+
     private static PermissionDecision allowAllSecurity(ToolUseRequest request, ToolUseContext context) {
         return new PermissionDecision(
             PermissionBehavior.ALLOW,

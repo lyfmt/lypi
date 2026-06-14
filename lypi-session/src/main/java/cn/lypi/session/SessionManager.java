@@ -107,4 +107,12 @@ public interface SessionManager extends SessionManagerPort {
      */
     @Override
     SessionHandle fork(ForkRequest request);
+
+    /**
+     * 删除指定 session 的 JSONL 文件。
+     *
+     * NOTE: 仅用于清理临时 fork session，不删除目录或其他 session 文件。
+     */
+    @Override
+    void deleteSession(String sessionId);
 }

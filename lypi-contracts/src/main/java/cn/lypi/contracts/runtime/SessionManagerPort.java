@@ -94,4 +94,13 @@ public interface SessionManagerPort {
      * 从指定历史节点复制线性分支到新 session，并记录父 session 来源。
      */
     SessionHandle fork(ForkRequest request);
+
+    /**
+     * 删除指定 session 的持久化文件。
+     *
+     * NOTE: 该方法用于清理临时后台 fork session；实现不得删除目录或其他 session 文件。
+     */
+    default void deleteSession(String sessionId) {
+        throw new UnsupportedOperationException("session deletion is not supported");
+    }
 }
