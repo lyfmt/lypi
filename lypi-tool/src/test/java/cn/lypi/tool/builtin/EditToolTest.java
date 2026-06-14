@@ -57,13 +57,13 @@ class EditToolTest {
     }
 
     @Test
-    void editIsDestructiveAndRequiresAsk() throws Exception {
+    void editIsDestructiveAndAllowsByDefaultAtToolLevel() throws Exception {
         Files.writeString(tempDir.resolve("a.txt"), "old");
         EditTool tool = new EditTool();
         Map<String, Object> input = Map.of("path", "a.txt", "oldString", "old", "newString", "new");
 
         assertTrue(tool.isDestructive(input));
-        assertEquals(PermissionBehavior.ASK, tool.checkPermissions(input, context()).behavior());
+        assertEquals(PermissionBehavior.ALLOW, tool.checkPermissions(input, context()).behavior());
         assertFalse(tool.isReadOnly(input));
         assertFalse(tool.isConcurrencySafe(input));
     }
