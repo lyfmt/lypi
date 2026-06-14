@@ -79,8 +79,10 @@ final class MemoryPromptSection implements SystemPromptSection {
         content.append("  - L1 允许比 L0 详细，但仍应压缩为规则、偏好、反例或纠错结论，不写会话流水。\n");
         content.append("- L2 `<cwd>/.ly-pi/memory.md` 或项目根 `MEMORY.md`\n");
         content.append("  - L2 是项目方向层，记录当前项目的项目目标、边界、设计方向、用户纠错、准则级事实和 L3 skill 索引。\n");
-        content.append("  - L2 用于回答：这个项目往哪里走、哪些原则不能忘、具体知识该去哪个 L3 skill 看。\n");
+        content.append("  - L2 用于回答：这个项目往哪里走、哪些原则不能忘、已经沉淀了哪些 L3 级项目知识。\n");
+        content.append("  - L2 只保留最简 L3 skill 索引：skill 名称、触发场景和一句话用途。\n");
         content.append("  - 只有当信息绑定当前项目，且会影响未来开发判断时，才写入 L2。\n");
+        content.append("  - L2 不写 L3 正文摘要、步骤清单、排障细节或实现细节；具体知识必须写入对应 L3 `SKILL.md`。\n");
         content.append("  - L2 不堆放模块细节、排障步骤、实现细节或具体操作流程；这些内容应下沉到 L3。\n");
         content.append("  - L2 不需要写入 L0 指针；它由固定路径自动发现，按项目场景主动读取。\n");
         content.append("- L3 `<cwd>/.ly-pi/skills/*`\n");
@@ -88,6 +90,7 @@ final class MemoryPromptSection implements SystemPromptSection {
         content.append("  - L3 用于回答：遇到这个模块、问题或流程时，具体怎么做。\n");
         content.append("  - 当 L2 出现具体模块知识或操作流程时，下沉到 L3；当某个项目知识需要多次调用时，也应沉淀为 L3 skill。\n");
         content.append("  - L3 更新必须保持可执行：说明触发场景、前置条件、处理步骤、验证方式和常见失败点。\n");
+        content.append("  - 新增、删除、重命名或更新 L3 `SKILL.md` 的用途、触发场景时，必须同步更新对应 L2 的最简 skill 索引。\n");
         content.append("  - 修改 skill 后，如果它的用途或触发场景变化，应同步 skill 描述或索引信息；不要只改正文导致发现失败。\n\n");
         content.append("### Layering Discipline\n");
         content.append("- 上层只留最小充分指针，下层才放内容。\n");

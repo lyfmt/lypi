@@ -93,9 +93,16 @@ class DefaultSystemPromptBuilderTest {
         assertThat(prompt.content()).contains("新增、删除、重命名 L1 文件时，必须同步更新 L0 指针");
         assertThat(prompt.content()).contains("L2 是项目方向层");
         assertThat(prompt.content()).contains("项目目标、边界、设计方向、用户纠错、准则级事实和 L3 skill 索引");
+        assertThat(prompt.content()).contains("已经沉淀了哪些 L3 级项目知识");
+        assertThat(prompt.content()).contains("L2 只保留最简 L3 skill 索引");
+        assertThat(prompt.content()).contains("skill 名称、触发场景和一句话用途");
+        assertThat(prompt.content()).contains("L2 不写 L3 正文摘要、步骤清单、排障细节或实现细节");
+        assertThat(prompt.content()).contains("具体知识必须写入对应 L3 `SKILL.md`");
         assertThat(prompt.content()).contains("L2 不需要写入 L0 指针");
         assertThat(prompt.content()).contains("L3 是项目具体知识和处理技巧层");
         assertThat(prompt.content()).contains("模块知识、处理流程、排障技巧、实现取舍和验证方式");
+        assertThat(prompt.content()).contains("新增、删除、重命名或更新 L3 `SKILL.md` 的用途、触发场景时");
+        assertThat(prompt.content()).contains("必须同步更新对应 L2 的最简 skill 索引");
         assertThat(prompt.content()).doesNotContain("应迁移或整理到 AGENTS.md");
         assertThat(prompt.content()).contains("L2 出现具体模块知识或操作流程时，下沉到 L3");
         assertThat(prompt.content()).contains("L0 变长时，下沉到 L1");
