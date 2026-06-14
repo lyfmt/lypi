@@ -4,10 +4,6 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
-import cn.lypi.contracts.security.PermissionBehavior;
-import cn.lypi.contracts.security.PermissionDecision;
-import cn.lypi.contracts.security.PermissionDecisionReason;
-import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.io.IOException;
@@ -15,7 +11,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 public final class EditTool extends AbstractFileTool {
     @Override
@@ -48,17 +43,6 @@ public final class EditTool extends AbstractFileTool {
             return new ValidationResult(false, List.of("oldString 与 newString 不能相同。"));
         }
         return new ValidationResult(true, List.of());
-    }
-
-    @Override
-    public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
-        return new PermissionDecision(
-            PermissionBehavior.ASK,
-            PermissionDecisionReason.TOOL_SPECIFIC,
-            "编辑文件需要确认。",
-            Optional.<PermissionUpdate>empty(),
-            Map.of("tool", name(), "path", input.getOrDefault("path", "").toString())
-        );
     }
 
     @Override
