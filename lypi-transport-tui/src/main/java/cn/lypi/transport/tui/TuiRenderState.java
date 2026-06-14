@@ -260,6 +260,17 @@ final class TuiRenderState {
         statusBar = withMode("running");
     }
 
+    boolean hasActiveTurn() {
+        return activeTurnId != null && !activeTurnId.isBlank();
+    }
+
+    void observeTurnAt(Instant observedAt) {
+        if (!hasActiveTurn() || observedAt == null) {
+            return;
+        }
+        lastTurnObservedAt = observedAt;
+    }
+
     void turnEnded(long durationMillis) {
         activeTurnId = "";
         activeTurnStartedAt = null;

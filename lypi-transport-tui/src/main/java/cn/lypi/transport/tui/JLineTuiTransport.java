@@ -20,6 +20,8 @@ import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -30,6 +32,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private static final int DEFAULT_TERMINAL_HEIGHT = 24;
     private static final int MAX_INPUT_CHUNKS_PER_DRAIN = 32;
     private static final int MAX_DIFF_PATCH_BYTES = 64 * 1024;
+    private static final long RUNTIME_TICK_INTERVAL_MILLIS = 1_000L;
     private static final DiffViewProvider NOOP_DIFF_VIEW_PROVIDER = (cwd, maxPatchBytes) -> Optional.empty();
 
     private final Object uiMonitor = new Object();
@@ -43,12 +46,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final TuiInputLoop inputLoop;
     private final TerminalSession terminalSession;
     private final DiffViewProvider diffViewProvider;
+    private final Clock clock;
     private SessionRuntimeState runtimeState;
     private String lastDiffSnapshotHash;
     private EventSubscription subscription;
     private EventBus attachedEvents;
     private boolean lastRenderHeldUiLock;
     private int uiLockEntries;
+    private Instant nextRuntimeTickAt;
 
     public JLineTuiTransport(Runnable renderer) {
         this.renderer = renderer;
@@ -61,6 +66,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputLoop = null;
         this.terminalSession = null;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
+        this.clock = Clock.systemUTC();
         this.runtimeState = null;
     }
 
@@ -81,6 +87,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputLoop = null;
         this.terminalSession = terminalSession;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
+        this.clock = Clock.systemUTC();
         this.runtimeState = null;
     }
 
@@ -96,6 +103,36 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
         Supplier<SkillIndex> skillIndexSupplier
+    ) {
+        this(
+            frameSink,
+            width,
+            height,
+            state,
+            inputSource,
+            submitHandler,
+            terminalSession,
+            slashPickerSupplier,
+            diffViewProvider,
+            resumeController,
+            skillIndexSupplier,
+            Clock.systemUTC()
+        );
+    }
+
+    private JLineTuiTransport(
+        FrameSink frameSink,
+        int width,
+        int height,
+        SessionRuntimeState state,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        TerminalSession terminalSession,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
+        Supplier<SkillIndex> skillIndexSupplier,
+        Clock clock
     ) {
         this.renderer = null;
         this.reducer = TuiEventReducer.fromRuntimeState(state);
@@ -120,6 +157,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
         this.terminalSession = terminalSession;
         this.diffViewProvider = diffViewProvider == null ? NOOP_DIFF_VIEW_PROVIDER : diffViewProvider;
+        this.clock = clock == null ? Clock.systemUTC() : clock;
         this.runtimeState = state;
     }
 
@@ -534,6 +572,30 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         );
     }
 
+    static JLineTuiTransport withInput(
+        FrameSink frameSink,
+        int width,
+        int height,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        Clock clock
+    ) {
+        return new JLineTuiTransport(
+            frameSink,
+            width,
+            height,
+            null,
+            inputSource,
+            submitHandler,
+            null,
+            null,
+            NOOP_DIFF_VIEW_PROVIDER,
+            null,
+            null,
+            clock
+        );
+    }
+
     static JLineTuiTransport open(
         SessionRuntimeState state,
         EventBus events,
@@ -684,6 +746,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         while (!exitRequested() && !Thread.currentThread().isInterrupted()) {
             drainInput();
             if (!exitRequested()) {
+                renderRuntimeTickIfDue();
                 sleepAfterEmptyPoll();
             }
         }
@@ -758,6 +821,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
 
     void drainInputForTest() throws IOException {
         drainInput();
+    }
+
+    void renderRuntimeTickForTest() {
+        renderRuntimeTick();
     }
 
     int uiLockEntryCountForTest() {
@@ -863,9 +930,38 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     }
 
     private void renderCurrentFrame() {
+        reducer.observeRuntimeAt(clock.instant());
         TuiViewModel view = reducer.view();
         syncInputLoopToolState(view);
         frameSink.render(tuiRenderer.renderFrame(view, screen, layout, currentDraft(), currentCursor()));
+    }
+
+    private void renderRuntimeTickIfDue() {
+        if (reducer == null || !reducer.hasActiveTurn()) {
+            nextRuntimeTickAt = null;
+            return;
+        }
+        Instant now = clock.instant();
+        if (nextRuntimeTickAt == null) {
+            nextRuntimeTickAt = now.plusMillis(RUNTIME_TICK_INTERVAL_MILLIS);
+            return;
+        }
+        if (now.isBefore(nextRuntimeTickAt)) {
+            return;
+        }
+        renderRuntimeTick();
+    }
+
+    private void renderRuntimeTick() {
+        synchronized (uiMonitor) {
+            if (reducer == null || !reducer.hasActiveTurn()) {
+                nextRuntimeTickAt = null;
+                return;
+            }
+            uiLockEntries++;
+            renderCurrentFrame();
+            nextRuntimeTickAt = clock.instant().plusMillis(RUNTIME_TICK_INTERVAL_MILLIS);
+        }
     }
 
     private void refreshDiffAfterToolEnd(AgentEvent event) {
