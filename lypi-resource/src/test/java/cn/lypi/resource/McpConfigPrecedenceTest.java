@@ -29,7 +29,7 @@ class McpConfigPrecedenceTest {
 
         assertThat(servers).singleElement().satisfies(server -> {
             assertThat(server.name()).isEqualTo("filesystem");
-            assertThat(server.command()).containsExactly("node", "project.js");
+            assertThat(server.stdio().command()).containsExactly("node", "project.js");
         });
         assertThat(diagnostics).anySatisfy(diagnostic -> assertThat(diagnostic.message()).contains("mcp server override").contains("filesystem"));
     }
@@ -58,8 +58,9 @@ class McpConfigPrecedenceTest {
 
         assertThat(servers).singleElement().satisfies(server -> {
             assertThat(server.name()).isEqualTo("filesystem");
-            assertThat(server.command()).containsExactly("npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp");
-            assertThat(server.env()).containsEntry("ROOT", "/tmp");
+            assertThat(server.stdio().command()).containsExactly("npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp");
+            assertThat(server.stdio().env()).containsEntry("ROOT", "/tmp");
+            assertThat(server.http()).isNull();
         });
         assertThat(diagnostics).isEmpty();
     }
