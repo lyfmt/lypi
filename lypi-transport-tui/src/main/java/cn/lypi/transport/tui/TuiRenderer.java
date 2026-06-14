@@ -132,7 +132,7 @@ final class TuiRenderer {
                 List<String> thinkingLines = prefixedLines("thinking: ", content, width);
                 appendWithinBudget(
                     lines,
-                    styledLines(limitLines(thinkingLines, THINKING_VISIBLE_LINE_LIMIT), THINKING_MESSAGE),
+                    styledLines(compressedThinkingLines(thinkingLines), THINKING_MESSAGE),
                     lineBudget
                 );
             } else {
@@ -213,6 +213,16 @@ final class TuiRenderer {
 
     private List<String> limitLines(List<String> lines, int limit) {
         return lines.subList(0, Math.min(limit, lines.size()));
+    }
+
+    private List<String> compressedThinkingLines(List<String> lines) {
+        if (lines.size() <= THINKING_VISIBLE_LINE_LIMIT) {
+            return lines;
+        }
+        List<String> compressed = new ArrayList<>(limitLines(lines, THINKING_VISIBLE_LINE_LIMIT));
+        int hiddenLineCount = lines.size() - THINKING_VISIBLE_LINE_LIMIT;
+        compressed.add(" ".repeat(AnsiWidth.displayWidth("thinking: ")) + "... 已折叠 " + hiddenLineCount + " 行");
+        return compressed;
     }
 
     private List<String> prefixedLines(String prefix, String content, int width) {

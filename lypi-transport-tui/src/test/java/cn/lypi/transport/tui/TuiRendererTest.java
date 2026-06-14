@@ -182,11 +182,11 @@ class TuiRendererTest {
     }
 
     @Test
-    void compressesThinkingDisplayToThreeLines() {
+    void compressesThinkingDisplayAndShowsHiddenLineCount() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(4);
         TuiViewModel view = new TuiViewModel(
-            List.of(new TuiThinkingBlock("t1", "m1", "第一行\n第二行\n第三行\n第四行", false, false)),
+            List.of(new TuiThinkingBlock("t1", "m1", "第一行\n第二行\n第三行\n第四行\n第五行", false, false)),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
@@ -198,7 +198,9 @@ class TuiRendererTest {
         assertEquals("\033[38;5;244mthinking: 第一行\033[0m", lines.get(0));
         assertEquals("\033[38;5;244m          第二行\033[0m", lines.get(1));
         assertEquals("\033[38;5;244m          第三行\033[0m", lines.get(2));
+        assertEquals("\033[38;5;244m          ... 已折叠 2 行\033[0m", lines.get(3));
         assertFalse(lines.stream().anyMatch(line -> line.contains("第四行")));
+        assertFalse(lines.stream().anyMatch(line -> line.contains("第五行")));
     }
 
     @Test
