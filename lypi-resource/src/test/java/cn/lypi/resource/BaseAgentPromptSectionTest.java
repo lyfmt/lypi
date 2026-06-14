@@ -19,8 +19,14 @@ class BaseAgentPromptSectionTest {
             "## Editing Constraints",
             "Treat dirty worktrees as shared state",
             "Never use destructive commands",
+            "## Context Discipline",
+            "When taking over an existing project or resuming unfamiliar work",
+            "Do not invent project details",
+            "If relevant context is missing, gather it with read-only tools before editing",
             "## Workflow",
             "Do not claim success without verification evidence",
+            "If verification cannot be run, say exactly what was not run and why",
+            "Include blockers or residual risk only when they affect the user's next step",
             "## Final Response"
         );
         assertThat(content.toString()).doesNotContain("Codex CLI", "apply_patch", "frontend", "rg", "ripgrep");
