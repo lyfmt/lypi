@@ -17,6 +17,8 @@ final class RipgrepCommandBuilder {
         args.add("!target");
         args.add("--glob");
         args.add("!.lypi/sessions/**");
+        args.add("--glob");
+        args.add("!.lypi/cache/**");
         args.add("--max-columns");
         args.add("500");
         if (query.multiline()) {

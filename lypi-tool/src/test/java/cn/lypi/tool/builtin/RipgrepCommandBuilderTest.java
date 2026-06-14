@@ -26,6 +26,7 @@ class RipgrepCommandBuilderTest {
             "--glob", "!.sl",
             "--glob", "!target",
             "--glob", "!.lypi/sessions/**",
+            "--glob", "!.lypi/cache/**",
             "--max-columns", "500",
             "-l",
             "needle"
@@ -46,6 +47,7 @@ class RipgrepCommandBuilderTest {
             "--glob", "!.sl",
             "--glob", "!target",
             "--glob", "!.lypi/sessions/**",
+            "--glob", "!.lypi/cache/**",
             "--max-columns", "500",
             "-n",
             "needle"
@@ -75,6 +77,7 @@ class RipgrepCommandBuilderTest {
             "--glob", "!.sl",
             "--glob", "!target",
             "--glob", "!.lypi/sessions/**",
+            "--glob", "!.lypi/cache/**",
             "--max-columns", "500",
             "-n",
             "-C", "3",
@@ -98,6 +101,7 @@ class RipgrepCommandBuilderTest {
             "--glob", "!.sl",
             "--glob", "!target",
             "--glob", "!.lypi/sessions/**",
+            "--glob", "!.lypi/cache/**",
             "--max-columns", "500",
             "-l",
             "-e", "-needle"
@@ -123,6 +127,7 @@ class RipgrepCommandBuilderTest {
             "--glob", "!.sl",
             "--glob", "!target",
             "--glob", "!.lypi/sessions/**",
+            "--glob", "!.lypi/cache/**",
             "--max-columns", "500",
             "-l",
             "needle",
@@ -153,6 +158,7 @@ class RipgrepCommandBuilderTest {
             "--glob", "!.sl",
             "--glob", "!target",
             "--glob", "!.lypi/sessions/**",
+            "--glob", "!.lypi/cache/**",
             "--max-columns", "500",
             "-U",
             "--multiline-dotall",
