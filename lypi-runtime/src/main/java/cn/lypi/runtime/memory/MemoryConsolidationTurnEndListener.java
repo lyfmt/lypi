@@ -53,6 +53,9 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
             return;
         }
         SessionView view = sessionManager.currentView();
+        if (!event.sessionId().equals(view.sessionId())) {
+            return;
+        }
         String forkPointEntryId = view.leafId();
         if (forkPointEntryId == null || forkPointEntryId.isBlank()) {
             return;

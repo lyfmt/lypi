@@ -73,6 +73,32 @@ class MemoryConsolidationTurnEndListenerTest {
     }
 
     @Test
+    void skipsTurnFromAnotherSession() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingRunner runner = new RecordingRunner();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new MutableSessionManager("ses_main", "leaf-1"),
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            runner,
+            Runnable::run
+        ).start();
+
+        eventBus.publish(new TurnEndEvent(
+            "ses_other",
+            "turn_1",
+            "COMPLETED",
+            NOW,
+            NOW.plusMillis(1_500_000L),
+            1_500_000L,
+            31,
+            NOW.plusMillis(1_500_000L)
+        ));
+
+        assertThat(runner.requests).isEmpty();
+    }
+
+    @Test
     void runnerFailureDoesNotEscapeEventPublish() {
         InMemoryEventBus eventBus = new InMemoryEventBus();
         MemoryConsolidationRunner runner = request -> {

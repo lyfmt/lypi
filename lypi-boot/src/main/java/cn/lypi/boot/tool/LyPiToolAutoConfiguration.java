@@ -14,6 +14,8 @@ import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.EventPublishingPermissionGate;
 import cn.lypi.tool.FilePermissionUpdateStore;
 import cn.lypi.tool.FilteredToolRuntime;
+import cn.lypi.tool.MemoryConsolidationToolRuntime;
+import cn.lypi.tool.MemoryConsolidationWritePolicy;
 import cn.lypi.tool.PermissionGate;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.PermissionResponseGate;
@@ -122,13 +124,32 @@ public class LyPiToolAutoConfiguration {
                 return toolPolicy == null ? runtime : new FilteredToolRuntime(runtime, toolPolicy);
             }
 
+            @Override
+            public ToolRuntimePort createMemoryConsolidation(Path cwd, EventBus eventBus) {
+                Path runtimeCwd = cwd == null ? Path.of(configuredCwd) : cwd;
+                ToolRuntimePort runtime = createRuntime(runtimeCwd, eventBus, denyResponseGate(), null);
+                return new MemoryConsolidationToolRuntime(
+                    runtime,
+                    new MemoryConsolidationWritePolicy(runtimeCwd)
+                );
+            }
+
             private ToolRuntimePort createRuntime(Path cwd) {
+                return createRuntime(cwd, resolvedEventBus, responseGate.getIfAvailable(), promptPort.getIfAvailable());
+            }
+
+            private ToolRuntimePort createRuntime(
+                Path cwd,
+                EventBus runtimeEventBus,
+                PermissionResponseGate runtimeResponseGate,
+                PermissionPromptPort runtimePromptPort
+            ) {
                 Path runtimeCwd = cwd == null ? Path.of(configuredCwd) : cwd;
                 ToolRuntimeOptions options = ToolRuntimeOptions.builder()
                     .cwd(runtimeCwd)
                     .build();
                 DefaultToolRuntime runtime = toolRuntime(
-                    resolvedEventBus,
+                    runtimeEventBus,
                     new cn.lypi.tool.DefaultToolRegistry(),
                     new cn.lypi.tool.ToolSchemaValidator(),
                     new cn.lypi.tool.ToolExecutionPlanner(),
@@ -136,8 +157,8 @@ public class LyPiToolAutoConfiguration {
                     new cn.lypi.tool.ToolRuntimeContextFactory(options),
                     cn.lypi.tool.ToolExecutionInterceptors.noop(),
                     securityRuntime,
-                    responseGate.getIfAvailable(),
-                    promptPort.getIfAvailable(),
+                    runtimeResponseGate,
+                    runtimePromptPort,
                     new FilePermissionUpdateStore(runtimeCwd)
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
@@ -152,6 +173,16 @@ public class LyPiToolAutoConfiguration {
                     }
                 }
                 return runtime;
+            }
+
+            private PermissionResponseGate denyResponseGate() {
+                return requestEvent -> new PermissionResponse(
+                    requestEvent.sessionId(),
+                    requestEvent.requestId(),
+                    "deny",
+                    false,
+                    Instant.now()
+                );
             }
         };
     }
