@@ -913,7 +913,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         boolean activeToolBlock = view.blocks()
             .stream()
             .anyMatch(block -> block instanceof TuiToolBlock tool && tool.active());
-        boolean activeTurn = view.runtimeLine() != null && view.runtimeLine().startsWith("turn running ");
+        boolean activeTurn = view.runtimeLine() != null && view.runtimeLine().startsWith("working (");
         inputLoop.setInterruptibleRunning(activeTurn || activeToolBlock || view.statusBar().hasInterruptibleTool());
     }
 

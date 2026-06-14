@@ -97,8 +97,8 @@ public final class TuiEventReducer {
             case PermissionRequestEvent request -> reducePermissionRequest(request);
             case PermissionDecisionEvent decision -> reducePermissionDecision(decision);
             case ErrorEvent error -> reduceError(error);
-            case TurnStartEvent start -> state.turnStarted(start.turnId());
-            case TurnEndEvent ignored -> state.turnEnded();
+            case TurnStartEvent start -> state.turnStarted(start.turnId(), start.startedAt(), start.timestamp());
+            case TurnEndEvent end -> state.turnEnded(end.durationMillis());
             case RetryStartEvent start -> state.retryStarted(start.attempt(), start.reason());
             case RetryEndEvent ignored -> state.retryEnded();
             case CompactStartEvent start -> state.compactStarted(start.kind());

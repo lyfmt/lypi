@@ -18,6 +18,8 @@ import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,6 +40,9 @@ final class TuiRenderState {
     private boolean runtimeInterruptibleTool;
     private final Set<String> runningToolUseIds = new HashSet<>();
     private String activeTurnId;
+    private Instant activeTurnStartedAt;
+    private Instant lastTurnObservedAt;
+    private String lastTurnDurationLine;
     private String retryLine;
     private String compactLine;
     private String interruptLine;
@@ -246,17 +251,23 @@ final class TuiRenderState {
         );
     }
 
-    void turnStarted(String turnId) {
+    void turnStarted(String turnId, Instant startedAt, Instant observedAt) {
         activeTurnId = valueOrEmpty(turnId);
+        activeTurnStartedAt = startedAt;
+        lastTurnObservedAt = observedAt == null ? startedAt : observedAt;
+        lastTurnDurationLine = "";
         interruptLine = "";
         statusBar = withMode("running");
     }
 
-    void turnEnded() {
+    void turnEnded(long durationMillis) {
         activeTurnId = "";
+        activeTurnStartedAt = null;
+        lastTurnObservedAt = null;
         retryLine = "";
         compactLine = "";
         interruptLine = "";
+        lastTurnDurationLine = "worked " + formatTurnDuration(durationMillis);
         statusBar = withMode(currentMode());
     }
 
@@ -288,6 +299,9 @@ final class TuiRenderState {
         retryLine = "";
         compactLine = "";
         activeTurnId = "";
+        activeTurnStartedAt = null;
+        lastTurnObservedAt = null;
+        lastTurnDurationLine = "";
         interruptLine = "interrupted" + suffix(reason);
         statusBar = withMode(agentMode);
     }
@@ -331,16 +345,40 @@ final class TuiRenderState {
             return interruptLine;
         }
         if (activeTurnId != null && !activeTurnId.isBlank()) {
-            return "turn running " + activeTurnId;
+            long elapsedMillis = 0L;
+            if (activeTurnStartedAt != null && lastTurnObservedAt != null) {
+                elapsedMillis = Math.max(0L, Duration.between(activeTurnStartedAt, lastTurnObservedAt).toMillis());
+            }
+            return "working (" + formatTurnDuration(elapsedMillis) + ")";
+        }
+        if (lastTurnDurationLine != null && !lastTurnDurationLine.isBlank()) {
+            return lastTurnDurationLine;
         }
         return "";
     }
 
     private void clearRuntimeLines() {
         activeTurnId = "";
+        activeTurnStartedAt = null;
+        lastTurnObservedAt = null;
+        lastTurnDurationLine = "";
         retryLine = "";
         compactLine = "";
         interruptLine = "";
+    }
+
+    static String formatTurnDuration(long durationMillis) {
+        long totalSeconds = Math.max(0L, durationMillis / 1000L);
+        long hours = totalSeconds / 3600L;
+        long minutes = (totalSeconds % 3600L) / 60L;
+        long seconds = totalSeconds % 60L;
+        if (hours > 0L) {
+            return hours + "h" + minutes + "m" + seconds + "s";
+        }
+        if (minutes > 0L) {
+            return minutes + "m" + seconds + "s";
+        }
+        return seconds + "s";
     }
 
     private String modelLabel(SessionRuntimeState runtimeState) {
