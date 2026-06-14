@@ -116,6 +116,25 @@ class MemoryConsolidationTurnEndListenerTest {
     }
 
     @Test
+    void executorRejectionDoesNotEscapeEventPublish() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingRunner runner = new RecordingRunner();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new MutableSessionManager("ses_main", "leaf-1"),
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            runner,
+            command -> {
+                throw new java.util.concurrent.RejectedExecutionException("closed");
+            }
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 31));
+
+        assertThat(runner.requests).isEmpty();
+    }
+
+    @Test
     void quietEventBusDropsPublishedEventsAndSubscriptions() {
         QuietEventBus quiet = new QuietEventBus();
         List<Object> delivered = new ArrayList<>();

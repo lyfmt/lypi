@@ -1,25 +1,38 @@
 package cn.lypi.tool;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemoryConsolidationWritePolicyTest {
-    private final Path cwd = Path.of("/repo").toAbsolutePath().normalize();
-    private final Path userRoot = Path.of("/home/user/.ly-pi").toAbsolutePath().normalize();
-    private final MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
+    @TempDir
+    Path tempDir;
 
     @Test
-    void allowsUserMemoryTargets() {
-        assertTrue(policy.isAllowedWritePath("/home/user/.ly-pi/memory.md"));
-        assertTrue(policy.isAllowedWritePath("/home/user/.ly-pi/memories/guidance.md"));
-        assertTrue(policy.isAllowedWritePath("/home/user/.ly-pi/memories/nested/guidance.md"));
+    void allowsUserMemoryTargets() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path userRoot = tempDir.resolve("home/.ly-pi");
+        Files.createDirectories(userRoot.resolve("memories/nested"));
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
+
+        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memory.md").toString()));
+        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memories/guidance.md").toString()));
+        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memories/nested/guidance.md").toString()));
     }
 
     @Test
-    void allowsProjectMemoryTargets() {
+    void allowsProjectMemoryTargets() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path userRoot = tempDir.resolve("home/.ly-pi");
+        Files.createDirectories(cwd.resolve(".ly-pi/memory/project"));
+        Files.createDirectories(cwd.resolve(".ly-pi/skills/java/nested"));
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
+
         assertTrue(policy.isAllowedWritePath("MEMORY.md"));
         assertTrue(policy.isAllowedWritePath(".ly-pi/memory.md"));
         assertTrue(policy.isAllowedWritePath(".ly-pi/memory/project/facts.md"));
@@ -28,7 +41,12 @@ class MemoryConsolidationWritePolicyTest {
     }
 
     @Test
-    void deniesNonMemoryTargets() {
+    void deniesNonMemoryTargets() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path userRoot = tempDir.resolve("home/.ly-pi");
+        Files.createDirectories(cwd);
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
+
         assertFalse(policy.isAllowedWritePath("src/Main.java"));
         assertFalse(policy.isAllowedWritePath("docs/foo.md"));
         assertFalse(policy.isAllowedWritePath(".git/config"));
@@ -36,8 +54,27 @@ class MemoryConsolidationWritePolicyTest {
     }
 
     @Test
-    void deniesTraversalOutsideAllowedRoots() {
+    void deniesTraversalOutsideAllowedRoots() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path userRoot = tempDir.resolve("home/.ly-pi");
+        Files.createDirectories(cwd.resolve(".ly-pi/memory"));
+        Files.createDirectories(userRoot.resolve("memories"));
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
+
         assertFalse(policy.isAllowedWritePath(".ly-pi/memory/../../../src/Main.java"));
-        assertFalse(policy.isAllowedWritePath("/home/user/.ly-pi/memories/../../../secret.md"));
+        assertFalse(policy.isAllowedWritePath(userRoot.resolve("memories/../../../secret.md").toString()));
+    }
+
+    @Test
+    void deniesSymlinkEscapeFromAllowedRoots() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path outside = tempDir.resolve("outside");
+        Path memoryParent = cwd.resolve(".ly-pi");
+        Files.createDirectories(memoryParent);
+        Files.createDirectories(outside);
+        Files.createSymbolicLink(memoryParent.resolve("memory"), outside);
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, tempDir.resolve("home/.ly-pi"));
+
+        assertFalse(policy.isAllowedWritePath(".ly-pi/memory/escaped.md"));
     }
 }

@@ -26,6 +26,6 @@ public interface ToolRuntimeFactoryPort {
      * 创建后台记忆沉淀专用受限工具运行时。
      */
     default ToolRuntimePort createMemoryConsolidation(Path cwd, EventBus eventBus) {
-        return create(cwd);
+        throw new UnsupportedOperationException("memory consolidation tool runtime is not supported");
     }
 }

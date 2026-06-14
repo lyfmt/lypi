@@ -32,6 +32,6 @@ public interface AgentCoreFactoryPort {
         ToolRuntimePort toolRuntime,
         EventBus eventBus
     ) {
-        return create(cwd, sessionManager);
+        throw new UnsupportedOperationException("restricted agent core creation is not supported");
     }
 }

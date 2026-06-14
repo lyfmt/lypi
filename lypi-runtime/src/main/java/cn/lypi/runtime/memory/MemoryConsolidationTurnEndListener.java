@@ -9,6 +9,7 @@ import cn.lypi.contracts.session.SessionView;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 监听主 turn 结束事件并异步触发后台记忆沉淀。
@@ -61,7 +62,11 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
             return;
         }
         MemoryConsolidationRequest request = new MemoryConsolidationRequest(event.sessionId(), forkPointEntryId);
-        executor.execute(() -> runQuietly(request));
+        try {
+            executor.execute(() -> runQuietly(request));
+        } catch (RejectedExecutionException exception) {
+            // NOTE: 应用关闭或有界队列拒绝时，后台沉淀必须静默放弃。
+        }
     }
 
     private void runQuietly(MemoryConsolidationRequest request) {

@@ -1,5 +1,7 @@
 package cn.lypi.tool;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
 
@@ -39,18 +41,91 @@ public final class MemoryConsolidationWritePolicy {
             return false;
         }
         Path path = normalizeAgainstCwd(Path.of(rawPath));
-        return path.equals(userMemoryIndex)
-            || startsBelow(path, userMemories)
-            || path.equals(projectMemoryFile)
-            || path.equals(projectRootMemory)
-            || startsBelow(path, projectMemoryDirectory)
-            || isProjectSkillFile(path);
+        Path lexicalAllowedRoot = lexicalAllowedRoot(path);
+        return lexicalAllowedRoot != null && isRealPathInsideAllowedRoot(path, lexicalAllowedRoot);
     }
 
     private boolean isProjectSkillFile(Path path) {
         return startsBelow(path, projectSkillsDirectory)
             && path.getFileName() != null
             && "SKILL.md".equals(path.getFileName().toString());
+    }
+
+    private Path lexicalAllowedRoot(Path path) {
+        if (path.equals(userMemoryIndex)) {
+            return userMemoryIndex.getParent();
+        }
+        if (startsBelow(path, userMemories)) {
+            return userMemories;
+        }
+        if (path.equals(projectMemoryFile)) {
+            return projectMemoryFile.getParent();
+        }
+        if (path.equals(projectRootMemory)) {
+            return projectRootMemory.getParent();
+        }
+        if (startsBelow(path, projectMemoryDirectory)) {
+            return projectMemoryDirectory;
+        }
+        if (isProjectSkillFile(path)) {
+            return projectSkillsDirectory;
+        }
+        return null;
+    }
+
+    private boolean isRealPathInsideAllowedRoot(Path path, Path allowedRoot) {
+        try {
+            if (containsSymlinkInsideMemoryRoot(allowedRoot)) {
+                return false;
+            }
+            Path existing = existingPath(path);
+            Path realExisting = existing.toRealPath();
+            Path realAllowedRoot = Files.exists(allowedRoot) ? allowedRoot.toRealPath() : existingPath(allowedRoot).toRealPath();
+            if (Files.exists(path)) {
+                return realExisting.startsWith(realAllowedRoot);
+            }
+            return realExisting.startsWith(realAllowedRoot)
+                && path.toAbsolutePath().normalize().startsWith(existing.toAbsolutePath().normalize());
+        } catch (IOException | RuntimeException exception) {
+            return false;
+        }
+    }
+
+    private boolean containsSymlinkInsideMemoryRoot(Path path) {
+        Path normalized = path.toAbsolutePath().normalize();
+        Path current = symlinkCheckBase(normalized);
+        if (current == null) {
+            return false;
+        }
+        Path relative = current.relativize(normalized);
+        for (Path segment : relative) {
+            current = current == null ? segment : current.resolve(segment);
+            if (Files.isSymbolicLink(current)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Path symlinkCheckBase(Path path) {
+        if (path.startsWith(cwd)) {
+            return cwd;
+        }
+        if (path.startsWith(userRoot)) {
+            return userRoot;
+        }
+        return path.getParent();
+    }
+
+    private Path existingPath(Path path) {
+        Path current = path;
+        while (current != null && !Files.exists(current)) {
+            current = current.getParent();
+        }
+        if (current == null) {
+            throw new IllegalArgumentException("no existing parent for path " + path);
+        }
+        return current;
     }
 
     private Path normalizeAgainstCwd(Path path) {

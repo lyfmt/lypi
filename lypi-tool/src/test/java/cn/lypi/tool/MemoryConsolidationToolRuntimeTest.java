@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,12 +21,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemoryConsolidationToolRuntimeTest {
+    @TempDir
+    Path tempDir;
+
     @Test
     void snapshotOnlyContainsAllowedTools() {
-        RecordingRuntime delegate = runtime();
+        RecordingRuntime delegate = runtime(tempDir);
         MemoryConsolidationToolRuntime runtime = new MemoryConsolidationToolRuntime(
             delegate,
-            new MemoryConsolidationWritePolicy(Path.of("/repo"), Path.of("/home/user/.ly-pi"))
+            new MemoryConsolidationWritePolicy(tempDir, tempDir.resolve("home/.ly-pi"))
         );
 
         assertEquals(List.of("read", "grep", "glob", "edit", "write"),
@@ -36,10 +40,10 @@ class MemoryConsolidationToolRuntimeTest {
 
     @Test
     void deniesToolOutsidePolicyWithoutCallingDelegate() {
-        RecordingRuntime delegate = runtime();
+        RecordingRuntime delegate = runtime(tempDir);
         MemoryConsolidationToolRuntime runtime = new MemoryConsolidationToolRuntime(
             delegate,
-            new MemoryConsolidationWritePolicy(Path.of("/repo"), Path.of("/home/user/.ly-pi"))
+            new MemoryConsolidationWritePolicy(tempDir, tempDir.resolve("home/.ly-pi"))
         );
 
         ToolResult<?> result = runtime.execute(
@@ -54,10 +58,10 @@ class MemoryConsolidationToolRuntimeTest {
 
     @Test
     void deniesWriteOutsideMemoryTargetsWithoutCallingDelegate() {
-        RecordingRuntime delegate = runtime();
+        RecordingRuntime delegate = runtime(tempDir);
         MemoryConsolidationToolRuntime runtime = new MemoryConsolidationToolRuntime(
             delegate,
-            new MemoryConsolidationWritePolicy(Path.of("/repo"), Path.of("/home/user/.ly-pi"))
+            new MemoryConsolidationWritePolicy(tempDir, tempDir.resolve("home/.ly-pi"))
         );
 
         ToolResult<?> result = runtime.execute(
@@ -71,11 +75,12 @@ class MemoryConsolidationToolRuntimeTest {
     }
 
     @Test
-    void delegatesAllowedWriteTargets() {
-        RecordingRuntime delegate = runtime();
+    void delegatesAllowedWriteTargets() throws Exception {
+        java.nio.file.Files.createDirectories(tempDir.resolve(".ly-pi/memory/project"));
+        RecordingRuntime delegate = runtime(tempDir);
         MemoryConsolidationToolRuntime runtime = new MemoryConsolidationToolRuntime(
             delegate,
-            new MemoryConsolidationWritePolicy(Path.of("/repo"), Path.of("/home/user/.ly-pi"))
+            new MemoryConsolidationWritePolicy(tempDir, tempDir.resolve("home/.ly-pi"))
         );
 
         ToolResult<?> result = runtime.execute(
@@ -89,8 +94,25 @@ class MemoryConsolidationToolRuntimeTest {
         assertEquals("write", delegate.requests.getFirst().toolName());
     }
 
-    private static RecordingRuntime runtime() {
-        RecordingRuntime runtime = new RecordingRuntime(Path.of("/repo"));
+    @Test
+    void forcesDefaultPermissionModeBeforeDelegating() throws Exception {
+        java.nio.file.Files.createDirectories(tempDir.resolve(".ly-pi/memory/project"));
+        RecordingRuntime delegate = runtime(tempDir);
+        MemoryConsolidationToolRuntime runtime = new MemoryConsolidationToolRuntime(
+            delegate,
+            new MemoryConsolidationWritePolicy(tempDir, tempDir.resolve("home/.ly-pi"))
+        );
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("path", ".ly-pi/memory/project/facts.md"), "msg_1")),
+            TestTools.context(PermissionMode.BYPASS)
+        );
+
+        assertEquals(PermissionMode.DEFAULT_EXECUTE, delegate.contexts.getFirst().permissionMode());
+    }
+
+    private static RecordingRuntime runtime(Path cwd) {
+        RecordingRuntime runtime = new RecordingRuntime(cwd);
         runtime.tools.add(TestTools.echo("read", List.of("cat"), true, true, false));
         runtime.tools.add(TestTools.echo("grep", List.of(), true, true, false));
         runtime.tools.add(TestTools.echo("glob", List.of(), true, true, false));
@@ -104,6 +126,7 @@ class MemoryConsolidationToolRuntimeTest {
         private final Path cwd;
         private final List<Tool<?, ?>> tools = new ArrayList<>();
         private final List<ToolUseRequest> requests = new ArrayList<>();
+        private final List<ContextSnapshot> contexts = new ArrayList<>();
 
         private RecordingRuntime(Path cwd) {
             this.cwd = cwd;
@@ -150,6 +173,7 @@ class MemoryConsolidationToolRuntimeTest {
             ToolRuntimeInvocation invocation
         ) {
             this.requests.addAll(requests);
+            this.contexts.add(context);
             List<ToolResult<?>> results = new ArrayList<>();
             for (ToolUseRequest request : requests) {
                 results.add(TestTools.result(request.toolUseId(), request.toolName(), false));
