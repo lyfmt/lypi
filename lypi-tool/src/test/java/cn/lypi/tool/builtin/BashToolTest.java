@@ -63,6 +63,17 @@ class BashToolTest {
     }
 
     @Test
+    void inputSchemaExposesShellSelectionFields() {
+        BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+
+        assertEquals(Map.of("type", "string"), properties.get("shell"));
+        assertEquals(Map.of("type", "boolean"), properties.get("loginShell"));
+    }
+
+    @Test
     void mapsCommandToExecutionRequestAndResult() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(7, "out", "err", false, Optional.empty()));
         RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
@@ -94,6 +105,71 @@ class BashToolTest {
             ToolProgress.phase("running", "执行 shell 命令"),
             ToolProgress.status("executor progress", null)
         ), progresses);
+    }
+
+    @Test
+    void mapsNonLoginShellCommandToExecutionRequest() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "echo hi", "loginShell", false),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(List.of("bash", "-c", "echo hi"), executor.request.get().command());
+    }
+
+    @Test
+    void mapsAllowedShellToExecutionRequest() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+
+        ToolResult<String> shResult = tool.execute(
+            Map.of("command", "echo hi", "shell", "sh"),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(shResult.isError());
+        assertEquals(List.of("sh", "-lc", "echo hi"), executor.request.get().command());
+
+        ToolResult<String> zshResult = tool.execute(
+            Map.of("command", "echo hi", "shell", "zsh"),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(zshResult.isError());
+        assertEquals(List.of("zsh", "-lc", "echo hi"), executor.request.get().command());
+
+        ToolResult<String> absoluteBashResult = tool.execute(
+            Map.of("command", "echo hi", "shell", "/bin/bash"),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(absoluteBashResult.isError());
+        assertEquals(List.of("/bin/bash", "-lc", "echo hi"), executor.request.get().command());
+    }
+
+    @Test
+    void rejectsUnsupportedShell() {
+        BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
+
+        var pythonResult = tool.validateInput(Map.of("command", "echo hi", "shell", "python"), context(Map.of()));
+        var relativePathResult = tool.validateInput(Map.of("command", "echo hi", "shell", "bin/bash"), context(Map.of()));
+
+        assertFalse(pythonResult.valid());
+        assertTrue(pythonResult.messages().getFirst().contains("shell"));
+        assertFalse(relativePathResult.valid());
+        assertTrue(relativePathResult.messages().getFirst().contains("shell"));
     }
 
     @Test

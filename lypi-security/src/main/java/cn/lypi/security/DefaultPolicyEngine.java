@@ -10,6 +10,7 @@ import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -67,7 +68,7 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             return pathSafety.get();
         }
 
-        Optional<PermissionDecision> bashRedirectDecision = bashRedirectDecision(request, bashRisk);
+        Optional<PermissionDecision> bashRedirectDecision = bashRedirectDecision(request, context, bashRisk);
         if (bashRedirectDecision.isPresent()) {
             return bashRedirectDecision.get();
         }
@@ -75,6 +76,11 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         Optional<PermissionDecision> prefixAllow = prefixAllowDecision(request, effectiveRules, bashRisk);
         if (prefixAllow.isPresent()) {
             return prefixAllow.get();
+        }
+
+        Optional<PermissionDecision> explicitAllow = explicitAllowDecision(request, effectiveRules, bashRisk);
+        if (explicitAllow.isPresent()) {
+            return explicitAllow.get();
         }
 
         Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, permissionMode(context), bashRisk);
@@ -85,11 +91,6 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         Optional<PermissionDecision> explicitAsk = explicitDecision(request, effectiveRules, PermissionBehavior.ASK, bashRisk);
         if (explicitAsk.isPresent()) {
             return explicitAsk.get();
-        }
-
-        Optional<PermissionDecision> explicitAllow = explicitDecision(request, effectiveRules, PermissionBehavior.ALLOW, bashRisk);
-        if (explicitAllow.isPresent()) {
-            return explicitAllow.get();
         }
 
         PermissionMode mode = permissionMode(context);
@@ -149,20 +150,60 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         return Optional.empty();
     }
 
+    private Optional<PermissionDecision> explicitAllowDecision(
+        ToolUseRequest request,
+        List<PermissionRule> effectiveRules,
+        BashRiskAnalysis bashRisk
+    ) {
+        Optional<PermissionDecision> explicitAllow = explicitDecision(
+            request,
+            effectiveRules,
+            PermissionBehavior.ALLOW,
+            bashRisk
+        );
+        if (explicitAllow.isEmpty() || !isBashTool(request.toolName())) {
+            return explicitAllow;
+        }
+        if (bashRisk == null || !bashRisk.staticallyKnown() || bashRisk.riskLevel() == BashRiskLevel.UNKNOWN
+            || bashRisk.riskLevel() == BashRiskLevel.DESTRUCTIVE) {
+            return Optional.empty();
+        }
+        return explicitAllow;
+    }
+
     private Optional<PermissionDecision> pathSafetyDecision(ToolUseRequest request, ToolUseContext context) {
         return pathSafetyChecker.check(request, context);
     }
 
-    private Optional<PermissionDecision> bashRedirectDecision(ToolUseRequest request, BashRiskAnalysis bashRisk) {
+    private Optional<PermissionDecision> bashRedirectDecision(
+        ToolUseRequest request,
+        ToolUseContext context,
+        BashRiskAnalysis bashRisk
+    ) {
         if (!isBashTool(request.toolName()) || bashRisk == null || bashRisk.redirectTargets().isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(decision(
-            PermissionBehavior.DENY,
-            PermissionDecisionReason.PATH_SAFETY,
-            "Bash 命令禁止使用输出重定向。",
-            Map.of("bashRisk", bashRisk)
-        ));
+        Path redirectBase = bashCwd(request, context);
+        for (Path redirectTarget : bashRisk.redirectTargets()) {
+            Optional<PermissionDecision> pathDecision = pathSafetyChecker.checkPathInsideWorkspace(
+                "bashRedirectTarget",
+                redirectTarget.toString(),
+                context,
+                redirectBase
+            );
+            if (pathDecision.isPresent()) {
+                return Optional.of(withBashRisk(pathDecision.get(), bashRisk));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Path bashCwd(ToolUseRequest request, ToolUseContext context) {
+        Object rawCwd = request.input().get("cwd");
+        if (rawCwd == null || rawCwd.toString().isBlank()) {
+            return context.cwd();
+        }
+        return context.cwd().resolve(rawCwd.toString()).normalize();
     }
 
     private Optional<PermissionDecision> bashRiskDecision(
@@ -317,6 +358,18 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             reason,
             message,
             suggestedUpdate == null ? Optional.empty() : suggestedUpdate,
+            Map.copyOf(metadata)
+        );
+    }
+
+    private PermissionDecision withBashRisk(PermissionDecision decision, BashRiskAnalysis bashRisk) {
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>(decision.metadata());
+        metadata.put("bashRisk", bashRisk);
+        return new PermissionDecision(
+            decision.behavior(),
+            decision.reason(),
+            decision.message(),
+            decision.suggestedUpdate(),
             Map.copyOf(metadata)
         );
     }

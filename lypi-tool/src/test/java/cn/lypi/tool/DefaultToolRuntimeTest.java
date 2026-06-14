@@ -477,6 +477,32 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void defaultSandboxBashRedirectAskRequiresUserApproval() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        AtomicInteger executeCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(
+            BashRiskLevel.MEDIUM,
+            "echo ok > notes/output.txt",
+            List.of(Path.of("notes/output.txt"))
+        );
+        PermissionGate gate = (request, tool, context, decision) -> {
+            requestedDecision.set(decision);
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "sandbox"), "msg_1")),
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+        assertEquals(1, executeCalls.get());
+    }
+
+    @Test
     void defaultExecuteDeniesDangerousDefaultBashBeforeGateAndExecutor() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
@@ -1719,6 +1745,10 @@ class DefaultToolRuntimeTest {
     }
 
     private PermissionDecision bashRiskDecision(BashRiskLevel riskLevel, String command) {
+        return bashRiskDecision(riskLevel, command, List.of());
+    }
+
+    private PermissionDecision bashRiskDecision(BashRiskLevel riskLevel, String command, List<Path> redirectTargets) {
         return new PermissionDecision(
             PermissionBehavior.ASK,
             PermissionDecisionReason.BASH_RISK,
@@ -1727,7 +1757,7 @@ class DefaultToolRuntimeTest {
             Map.of("bashRisk", new BashRiskAnalysis(
                 command,
                 List.of(command),
-                List.of(),
+                redirectTargets,
                 riskLevel,
                 List.of("test risk"),
                 riskLevel != BashRiskLevel.UNKNOWN
