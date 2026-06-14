@@ -67,8 +67,7 @@ final class BashPrefixPolicy {
         if (bashRisk == null
             || !bashRisk.staticallyKnown()
             || bashRisk.riskLevel() == BashRiskLevel.UNKNOWN
-            || bashRisk.riskLevel() == BashRiskLevel.DESTRUCTIVE
-            || !bashRisk.redirectTargets().isEmpty()) {
+            || bashRisk.riskLevel() == BashRiskLevel.DESTRUCTIVE) {
             return false;
         }
         Optional<List<String>> prefix = prefixFromRule(rule);

@@ -117,68 +117,113 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
-    void decideDeniesBashRedirectsInEveryPermissionMode() {
+    void decideAsksForWorkspaceBashRedirectsInDefaultExecuteMode() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 
-        for (PermissionMode mode : PermissionMode.values()) {
-            PermissionDecision decision = engine.decide(
-                request("bash", Map.of("command", "echo ok > notes/output.txt")),
-                context(mode)
-            );
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "echo ok > notes/output.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
 
-            assertThat(decision.behavior()).as(mode.name()).isEqualTo(PermissionBehavior.DENY);
-            assertThat(decision.reason()).as(mode.name()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-        }
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+        assertThat(decision.metadata()).containsKey("bashRisk");
+        assertThat(decision.suggestedUpdate()).isEmpty();
     }
 
     @Test
-    void decideDeniesFileDescriptorBashRedirectsInBypassMode() {
+    void decideDeniesBashRedirectsThatEscapeWorkspace() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "echo ok > ../output.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision.message()).contains("越过当前工作目录");
+    }
+
+    @Test
+    void decideAllowsWorkspaceBashRedirectsInBypassMode() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "echo ok > notes/output.txt")),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
+    void decideAllowsWorkspaceBashRedirectsWhenStoredPrefixRuleMatches() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
+            rule(PermissionBehavior.ALLOW, "bash", "prefix:echo ok", "remember echo")
+        ));
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "echo ok > notes/output.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.EXPLICIT_RULE);
+    }
+
+    @Test
+    void decideAllowsWorkspaceBashRedirectsWhenStoredPatternRuleMatches() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
+            rule(PermissionBehavior.ALLOW, "bash", "echo ok > notes/output.txt", "remember exact redirect")
+        ));
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "echo ok > notes/output.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.EXPLICIT_RULE);
+    }
+
+    @Test
+    void decideChecksBashRedirectTargetsRelativeToRequestedCwd() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        PermissionDecision decision = engine.decide(
+            request("bash", Map.of("command", "echo ok > ../output.txt", "cwd", "subdir")),
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+    }
+
+    @Test
+    void decideAppliesRedirectPolicyToFileDescriptorAndCompactRedirects() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 
         PermissionDecision stdoutRedirect = engine.decide(
             request("bash", Map.of("command", "echo ok 1> notes/output.txt")),
-            context(PermissionMode.BYPASS)
+            context(PermissionMode.DEFAULT_EXECUTE)
         );
         PermissionDecision stderrAppendRedirect = engine.decide(
             request("bash", Map.of("command", "make test 2>> logs/stderr.txt")),
             context(PermissionMode.BYPASS)
         );
-        PermissionDecision customFdRedirect = engine.decide(
-            request("bash", Map.of("command", "echo data 3> notes/fd3.txt")),
-            context(PermissionMode.BYPASS)
-        );
-
-        assertThat(stdoutRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(stdoutRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-        assertThat(stderrAppendRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(stderrAppendRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-        assertThat(customFdRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(customFdRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-    }
-
-    @Test
-    void decideDeniesCompactBashRedirectsInBypassMode() {
-        DefaultPolicyEngine engine = new DefaultPolicyEngine();
-
         PermissionDecision compactRedirect = engine.decide(
-            request("bash", Map.of("command", "echo hi>notes/output.txt")),
-            context(PermissionMode.BYPASS)
-        );
-        PermissionDecision compactAppendRedirect = engine.decide(
-            request("bash", Map.of("command", "printf hi>>notes/output.txt")),
-            context(PermissionMode.BYPASS)
-        );
-        PermissionDecision compactFdRedirect = engine.decide(
-            request("bash", Map.of("command", "echo hi 1>notes/output.txt")),
+            request("bash", Map.of("command", "echo hi>../output.txt")),
             context(PermissionMode.BYPASS)
         );
 
+        assertThat(stdoutRedirect.behavior()).isEqualTo(PermissionBehavior.ASK);
+        assertThat(stdoutRedirect.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+        assertThat(stderrAppendRedirect.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(stderrAppendRedirect.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
         assertThat(compactRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
         assertThat(compactRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-        assertThat(compactAppendRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(compactAppendRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-        assertThat(compactFdRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(compactFdRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
     }
 
     @Test

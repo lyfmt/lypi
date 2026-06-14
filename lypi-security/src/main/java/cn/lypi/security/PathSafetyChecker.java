@@ -57,7 +57,7 @@ final class PathSafetyChecker {
         return Optional.empty();
     }
 
-    private Optional<PermissionDecision> checkPath(String fieldName, String rawPath, ToolUseContext context) {
+    Optional<PermissionDecision> checkPath(String fieldName, String rawPath, ToolUseContext context) {
         Path cwd = context.cwd().toAbsolutePath().normalize();
         Path target = cwd.resolve(rawPath).normalize();
         if (!target.startsWith(cwd)) {
@@ -90,6 +90,35 @@ final class PathSafetyChecker {
             }
         }
         String relativePath = cwd.relativize(target).toString().replace('\\', '/');
+        if (isProtectedPath(relativePath)) {
+            return Optional.of(decision(
+                "工具路径命中受保护路径: " + rawPath,
+                fieldName,
+                rawPath,
+                target
+            ));
+        }
+        return Optional.empty();
+    }
+
+    Optional<PermissionDecision> checkPathInsideWorkspace(
+        String fieldName,
+        String rawPath,
+        ToolUseContext context,
+        Path baseCwd
+    ) {
+        Path workspace = context.cwd().toAbsolutePath().normalize();
+        Path base = baseCwd.toAbsolutePath().normalize();
+        Path target = base.resolve(rawPath).normalize();
+        if (!target.startsWith(workspace)) {
+            return Optional.of(decision(
+                "工具路径越过当前工作目录: " + rawPath,
+                fieldName,
+                rawPath,
+                target
+            ));
+        }
+        String relativePath = workspace.relativize(target).toString().replace('\\', '/');
         if (isProtectedPath(relativePath)) {
             return Optional.of(decision(
                 "工具路径命中受保护路径: " + rawPath,
