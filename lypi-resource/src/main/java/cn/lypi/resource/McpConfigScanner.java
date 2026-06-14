@@ -1,11 +1,18 @@
 package cn.lypi.resource;
 
 import cn.lypi.contracts.mcp.McpServerConfig;
+import cn.lypi.contracts.mcp.McpBearerAuthConfig;
+import cn.lypi.contracts.mcp.McpAuthConfig;
+import cn.lypi.contracts.mcp.McpHttpServerConfig;
+import cn.lypi.contracts.mcp.McpNoAuthConfig;
+import cn.lypi.contracts.mcp.McpStdioServerConfig;
 import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.resource.ResourceDiagnostic;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -133,6 +140,24 @@ class McpConfigScanner {
         if (transport == null) {
             return null;
         }
+        McpStdioServerConfig stdio = transport == McpTransport.STDIO ? stdioConfig(name, node, file, diagnostics) : null;
+        McpHttpServerConfig http = transport == McpTransport.HTTP ? httpConfig(name, node, file, diagnostics) : null;
+        return new McpServerConfig(
+            name,
+            transport,
+            stdio,
+            http,
+            Duration.ofSeconds(timeoutSeconds(name, node, "startupTimeoutSeconds", 10, file, diagnostics)),
+            Duration.ofSeconds(timeoutSeconds(name, node, "callTimeoutSeconds", 60, file, diagnostics))
+        );
+    }
+
+    private McpStdioServerConfig stdioConfig(
+        String name,
+        JsonNode node,
+        Path file,
+        List<ResourceDiagnostic> diagnostics
+    ) {
         List<String> command = new ArrayList<>();
         JsonNode commandNode = node.path("command");
         if (commandNode.isTextual()) {
@@ -141,17 +166,66 @@ class McpConfigScanner {
             commandNode.forEach(part -> command.add(part.asText()));
         }
         node.path("args").forEach(part -> command.add(part.asText()));
-        validateTransportSpecificFields(name, transport, command, node, file, diagnostics);
-        Map<String, String> env = new LinkedHashMap<>();
-        node.path("env").properties().forEach(entry -> env.put(entry.getKey(), entry.getValue().asText()));
-        return new McpServerConfig(
-            name,
-            transport,
-            List.copyOf(command),
-            Map.copyOf(env),
-            Duration.ofSeconds(timeoutSeconds(name, node, "startupTimeoutSeconds", 10, file, diagnostics)),
-            Duration.ofSeconds(timeoutSeconds(name, node, "callTimeoutSeconds", 60, file, diagnostics))
+        if (command.isEmpty() || command.getFirst().isBlank()) {
+            diagnostics.add(ResourceDiagnostics.warning("mcp server command is empty: " + name, file));
+        }
+        Map<String, String> env = stringMap(node.path("env"));
+        return new McpStdioServerConfig(List.copyOf(command), Map.copyOf(env));
+    }
+
+    private McpHttpServerConfig httpConfig(
+        String name,
+        JsonNode node,
+        Path file,
+        List<ResourceDiagnostic> diagnostics
+    ) {
+        URI url = parseUri(name, node.path("url").asText(""), file, diagnostics);
+        return new McpHttpServerConfig(
+            url,
+            Map.copyOf(stringMap(node.path("headers"))),
+            authConfig(name, node.path("auth"), file, diagnostics),
+            Duration.ofSeconds(timeoutSeconds(name, node, "connectTimeoutSeconds", 10, file, diagnostics)),
+            Duration.ofSeconds(timeoutSeconds(name, node, "readTimeoutSeconds", 60, file, diagnostics))
         );
+    }
+
+    private URI parseUri(String name, String value, Path file, List<ResourceDiagnostic> diagnostics) {
+        if (value == null || value.isBlank()) {
+            diagnostics.add(ResourceDiagnostics.warning("HTTP mcp server url is empty: " + name, file));
+            return null;
+        }
+        try {
+            return new URI(value);
+        } catch (URISyntaxException exception) {
+            diagnostics.add(ResourceDiagnostics.warning("HTTP mcp server url is invalid for " + name + ": " + exception.getMessage(), file));
+            return null;
+        }
+    }
+
+    private McpAuthConfig authConfig(String name, JsonNode node, Path file, List<ResourceDiagnostic> diagnostics) {
+        if (!node.isObject()) {
+            return new McpNoAuthConfig();
+        }
+        String type = node.path("type").asText("none").toLowerCase(Locale.ROOT);
+        return switch (type) {
+            case "none" -> new McpNoAuthConfig();
+            case "bearer" -> new McpBearerAuthConfig(
+                node.path("tokenEnv").asText(""),
+                node.path("token").asText("")
+            );
+            default -> {
+                diagnostics.add(ResourceDiagnostics.warning("unsupported mcp auth type for " + name + ": " + type, file));
+                yield new McpNoAuthConfig();
+            }
+        };
+    }
+
+    private Map<String, String> stringMap(JsonNode node) {
+        Map<String, String> values = new LinkedHashMap<>();
+        if (node.isObject()) {
+            node.properties().forEach(entry -> values.put(entry.getKey(), entry.getValue().asText()));
+        }
+        return values;
     }
 
     private McpTransport parseTransport(
@@ -166,22 +240,6 @@ class McpConfigScanner {
         } catch (IllegalArgumentException exception) {
             diagnostics.add(ResourceDiagnostics.warning("unsupported mcp transport for " + name + ": " + transportName, file));
             return null;
-        }
-    }
-
-    private void validateTransportSpecificFields(
-        String name,
-        McpTransport transport,
-        List<String> command,
-        JsonNode node,
-        Path file,
-        List<ResourceDiagnostic> diagnostics
-    ) {
-        if (transport == McpTransport.STDIO && (command.isEmpty() || command.getFirst().isBlank())) {
-            diagnostics.add(ResourceDiagnostics.warning("mcp server command is empty: " + name, file));
-        }
-        if (transport == McpTransport.HTTP && node.path("url").asText("").isBlank()) {
-            diagnostics.add(ResourceDiagnostics.warning("HTTP mcp server url is empty: " + name, file));
         }
     }
 
