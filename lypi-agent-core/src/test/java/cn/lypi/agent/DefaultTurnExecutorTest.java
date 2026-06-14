@@ -129,7 +129,63 @@ class DefaultTurnExecutorTest {
         assertThat(assistantEnd.blocks()).hasSize(1);
         assertThat(assistantEnd.blocks().getFirst().text()).isEqualTo("hi");
         assertThat(assistantEnd.stopReason()).contains("end_turn");
-        assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
+        TurnStartEvent turnStart = (TurnStartEvent) eventBus.events.getFirst();
+        TurnEndEvent turnEnd = (TurnEndEvent) eventBus.events.getLast();
+        assertThat(turnEnd.status()).isEqualTo("COMPLETED");
+        assertThat(turnStart.startedAt()).isEqualTo(NOW);
+        assertThat(turnEnd.startedAt()).isEqualTo(turnStart.startedAt());
+        assertThat(turnEnd.endedAt()).isEqualTo(NOW);
+        assertThat(turnEnd.durationMillis()).isZero();
+        assertThat(turnEnd.timestamp()).isEqualTo(turnEnd.endedAt());
+    }
+
+    @Test
+    void turnEndEventKeepsStartedAtAndNonZeroDuration() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        MutableTestClock clock = new MutableTestClock(NOW);
+        provider.enqueueProbe(
+            List.of(
+                new AssistantStart("msg-assistant"),
+                new TextDelta("hi"),
+                new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+            ),
+            event -> clock.advance(java.time.Duration.ofSeconds(2))
+        );
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "entry-1"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        TurnStartEvent turnStart = (TurnStartEvent) eventBus.events.getFirst();
+        TurnEndEvent turnEnd = (TurnEndEvent) eventBus.events.getLast();
+        assertThat(turnStart.startedAt()).isEqualTo(NOW);
+        assertThat(turnEnd.startedAt()).isEqualTo(NOW);
+        assertThat(turnEnd.endedAt()).isEqualTo(NOW.plusSeconds(6));
+        assertThat(turnEnd.durationMillis()).isEqualTo(6_000L);
+        assertThat(turnEnd.timestamp()).isEqualTo(turnEnd.endedAt());
     }
 
     @Test
@@ -1702,7 +1758,12 @@ class DefaultTurnExecutorTest {
                 "MessageStartEvent:msg-error",
                 "MessageEndEvent:msg-error"
             );
-        assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("FAILED");
+        TurnStartEvent turnStart = (TurnStartEvent) eventBus.events.getFirst();
+        TurnEndEvent turnEnd = (TurnEndEvent) eventBus.events.getLast();
+        assertThat(turnEnd.status()).isEqualTo("FAILED");
+        assertThat(turnEnd.startedAt()).isEqualTo(turnStart.startedAt());
+        assertThat(turnEnd.endedAt()).isEqualTo(turnEnd.timestamp());
+        assertThat(turnEnd.durationMillis()).isGreaterThanOrEqualTo(0L);
         assertThat(memory.calls).isZero();
     }
 

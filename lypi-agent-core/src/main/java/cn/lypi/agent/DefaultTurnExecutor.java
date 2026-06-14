@@ -40,6 +40,7 @@ import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -73,7 +74,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         List<AgentMessage> newMessages = new ArrayList<>();
         ports.sessionManager().openOrCreate(request.sessionId());
         request.parentEntryId().ifPresent(parentEntryId -> ports.sessionManager().switchLeaf(parentEntryId));
-        ports.eventBus().publish(new TurnStartEvent(request.sessionId(), turnId, clock.instant()));
+        Instant startedAt = clock.instant();
+        ports.eventBus().publish(new TurnStartEvent(request.sessionId(), turnId, startedAt, startedAt));
         Optional<String> unsafeReason = unsafeContinuationReason(currentLeafId());
         if (unsafeReason.isPresent()) {
             ports.eventBus().publish(new ErrorEvent(
@@ -82,7 +84,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 "当前分支停在 assistant 工具调用消息上，不能直接追加用户消息。请选择上一条用户消息或工具结果之后继续。",
                 clock.instant()
             ));
-            return failedState(turnId, request.sessionId(), null, List.of(), 0);
+            return failedState(turnId, request.sessionId(), null, List.of(), 0, startedAt);
         }
 
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
@@ -97,7 +99,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             contextLeafId = appendStartedMessage(request.sessionId(), assistant);
             newMessages.add(assistant);
             if (isAssistantError(assistant, request)) {
-                return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
+                return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt);
             }
 
             while (!request.abortSignal().aborted()) {
@@ -109,7 +111,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     );
                     appendNewMessage(request.sessionId(), error);
                     newMessages.add(error);
-                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
+                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt);
                 }
                 List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
                 if (toolRequests.isEmpty()) {
@@ -135,7 +137,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 contextLeafId = appendStartedMessage(request.sessionId(), assistant);
                 newMessages.add(assistant);
                 if (isAssistantError(assistant, request)) {
-                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
+                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt);
                 }
             }
         } catch (RuntimeException failure) {
@@ -146,7 +148,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             );
             appendNewMessage(request.sessionId(), handled.message());
             newMessages.add(handled.message());
-            return failedState(turnId, request.sessionId(), context, newMessages, toolRound);
+            return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt);
         }
 
         TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
@@ -154,7 +156,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         if (status == TurnStatus.COMPLETED) {
             extractMemorySafely(state);
         }
-        ports.eventBus().publish(new TurnEndEvent(request.sessionId(), turnId, status.name(), clock.instant()));
+        publishTurnEnd(request.sessionId(), turnId, status, startedAt);
         return state;
     }
 
@@ -216,7 +218,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         String sessionId,
         ContextSnapshot context,
         List<AgentMessage> newMessages,
-        int toolRound
+        int toolRound,
+        Instant startedAt
     ) {
         TurnState state = new TurnState(
             turnId,
@@ -226,8 +229,22 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             toolRound,
             TurnStatus.FAILED
         );
-        ports.eventBus().publish(new TurnEndEvent(sessionId, turnId, TurnStatus.FAILED.name(), clock.instant()));
+        publishTurnEnd(sessionId, turnId, TurnStatus.FAILED, startedAt);
         return state;
+    }
+
+    private void publishTurnEnd(String sessionId, String turnId, TurnStatus status, Instant startedAt) {
+        Instant endedAt = clock.instant();
+        long durationMillis = Math.max(0L, Duration.between(startedAt, endedAt).toMillis());
+        ports.eventBus().publish(new TurnEndEvent(
+            sessionId,
+            turnId,
+            status.name(),
+            startedAt,
+            endedAt,
+            durationMillis,
+            endedAt
+        ));
     }
 
     private ContextSnapshot buildContext(TurnRequest request, Optional<String> leafEntryId) {
