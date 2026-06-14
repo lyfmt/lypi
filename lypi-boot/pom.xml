@@ -23,7 +23,7 @@
 		</dependency>
 		<dependency>
 			<groupId>cn.lypi</groupId>
-			<artifactId>lypi-session-engine</artifactId>
+			<artifactId>lypi-session</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>cn.lypi</groupId>
@@ -47,11 +47,20 @@
 		</dependency>
 		<dependency>
 			<groupId>cn.lypi</groupId>
+			<artifactId>lypi-runtime</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>cn.lypi</groupId>
 			<artifactId>lypi-transport-headless</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>cn.lypi</groupId>
 			<artifactId>lypi-transport-tui</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
 		</dependency>
 	</dependencies>
 
@@ -64,4 +73,3 @@
 		</plugins>
 	</build>
 </project>
-

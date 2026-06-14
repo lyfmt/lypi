@@ -1,13 +1,10 @@
 package cn.lypi.contracts.common;
 
 public interface ProgressSink {
-    /*
-    * @status : 未完成
-    * @summary : 发布当前任务进度文本。
-    *@description : 工具执行、外部进程和 MCP 调用可通过该接口向事件流报告进度。
-    *
-    *
-                              */
-    void progress(String message);
+    /**
+     * 发布结构化工具进度。
+     *
+     * NOTE: 发布端会忽略 null progress；工具实现应优先使用 ToolProgress 的工厂方法构造进度。
+     */
+    void progress(ToolProgress progress);
 }
-

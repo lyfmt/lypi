@@ -1,0 +1,948 @@
+package cn.lypi.boot.runtime;
+
+import cn.lypi.agent.AgentCoreRuntimePorts;
+import cn.lypi.agent.ContextAssembler;
+import cn.lypi.agent.ContextBudgetEstimator;
+import cn.lypi.agent.DefaultContextAssembler;
+import cn.lypi.agent.DefaultCompactionRuntime;
+import cn.lypi.agent.DefaultTurnExecutor;
+import cn.lypi.agent.NoopMemoryExtractionWorker;
+import cn.lypi.agent.TurnIds;
+import cn.lypi.agent.branch.AiBranchSummarizer;
+import cn.lypi.agent.branch.BranchSummaryContextBuilder;
+import cn.lypi.agent.branch.BranchSummaryInstructionFactory;
+import cn.lypi.agent.compact.CompactionCoordinator;
+import cn.lypi.agent.compact.CompactionSummarizer;
+import cn.lypi.agent.compact.DefaultCompactionCoordinator;
+import cn.lypi.agent.compact.DefaultCompactionPlanner;
+import cn.lypi.boot.BootstrapService;
+import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
+import cn.lypi.contracts.context.ContextBudget;
+import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.model.ModelCatalogPort;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
+import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.AgentRegistryPort;
+import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.runtime.AppEntry;
+import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.CompactionRuntimePort;
+import cn.lypi.contracts.runtime.LyPiRuntime;
+import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
+import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.runtime.SessionStorageRootPort;
+import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
+import cn.lypi.contracts.transport.TransportAdapter;
+import cn.lypi.contracts.tui.DiffViewProvider;
+import cn.lypi.contracts.tui.NewSessionController;
+import cn.lypi.contracts.tui.ResumeSessionController;
+import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.SlashCommand;
+import cn.lypi.resource.DefaultResourceRuntime;
+import cn.lypi.runtime.event.InMemoryEventBus;
+import cn.lypi.runtime.memory.JsonlMemoryConsolidationAuditSink;
+import cn.lypi.runtime.memory.MemoryConsolidationAuditSink;
+import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
+import cn.lypi.runtime.memory.MemoryConsolidationRunner;
+import cn.lypi.runtime.memory.MemoryConsolidationTrigger;
+import cn.lypi.runtime.memory.MemoryConsolidationTurnEndListener;
+import cn.lypi.runtime.memory.QuietEventBus;
+import cn.lypi.runtime.subagent.ChildAgentSnapshot;
+import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
+import cn.lypi.runtime.subagent.DefaultAgentCenter;
+import cn.lypi.runtime.subagent.DefaultAgentRegistry;
+import cn.lypi.runtime.subagent.DefaultMailboxService;
+import cn.lypi.runtime.subagent.JsonSubagentProcessRunner;
+import cn.lypi.runtime.subagent.JsonlMailboxStore;
+import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
+import cn.lypi.runtime.subagent.MailboxDeliveryService;
+import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
+import cn.lypi.runtime.subagent.SubagentProcessRunner;
+import cn.lypi.security.DefaultPolicyEngine;
+import cn.lypi.security.ExecPolicyRuleFileReader;
+import cn.lypi.session.ChildSessionService;
+import cn.lypi.session.ChildSessionView;
+import cn.lypi.session.DefaultSessionManagerFactory;
+import cn.lypi.session.GitWorkingTreeDiffQuery;
+import cn.lypi.session.SessionManagerImpl;
+import cn.lypi.session.SessionTreeQuery;
+import cn.lypi.transport.tui.AgentSlashCommandHandler;
+import cn.lypi.transport.tui.JLineTuiTransport;
+import cn.lypi.transport.tui.JLineTuiTransportFactory;
+import cn.lypi.transport.tui.MailboxSlashCommandHandler;
+import java.math.BigDecimal;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+
+@AutoConfiguration(after = {
+    cn.lypi.boot.ai.LyPiAiAutoConfiguration.class,
+    cn.lypi.boot.tool.LyPiToolAutoConfiguration.class
+})
+@EnableConfigurationProperties({LyPiRuntimeProperties.class, LyPiSubagentProperties.class})
+public class LyPiRuntimeAutoConfiguration {
+    private static final Path DEFAULT_CWD = Path.of(".").toAbsolutePath().normalize();
+
+    /**
+     * 创建默认事件总线。
+     */
+    @Bean
+    @ConditionalOnMissingBean(EventBus.class)
+    public EventBus eventBus() {
+        return new InMemoryEventBus();
+    }
+
+    /**
+     * 创建默认权限策略运行时。
+     */
+    @Bean
+    @ConditionalOnMissingBean(SecurityRuntimePort.class)
+    public SecurityRuntimePort securityRuntime(LyPiRuntimeProperties properties) {
+        Path rulesFile = properties.getCwd().resolve("rules").resolve("default.rules");
+        return new DefaultPolicyEngine(new ExecPolicyRuleFileReader().read(rulesFile));
+    }
+
+    /**
+     * 创建默认 session 管理器。
+     */
+    @Bean
+    @ConditionalOnMissingBean(SessionManagerPort.class)
+    public SessionManagerPort sessionManager(LyPiRuntimeProperties properties) {
+        return new SessionManagerImpl(
+            properties.getCwd(),
+            new ModelSelection(properties.getDefaultProvider(), properties.getDefaultModel(), properties.getThinkingLevel()),
+            properties.getThinkingLevel(),
+            properties.getAgentMode(),
+            properties.getPermissionMode()
+        );
+    }
+
+    /**
+     * 创建默认 session manager factory。
+     */
+    @Bean
+    @ConditionalOnMissingBean(SessionManagerFactoryPort.class)
+    public SessionManagerFactoryPort sessionManagerFactory() {
+        return new DefaultSessionManagerFactory();
+    }
+
+    /**
+     * 创建默认资源运行时。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ResourceRuntimePort.class)
+    public ResourceRuntimePort resourceRuntime() {
+        return new DefaultResourceRuntime();
+    }
+
+    /**
+     * 创建默认 context assembler。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ContextAssembler.class)
+    public ContextAssembler contextAssembler(
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        ObjectProvider<ModelCatalogPort> modelCatalog
+    ) {
+        return new DefaultContextAssembler(
+            sessionManager,
+            resourceRuntime,
+            new ContextBudgetEstimator(modelCatalog.getIfAvailable())
+        );
+    }
+
+    /**
+     * 创建缺省 compact summary 占位实现。
+     *
+     * NOTE: 完整应用由 LyPiAiAutoConfiguration 提供使用主模型的 AiCompactionSummarizer；
+     * 这里仅让未加载 AI 自动配置的精简装配在使用 compact 时 fail-fast。
+     */
+    @Bean
+    @ConditionalOnMissingBean(CompactionSummarizer.class)
+    public CompactionSummarizer compactionSummarizer() {
+        return request -> {
+            throw new IllegalStateException("AI compaction summarizer is unavailable");
+        };
+    }
+
+    /**
+     * 创建默认 compaction coordinator。
+     */
+    @Bean
+    @ConditionalOnMissingBean(CompactionCoordinator.class)
+    public CompactionCoordinator compactionCoordinator(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionSummarizer summarizer
+    ) {
+        return new DefaultCompactionCoordinator(
+            sessionManager,
+            contextAssembler,
+            eventBus,
+            new DefaultCompactionPlanner(),
+            summarizer,
+            Clock.systemUTC()
+        );
+    }
+
+    /**
+     * 创建默认手动压缩运行时。
+     */
+    @Bean
+    @ConditionalOnMissingBean(CompactionRuntimePort.class)
+    public CompactionRuntimePort compactionRuntime(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionSummarizer summarizer
+    ) {
+        return new DefaultCompactionRuntime(
+            contextAssembler,
+            new DefaultCompactionCoordinator(
+                sessionManager,
+                contextAssembler,
+                eventBus,
+                DefaultCompactionRuntime.manualPlanner(),
+                summarizer,
+                Clock.systemUTC()
+            )
+        );
+    }
+
+    /**
+     * 创建默认 AgentCore。
+     */
+    @Bean
+    @ConditionalOnBean({AiProviderRuntimePort.class, ToolRuntimePort.class})
+    @ConditionalOnMissingBean(AgentCorePort.class)
+    public AgentCorePort agentCore(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        AiProviderRuntimePort aiProvider,
+        ToolRuntimePort toolRuntime,
+        SecurityRuntimePort securityRuntime,
+        ResourceRuntimePort resourceRuntime,
+        EventBus eventBus,
+        ContextAssembler contextAssembler,
+        CompactionCoordinator compactionCoordinator
+    ) {
+        AgentCoreRuntimePorts ports = new AgentCoreRuntimePorts(
+            properties.getCwd(),
+            sessionManager,
+            aiProvider,
+            toolRuntime,
+            securityRuntime,
+            resourceRuntime,
+            eventBus,
+            contextAssembler,
+            null,
+            compactionCoordinator,
+            new NoopMemoryExtractionWorker()
+        );
+        return new DefaultTurnExecutor(ports, TurnIds.random(), Clock.systemUTC());
+    }
+
+    /**
+     * 创建默认 AgentCore factory。
+     *
+     * NOTE: 核心端口在创建 child turn executor 时延迟解析，避免跨配置类
+     * bean 条件受装配顺序影响；缺失依赖会在使用时 fail-fast。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public AgentCoreFactoryPort agentCoreFactory(
+        ObjectProvider<AiProviderRuntimePort> aiProvider,
+        ObjectProvider<ToolRuntimePort> toolRuntime,
+        ObjectProvider<ToolRuntimeFactoryPort> toolRuntimeFactory,
+        ObjectProvider<SecurityRuntimePort> securityRuntime,
+        ObjectProvider<ResourceRuntimePort> resourceRuntime,
+        EventBus eventBus,
+        ObjectProvider<CompactionSummarizer> compactionSummarizer,
+        ObjectProvider<ModelCatalogPort> modelCatalog,
+        Clock clock
+    ) {
+        return new AgentCoreFactoryPort() {
+            @Override
+            public AgentCorePort create(Path cwd, SessionManagerPort sessionManager) {
+                return create(cwd, sessionManager, null);
+            }
+
+            @Override
+            public AgentCorePort create(Path cwd, SessionManagerPort sessionManager, SubagentToolPolicy toolPolicy) {
+                ToolRuntimeFactoryPort resolvedToolRuntimeFactory = toolRuntimeFactory.getIfAvailable();
+                ToolRuntimePort resolvedToolRuntime = resolvedToolRuntimeFactory == null
+                    ? toolRuntime.getObject()
+                    : resolvedToolRuntimeFactory.create(cwd, toolPolicy);
+                return createWithPorts(cwd, sessionManager, resolvedToolRuntime, eventBus);
+            }
+
+            @Override
+            public AgentCorePort create(
+                Path cwd,
+                SessionManagerPort sessionManager,
+                ToolRuntimePort toolRuntime,
+                EventBus eventBus
+            ) {
+                return createWithPorts(cwd, sessionManager, toolRuntime, eventBus);
+            }
+
+            private AgentCorePort createWithPorts(
+                Path cwd,
+                SessionManagerPort sessionManager,
+                ToolRuntimePort resolvedToolRuntime,
+                EventBus resolvedEventBus
+            ) {
+                AiProviderRuntimePort resolvedAiProvider = aiProvider.getObject();
+                SecurityRuntimePort resolvedSecurityRuntime = securityRuntime.getObject();
+                ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getObject();
+                CompactionSummarizer resolvedCompactionSummarizer = compactionSummarizer.getObject();
+                DefaultContextAssembler assembler = new DefaultContextAssembler(
+                    sessionManager,
+                    resolvedResourceRuntime,
+                    new ContextBudgetEstimator(modelCatalog.getIfAvailable())
+                );
+                DefaultCompactionCoordinator compactionCoordinator = new DefaultCompactionCoordinator(
+                    sessionManager,
+                    assembler,
+                    resolvedEventBus,
+                    new DefaultCompactionPlanner(),
+                    resolvedCompactionSummarizer,
+                    clock
+                );
+                return new DefaultTurnExecutor(
+                    new AgentCoreRuntimePorts(
+                        cwd,
+                        sessionManager,
+                        resolvedAiProvider,
+                        resolvedToolRuntime,
+                        resolvedSecurityRuntime,
+                        resolvedResourceRuntime,
+                        resolvedEventBus,
+                        assembler,
+                        null,
+                        compactionCoordinator,
+                        new NoopMemoryExtractionWorker()
+                    ),
+                    TurnIds.random(),
+                    clock
+                );
+            }
+        };
+    }
+
+    /**
+     * 创建后台记忆沉淀触发器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public MemoryConsolidationTrigger memoryConsolidationTrigger() {
+        return new MemoryConsolidationTrigger();
+    }
+
+    /**
+     * 创建后台记忆沉淀 prompt factory。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public MemoryConsolidationPromptFactory memoryConsolidationPromptFactory() {
+        return new MemoryConsolidationPromptFactory();
+    }
+
+    /**
+     * 创建后台记忆沉淀审计 sink。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public MemoryConsolidationAuditSink memoryConsolidationAuditSink(LyPiRuntimeProperties properties) {
+        return new JsonlMemoryConsolidationAuditSink(properties.getCwd());
+    }
+
+    /**
+     * 创建后台记忆沉淀 executor。
+     */
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnMissingBean(name = "memoryConsolidationExecutor")
+    public ExecutorService memoryConsolidationExecutor() {
+        return Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "lypi-memory-consolidation");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    /**
+     * 创建后台记忆沉淀 runner。
+     */
+    @Bean
+    @ConditionalOnMissingBean(MemoryConsolidationRunner.class)
+    @ConditionalOnBean({AgentCoreFactoryPort.class, ToolRuntimeFactoryPort.class})
+    public MemoryConsolidationRunner memoryConsolidationRunner(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        AgentCoreFactoryPort agentCoreFactory,
+        ToolRuntimeFactoryPort toolRuntimeFactory,
+        MemoryConsolidationPromptFactory promptFactory,
+        MemoryConsolidationAuditSink auditSink
+    ) {
+        return request -> {
+            QuietEventBus quietEventBus = new QuietEventBus();
+            ToolRuntimePort restrictedToolRuntime = toolRuntimeFactory.createMemoryConsolidation(properties.getCwd(), quietEventBus);
+            new BootMemoryConsolidationRunner(
+                properties.getCwd(),
+                sessionManager,
+                new AgentCoreFactoryPort() {
+                    @Override
+                    public AgentCorePort create(Path cwd, SessionManagerPort forkSessionManager) {
+                        return agentCoreFactory.create(cwd, forkSessionManager, restrictedToolRuntime, quietEventBus);
+                    }
+                },
+                promptFactory,
+                auditSink
+            ).run(request);
+        };
+    }
+
+    /**
+     * 创建 turn end 后台记忆沉淀监听器。
+     */
+    @Bean(initMethod = "start", destroyMethod = "close")
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(MemoryConsolidationRunner.class)
+    public MemoryConsolidationTurnEndListener memoryConsolidationTurnEndListener(
+        EventBus eventBus,
+        SessionManagerPort sessionManager,
+        MemoryConsolidationTrigger trigger,
+        MemoryConsolidationRunner runner,
+        java.util.concurrent.Executor executor,
+        MemoryConsolidationAuditSink auditSink
+    ) {
+        return new MemoryConsolidationTurnEndListener(eventBus, sessionManager, trigger, runner, executor, auditSink);
+    }
+
+    /**
+     * 创建默认 session runtime state。
+     */
+    @Bean
+    @ConditionalOnMissingBean(SessionRuntimeState.class)
+    public SessionRuntimeState sessionRuntimeState(LyPiRuntimeProperties properties, SessionManagerPort sessionManager) {
+        var handle = properties.isSessionIdConfigured()
+            ? sessionManager.openOrCreate(properties.getSessionId())
+            : sessionManager.openTemporary(properties.getSessionId());
+        return new SessionRuntimeState(
+            handle.sessionId(),
+            properties.getCwd(),
+            handle.leafId(),
+            new ModelSelection(properties.getDefaultProvider(), properties.getDefaultModel(), properties.getThinkingLevel()),
+            properties.getThinkingLevel(),
+            properties.getAgentMode(),
+            properties.getPermissionMode(),
+            new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
+            false,
+            false,
+            false,
+            false
+        );
+    }
+
+    /**
+     * 创建默认启动装配服务。
+     */
+    @Bean
+    @ConditionalOnBean(ToolRuntimePort.class)
+    @ConditionalOnMissingBean(BootstrapService.class)
+    public BootstrapService bootstrapService(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        ToolRuntimePort toolRuntime
+    ) {
+        return new DefaultBootstrapService(properties, sessionManager, resourceRuntime, toolRuntime);
+    }
+
+    /**
+     * 创建最小 AppEntry。
+     */
+    @Bean
+    @ConditionalOnBean({BootstrapService.class, AgentCorePort.class})
+    @ConditionalOnMissingBean(AppEntry.class)
+    public AppEntry appEntry(
+        BootstrapService bootstrapService,
+        AgentCorePort agentCore,
+        EventBus eventBus,
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        ObjectProvider<TransportLauncher> transportLaunchers
+    ) {
+        return new DefaultAppEntry(
+            bootstrapService,
+            agentCore,
+            eventBus,
+            properties,
+            sessionManager,
+            List.copyOf(transportLaunchers.orderedStream().toList())
+        );
+    }
+
+    /**
+     * 创建真实 TUI transport factory。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public JLineTuiTransportFactory jLineTuiTransportFactory(
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime
+    ) {
+        return (state, core, events, terminal, diffViewProvider, resumeController, newSessionController, slashCommands) -> JLineTuiTransport.open(
+            state,
+            core,
+            events,
+            terminal,
+            diffViewProvider,
+            slashCommands,
+            resumeController,
+            newSessionController,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime
+        );
+    }
+
+    /**
+     * 创建默认 resume session 控制器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public ResumeSessionController resumeSessionController(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        EventBus eventBus,
+        ObjectProvider<AiProviderRuntimePort> aiProviderRuntime
+    ) {
+        AiProviderRuntimePort provider = aiProviderRuntime.getIfAvailable();
+        return new DefaultResumeSessionController(
+            properties.getCwd(),
+            sessionManager,
+            eventBus,
+            provider == null
+                ? null
+                : new AiBranchSummarizer(
+                    provider,
+                    new BranchSummaryContextBuilder(new BranchSummaryInstructionFactory())
+                )
+        );
+    }
+
+    /**
+     * 创建默认 new session 控制器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NewSessionController newSessionController(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        EventBus eventBus
+    ) {
+        return new DefaultNewSessionController(properties.getCwd(), sessionManager, eventBus);
+    }
+
+    /**
+     * 创建默认 Git working tree diff provider。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public DiffViewProvider diffViewProvider() {
+        return (cwd, maxPatchBytes) -> cwd == null
+            ? Optional.empty()
+            : new GitWorkingTreeDiffQuery(cwd).diffView(maxPatchBytes);
+    }
+
+    /**
+     * 创建默认 JLine TUI 启动器。
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "jLineTuiTransportLauncher")
+    public TransportLauncher jLineTuiTransportLauncher(
+        JLineTuiTransportFactory factory,
+        DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        ObjectProvider<SlashCommand> slashCommands
+    ) {
+        return new JLineTuiTransportLauncher(
+            factory,
+            diffViewProvider,
+            resumeController,
+            newSessionController,
+            slashCommands.orderedStream().toList()
+        );
+    }
+
+    /**
+     * 创建默认运行时聚合对象。
+     */
+    @Bean
+    @ConditionalOnBean({AgentCorePort.class, AiProviderRuntimePort.class, ToolRuntimePort.class, BootstrapService.class})
+    @ConditionalOnMissingBean(LyPiRuntime.class)
+    public LyPiRuntime lyPiRuntime(
+        AppEntry appEntry,
+        SessionManagerPort sessionManager,
+        AgentCorePort agentCore,
+        AiProviderRuntimePort aiProvider,
+        ToolRuntimePort toolRuntime,
+        SecurityRuntimePort securityRuntime,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        ObjectProvider<TransportAdapter> transports
+    ) {
+        return new LyPiRuntime(
+            appEntry,
+            sessionManager,
+            agentCore,
+            aiProvider,
+            toolRuntime,
+            securityRuntime,
+            resourceRuntime,
+            compactionRuntime,
+            List.copyOf(transports.orderedStream().toList())
+        );
+    }
+
+    /**
+     * 创建 Spring Boot 启动回调。
+     */
+    @Bean("lyPiApplicationRunner")
+    @ConditionalOnBean(AppEntry.class)
+    @ConditionalOnMissingBean(name = "lyPiApplicationRunner")
+    public ApplicationRunner lyPiApplicationRunner(AppEntry appEntry, LyPiRuntimeProperties properties) {
+        return args -> {
+            if (isHeadlessSubagent(args)) {
+                return;
+            }
+            appEntry.start(new cn.lypi.contracts.bootstrap.BootstrapRequest(
+                properties.getCwd(),
+                args == null ? List.of() : args.getNonOptionArgs(),
+                properties.isSessionIdConfigured() ? Optional.of(properties.getSessionId()) : Optional.empty(),
+                Optional.ofNullable(properties.getInitialPrompt())
+            ));
+        };
+    }
+
+    private boolean isHeadlessSubagent(org.springframework.boot.ApplicationArguments args) {
+        if (args == null) {
+            return false;
+        }
+        if (args.containsOption("lypi.headless.subagent") || args.containsOption("lypi-headless-subagent")) {
+            return true;
+        }
+        return List.of(args.getSourceArgs()).contains("headless-subagent");
+    }
+
+    /**
+     * 创建 transport 事件连接器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public TransportEventConnector transportEventConnector(
+        EventBus eventBus,
+        ObjectProvider<TransportAdapter> transports,
+        ObjectProvider<SessionRuntimeState> state
+    ) {
+        TransportEventConnector connector = new TransportEventConnector(eventBus, List.copyOf(transports.orderedStream().toList()));
+        state.ifAvailable(connector::attachAll);
+        return connector;
+    }
+
+    /**
+     * 创建默认时钟。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public Clock clock() {
+        return Clock.systemUTC();
+    }
+
+    /**
+     * 创建 child session 服务。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ChildSessionPort.class)
+    public ChildSessionPort childSessionPort() {
+        return new ChildSessionService();
+    }
+
+    /**
+     * 创建 child agent 持久化快照查询器。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ChildAgentSnapshotProvider.class)
+    public ChildAgentSnapshotProvider childAgentSnapshotProvider(ObjectProvider<SessionManagerPort> sessionManager) {
+        SessionTreeQuery query = new SessionTreeQuery(sessionStorageRoot(sessionManager.getIfAvailable()));
+        return parentSessionId -> query.children(parentSessionId).stream()
+            .map(this::childAgentSnapshot)
+            .toList();
+    }
+
+    private ChildAgentSnapshot childAgentSnapshot(ChildSessionView child) {
+        return new ChildAgentSnapshot(
+            child.sessionId(),
+            child.parentSessionId().orElse(""),
+            child.parentSpawnEntryId().orElse(""),
+            child.agentName(),
+            child.agentRole()
+        );
+    }
+
+    /**
+     * 创建 mailbox JSONL store。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public JsonlMailboxStore jsonlMailboxStore(ObjectProvider<SessionManagerPort> sessionManager) {
+        return new JsonlMailboxStore(sessionStorageRoot(sessionManager.getIfAvailable()));
+    }
+
+    /**
+     * 创建默认 mailbox 服务。
+     */
+    @Bean
+    @ConditionalOnMissingBean(MailboxPort.class)
+    public DefaultMailboxService mailboxPort(JsonlMailboxStore store, SessionManagerPort sessionManager, Clock clock) {
+        return new DefaultMailboxService(store, sessionManager, clock);
+    }
+
+    /**
+     * 创建默认 mailbox 投递守卫。
+     *
+     * NOTE: 默认保守不自动投递，由 TUI/headless 空闲检测后替换。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public MailboxDeliveryGuard mailboxDeliveryGuard(ObjectProvider<SessionRuntimeState> state, SessionManagerPort sessionManager) {
+        return message -> {
+            if (message == null) {
+                return false;
+            }
+            SessionRuntimeState runtimeState = state.getIfAvailable();
+            if (runtimeState == null
+                || runtimeState.hasInterruptibleTool()
+                || runtimeState.hasActiveTurn()
+                || runtimeState.hasPendingPermission()
+                || runtimeState.hasPendingInput()) {
+                return false;
+            }
+            return message.parentSessionId().equals(runtimeState.sessionId())
+                && currentBranchContainsSpawnEntry(sessionManager, runtimeState, message.parentSpawnEntryId());
+        };
+    }
+
+    private boolean currentBranchContainsSpawnEntry(
+        SessionManagerPort sessionManager,
+        SessionRuntimeState runtimeState,
+        String parentSpawnEntryId
+    ) {
+        if (parentSpawnEntryId == null || parentSpawnEntryId.isBlank()) {
+            return false;
+        }
+        try {
+            return sessionManager.branch(runtimeState.currentBranchLeafId()).stream()
+                .map(SessionEntry::id)
+                .anyMatch(parentSpawnEntryId::equals);
+        } catch (RuntimeException exception) {
+            return false;
+        }
+    }
+
+    /**
+     * 创建 mailbox 投递服务。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(DefaultMailboxService.class)
+    public MailboxDeliveryService mailboxDeliveryService(DefaultMailboxService mailbox, MailboxDeliveryGuard guard) {
+        return new MailboxDeliveryService(mailbox, guard);
+    }
+
+    /**
+     * 创建 /mailbox slash command handler。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(MailboxPort.class)
+    public MailboxSlashCommandHandler mailboxSlashCommandHandler(
+        MailboxPort mailbox,
+        ObjectProvider<SessionRuntimeState> state,
+        SessionManagerPort sessionManager
+    ) {
+        return new MailboxSlashCommandHandler(mailbox, () -> {
+            SessionRuntimeState runtimeState = state.getIfAvailable();
+            if (runtimeState != null) {
+                return runtimeState.sessionId();
+            }
+            return sessionManager.currentView().sessionId();
+        });
+    }
+
+    /**
+     * 创建 /mailbox slash command 定义。
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "mailboxSlashCommand")
+    @ConditionalOnBean(MailboxSlashCommandHandler.class)
+    public SlashCommand mailboxSlashCommand(MailboxSlashCommandHandler handler) {
+        return handler.command();
+    }
+
+    /**
+     * 创建默认 agent registry。
+     */
+    @Bean
+    @ConditionalOnMissingBean(AgentRegistryPort.class)
+    @ConditionalOnBean(DefaultMailboxService.class)
+    public AgentRegistryPort agentRegistry(
+        SessionManagerPort parentSession,
+        DefaultMailboxService mailbox,
+        ObjectProvider<RunningAgentSnapshotProvider> runningAgents,
+        ObjectProvider<AgentCenterPort> agentCenter,
+        ChildAgentSnapshotProvider childAgents
+    ) {
+        return new DefaultAgentRegistry(
+            parentSession,
+            mailbox,
+            runningAgentSnapshotProvider(runningAgents, agentCenter),
+            childAgents
+        );
+    }
+
+    /**
+     * 创建 /agent slash command handler。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(AgentRegistryPort.class)
+    public AgentSlashCommandHandler agentSlashCommandHandler(
+        AgentRegistryPort registry,
+        ObjectProvider<AgentCenterPort> agentCenter,
+        ObjectProvider<SessionRuntimeState> state,
+        SessionManagerPort sessionManager
+    ) {
+        return new AgentSlashCommandHandler(registry, agentCenter.getIfAvailable(), () -> {
+            SessionRuntimeState runtimeState = state.getIfAvailable();
+            if (runtimeState != null) {
+                return runtimeState.sessionId();
+            }
+            return sessionManager.currentView().sessionId();
+        });
+    }
+
+    /**
+     * 创建 /agent slash command 定义。
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "agentSlashCommand")
+    @ConditionalOnBean(AgentSlashCommandHandler.class)
+    public SlashCommand agentSlashCommand(AgentSlashCommandHandler handler) {
+        return handler.command();
+    }
+
+    /**
+     * 聚合 TUI slash command 定义，供真实 TUI transport 打开时接入。
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "tuiSlashCommands")
+    public List<SlashCommand> tuiSlashCommands(ObjectProvider<SlashCommand> commands) {
+        return commands.orderedStream().toList();
+    }
+
+    private RunningAgentSnapshotProvider runningAgentSnapshotProvider(
+        ObjectProvider<RunningAgentSnapshotProvider> runningAgents,
+        ObjectProvider<AgentCenterPort> agentCenter
+    ) {
+        List<RunningAgentSnapshotProvider> explicitProviders = runningAgents.orderedStream()
+            .filter(provider -> !(provider instanceof AgentCenterPort))
+            .toList();
+        if (!explicitProviders.isEmpty()) {
+            return explicitProviders.getFirst();
+        }
+        AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
+        if (resolvedAgentCenter instanceof RunningAgentSnapshotProvider provider) {
+            return provider;
+        }
+        return ignored -> List.of();
+    }
+
+    /**
+     * 创建 subagent 子进程命令解析器。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    SubagentCommandResolver subagentCommandResolver(LyPiSubagentProperties properties) {
+        return new SubagentCommandResolver(properties);
+    }
+
+    /**
+     * 创建 JSON subagent 子进程 runner。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public SubagentProcessRunner subagentProcessRunner(SubagentCommandResolver subagentCommandResolver) {
+        return new JsonSubagentProcessRunner(subagentCommandResolver.resolve());
+    }
+
+    /**
+     * 创建默认 agent center。
+     */
+    @Bean
+    @ConditionalOnMissingBean(AgentCenterPort.class)
+    @ConditionalOnBean({DefaultMailboxService.class, MailboxDeliveryService.class})
+    public AgentCenterPort agentCenter(
+        ChildSessionPort childSessions,
+        SessionManagerPort parentSession,
+        SessionManagerFactoryPort sessionManagerFactory,
+        SubagentProcessRunner processRunner,
+        DefaultMailboxService mailbox,
+        MailboxDeliveryService deliveryService,
+        SubagentCommandResolver subagentCommandResolver,
+        Clock clock
+    ) {
+        List<String> command = subagentCommandResolver.resolve();
+        return new DefaultAgentCenter(
+            command,
+            childSessions,
+            parentSession,
+            sessionStorageRoot(parentSession),
+            sessionManagerFactory,
+            processRunner,
+            mailbox,
+            deliveryService,
+            clock
+        );
+    }
+
+    private Path sessionStorageRoot(SessionManagerPort sessionManager) {
+        if (sessionManager instanceof SessionStorageRootPort storageRoot) {
+            return storageRoot.sessionStorageRoot();
+        }
+        return DEFAULT_CWD;
+    }
+
+}

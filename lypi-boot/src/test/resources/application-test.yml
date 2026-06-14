@@ -1,0 +1,25 @@
+lypi:
+  ai:
+    default-provider: openai
+    default-model: gpt-5-mini
+    compaction-summary:
+      fallback-policy: fallback_deterministic
+    providers:
+      openai:
+        enabled: true
+        api-style: openai_compatible
+        request-style: responses
+        fallback-request-style: chat_completions
+        transport: auto
+        base-url: https://api.openai.test/v1
+        websocket-path: /v1/responses
+        api-key: ${LYPI_TEST_TOKEN}
+        models:
+          - model-id: gpt-5-mini
+            context-window: 128000
+            max-output-tokens: 16384
+            supports-thinking: true
+            supports-image-input: true
+            input-token-cost: 0
+            output-token-cost: 0
+            currency: USD

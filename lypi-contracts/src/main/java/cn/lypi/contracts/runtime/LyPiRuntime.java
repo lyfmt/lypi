@@ -5,12 +5,12 @@ import java.util.List;
 
 public record LyPiRuntime(
     AppEntry appEntry,
-    SessionEnginePort sessionEngine,
+    SessionManagerPort sessionManager,
     AgentCorePort agentCore,
     AiProviderRuntimePort aiProvider,
     ToolRuntimePort toolRuntime,
     SecurityRuntimePort securityRuntime,
     ResourceRuntimePort resourceRuntime,
+    CompactionRuntimePort compactionRuntime,
     List<TransportAdapter> transports
 ) {}
-

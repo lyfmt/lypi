@@ -1,0 +1,11 @@
+spring:
+  main:
+    banner-mode: off
+
+lypi:
+  ai:
+    default-provider:
+    default-model:
+    compaction-summary:
+      fallback-policy: fallback_deterministic
+    providers: {}

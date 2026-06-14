@@ -1,0 +1,67 @@
+package cn.lypi.ai;
+
+import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.model.AssistantEventStream;
+import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.runtime.AiStreamOptions;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
+
+public interface ProviderAdapter {
+    /**
+     * 返回该 adapter 负责的 provider 名称。
+     *
+     * NOTE: 名称必须与 ModelDescriptor.provider 保持一致，用于 ModelPort 路由模型调用。
+     */
+    String provider();
+
+    /**
+     * 发起 provider 流式调用并标准化输出。
+     *
+     * NOTE: 具体 provider 协议、thinking 参数和原始 SSE 必须在 adapter 内转换，不得泄漏到上层。
+     */
+    AssistantEventStream stream(ContextSnapshot context, ModelDescriptor descriptor, AbortSignal signal);
+
+    /**
+     * 发起带运行选项的 provider 流式调用并标准化输出。
+     *
+     * NOTE: 默认实现保持旧 adapter 兼容；支持运行选项的 adapter 应重写该方法。
+     */
+    default AssistantEventStream stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        AiStreamOptions options,
+        AbortSignal signal
+    ) {
+        return stream(context, descriptor, signal);
+    }
+
+    /**
+     * 发起带工具注册表快照的 provider 流式调用并标准化输出。
+     *
+     * NOTE: 默认实现保持旧 adapter 兼容；支持工具调用的 adapter 应重写该方法。
+     */
+    default AssistantEventStream stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        ToolRegistrySnapshot tools,
+        AbortSignal signal
+    ) {
+        return stream(context, descriptor, signal);
+    }
+
+    /**
+     * 发起带工具注册表快照和运行选项的 provider 流式调用并标准化输出。
+     *
+     * NOTE: 默认实现保持旧 adapter 兼容；支持工具调用和运行选项的 adapter 应重写该方法。
+     */
+    default AssistantEventStream stream(
+        ContextSnapshot context,
+        ModelDescriptor descriptor,
+        ToolRegistrySnapshot tools,
+        AiStreamOptions options,
+        AbortSignal signal
+    ) {
+        return stream(context, descriptor, tools, signal);
+    }
+}
