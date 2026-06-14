@@ -265,6 +265,22 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
         return new ForkService(clock).fork(request, header, index);
     }
 
+    /**
+     * 删除指定 session 的 JSONL 文件。
+     */
+    @Override
+    public void deleteSession(String sessionId) {
+        if (this.sessionId != null && this.sessionId.equals(sessionId) && header != null && index != null) {
+            store.delete(sessionId);
+            this.sessionId = null;
+            header = null;
+            index = null;
+            persistent = false;
+            return;
+        }
+        store.delete(sessionId);
+    }
+
     private SessionHandle handle() {
         return new SessionHandle(sessionId, store.sessionFile(sessionId), index.leafId(), index.byId());
     }
