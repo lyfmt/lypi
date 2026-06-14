@@ -21,6 +21,7 @@ final class TuiRenderer {
     private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
     private static final String ANSI_RESET = "\033[0m";
     private static final String INPUT_PREFIX = "> ";
+    private static final int THINKING_VISIBLE_LINE_LIMIT = 3;
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
     private final ToolDisplayRendererRegistry toolDisplayRenderers = ToolDisplayRendererRegistry.defaults();
 
@@ -128,7 +129,12 @@ final class TuiRenderer {
                 appendWithinBudget(lines, toolLines(tool, width, toolOutputExpanded, remainingBudget(lines, lineBudget)), lineBudget);
             } else if (block instanceof TuiThinkingBlock thinking) {
                 String content = thinking.collapsed() ? "collapsed" : thinking.content();
-                appendWithinBudget(lines, styledLines(prefixedLines("thinking: ", content, width), THINKING_MESSAGE), lineBudget);
+                List<String> thinkingLines = prefixedLines("thinking: ", content, width);
+                appendWithinBudget(
+                    lines,
+                    styledLines(compressedThinkingLines(thinkingLines), THINKING_MESSAGE),
+                    lineBudget
+                );
             } else {
                 appendWithinBudget(lines, wrap(text, width), lineBudget);
             }
@@ -203,6 +209,20 @@ final class TuiRenderer {
         }
         int remaining = lineBudget - target.size();
         target.addAll(source.subList(0, Math.min(remaining, source.size())));
+    }
+
+    private List<String> limitLines(List<String> lines, int limit) {
+        return lines.subList(0, Math.min(limit, lines.size()));
+    }
+
+    private List<String> compressedThinkingLines(List<String> lines) {
+        if (lines.size() <= THINKING_VISIBLE_LINE_LIMIT) {
+            return lines;
+        }
+        List<String> compressed = new ArrayList<>(limitLines(lines, THINKING_VISIBLE_LINE_LIMIT));
+        int hiddenLineCount = lines.size() - THINKING_VISIBLE_LINE_LIMIT;
+        compressed.add(" ".repeat(AnsiWidth.displayWidth("thinking: ")) + "... 已折叠 " + hiddenLineCount + " 行");
+        return compressed;
     }
 
     private List<String> prefixedLines(String prefix, String content, int width) {
