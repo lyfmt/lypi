@@ -116,6 +116,7 @@ public class LyPiToolAutoConfiguration {
         ObjectProvider<PermissionPromptPort> promptPort,
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         ObjectProvider<McpClientManagerFactory> mcpClientManagerFactory,
+        McpClientManagerLifecycle mcpClientManagerLifecycle,
         Environment environment
     ) {
         EventBus resolvedEventBus = eventBus.getIfAvailable();
@@ -163,10 +164,19 @@ public class LyPiToolAutoConfiguration {
                         BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox, resolvedAgentRegistry);
                     }
                 }
-                registerMcpTools(runtime, runtimeCwd, resolvedResourceRuntime, resolvedMcpClientManagerFactory);
+                registerMcpTools(runtime, runtimeCwd, resolvedResourceRuntime, resolvedMcpClientManagerFactory, mcpClientManagerLifecycle);
                 return runtime;
             }
         };
+    }
+
+    /**
+     * 创建 MCP client manager 生命周期管理器。
+     */
+    @Bean
+    @ConditionalOnMissingBean(McpClientManagerLifecycle.class)
+    public McpClientManagerLifecycle mcpClientManagerLifecycle() {
+        return new McpClientManagerLifecycle();
     }
 
     /**
@@ -287,7 +297,8 @@ public class LyPiToolAutoConfiguration {
         ToolRuntimePort runtime,
         Path cwd,
         ResourceRuntimePort resourceRuntime,
-        McpClientManagerFactory managerFactory
+        McpClientManagerFactory managerFactory,
+        McpClientManagerLifecycle managerLifecycle
     ) {
         if (resourceRuntime == null || managerFactory == null) {
             return;
@@ -298,6 +309,7 @@ public class LyPiToolAutoConfiguration {
                 return;
             }
             McpClientManager manager = managerFactory.create(cwd);
+            managerLifecycle.track(manager);
             manager.connectAll(resources.mcpServers()).forEach(schema ->
                 runtime.register(new McpToolAdapter(schema, manager::invoke))
             );

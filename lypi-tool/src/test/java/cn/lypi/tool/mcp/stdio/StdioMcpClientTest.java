@@ -1,6 +1,7 @@
 package cn.lypi.tool.mcp.stdio;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.mcp.McpServerConfig;
@@ -51,23 +52,38 @@ class StdioMcpClientTest {
         client.close();
     }
 
+    @Test
+    void closesProcessWhenConnectFails() {
+        StdioMcpClient client = new StdioMcpClient(config("fail-initialize"), tempDir, new ObjectMapper(), message -> {
+        });
+
+        assertThrows(cn.lypi.tool.mcp.McpClientException.class, client::connect);
+
+        client.close();
+    }
+
     private McpServerConfig config() {
+        return config(new String[0]);
+    }
+
+    private McpServerConfig config(String... args) {
         return new McpServerConfig(
             "fake",
             McpTransport.STDIO,
-            new McpStdioServerConfig(command(), Map.of()),
+            new McpStdioServerConfig(command(args), Map.of()),
             null,
             Duration.ofSeconds(5),
             Duration.ofSeconds(5)
         );
     }
 
-    private List<String> command() {
+    private List<String> command(String... args) {
         List<String> command = new ArrayList<>();
         command.add(Path.of(System.getProperty("java.home")).resolve("bin/java").toString());
         command.add("-cp");
         command.add(System.getProperty("java.class.path"));
         command.add(FakeStdioMcpServer.class.getName());
+        command.addAll(List.of(args));
         return command;
     }
 }

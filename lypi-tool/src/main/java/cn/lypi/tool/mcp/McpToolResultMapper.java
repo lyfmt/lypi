@@ -20,6 +20,17 @@ public final class McpToolResultMapper {
      * 返回 MCP tool 结果的人类可读表示。
      */
     public String map(JsonNode result) {
+        return text(result);
+    }
+
+    /**
+     * 返回 MCP tool 结果和远端声明的错误状态。
+     */
+    public McpToolCallResult mapResult(JsonNode result) {
+        return new McpToolCallResult(text(result), result.path("isError").asBoolean(false));
+    }
+
+    private String text(JsonNode result) {
         JsonNode content = result.path("content");
         if (!content.isArray()) {
             return compact(result);

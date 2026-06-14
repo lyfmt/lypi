@@ -41,12 +41,16 @@ public final class McpClientManager implements AutoCloseable {
             return tools;
         }
         for (McpServerConfig config : configs) {
+            McpClient client = null;
             try {
-                McpClient client = clientFactory.create(config, cwd);
+                client = clientFactory.create(config, cwd);
                 List<McpToolSchema> schemas = client.connect();
                 clients.put(config.name(), client);
                 tools.addAll(schemas);
             } catch (RuntimeException exception) {
+                if (client != null) {
+                    client.close();
+                }
                 // NOTE: 单个 MCP 端点失败不能阻断本地工具或其他端点。
             }
         }
@@ -80,7 +84,7 @@ public final class McpClientManager implements AutoCloseable {
         ToolUseContext context,
         ProgressSink progress
     ) {
-        return resultMapper.map(invoke(serverName, toolName, arguments));
+        return resultMapper.mapResult(invoke(serverName, toolName, arguments));
     }
 
     @Override

@@ -2,6 +2,7 @@ package cn.lypi.tool.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.mcp.McpServerConfig;
@@ -15,6 +16,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class McpClientManagerTest {
@@ -41,6 +43,27 @@ class McpClientManagerTest {
         List<McpToolSchema> tools = manager.connectAll(List.of(config("bad"), config("ok")));
 
         assertEquals(List.of("ok"), tools.stream().map(McpToolSchema::serverName).toList());
+    }
+
+    @Test
+    void closesClientWhenConnectFails() {
+        AtomicBoolean closed = new AtomicBoolean(false);
+        McpClientManager manager = new McpClientManager(Path.of("."), (config, cwd) -> new FakeClient(config.name()) {
+            @Override
+            public List<McpToolSchema> connect() {
+                throw new IllegalStateException("initialize failed");
+            }
+
+            @Override
+            public void close() {
+                closed.set(true);
+            }
+        });
+
+        List<McpToolSchema> tools = manager.connectAll(List.of(config("bad")));
+
+        assertTrue(tools.isEmpty());
+        assertTrue(closed.get());
     }
 
     @Test

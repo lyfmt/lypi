@@ -393,6 +393,24 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
+    void closesMcpManagersWhenContextCloses() {
+        RecordingMcpClientFactory mcpClients = new RecordingMcpClientFactory();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(ResourceRuntimePort.class, () -> resourceRuntimeWith(mcpServerConfig()))
+            .withBean(McpClientManagerFactory.class, () -> cwd -> mcpClients.manager(cwd))
+            .run(context -> {
+                assertThat(context.getBean(ToolRuntimePort.class).resolve("mcp__fake__echo")).isPresent();
+                assertThat(mcpClients.closed).isFalse();
+            });
+
+        assertThat(mcpClients.closed).isTrue();
+    }
+
+
+    @Test
     void mcpConnectionFailureDoesNotBlockBuiltInTools() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
@@ -640,6 +658,7 @@ class LyPiToolAutoConfigurationTest {
     private static final class RecordingMcpClientFactory {
         private final List<McpServerConfig> connectedConfigs = new ArrayList<>();
         private final List<Map<String, Object>> invocations = new ArrayList<>();
+        private boolean closed;
 
         private McpClientManager manager(Path cwd) {
             return new McpClientManager(cwd, (config, runtimeCwd) -> new McpClient() {
@@ -660,6 +679,7 @@ class LyPiToolAutoConfigurationTest {
 
                 @Override
                 public void close() {
+                    closed = true;
                 }
             });
         }

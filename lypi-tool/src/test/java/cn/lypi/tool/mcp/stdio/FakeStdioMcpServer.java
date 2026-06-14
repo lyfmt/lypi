@@ -16,6 +16,7 @@ public final class FakeStdioMcpServer {
     }
 
     public static void main(String[] args) throws Exception {
+        boolean failInitialize = args.length > 0 && "fail-initialize".equals(args[0]);
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
         String line;
         while ((line = reader.readLine()) != null) {
@@ -24,6 +25,10 @@ public final class FakeStdioMcpServer {
                 continue;
             }
             String method = request.path("method").asText();
+            if (failInitialize && "initialize".equals(method)) {
+                writeError(request, -32000, "initialize failed");
+                return;
+            }
             Object result = switch (method) {
                 case "initialize" -> Map.of(
                     "protocolVersion", "2025-06-18",
@@ -58,5 +63,14 @@ public final class FakeStdioMcpServer {
             System.out.println(JSON.writeValueAsString(response));
             System.out.flush();
         }
+    }
+
+    private static void writeError(JsonNode request, int code, String message) throws Exception {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("jsonrpc", "2.0");
+        response.put("id", request.path("id").asLong());
+        response.put("error", Map.of("code", code, "message", message));
+        System.out.println(JSON.writeValueAsString(response));
+        System.out.flush();
     }
 }

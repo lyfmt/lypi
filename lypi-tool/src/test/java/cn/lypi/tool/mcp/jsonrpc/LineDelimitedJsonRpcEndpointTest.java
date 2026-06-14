@@ -3,8 +3,10 @@ package cn.lypi.tool.mcp.jsonrpc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.tool.mcp.McpClientException;
 import cn.lypi.tool.mcp.McpProtocolException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -99,6 +101,25 @@ class LineDelimitedJsonRpcEndpointTest {
             () -> result.get(1, TimeUnit.SECONDS)
         );
         assertTrue(exception.getMessage().contains("invalid JSON-RPC message"));
+        pipes.closeServer();
+        endpoint.close();
+    }
+
+    @Test
+    void requestUsesProvidedTimeoutWhenPresent() throws Exception {
+        TestPipes pipes = TestPipes.create();
+        LineDelimitedJsonRpcEndpoint endpoint = endpoint(pipes.clientInput(), pipes.clientOutput());
+        endpoint.start();
+
+        CompletableFuture<JsonNode> result = endpoint.request("tools/call", Map.of(), Duration.ofMillis(25));
+        pipes.readServerRequest();
+
+        ExecutionException exception = assertThrows(
+            ExecutionException.class,
+            () -> result.get(500, TimeUnit.MILLISECONDS)
+        );
+        assertInstanceOf(McpClientException.class, exception.getCause());
+        assertTrue(exception.getCause().getMessage().contains("tools/call"));
         pipes.closeServer();
         endpoint.close();
     }

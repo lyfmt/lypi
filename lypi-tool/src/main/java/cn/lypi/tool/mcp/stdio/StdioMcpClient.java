@@ -44,24 +44,29 @@ public final class StdioMcpClient implements McpClient {
 
     @Override
     public List<McpToolSchema> connect() {
-        process = StdioMcpProcess.start(config, cwd);
-        startStderrDrain(process);
-        endpoint = new LineDelimitedJsonRpcEndpoint(
-            process.inputStream(),
-            process.outputStream(),
-            jsonMapper,
-            config.startupTimeout(),
-            diagnostics
-        );
-        endpoint.start();
-        await(endpoint.request("initialize", Map.of(
-            "protocolVersion", "2025-06-18",
-            "capabilities", Map.of(),
-            "clientInfo", Map.of("name", "ly-pi", "version", "0.0.1-SNAPSHOT")
-        )), config.startupTimeout(), "initialize");
-        endpoint.notify("notifications/initialized", Map.of());
-        JsonNode toolsResult = await(endpoint.request("tools/list", Map.of()), config.startupTimeout(), "tools/list");
-        return schemaMapper.map(config.name(), toolsResult);
+        try {
+            process = StdioMcpProcess.start(config, cwd);
+            startStderrDrain(process);
+            endpoint = new LineDelimitedJsonRpcEndpoint(
+                process.inputStream(),
+                process.outputStream(),
+                jsonMapper,
+                config.startupTimeout(),
+                diagnostics
+            );
+            endpoint.start();
+            await(endpoint.request("initialize", Map.of(
+                "protocolVersion", "2025-06-18",
+                "capabilities", Map.of(),
+                "clientInfo", Map.of("name", "ly-pi", "version", "0.0.1-SNAPSHOT")
+            ), config.startupTimeout()), config.startupTimeout(), "initialize");
+            endpoint.notify("notifications/initialized", Map.of());
+            JsonNode toolsResult = await(endpoint.request("tools/list", Map.of(), config.startupTimeout()), config.startupTimeout(), "tools/list");
+            return schemaMapper.map(config.name(), toolsResult);
+        } catch (RuntimeException exception) {
+            close();
+            throw exception;
+        }
     }
 
     @Override
@@ -72,7 +77,7 @@ public final class StdioMcpClient implements McpClient {
         return await(endpoint.request("tools/call", Map.of(
             "name", toolName,
             "arguments", arguments == null ? Map.of() : arguments
-        )), config.callTimeout(), "tools/call");
+        ), config.callTimeout()), config.callTimeout(), "tools/call");
     }
 
     @Override

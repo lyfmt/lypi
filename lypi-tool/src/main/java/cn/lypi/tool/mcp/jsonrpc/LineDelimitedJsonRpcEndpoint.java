@@ -73,16 +73,22 @@ public final class LineDelimitedJsonRpcEndpoint implements JsonRpcEndpoint {
 
     @Override
     public CompletableFuture<JsonNode> request(String method, Object params) {
+        return request(method, params, timeout);
+    }
+
+    @Override
+    public CompletableFuture<JsonNode> request(String method, Object params, Duration requestTimeout) {
         ensureOpen();
         long id = nextId.getAndIncrement();
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
         pending.put(id, future);
+        Duration effectiveTimeout = requestTimeout == null ? timeout : requestTimeout;
         scheduler.schedule(() -> {
             CompletableFuture<JsonNode> removed = pending.remove(id);
             if (removed != null) {
                 removed.completeExceptionally(new McpClientException("JSON-RPC request timed out: " + method));
             }
-        }, timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }, effectiveTimeout.toMillis(), TimeUnit.MILLISECONDS);
         try {
             writeMessage(requestMessage(id, method, params));
         } catch (RuntimeException exception) {

@@ -40,4 +40,22 @@ class McpToolResultMapperTest {
 
         assertTrue(mapper.map(result).contains("\"image\""));
     }
+
+    @Test
+    void preservesMcpErrorFlag() throws Exception {
+        JsonNode result = jsonMapper.readTree("""
+            {
+              "content": [
+                {"type": "text", "text": "remote failed"}
+              ],
+              "isError": true
+            }
+            """);
+        McpToolResultMapper mapper = new McpToolResultMapper(jsonMapper);
+
+        McpToolCallResult mapped = mapper.mapResult(result);
+
+        assertEquals("remote failed", mapped.output());
+        assertTrue(mapped.error());
+    }
 }

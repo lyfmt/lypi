@@ -62,6 +62,20 @@ class McpToolAdapterTest {
     }
 
     @Test
+    void mcpDeclaredErrorReturnsToolError() {
+        McpToolSchema schema = new McpToolSchema("github", "list_issues", "", new JsonSchema(Map.of()), "");
+        McpToolAdapter adapter = new McpToolAdapter(schema, (serverName, toolName, arguments, context, progress) ->
+            new McpToolCallResult("remote failed", true)
+        );
+
+        ToolResult<Object> result = adapter.execute(Map.of(), context(), message -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().toString().contains("remote failed"));
+    }
+
+    @Test
     void defaultsToWritableAndNotConcurrencySafe() {
         McpToolAdapter adapter = new McpToolAdapter(
             new McpToolSchema("server", "tool", "", new JsonSchema(Map.of()), ""),
