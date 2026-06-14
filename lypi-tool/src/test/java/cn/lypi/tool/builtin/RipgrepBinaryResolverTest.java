@@ -4,8 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,6 +42,33 @@ class RipgrepBinaryResolverTest {
     }
 
     @Test
+    void extractsClasspathRipgrepResourceToCacheWhenPackagedInJar() throws Exception {
+        Path jar = tempDir.resolve("ripgrep-test.jar");
+        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar))) {
+            output.putNextEntry(new JarEntry("ripgrep/x86_64-linux/rg"));
+            output.write("#!/bin/sh\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            output.closeEntry();
+        }
+        Path cacheRoot = tempDir.resolve("cache");
+        try (URLClassLoader classLoader = new URLClassLoader(new URL[] {jar.toUri().toURL()}, null)) {
+            RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
+                new RipgrepPlatform("linux", "x86_64"),
+                tempDir.resolve("missing-resources"),
+                cacheRoot,
+                classLoader
+            );
+
+            RipgrepBinary command = resolver.resolve(Map.of());
+
+            Path extracted = Path.of(command.command());
+            assertTrue(extracted.startsWith(cacheRoot));
+            assertTrue(Files.isRegularFile(extracted));
+            assertTrue(Files.isExecutable(extracted));
+            assertEquals("vendor", command.mode());
+        }
+    }
+
+    @Test
     void systemModeUsesCommandNameOnly() {
         RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
             new RipgrepPlatform("linux", "x86_64"),
@@ -51,16 +82,20 @@ class RipgrepBinaryResolverTest {
     }
 
     @Test
-    void rejectsMissingVendorBinaryWithoutSystemOverride() {
-        RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
-            new RipgrepPlatform("linux", "x86_64"),
-            tempDir
-        );
+    void rejectsMissingVendorBinaryWithoutSystemOverride() throws Exception {
+        try (URLClassLoader classLoader = new URLClassLoader(new URL[0], null)) {
+            RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
+                new RipgrepPlatform("linux", "x86_64"),
+                tempDir,
+                tempDir.resolve("cache"),
+                classLoader
+            );
 
-        IllegalStateException exception = assertThrows(IllegalStateException.class, () -> resolver.resolve(Map.of()));
+            IllegalStateException exception = assertThrows(IllegalStateException.class, () -> resolver.resolve(Map.of()));
 
-        assertTrue(exception.getMessage().contains("未找到随包 ripgrep"));
-        assertTrue(exception.getMessage().contains("x86_64-linux"));
+            assertTrue(exception.getMessage().contains("未找到随包 ripgrep"));
+            assertTrue(exception.getMessage().contains("x86_64-linux"));
+        }
     }
 
     private Path vendorBinary(String relativePath) throws Exception {

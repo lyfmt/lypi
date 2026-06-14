@@ -10,6 +10,8 @@ import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -98,16 +100,18 @@ class RipgrepSearchRunnerTest {
     }
 
     @Test
-    void missingVendorBinaryReturnsResolverError() {
+    void missingVendorBinaryReturnsResolverError() throws Exception {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
-
-        RipgrepSearchResult result = runner(executor).search(
-            GrepQuery.fromInput(Map.of("pattern", "needle")),
-            tempDir,
-            context(),
-            message -> {
-            }
-        );
+        RipgrepSearchResult result;
+        try (URLClassLoader classLoader = new URLClassLoader(new URL[0], null)) {
+            result = runner(executor, classLoader).search(
+                GrepQuery.fromInput(Map.of("pattern", "needle")),
+                tempDir,
+                context(),
+                message -> {
+                }
+            );
+        }
 
         assertTrue(result.isError());
         assertTrue(result.message().contains("未找到随包 ripgrep"));
@@ -118,6 +122,20 @@ class RipgrepSearchRunnerTest {
             executor,
             new RipgrepCommandBuilder(),
             RipgrepBinaryResolver.forTesting(new RipgrepPlatform("linux", "x86_64"), tempDir),
+            Duration.ofSeconds(20)
+        );
+    }
+
+    private RipgrepSearchRunner runner(Executor executor, ClassLoader classLoader) {
+        return new RipgrepSearchRunner(
+            executor,
+            new RipgrepCommandBuilder(),
+            RipgrepBinaryResolver.forTesting(
+                new RipgrepPlatform("linux", "x86_64"),
+                tempDir,
+                tempDir.resolve("cache"),
+                classLoader
+            ),
             Duration.ofSeconds(20)
         );
     }

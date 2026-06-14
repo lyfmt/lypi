@@ -13,6 +13,8 @@ import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -147,11 +149,15 @@ class GrepToolTest {
     }
 
     @Test
-    void missingVendorBinaryReturnsError() {
-        GrepTool tool = tool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
+    void missingVendorBinaryReturnsError() throws Exception {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        ToolResult<String> result;
+        try (URLClassLoader classLoader = new URLClassLoader(new URL[0], null)) {
+            GrepTool tool = tool(executor, classLoader);
 
-        ToolResult<String> result = tool.execute(Map.of("pattern", "needle"), context(), message -> {
-        });
+            result = tool.execute(Map.of("pattern", "needle"), context(), message -> {
+            });
+        }
 
         assertTrue(result.isError());
         assertTrue(result.output().contains("未找到随包 ripgrep"));
@@ -173,6 +179,24 @@ class GrepToolTest {
                 executor,
                 new RipgrepCommandBuilder(),
                 RipgrepBinaryResolver.forTesting(new RipgrepPlatform("linux", "x86_64"), tempDir),
+                java.time.Duration.ofSeconds(20)
+            ),
+            new GrepResultFormatter()
+        );
+    }
+
+    private GrepTool tool(Executor executor, ClassLoader classLoader) {
+        return new GrepTool(
+            executor,
+            new RipgrepSearchRunner(
+                executor,
+                new RipgrepCommandBuilder(),
+                RipgrepBinaryResolver.forTesting(
+                    new RipgrepPlatform("linux", "x86_64"),
+                    tempDir,
+                    tempDir.resolve("cache"),
+                    classLoader
+                ),
                 java.time.Duration.ofSeconds(20)
             ),
             new GrepResultFormatter()

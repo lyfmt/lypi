@@ -8,13 +8,15 @@ record RipgrepPlatform(String osName, String osArch) {
     }
 
     String resourcePath() {
-        String platform = platformName();
-        String executable = "windows".equals(platform) ? "rg.exe" : "rg";
-        return "ripgrep/" + architectureName() + "-" + platform + "/" + executable;
+        return "ripgrep/" + platformId() + "/" + executableName();
     }
 
     String platformId() {
         return architectureName() + "-" + platformName();
+    }
+
+    String executableName() {
+        return "windows".equals(platformName()) ? "rg.exe" : "rg";
     }
 
     private String platformName() {
