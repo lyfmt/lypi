@@ -33,6 +33,7 @@ import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelSelection;
@@ -623,6 +624,46 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"type\":\"turn_start\""));
         assertInstanceOf(TurnStartEvent.class, restored.event());
         assertEquals(7, restored.sequence());
+    }
+
+    @Test
+    void turnStartEventRoundTripKeepsStartedAtTimingField() throws Exception {
+        Instant startedAt = Instant.parse("2026-06-01T12:00:00Z");
+        AgentEvent event = new TurnStartEvent("ses_01", "turn_01", startedAt, startedAt);
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"turn_start\""));
+        TurnStartEvent start = assertInstanceOf(TurnStartEvent.class, restored);
+        assertEquals(startedAt, start.startedAt());
+        assertEquals(start.startedAt(), start.timestamp());
+    }
+
+    @Test
+    void turnEndEventRoundTripKeepsTimingFields() throws Exception {
+        Instant startedAt = Instant.parse("2026-06-01T12:00:00Z");
+        Instant endedAt = Instant.parse("2026-06-01T12:00:03Z");
+        AgentEvent event = new TurnEndEvent(
+            "ses_01",
+            "turn_01",
+            "COMPLETED",
+            startedAt,
+            endedAt,
+            3000L,
+            endedAt
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"turn_end\""));
+        TurnEndEvent end = assertInstanceOf(TurnEndEvent.class, restored);
+        assertEquals("COMPLETED", end.status());
+        assertEquals(startedAt, end.startedAt());
+        assertEquals(endedAt, end.endedAt());
+        assertEquals(3000L, end.durationMillis());
+        assertEquals(end.endedAt(), end.timestamp());
     }
 
     @Test
