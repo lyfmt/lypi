@@ -259,7 +259,7 @@ class RuntimeTuiSubmitHandlerTest {
             skills("memory-lint")
         );
 
-        handler.submitUserInput("/memory lint");
+        handler.submitUserInput("/memory-lint");
 
         TurnRequest request = core.requests.getFirst();
         assertEquals("Lint L2,L3 with $memory-lint.", request.userInput());

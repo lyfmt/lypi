@@ -24,7 +24,6 @@ import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
@@ -39,7 +38,7 @@ import java.util.UUID;
 final class SlashCommandRouter {
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/compact",
-        "/memory",
+        "/memory-lint",
         "/model",
         "/new",
         "/permission-mode",
@@ -132,7 +131,7 @@ final class SlashCommandRouter {
             case "/permission-mode" -> routePermissionMode(arguments, input);
             case "/plan" -> routePlan(arguments, input);
             case "/compact" -> routeCompact(arguments);
-            case "/memory" -> routeMemory(arguments);
+            case "/memory-lint" -> routeMemoryLint(arguments);
             case "/new" -> routeNew(arguments);
             default -> routeExternalOrPromptTemplate(match.command().orElseThrow(), arguments);
         };
@@ -276,13 +275,6 @@ final class SlashCommandRouter {
         }
     }
 
-    private SlashCommandResult routeMemory(SlashCommandArguments arguments) {
-        if (arguments.positionals().isEmpty() || !"lint".equalsIgnoreCase(arguments.positionals().getFirst())) {
-            return SlashCommandResult.error(memoryLintUsage());
-        }
-        return routeMemoryLint(arguments);
-    }
-
     private SlashCommandResult routeMemoryLint(SlashCommandArguments arguments) {
         List<String> layers;
         try {
@@ -292,7 +284,7 @@ final class SlashCommandRouter {
         }
         Optional<PromptTemplate> template = findPromptTemplate("memory-lint");
         if (template.isEmpty()) {
-            return SlashCommandResult.error("memory lint: prompt template memory-lint is unavailable");
+            return SlashCommandResult.error("memory-lint: prompt template memory-lint is unavailable");
         }
         PromptRenderResult rendered = resourceRuntime.renderPrompt(
             template.orElseThrow(),
@@ -300,29 +292,18 @@ final class SlashCommandRouter {
         );
         Optional<String> warning = firstWarning(rendered);
         if (warning.isPresent()) {
-            return SlashCommandResult.error("memory lint: " + warning.orElseThrow());
+            return SlashCommandResult.error("memory-lint: " + warning.orElseThrow());
         }
         return SlashCommandResult.submitPrompt(rendered.content());
     }
 
     private List<String> memoryLintLayers(SlashCommandArguments arguments) {
-        List<String> raw = new ArrayList<>();
-        for (String name : arguments.named().keySet()) {
-            if (!"layers".equals(name) && !"--layers".equals(name)) {
-                throw new IllegalArgumentException(memoryLintUsage());
-            }
-        }
-        String namedLayers = arguments.named().get("layers");
-        if (namedLayers == null) {
-            namedLayers = arguments.named().get("--layers");
-        }
-        if (namedLayers != null && namedLayers.isBlank()) {
+        if (!arguments.named().isEmpty() || arguments.positionals().size() > 1) {
             throw new IllegalArgumentException(memoryLintUsage());
         }
-        if (namedLayers != null) {
-            raw.addAll(Arrays.asList(namedLayers.split(",")));
-        }
-        raw.addAll(arguments.positionals().stream().skip(1).toList());
+        List<String> raw = arguments.positionals().isEmpty()
+            ? List.of()
+            : Arrays.asList(arguments.positionals().getFirst().split(",", -1));
         if (raw.isEmpty()) {
             raw = List.of("L2", "L3");
         }
@@ -338,7 +319,7 @@ final class SlashCommandRouter {
     }
 
     private String memoryLintUsage() {
-        return "usage: /memory lint [L0 L1 L2 L3] or /memory lint --layers=L0,L2";
+        return "usage: /memory-lint [L0,L1,L2,L3]";
     }
 
     private SlashCommandResult routePromptTemplate(String templateName, SlashCommandArguments arguments) {
