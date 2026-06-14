@@ -243,6 +243,29 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
+    void memoryLintSlashCommandSubmitsPromptAndActivatesSkillMention() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            Runnable::run,
+            new SlashCommandRouter("ses_1", Path.of("."), session, resources(List.of(memoryLintTemplate()))),
+            null,
+            skills("memory-lint")
+        );
+
+        handler.submitUserInput("/memory lint");
+
+        TurnRequest request = core.requests.getFirst();
+        assertEquals("Lint L2,L3 with $memory-lint.", request.userInput());
+        assertEquals(List.of(new SkillMention("memory-lint", Path.of("/tmp/memory-lint/SKILL.md"))), request.skillMentions());
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
     void externalSlashCommandRunsHandlerAndPublishesLocalOutputWithoutStartingTurn() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
@@ -625,6 +648,17 @@ class RuntimeTuiSubmitHandlerTest {
             "sha256:review"
         );
         return resources(List.of(review));
+    }
+
+    private static PromptTemplate memoryLintTemplate() {
+        return new PromptTemplate(
+            "memory-lint",
+            "Memory lint",
+            PromptTemplateSource.USER,
+            List.of(new PromptParameter("layers", "Layers", true, Optional.empty())),
+            "Lint {{layers}} with $memory-lint.",
+            "sha256:memory-lint"
+        );
     }
 
     private static ResourceRuntimePort resources(List<PromptTemplate> templates) {
