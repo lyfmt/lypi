@@ -485,6 +485,73 @@ class SlashCommandRouterTest {
         assertEquals(List.of(), session.entries);
     }
 
+    @Test
+    void memoryLintDefaultsToProjectLayers() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
+
+        SlashCommandResult result = router.route("/memory lint");
+
+        assertTrue(result.matched());
+        assertFalse(result.consumed());
+        assertEquals("Lint L2,L3 with $memory-lint.", result.prompt().orElseThrow());
+    }
+
+    @Test
+    void memoryLintAcceptsExplicitLayers() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
+
+        assertEquals("Lint L0,L3 with $memory-lint.", router.route("/memory lint L0 L3").prompt().orElseThrow());
+        assertEquals("Lint L1,L2 with $memory-lint.", router.route("/memory lint --layers=L1,L2").prompt().orElseThrow());
+    }
+
+    @Test
+    void memoryLintRejectsInvalidLayers() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
+
+        SlashCommandResult result = router.route("/memory lint L5");
+
+        assertTrue(result.matched());
+        assertTrue(result.consumed());
+        assertTrue(result.message().orElseThrow().contains("usage: /memory lint"));
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void memoryLintRequiresPromptTemplate() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.DEFAULT_EXECUTE
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith());
+
+        SlashCommandResult result = router.route("/memory lint");
+
+        assertTrue(result.matched());
+        assertTrue(result.consumed());
+        assertTrue(result.message().orElseThrow().contains("memory lint: prompt template memory-lint is unavailable"));
+        assertEquals(List.of(), session.entries);
+    }
+
     private static SessionContext context(
         ModelSelection model,
         ThinkingLevel thinking,
@@ -520,6 +587,17 @@ class SlashCommandRouterTest {
             List.of(new PromptParameter("scope", "Review scope", true, Optional.empty())),
             "Review {{scope}}.",
             "sha256:review"
+        );
+    }
+
+    private static PromptTemplate memoryLintTemplate() {
+        return new PromptTemplate(
+            "memory-lint",
+            "Memory lint",
+            PromptTemplateSource.USER,
+            List.of(new PromptParameter("layers", "Layers", true, Optional.empty())),
+            "Lint {{layers}} with $memory-lint.",
+            "sha256:memory-lint"
         );
     }
 

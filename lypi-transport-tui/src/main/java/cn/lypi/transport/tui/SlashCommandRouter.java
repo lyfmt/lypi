@@ -26,6 +26,9 @@ import cn.lypi.resource.DefaultPromptRenderer;
 import cn.lypi.resource.PromptRenderResult;
 import cn.lypi.resource.PromptRenderer;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.time.Instant;
 import java.util.List;
@@ -38,6 +41,7 @@ import java.util.UUID;
 final class SlashCommandRouter {
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/compact",
+        "/memory",
         "/model",
         "/new",
         "/permission-mode",
@@ -156,6 +160,7 @@ final class SlashCommandRouter {
             case "/permission-mode" -> routePermissionMode(arguments, input);
             case "/plan" -> routePlan(arguments, input);
             case "/compact" -> routeCompact(arguments);
+            case "/memory" -> routeMemory(arguments);
             case "/new" -> routeNew(arguments);
             default -> routeExternalOrPromptTemplate(match.command().orElseThrow(), arguments);
         };
@@ -299,15 +304,68 @@ final class SlashCommandRouter {
         }
     }
 
+    private SlashCommandResult routeMemory(SlashCommandArguments arguments) {
+        if (arguments.positionals().isEmpty() || !"lint".equalsIgnoreCase(arguments.positionals().getFirst())) {
+            return SlashCommandResult.error(memoryLintUsage());
+        }
+        return routeMemoryLint(arguments);
+    }
+
+    private SlashCommandResult routeMemoryLint(SlashCommandArguments arguments) {
+        List<String> layers;
+        try {
+            layers = memoryLintLayers(arguments);
+        } catch (IllegalArgumentException exception) {
+            return SlashCommandResult.error(exception.getMessage());
+        }
+        Optional<PromptTemplate> template = findPromptTemplate("memory-lint");
+        if (template.isEmpty()) {
+            return SlashCommandResult.error("memory lint: prompt template memory-lint is unavailable");
+        }
+        PromptRenderResult rendered = promptRenderer.render(
+            template.orElseThrow(),
+            new PromptRenderRequest("memory-lint", Map.of("layers", String.join(",", layers)), arguments.commandName())
+        );
+        Optional<String> warning = firstWarning(rendered);
+        if (warning.isPresent()) {
+            return SlashCommandResult.error("memory lint: " + warning.orElseThrow());
+        }
+        return SlashCommandResult.submitPrompt(rendered.content());
+    }
+
+    private List<String> memoryLintLayers(SlashCommandArguments arguments) {
+        List<String> raw = new ArrayList<>();
+        String namedLayers = arguments.named().get("layers");
+        if (namedLayers == null) {
+            namedLayers = arguments.named().get("--layers");
+        }
+        if (namedLayers != null && !namedLayers.isBlank()) {
+            raw.addAll(Arrays.asList(namedLayers.split(",")));
+        }
+        raw.addAll(arguments.positionals().stream().skip(1).toList());
+        if (raw.isEmpty()) {
+            raw = List.of("L2", "L3");
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String layer : raw) {
+            String value = layer == null ? "" : layer.trim().toUpperCase(Locale.ROOT);
+            if (!List.of("L0", "L1", "L2", "L3").contains(value)) {
+                throw new IllegalArgumentException(memoryLintUsage());
+            }
+            normalized.add(value);
+        }
+        return List.copyOf(normalized);
+    }
+
+    private String memoryLintUsage() {
+        return "usage: /memory lint [L0 L1 L2 L3] or /memory lint --layers=L0,L2";
+    }
+
     private SlashCommandResult routePromptTemplate(String templateName, SlashCommandArguments arguments) {
         if (resourceRuntime == null) {
             return SlashCommandResult.notMatched();
         }
-        ResourceSnapshot resources = resourceRuntime.load(cwd);
-        PromptTemplate template = resources.promptTemplates().stream()
-            .filter(candidate -> normalizedTemplateName(candidate).equals(templateName))
-            .findFirst()
-            .orElse(null);
+        PromptTemplate template = findPromptTemplate(templateName).orElse(null);
         if (template == null) {
             return SlashCommandResult.notMatched();
         }
@@ -327,6 +385,16 @@ final class SlashCommandRouter {
             return SlashCommandResult.error(warning.orElseThrow());
         }
         return SlashCommandResult.submitPrompt(rendered.content());
+    }
+
+    private Optional<PromptTemplate> findPromptTemplate(String templateName) {
+        if (resourceRuntime == null) {
+            return Optional.empty();
+        }
+        ResourceSnapshot resources = resourceRuntime.load(cwd);
+        return resources.promptTemplates().stream()
+            .filter(candidate -> normalizedTemplateName(candidate).equals(templateName))
+            .findFirst();
     }
 
     private SlashCommandResult routeExternalOrPromptTemplate(String commandName, SlashCommandArguments arguments) {
