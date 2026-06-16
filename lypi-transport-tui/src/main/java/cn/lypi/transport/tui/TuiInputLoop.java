@@ -1,17 +1,10 @@
 package cn.lypi.transport.tui;
 
-import cn.lypi.contracts.tui.BranchSummaryOffer;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.ResumeSessionController;
-import cn.lypi.contracts.tui.SessionResumeInfo;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiViewModel;
-import cn.lypi.contracts.context.AgentMessage;
-import cn.lypi.contracts.context.MessageKind;
-import cn.lypi.contracts.context.TextContentBlock;
-import cn.lypi.contracts.session.MessageEntry;
-import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.skill.SkillDescriptor;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.skill.SkillMention;
@@ -33,17 +26,12 @@ final class TuiInputLoop {
     private final Supplier<SlashCommandPicker> slashPickerSupplier;
     private final Supplier<SkillIndex> skillIndexSupplier;
     private final ResumeSessionController resumeController;
-    private final Consumer<SessionRuntimeState> resumeStateConsumer;
+    private final ResumeOverlayController resumeOverlayController;
     private SlashCommandPicker slashPicker;
     private SkillMentionToken skillToken;
     private int skillSelectedIndex;
     private final List<SkillMentionBinding> skillBindings = new java.util.ArrayList<>();
     private final SkillMentionSuppressions skillSuppressions = new SkillMentionSuppressions();
-    private ResumeSessionSelector resumeSessionSelector;
-    private ResumeBranchTreeSelector resumeBranchTreeSelector;
-    private PendingBranchSummaryResume pendingBranchSummaryResume;
-    private String branchSummaryLine;
-    private String resumeSessionId;
     private boolean slashOverlayClosed;
     private boolean interruptibleRunning;
     private boolean exitRequested;
@@ -134,19 +122,26 @@ final class TuiInputLoop {
             : slashPickerSupplier;
         this.skillIndexSupplier = skillIndexSupplier == null ? () -> new SkillIndex(List.of(), List.of()) : skillIndexSupplier;
         this.resumeController = resumeController;
-        this.resumeStateConsumer = resumeStateConsumer;
+        this.resumeOverlayController = resumeController == null ? null : new ResumeOverlayController(
+            resumeController,
+            resumeStateConsumer,
+            submitHandler::resumeSession,
+            editor::replaceDraft
+        );
     }
 
     void acceptText(String text) {
-        if (pendingBranchSummaryResume != null) {
-            handleBranchSummaryConfirmationText(text);
+        if (resumeOverlayController != null && resumeOverlayController.pendingBranchSummary()) {
+            resumeOverlayController.handleText(text, this::render);
             return;
         }
         if (compactRunning()) {
             render();
             return;
         }
-        branchSummaryLine = null;
+        if (resumeOverlayController != null) {
+            resumeOverlayController.clearTransientLine();
+        }
         editor.insert(text);
         slashOverlayClosed = false;
         skillToken = null;
@@ -158,7 +153,9 @@ final class TuiInputLoop {
             render();
             return;
         }
-        branchSummaryLine = null;
+        if (resumeOverlayController != null) {
+            resumeOverlayController.clearTransientLine();
+        }
         editor.insertPaste(text);
         slashOverlayClosed = false;
         skillToken = null;
@@ -170,8 +167,8 @@ final class TuiInputLoop {
             render();
             return;
         }
-        if (pendingBranchSummaryResume == null) {
-            branchSummaryLine = null;
+        if (resumeOverlayController != null) {
+            resumeOverlayController.clearTransientLineUnlessPendingSummary();
         }
         Optional<PermissionPromptView> prompt = currentView().permissionPrompt();
         if (prompt.isPresent()) {
@@ -535,24 +532,11 @@ final class TuiInputLoop {
     }
 
     private List<String> overlayLines() {
-        if (pendingBranchSummaryResume != null) {
-            BranchSummaryOffer offer = pendingBranchSummaryResume.offer();
-            if (branchSummaryLine != null && !branchSummaryLine.isBlank()) {
-                return List.of(branchSummaryLine);
+        if (resumeOverlayController != null) {
+            List<String> resumeLines = resumeOverlayController.overlayLines(layout.width());
+            if (!resumeLines.isEmpty()) {
+                return resumeLines;
             }
-            return List.of(
-                "Summarize abandoned branch before switching? [y/N]",
-                offer.entriesToSummarize() + " entries will be summarized from the branch you are leaving."
-            );
-        }
-        if (branchSummaryLine != null && !branchSummaryLine.isBlank()) {
-            return List.of(branchSummaryLine);
-        }
-        if (resumeBranchTreeSelector != null) {
-            return resumeBranchTreeSelector.render(layout.width());
-        }
-        if (resumeSessionSelector != null) {
-            return resumeSessionSelector.render(layout.width());
         }
         List<String> skillLines = skillOverlayLines();
         if (!skillLines.isEmpty()) {
@@ -562,202 +546,15 @@ final class TuiInputLoop {
     }
 
     private boolean resumeOverlayOpen() {
-        return resumeSessionSelector != null || resumeBranchTreeSelector != null || pendingBranchSummaryResume != null;
+        return resumeOverlayController != null && resumeOverlayController.open();
     }
 
     private void openResumeSessions() {
-        List<SessionResumeInfo> sessions = resumeController.sessions();
-        String currentSessionId = currentView().statusBar().sessionId();
-        java.nio.file.Path currentPath = sessions.stream()
-            .filter(session -> session.sessionId().equals(currentSessionId))
-            .map(SessionResumeInfo::path)
-            .findFirst()
-            .orElse(null);
-        resumeSessionSelector = new ResumeSessionSelector(sessions, currentPath, Math.max(1, layout.height() - 4));
-        resumeBranchTreeSelector = null;
-        resumeSessionId = null;
+        resumeOverlayController.openSessions(currentView().statusBar().sessionId(), Math.max(1, layout.height() - 4));
     }
 
     private void handleResumeOverlayKey(TerminalKey key) {
-        if (key == TerminalKey.ESC || key == TerminalKey.CTRL_C) {
-            closeResumeOverlay();
-            render();
-            return;
-        }
-        if (pendingBranchSummaryResume != null) {
-            handleBranchSummaryConfirmationKey(key);
-            return;
-        }
-        if (resumeSessionSelector != null) {
-            handleResumeSessionKey(key);
-            return;
-        }
-        handleResumeTreeKey(key);
-    }
-
-    private void handleResumeSessionKey(TerminalKey key) {
-        if (key == TerminalKey.UP) {
-            resumeSessionSelector.moveUp();
-            render();
-            return;
-        }
-        if (key == TerminalKey.DOWN) {
-            resumeSessionSelector.moveDown();
-            render();
-            return;
-        }
-        if (key == TerminalKey.ENTER) {
-            resumeSessionSelector.selectedSession().ifPresent(session -> {
-                resumeSessionId = session.sessionId();
-                resumeBranchTreeSelector = new ResumeBranchTreeSelector(
-                    resumeController.tree(session.sessionId()).roots(),
-                    session.leafId(),
-                    Math.max(1, layout.height() - 4)
-                );
-                resumeSessionSelector = null;
-            });
-            render();
-        }
-    }
-
-    private void handleResumeTreeKey(TerminalKey key) {
-        if (resumeBranchTreeSelector == null) {
-            return;
-        }
-        if (key == TerminalKey.UP) {
-            resumeBranchTreeSelector.moveUp();
-            render();
-            return;
-        }
-        if (key == TerminalKey.DOWN) {
-            resumeBranchTreeSelector.moveDown();
-            render();
-            return;
-        }
-        if (key == TerminalKey.TAB) {
-            resumeBranchTreeSelector.toggleUserOnly();
-            render();
-            return;
-        }
-        if (key == TerminalKey.ENTER) {
-            Optional<SessionEntry> selectedEntry = resumeBranchTreeSelector.selectedEntry();
-            if (selectedEntry.isEmpty()) {
-                closeResumeOverlay();
-                render();
-                return;
-            }
-            ResumeTarget target = resumeTarget(selectedEntry.orElseThrow());
-            Optional<BranchSummaryOffer> offer = resumeController.branchSummaryOffer(resumeSessionId, target.leafId());
-            if (offer.isPresent()) {
-                pendingBranchSummaryResume = new PendingBranchSummaryResume(resumeSessionId, target, offer.orElseThrow());
-                resumeBranchTreeSelector = null;
-                render();
-                return;
-            }
-            resumeWithoutBranchSummary(resumeSessionId, target);
-            closeResumeOverlay();
-            render();
-        }
-    }
-
-    private void handleBranchSummaryConfirmationText(String text) {
-        String answer = text == null ? "" : text.trim();
-        if ("y".equalsIgnoreCase(answer)) {
-            resumeWithBranchSummary();
-            return;
-        }
-        if ("n".equalsIgnoreCase(answer)) {
-            PendingBranchSummaryResume pending = pendingBranchSummaryResume;
-            resumeWithoutBranchSummary(pending.sessionId(), pending.target());
-            closeResumeOverlay();
-            render();
-            return;
-        }
-        render();
-    }
-
-    private void handleBranchSummaryConfirmationKey(TerminalKey key) {
-        if (key == TerminalKey.ENTER) {
-            PendingBranchSummaryResume pending = pendingBranchSummaryResume;
-            resumeWithoutBranchSummary(pending.sessionId(), pending.target());
-            closeResumeOverlay();
-            render();
-        }
-    }
-
-    private void resumeWithBranchSummary() {
-        PendingBranchSummaryResume pending = pendingBranchSummaryResume;
-        branchSummaryLine = "Summarizing abandoned branch...";
-        render();
-        SessionRuntimeState resumed = resumeController.resumeWithBranchSummary(pending.sessionId(), pending.target().leafId());
-        String resumedLeafId = resumed == null ? pending.target().leafId() : resumed.currentBranchLeafId();
-        submitHandler.resumeSession(pending.sessionId(), resumedLeafId);
-        pending.target().draftText().ifPresent(editor::replaceDraft);
-        if (resumeStateConsumer != null && resumed != null) {
-            resumeStateConsumer.accept(withoutSummaryTranscript(resumed));
-        }
-        branchSummaryLine = "Branch summary saved.";
-        closeResumeOverlay();
-        render();
-    }
-
-    private void resumeWithoutBranchSummary(String sessionId, ResumeTarget target) {
-        SessionRuntimeState resumed = resumeController.resume(sessionId, target.leafId());
-        submitHandler.resumeSession(sessionId, target.leafId());
-        target.draftText().ifPresent(editor::replaceDraft);
-        if (resumeStateConsumer != null && resumed != null) {
-            resumeStateConsumer.accept(resumed);
-        }
-    }
-
-    private void closeResumeOverlay() {
-        resumeSessionSelector = null;
-        resumeBranchTreeSelector = null;
-        pendingBranchSummaryResume = null;
-        resumeSessionId = null;
-    }
-
-    private SessionRuntimeState withoutSummaryTranscript(SessionRuntimeState state) {
-        List<AgentMessage> visibleTranscript = state.transcript().stream()
-            .filter(message -> message.kind() != MessageKind.SUMMARY)
-            .toList();
-        return new SessionRuntimeState(
-            state.sessionId(),
-            state.cwd(),
-            state.currentBranchLeafId(),
-            state.model(),
-            state.thinkingLevel(),
-            state.agentMode(),
-            state.permissionMode(),
-            state.budget(),
-            visibleTranscript,
-            state.hasInterruptibleTool(),
-            state.hasActiveTurn(),
-            state.hasPendingPermission(),
-            state.hasPendingInput()
-        );
-    }
-
-    private ResumeTarget resumeTarget(SessionEntry entry) {
-        if (entry instanceof MessageEntry messageEntry
-            && messageEntry.message() != null
-            && messageEntry.message().role() == cn.lypi.contracts.context.MessageRole.USER) {
-            return new ResumeTarget(messageEntry.parentId(), userMessageText(messageEntry.message()));
-        }
-        return new ResumeTarget(entry.id(), Optional.empty());
-    }
-
-    private Optional<String> userMessageText(AgentMessage message) {
-        if (message.content() == null) {
-            return Optional.of("");
-        }
-        return Optional.of(message.content().stream()
-            .filter(TextContentBlock.class::isInstance)
-            .map(TextContentBlock.class::cast)
-            .map(TextContentBlock::text)
-            .filter(text -> text != null && !text.isBlank())
-            .findFirst()
-            .orElse(""));
+        resumeOverlayController.handleKey(key, Math.max(1, layout.height() - 4), this::render);
     }
 
     private void acceptSlashSelection() {
@@ -846,12 +643,4 @@ final class TuiInputLoop {
         );
     }
 
-    private record ResumeTarget(String leafId, Optional<String> draftText) {
-        private ResumeTarget {
-            draftText = draftText == null ? Optional.empty() : draftText;
-        }
-    }
-
-    private record PendingBranchSummaryResume(String sessionId, ResumeTarget target, BranchSummaryOffer offer) {
-    }
 }

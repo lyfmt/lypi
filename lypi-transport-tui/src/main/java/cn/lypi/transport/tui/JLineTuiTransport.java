@@ -4,13 +4,11 @@ import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
-import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.skill.SkillIndex;
-import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.ResumeSessionController;
@@ -21,7 +19,6 @@ import cn.lypi.contracts.tui.TuiViewModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Clock;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -47,13 +44,12 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final TerminalSession terminalSession;
     private final DiffViewProvider diffViewProvider;
     private final Clock clock;
+    private final TuiRuntimeTicker runtimeTicker;
     private SessionRuntimeState runtimeState;
-    private String lastDiffSnapshotHash;
     private EventSubscription subscription;
     private EventBus attachedEvents;
     private boolean lastRenderHeldUiLock;
     private int uiLockEntries;
-    private Instant nextRuntimeTickAt;
 
     public JLineTuiTransport(Runnable renderer) {
         this.renderer = renderer;
@@ -67,6 +63,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.terminalSession = null;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.clock = Clock.systemUTC();
+        this.runtimeTicker = new TuiRuntimeTicker(RUNTIME_TICK_INTERVAL_MILLIS, MAX_DIFF_PATCH_BYTES);
         this.runtimeState = null;
     }
 
@@ -88,6 +85,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.terminalSession = terminalSession;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.clock = Clock.systemUTC();
+        this.runtimeTicker = new TuiRuntimeTicker(RUNTIME_TICK_INTERVAL_MILLIS, MAX_DIFF_PATCH_BYTES);
         this.runtimeState = null;
     }
 
@@ -158,6 +156,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.terminalSession = terminalSession;
         this.diffViewProvider = diffViewProvider == null ? NOOP_DIFF_VIEW_PROVIDER : diffViewProvider;
         this.clock = clock == null ? Clock.systemUTC() : clock;
+        this.runtimeTicker = new TuiRuntimeTicker(RUNTIME_TICK_INTERVAL_MILLIS, MAX_DIFF_PATCH_BYTES);
         this.runtimeState = state;
     }
 
@@ -785,7 +784,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             uiLockEntries++;
             reducer.reduce(event);
-            refreshDiffAfterToolEnd(event);
+            runtimeTicker.refreshDiffAfterToolEnd(event, runtimeState, reducer, diffViewProvider);
             renderCurrentFrame();
         }
     }
@@ -824,7 +823,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     }
 
     void renderRuntimeTickForTest() {
-        renderRuntimeTick();
+        renderRuntimeTickUnderUiLock();
     }
 
     int uiLockEntryCountForTest() {
@@ -937,61 +936,21 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     }
 
     private void renderRuntimeTickIfDue() {
-        if (reducer == null || !reducer.hasActiveTurn()) {
-            nextRuntimeTickAt = null;
-            return;
-        }
-        Instant now = clock.instant();
-        if (nextRuntimeTickAt == null) {
-            nextRuntimeTickAt = now.plusMillis(RUNTIME_TICK_INTERVAL_MILLIS);
-            return;
-        }
-        if (now.isBefore(nextRuntimeTickAt)) {
-            return;
-        }
-        renderRuntimeTick();
+        runtimeTicker.renderTickIfDue(
+            reducer != null && reducer.hasActiveTurn(),
+            clock.instant(),
+            this::renderRuntimeTickUnderUiLock
+        );
     }
 
-    private void renderRuntimeTick() {
+    private void renderRuntimeTickUnderUiLock() {
         synchronized (uiMonitor) {
             if (reducer == null || !reducer.hasActiveTurn()) {
-                nextRuntimeTickAt = null;
                 return;
             }
             uiLockEntries++;
             renderCurrentFrame();
-            nextRuntimeTickAt = clock.instant().plusMillis(RUNTIME_TICK_INTERVAL_MILLIS);
         }
-    }
-
-    private void refreshDiffAfterToolEnd(AgentEvent event) {
-        if (!(event instanceof ToolEndEvent) || reducer == null) {
-            return;
-        }
-        if (runtimeState == null || runtimeState.cwd() == null) {
-            clearDiff();
-            return;
-        }
-        diffViewProvider.currentDiff(runtimeState.cwd(), MAX_DIFF_PATCH_BYTES)
-            .ifPresentOrElse(this::showDiffIfChanged, this::clearDiff);
-    }
-
-    private void showDiffIfChanged(DiffView diffView) {
-        String snapshotHash = snapshotHash(diffView);
-        if (snapshotHash.isBlank() || !snapshotHash.equals(lastDiffSnapshotHash)) {
-            reducer.showDiff(diffView);
-            lastDiffSnapshotHash = snapshotHash;
-        }
-    }
-
-    private void clearDiff() {
-        reducer.clearDiff();
-        lastDiffSnapshotHash = "";
-    }
-
-    private String snapshotHash(DiffView diffView) {
-        Object value = diffView.metadata().get("snapshotHash");
-        return value == null ? "" : value.toString();
     }
 
     private String currentDraft() {
