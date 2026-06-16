@@ -1,26 +1,12 @@
 package cn.lypi.boot.runtime;
 
-import cn.lypi.agent.AgentCoreRuntimePorts;
 import cn.lypi.agent.ContextAssembler;
-import cn.lypi.agent.ContextBudgetEstimator;
-import cn.lypi.agent.DefaultContextAssembler;
-import cn.lypi.agent.DefaultCompactionRuntime;
-import cn.lypi.agent.DefaultTurnExecutor;
-import cn.lypi.agent.NoopMemoryExtractionWorker;
-import cn.lypi.agent.TurnIds;
-import cn.lypi.agent.branch.AiBranchSummarizer;
-import cn.lypi.agent.branch.BranchSummaryContextBuilder;
-import cn.lypi.agent.branch.BranchSummaryInstructionFactory;
 import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.agent.compact.CompactionSummarizer;
-import cn.lypi.agent.compact.DefaultCompactionCoordinator;
-import cn.lypi.agent.compact.DefaultCompactionPlanner;
 import cn.lypi.boot.BootstrapService;
 import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
-import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.model.ModelCatalogPort;
-import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
@@ -35,55 +21,31 @@ import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
-import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
-import cn.lypi.contracts.session.SessionEntry;
-import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
-import cn.lypi.resource.DefaultResourceRuntime;
-import cn.lypi.runtime.event.InMemoryEventBus;
-import cn.lypi.runtime.memory.JsonlMemoryConsolidationAuditSink;
 import cn.lypi.runtime.memory.MemoryConsolidationAuditSink;
 import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
 import cn.lypi.runtime.memory.MemoryConsolidationRunner;
 import cn.lypi.runtime.memory.MemoryConsolidationTrigger;
 import cn.lypi.runtime.memory.MemoryConsolidationTurnEndListener;
-import cn.lypi.runtime.memory.QuietEventBus;
-import cn.lypi.runtime.subagent.ChildAgentSnapshot;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
-import cn.lypi.runtime.subagent.DefaultAgentCenter;
-import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.DefaultMailboxService;
-import cn.lypi.runtime.subagent.JsonSubagentProcessRunner;
 import cn.lypi.runtime.subagent.JsonlMailboxStore;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
-import cn.lypi.security.DefaultPolicyEngine;
-import cn.lypi.security.ExecPolicyRuleFileReader;
-import cn.lypi.session.ChildSessionService;
-import cn.lypi.session.ChildSessionView;
-import cn.lypi.session.DefaultSessionManagerFactory;
-import cn.lypi.session.GitWorkingTreeDiffQuery;
-import cn.lypi.session.SessionManagerImpl;
-import cn.lypi.session.SessionTreeQuery;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
-import cn.lypi.transport.tui.JLineTuiTransport;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
-import java.math.BigDecimal;
-import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -98,15 +60,13 @@ import org.springframework.context.annotation.Bean;
 })
 @EnableConfigurationProperties({LyPiRuntimeProperties.class, LyPiSubagentProperties.class})
 public class LyPiRuntimeAutoConfiguration {
-    private static final Path DEFAULT_CWD = Path.of(".").toAbsolutePath().normalize();
-
     /**
      * 创建默认事件总线。
      */
     @Bean
     @ConditionalOnMissingBean(EventBus.class)
     public EventBus eventBus() {
-        return new InMemoryEventBus();
+        return RuntimeBeanFactories.eventBus();
     }
 
     /**
@@ -115,8 +75,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(SecurityRuntimePort.class)
     public SecurityRuntimePort securityRuntime(LyPiRuntimeProperties properties) {
-        Path rulesFile = properties.getCwd().resolve("rules").resolve("default.rules");
-        return new DefaultPolicyEngine(new ExecPolicyRuleFileReader().read(rulesFile));
+        return RuntimeBeanFactories.securityRuntime(properties);
     }
 
     /**
@@ -125,13 +84,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(SessionManagerPort.class)
     public SessionManagerPort sessionManager(LyPiRuntimeProperties properties) {
-        return new SessionManagerImpl(
-            properties.getCwd(),
-            new ModelSelection(properties.getDefaultProvider(), properties.getDefaultModel(), properties.getThinkingLevel()),
-            properties.getThinkingLevel(),
-            properties.getAgentMode(),
-            properties.getPermissionMode()
-        );
+        return RuntimeBeanFactories.sessionManager(properties);
     }
 
     /**
@@ -140,7 +93,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(SessionManagerFactoryPort.class)
     public SessionManagerFactoryPort sessionManagerFactory() {
-        return new DefaultSessionManagerFactory();
+        return RuntimeBeanFactories.sessionManagerFactory();
     }
 
     /**
@@ -149,7 +102,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(ResourceRuntimePort.class)
     public ResourceRuntimePort resourceRuntime() {
-        return new DefaultResourceRuntime();
+        return RuntimeBeanFactories.resourceRuntime();
     }
 
     /**
@@ -162,11 +115,7 @@ public class LyPiRuntimeAutoConfiguration {
         ResourceRuntimePort resourceRuntime,
         ObjectProvider<ModelCatalogPort> modelCatalog
     ) {
-        return new DefaultContextAssembler(
-            sessionManager,
-            resourceRuntime,
-            new ContextBudgetEstimator(modelCatalog.getIfAvailable())
-        );
+        return RuntimeBeanFactories.contextAssembler(sessionManager, resourceRuntime, modelCatalog.getIfAvailable());
     }
 
     /**
@@ -178,9 +127,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(CompactionSummarizer.class)
     public CompactionSummarizer compactionSummarizer() {
-        return request -> {
-            throw new IllegalStateException("AI compaction summarizer is unavailable");
-        };
+        return RuntimeBeanFactories.unavailableCompactionSummarizer();
     }
 
     /**
@@ -194,11 +141,10 @@ public class LyPiRuntimeAutoConfiguration {
         EventBus eventBus,
         CompactionSummarizer summarizer
     ) {
-        return new DefaultCompactionCoordinator(
+        return RuntimeBeanFactories.compactionCoordinator(
             sessionManager,
             contextAssembler,
             eventBus,
-            new DefaultCompactionPlanner(),
             summarizer,
             Clock.systemUTC()
         );
@@ -215,16 +161,12 @@ public class LyPiRuntimeAutoConfiguration {
         EventBus eventBus,
         CompactionSummarizer summarizer
     ) {
-        return new DefaultCompactionRuntime(
+        return RuntimeBeanFactories.compactionRuntime(
+            sessionManager,
             contextAssembler,
-            new DefaultCompactionCoordinator(
-                sessionManager,
-                contextAssembler,
-                eventBus,
-                DefaultCompactionRuntime.manualPlanner(),
-                summarizer,
-                Clock.systemUTC()
-            )
+            eventBus,
+            summarizer,
+            Clock.systemUTC()
         );
     }
 
@@ -245,8 +187,8 @@ public class LyPiRuntimeAutoConfiguration {
         ContextAssembler contextAssembler,
         CompactionCoordinator compactionCoordinator
     ) {
-        AgentCoreRuntimePorts ports = new AgentCoreRuntimePorts(
-            properties.getCwd(),
+        return RuntimeBeanFactories.agentCore(
+            properties,
             sessionManager,
             aiProvider,
             toolRuntime,
@@ -254,11 +196,9 @@ public class LyPiRuntimeAutoConfiguration {
             resourceRuntime,
             eventBus,
             contextAssembler,
-            null,
             compactionCoordinator,
-            new NoopMemoryExtractionWorker()
+            Clock.systemUTC()
         );
-        return new DefaultTurnExecutor(ports, TurnIds.random(), Clock.systemUTC());
     }
 
     /**
@@ -280,73 +220,17 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<ModelCatalogPort> modelCatalog,
         Clock clock
     ) {
-        return new AgentCoreFactoryPort() {
-            @Override
-            public AgentCorePort create(Path cwd, SessionManagerPort sessionManager) {
-                return create(cwd, sessionManager, null);
-            }
-
-            @Override
-            public AgentCorePort create(Path cwd, SessionManagerPort sessionManager, SubagentToolPolicy toolPolicy) {
-                ToolRuntimeFactoryPort resolvedToolRuntimeFactory = toolRuntimeFactory.getIfAvailable();
-                ToolRuntimePort resolvedToolRuntime = resolvedToolRuntimeFactory == null
-                    ? toolRuntime.getObject()
-                    : resolvedToolRuntimeFactory.create(cwd, toolPolicy);
-                return createWithPorts(cwd, sessionManager, resolvedToolRuntime, eventBus);
-            }
-
-            @Override
-            public AgentCorePort create(
-                Path cwd,
-                SessionManagerPort sessionManager,
-                ToolRuntimePort toolRuntime,
-                EventBus eventBus
-            ) {
-                return createWithPorts(cwd, sessionManager, toolRuntime, eventBus);
-            }
-
-            private AgentCorePort createWithPorts(
-                Path cwd,
-                SessionManagerPort sessionManager,
-                ToolRuntimePort resolvedToolRuntime,
-                EventBus resolvedEventBus
-            ) {
-                AiProviderRuntimePort resolvedAiProvider = aiProvider.getObject();
-                SecurityRuntimePort resolvedSecurityRuntime = securityRuntime.getObject();
-                ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getObject();
-                CompactionSummarizer resolvedCompactionSummarizer = compactionSummarizer.getObject();
-                DefaultContextAssembler assembler = new DefaultContextAssembler(
-                    sessionManager,
-                    resolvedResourceRuntime,
-                    new ContextBudgetEstimator(modelCatalog.getIfAvailable())
-                );
-                DefaultCompactionCoordinator compactionCoordinator = new DefaultCompactionCoordinator(
-                    sessionManager,
-                    assembler,
-                    resolvedEventBus,
-                    new DefaultCompactionPlanner(),
-                    resolvedCompactionSummarizer,
-                    clock
-                );
-                return new DefaultTurnExecutor(
-                    new AgentCoreRuntimePorts(
-                        cwd,
-                        sessionManager,
-                        resolvedAiProvider,
-                        resolvedToolRuntime,
-                        resolvedSecurityRuntime,
-                        resolvedResourceRuntime,
-                        resolvedEventBus,
-                        assembler,
-                        null,
-                        compactionCoordinator,
-                        new NoopMemoryExtractionWorker()
-                    ),
-                    TurnIds.random(),
-                    clock
-                );
-            }
-        };
+        return RuntimeBeanFactories.agentCoreFactory(
+            aiProvider,
+            toolRuntime,
+            toolRuntimeFactory,
+            securityRuntime,
+            resourceRuntime,
+            eventBus,
+            compactionSummarizer,
+            modelCatalog,
+            clock
+        );
     }
 
     /**
@@ -355,7 +239,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public MemoryConsolidationTrigger memoryConsolidationTrigger() {
-        return new MemoryConsolidationTrigger();
+        return RuntimeBeanFactories.memoryConsolidationTrigger();
     }
 
     /**
@@ -364,7 +248,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public MemoryConsolidationPromptFactory memoryConsolidationPromptFactory() {
-        return new MemoryConsolidationPromptFactory();
+        return RuntimeBeanFactories.memoryConsolidationPromptFactory();
     }
 
     /**
@@ -373,7 +257,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public MemoryConsolidationAuditSink memoryConsolidationAuditSink(LyPiRuntimeProperties properties) {
-        return new JsonlMemoryConsolidationAuditSink(properties.getCwd());
+        return RuntimeBeanFactories.memoryConsolidationAuditSink(properties);
     }
 
     /**
@@ -382,11 +266,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean(name = "memoryConsolidationExecutor")
     public ExecutorService memoryConsolidationExecutor() {
-        return Executors.newSingleThreadExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "lypi-memory-consolidation");
-            thread.setDaemon(true);
-            return thread;
-        });
+        return RuntimeBeanFactories.memoryConsolidationExecutor();
     }
 
     /**
@@ -403,22 +283,14 @@ public class LyPiRuntimeAutoConfiguration {
         MemoryConsolidationPromptFactory promptFactory,
         MemoryConsolidationAuditSink auditSink
     ) {
-        return request -> {
-            QuietEventBus quietEventBus = new QuietEventBus();
-            ToolRuntimePort restrictedToolRuntime = toolRuntimeFactory.createMemoryConsolidation(properties.getCwd(), quietEventBus);
-            new BootMemoryConsolidationRunner(
-                properties.getCwd(),
-                sessionManager,
-                new AgentCoreFactoryPort() {
-                    @Override
-                    public AgentCorePort create(Path cwd, SessionManagerPort forkSessionManager) {
-                        return agentCoreFactory.create(cwd, forkSessionManager, restrictedToolRuntime, quietEventBus);
-                    }
-                },
-                promptFactory,
-                auditSink
-            ).run(request);
-        };
+        return RuntimeBeanFactories.memoryConsolidationRunner(
+            properties,
+            sessionManager,
+            agentCoreFactory,
+            toolRuntimeFactory,
+            promptFactory,
+            auditSink
+        );
     }
 
     /**
@@ -435,7 +307,14 @@ public class LyPiRuntimeAutoConfiguration {
         java.util.concurrent.Executor executor,
         MemoryConsolidationAuditSink auditSink
     ) {
-        return new MemoryConsolidationTurnEndListener(eventBus, sessionManager, trigger, runner, executor, auditSink);
+        return RuntimeBeanFactories.memoryConsolidationTurnEndListener(
+            eventBus,
+            sessionManager,
+            trigger,
+            runner,
+            executor,
+            auditSink
+        );
     }
 
     /**
@@ -444,23 +323,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(SessionRuntimeState.class)
     public SessionRuntimeState sessionRuntimeState(LyPiRuntimeProperties properties, SessionManagerPort sessionManager) {
-        var handle = properties.isSessionIdConfigured()
-            ? sessionManager.openOrCreate(properties.getSessionId())
-            : sessionManager.openTemporary(properties.getSessionId());
-        return new SessionRuntimeState(
-            handle.sessionId(),
-            properties.getCwd(),
-            handle.leafId(),
-            new ModelSelection(properties.getDefaultProvider(), properties.getDefaultModel(), properties.getThinkingLevel()),
-            properties.getThinkingLevel(),
-            properties.getAgentMode(),
-            properties.getPermissionMode(),
-            new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
-            false,
-            false,
-            false,
-            false
-        );
+        return RuntimeBeanFactories.sessionRuntimeState(properties, sessionManager);
     }
 
     /**
@@ -475,7 +338,7 @@ public class LyPiRuntimeAutoConfiguration {
         ResourceRuntimePort resourceRuntime,
         ToolRuntimePort toolRuntime
     ) {
-        return new DefaultBootstrapService(properties, sessionManager, resourceRuntime, toolRuntime);
+        return RuntimeBeanFactories.bootstrapService(properties, sessionManager, resourceRuntime, toolRuntime);
     }
 
     /**
@@ -492,13 +355,13 @@ public class LyPiRuntimeAutoConfiguration {
         SessionManagerPort sessionManager,
         ObjectProvider<TransportLauncher> transportLaunchers
     ) {
-        return new DefaultAppEntry(
+        return RuntimeBeanFactories.appEntry(
             bootstrapService,
             agentCore,
             eventBus,
             properties,
             sessionManager,
-            List.copyOf(transportLaunchers.orderedStream().toList())
+            transportLaunchers.orderedStream().toList()
         );
     }
 
@@ -512,19 +375,7 @@ public class LyPiRuntimeAutoConfiguration {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) {
-        return (state, core, events, terminal, diffViewProvider, resumeController, newSessionController, slashCommands) -> JLineTuiTransport.open(
-            state,
-            core,
-            events,
-            terminal,
-            diffViewProvider,
-            slashCommands,
-            resumeController,
-            newSessionController,
-            sessionManager,
-            resourceRuntime,
-            compactionRuntime
-        );
+        return RuntimeBeanFactories.jLineTuiTransportFactory(sessionManager, resourceRuntime, compactionRuntime);
     }
 
     /**
@@ -538,17 +389,11 @@ public class LyPiRuntimeAutoConfiguration {
         EventBus eventBus,
         ObjectProvider<AiProviderRuntimePort> aiProviderRuntime
     ) {
-        AiProviderRuntimePort provider = aiProviderRuntime.getIfAvailable();
-        return new DefaultResumeSessionController(
-            properties.getCwd(),
+        return RuntimeBeanFactories.resumeSessionController(
+            properties,
             sessionManager,
             eventBus,
-            provider == null
-                ? null
-                : new AiBranchSummarizer(
-                    provider,
-                    new BranchSummaryContextBuilder(new BranchSummaryInstructionFactory())
-                )
+            aiProviderRuntime.getIfAvailable()
         );
     }
 
@@ -562,7 +407,7 @@ public class LyPiRuntimeAutoConfiguration {
         SessionManagerPort sessionManager,
         EventBus eventBus
     ) {
-        return new DefaultNewSessionController(properties.getCwd(), sessionManager, eventBus);
+        return RuntimeBeanFactories.newSessionController(properties, sessionManager, eventBus);
     }
 
     /**
@@ -571,9 +416,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public DiffViewProvider diffViewProvider() {
-        return (cwd, maxPatchBytes) -> cwd == null
-            ? Optional.empty()
-            : new GitWorkingTreeDiffQuery(cwd).diffView(maxPatchBytes);
+        return RuntimeBeanFactories.diffViewProvider();
     }
 
     /**
@@ -588,7 +431,7 @@ public class LyPiRuntimeAutoConfiguration {
         NewSessionController newSessionController,
         ObjectProvider<SlashCommand> slashCommands
     ) {
-        return new JLineTuiTransportLauncher(
+        return RuntimeBeanFactories.jLineTuiTransportLauncher(
             factory,
             diffViewProvider,
             resumeController,
@@ -614,7 +457,7 @@ public class LyPiRuntimeAutoConfiguration {
         CompactionRuntimePort compactionRuntime,
         ObjectProvider<TransportAdapter> transports
     ) {
-        return new LyPiRuntime(
+        return RuntimeBeanFactories.lyPiRuntime(
             appEntry,
             sessionManager,
             agentCore,
@@ -623,7 +466,7 @@ public class LyPiRuntimeAutoConfiguration {
             securityRuntime,
             resourceRuntime,
             compactionRuntime,
-            List.copyOf(transports.orderedStream().toList())
+            transports.orderedStream().toList()
         );
     }
 
@@ -634,27 +477,7 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnBean(AppEntry.class)
     @ConditionalOnMissingBean(name = "lyPiApplicationRunner")
     public ApplicationRunner lyPiApplicationRunner(AppEntry appEntry, LyPiRuntimeProperties properties) {
-        return args -> {
-            if (isHeadlessSubagent(args)) {
-                return;
-            }
-            appEntry.start(new cn.lypi.contracts.bootstrap.BootstrapRequest(
-                properties.getCwd(),
-                args == null ? List.of() : args.getNonOptionArgs(),
-                properties.isSessionIdConfigured() ? Optional.of(properties.getSessionId()) : Optional.empty(),
-                Optional.ofNullable(properties.getInitialPrompt())
-            ));
-        };
-    }
-
-    private boolean isHeadlessSubagent(org.springframework.boot.ApplicationArguments args) {
-        if (args == null) {
-            return false;
-        }
-        if (args.containsOption("lypi.headless.subagent") || args.containsOption("lypi-headless-subagent")) {
-            return true;
-        }
-        return List.of(args.getSourceArgs()).contains("headless-subagent");
+        return RuntimeBeanFactories.applicationRunner(appEntry, properties);
     }
 
     /**
@@ -667,9 +490,11 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<TransportAdapter> transports,
         ObjectProvider<SessionRuntimeState> state
     ) {
-        TransportEventConnector connector = new TransportEventConnector(eventBus, List.copyOf(transports.orderedStream().toList()));
-        state.ifAvailable(connector::attachAll);
-        return connector;
+        return RuntimeBeanFactories.transportEventConnector(
+            eventBus,
+            transports.orderedStream().toList(),
+            state.getIfAvailable()
+        );
     }
 
     /**
@@ -678,7 +503,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public Clock clock() {
-        return Clock.systemUTC();
+        return RuntimeBeanFactories.clock();
     }
 
     /**
@@ -687,7 +512,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(ChildSessionPort.class)
     public ChildSessionPort childSessionPort() {
-        return new ChildSessionService();
+        return RuntimeBeanFactories.childSessionPort();
     }
 
     /**
@@ -696,20 +521,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(ChildAgentSnapshotProvider.class)
     public ChildAgentSnapshotProvider childAgentSnapshotProvider(ObjectProvider<SessionManagerPort> sessionManager) {
-        SessionTreeQuery query = new SessionTreeQuery(sessionStorageRoot(sessionManager.getIfAvailable()));
-        return parentSessionId -> query.children(parentSessionId).stream()
-            .map(this::childAgentSnapshot)
-            .toList();
-    }
-
-    private ChildAgentSnapshot childAgentSnapshot(ChildSessionView child) {
-        return new ChildAgentSnapshot(
-            child.sessionId(),
-            child.parentSessionId().orElse(""),
-            child.parentSpawnEntryId().orElse(""),
-            child.agentName(),
-            child.agentRole()
-        );
+        return RuntimeBeanFactories.childAgentSnapshotProvider(sessionManager.getIfAvailable());
     }
 
     /**
@@ -718,7 +530,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public JsonlMailboxStore jsonlMailboxStore(ObjectProvider<SessionManagerPort> sessionManager) {
-        return new JsonlMailboxStore(sessionStorageRoot(sessionManager.getIfAvailable()));
+        return RuntimeBeanFactories.jsonlMailboxStore(sessionManager.getIfAvailable());
     }
 
     /**
@@ -727,7 +539,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(MailboxPort.class)
     public DefaultMailboxService mailboxPort(JsonlMailboxStore store, SessionManagerPort sessionManager, Clock clock) {
-        return new DefaultMailboxService(store, sessionManager, clock);
+        return RuntimeBeanFactories.mailboxPort(store, sessionManager, clock);
     }
 
     /**
@@ -738,38 +550,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public MailboxDeliveryGuard mailboxDeliveryGuard(ObjectProvider<SessionRuntimeState> state, SessionManagerPort sessionManager) {
-        return message -> {
-            if (message == null) {
-                return false;
-            }
-            SessionRuntimeState runtimeState = state.getIfAvailable();
-            if (runtimeState == null
-                || runtimeState.hasInterruptibleTool()
-                || runtimeState.hasActiveTurn()
-                || runtimeState.hasPendingPermission()
-                || runtimeState.hasPendingInput()) {
-                return false;
-            }
-            return message.parentSessionId().equals(runtimeState.sessionId())
-                && currentBranchContainsSpawnEntry(sessionManager, runtimeState, message.parentSpawnEntryId());
-        };
-    }
-
-    private boolean currentBranchContainsSpawnEntry(
-        SessionManagerPort sessionManager,
-        SessionRuntimeState runtimeState,
-        String parentSpawnEntryId
-    ) {
-        if (parentSpawnEntryId == null || parentSpawnEntryId.isBlank()) {
-            return false;
-        }
-        try {
-            return sessionManager.branch(runtimeState.currentBranchLeafId()).stream()
-                .map(SessionEntry::id)
-                .anyMatch(parentSpawnEntryId::equals);
-        } catch (RuntimeException exception) {
-            return false;
-        }
+        return RuntimeBeanFactories.mailboxDeliveryGuard(state::getIfAvailable, sessionManager);
     }
 
     /**
@@ -779,7 +560,7 @@ public class LyPiRuntimeAutoConfiguration {
     @ConditionalOnMissingBean
     @ConditionalOnBean(DefaultMailboxService.class)
     public MailboxDeliveryService mailboxDeliveryService(DefaultMailboxService mailbox, MailboxDeliveryGuard guard) {
-        return new MailboxDeliveryService(mailbox, guard);
+        return RuntimeBeanFactories.mailboxDeliveryService(mailbox, guard);
     }
 
     /**
@@ -793,13 +574,7 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<SessionRuntimeState> state,
         SessionManagerPort sessionManager
     ) {
-        return new MailboxSlashCommandHandler(mailbox, () -> {
-            SessionRuntimeState runtimeState = state.getIfAvailable();
-            if (runtimeState != null) {
-                return runtimeState.sessionId();
-            }
-            return sessionManager.currentView().sessionId();
-        });
+        return RuntimeBeanFactories.mailboxSlashCommandHandler(mailbox, state::getIfAvailable, sessionManager);
     }
 
     /**
@@ -825,7 +600,7 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<AgentCenterPort> agentCenter,
         ChildAgentSnapshotProvider childAgents
     ) {
-        return new DefaultAgentRegistry(
+        return RuntimeBeanFactories.agentRegistry(
             parentSession,
             mailbox,
             runningAgentSnapshotProvider(runningAgents, agentCenter),
@@ -845,13 +620,12 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<SessionRuntimeState> state,
         SessionManagerPort sessionManager
     ) {
-        return new AgentSlashCommandHandler(registry, agentCenter.getIfAvailable(), () -> {
-            SessionRuntimeState runtimeState = state.getIfAvailable();
-            if (runtimeState != null) {
-                return runtimeState.sessionId();
-            }
-            return sessionManager.currentView().sessionId();
-        });
+        return RuntimeBeanFactories.agentSlashCommandHandler(
+            registry,
+            agentCenter.getIfAvailable(),
+            state::getIfAvailable,
+            sessionManager
+        );
     }
 
     /**
@@ -870,24 +644,17 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(name = "tuiSlashCommands")
     public List<SlashCommand> tuiSlashCommands(ObjectProvider<SlashCommand> commands) {
-        return commands.orderedStream().toList();
+        return RuntimeBeanFactories.tuiSlashCommands(commands.orderedStream().toList());
     }
 
     private RunningAgentSnapshotProvider runningAgentSnapshotProvider(
         ObjectProvider<RunningAgentSnapshotProvider> runningAgents,
         ObjectProvider<AgentCenterPort> agentCenter
     ) {
-        List<RunningAgentSnapshotProvider> explicitProviders = runningAgents.orderedStream()
-            .filter(provider -> !(provider instanceof AgentCenterPort))
-            .toList();
-        if (!explicitProviders.isEmpty()) {
-            return explicitProviders.getFirst();
-        }
-        AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
-        if (resolvedAgentCenter instanceof RunningAgentSnapshotProvider provider) {
-            return provider;
-        }
-        return ignored -> List.of();
+        return RuntimeBeanFactories.runningAgentSnapshotProvider(
+            runningAgents.orderedStream().toList(),
+            agentCenter.getIfAvailable()
+        );
     }
 
     /**
@@ -896,7 +663,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     SubagentCommandResolver subagentCommandResolver(LyPiSubagentProperties properties) {
-        return new SubagentCommandResolver(properties);
+        return RuntimeBeanFactories.subagentCommandResolver(properties);
     }
 
     /**
@@ -905,7 +672,7 @@ public class LyPiRuntimeAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public SubagentProcessRunner subagentProcessRunner(SubagentCommandResolver subagentCommandResolver) {
-        return new JsonSubagentProcessRunner(subagentCommandResolver.resolve());
+        return RuntimeBeanFactories.subagentProcessRunner(subagentCommandResolver);
     }
 
     /**
@@ -924,25 +691,16 @@ public class LyPiRuntimeAutoConfiguration {
         SubagentCommandResolver subagentCommandResolver,
         Clock clock
     ) {
-        List<String> command = subagentCommandResolver.resolve();
-        return new DefaultAgentCenter(
-            command,
+        return RuntimeBeanFactories.agentCenter(
             childSessions,
             parentSession,
-            sessionStorageRoot(parentSession),
             sessionManagerFactory,
             processRunner,
             mailbox,
             deliveryService,
+            subagentCommandResolver,
             clock
         );
-    }
-
-    private Path sessionStorageRoot(SessionManagerPort sessionManager) {
-        if (sessionManager instanceof SessionStorageRootPort storageRoot) {
-            return storageRoot.sessionStorageRoot();
-        }
-        return DEFAULT_CWD;
     }
 
 }
