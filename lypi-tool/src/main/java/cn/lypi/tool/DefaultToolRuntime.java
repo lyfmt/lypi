@@ -4,18 +4,11 @@ import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.event.EventBus;
-import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.AgentMode;
-import cn.lypi.contracts.security.BashRiskAnalysis;
-import cn.lypi.contracts.security.PermissionBehavior;
-import cn.lypi.contracts.security.PermissionDecision;
-import cn.lypi.contracts.security.PermissionDecisionReason;
-import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRule;
-import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -58,8 +51,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final ToolExecutionEventPublisher eventPublisher;
     private final ToolLifecycleReporter lifecycleReporter;
     private final ToolResultFactory resultFactory;
-    private final SandboxEscalationPolicy sandboxEscalationPolicy;
-    private final BashSandboxRiskPolicy bashSandboxRiskPolicy;
+    private final ToolPermissionCoordinator permissionCoordinator;
     private final int maxConcurrency;
 
     public DefaultToolRuntime(SecurityRuntimePort securityRuntime) {
@@ -378,8 +370,14 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
         this.lifecycleReporter = new ToolLifecycleReporter(this.eventPublisher);
         this.resultFactory = new ToolResultFactory();
-        this.sandboxEscalationPolicy = new SandboxEscalationPolicy();
-        this.bashSandboxRiskPolicy = new BashSandboxRiskPolicy();
+        this.permissionCoordinator = new ToolPermissionCoordinator(
+            this.securityRuntime,
+            this.permissionGate,
+            this.permissionUpdateStore,
+            this.runtimePermissionRules,
+            new SandboxEscalationPolicy(),
+            new BashSandboxRiskPolicy()
+        );
         this.maxConcurrency = normalizedOptions.maxConcurrency();
     }
 
@@ -600,43 +598,17 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 return finalResult;
             }
 
-            PermissionDecision securityDecision = securityRuntime.decide(request, toolContext);
-            PermissionDecision effectiveDecision;
-            if (isDefaultSandboxBashRequest(request) && canEnterDefaultSandbox(securityDecision)) {
-                effectiveDecision = isDeny(securityDecision)
-                    ? securityDecision
-                    : allowDecision("默认 Bash 请求先进入沙箱执行。");
-            } else {
-                PermissionDecision toolDecision = tool.checkPermissions(input, toolContext);
-                effectiveDecision = effectiveDecision(toolDecision, securityDecision);
-            }
-            Optional<PermissionDecision> sandboxEscalationDecision = sandboxEscalationPolicy.decide(request, toolContext);
-            if (sandboxEscalationDecision.isPresent()) {
-                PermissionDecision sandboxDecision = withSuggestedUpdate(
-                    sandboxEscalationDecision.get(),
-                    securityDecision.suggestedUpdate()
-                );
-                effectiveDecision = effectiveDecision(
-                    isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"),
-                    sandboxDecision
-                );
-            } else if (!isDeny(effectiveDecision)) {
-                Optional<PermissionDecision> bashSandboxRiskDecision = bashSandboxRiskPolicy.decide(request, toolContext, securityDecision);
-                if (bashSandboxRiskDecision.isPresent()) {
-                    effectiveDecision = bashSandboxRiskDecision.get();
-                }
-            }
-            if (isDeny(effectiveDecision)) {
-                finalResult = permissionGateError(request.toolUseId(), PermissionGateResult.deny(decisionMessage(effectiveDecision)));
+            ToolPermissionCoordinator.Result permissionResult = permissionCoordinator.authorize(
+                request,
+                tool,
+                input,
+                toolContext
+            );
+            if (!permissionResult.allowed()) {
+                status = statusForGateResult(permissionResult.gateResult());
+                finalResult = permissionGateError(request.toolUseId(), permissionResult.gateResult());
                 return finalResult;
             }
-            PermissionGateResult permissionResult = resolvePermission(request, tool, toolContext, effectiveDecision);
-            if (permissionResult.status() != PermissionGateResult.Status.ALLOW) {
-                status = statusForGateResult(permissionResult);
-                finalResult = permissionGateError(request.toolUseId(), permissionResult);
-                return finalResult;
-            }
-            permissionResult.permissionUpdate().ifPresent(this::applyPermissionUpdate);
             ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
             if (beforeResult != null && beforeResult.blocked()) {
                 finalResult = errorResult(request.toolUseId(), beforeResult.message());
@@ -753,13 +725,6 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return options == null ? ToolRuntimeOptions.defaults() : options;
     }
 
-    private void applyPermissionUpdate(PermissionUpdate update) {
-        permissionUpdateStore.append(update);
-        if (update != null && update.rule() != null) {
-            runtimePermissionRules.add(update.rule());
-        }
-    }
-
     private static PermissionGate eventPublishingPermissionGate(EventBus eventBus, PermissionGate permissionGate) {
         PermissionGate safeGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
         return eventBus == null || safeGate instanceof EventPublishingPermissionGate
@@ -781,132 +746,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return ToolAbortSupport.aborted(context) && tool.interruptBehavior() == InterruptBehavior.CANCEL;
     }
 
-    private boolean isDefaultSandboxBashRequest(ToolUseRequest request) {
-        return request != null
-            && "bash".equals(request.toolName())
-            && !hasPrefixRule(request.input())
-            && SandboxPermissions.fromToolValue(stringInput(request.input(), "sandboxPermissions")) == SandboxPermissions.USE_DEFAULT;
-    }
-
-    private boolean canEnterDefaultSandbox(PermissionDecision securityDecision) {
-        if (securityDecision == null || securityDecision.behavior() != PermissionBehavior.ASK) {
-            return true;
-        }
-        Object bashRisk = securityDecision.metadata().get("bashRisk");
-        return !(bashRisk instanceof BashRiskAnalysis risk) || risk.redirectTargets().isEmpty();
-    }
-
-    private boolean hasPrefixRule(Map<String, Object> input) {
-        return input != null && input.containsKey("prefix_rule");
-    }
-
-    private String stringInput(Map<String, Object> input, String key) {
-        Object value = input == null ? null : input.get(key);
-        return value == null ? "" : value.toString();
-    }
-
-    private PermissionGateResult resolvePermission(
-        ToolUseRequest request,
-        Tool<Map<String, Object>, ?> tool,
-        ToolUseContext context,
-        PermissionDecision decision
-    ) {
-        if (decision == null || decision.behavior() == PermissionBehavior.DENY) {
-            return PermissionGateResult.deny(decisionMessage(decision));
-        }
-        if (decision.behavior() == PermissionBehavior.ALLOW) {
-            return PermissionGateResult.allow();
-        }
-        if (decision.behavior() == PermissionBehavior.ASK && isBypassPermissionMode(context)) {
-            return PermissionGateResult.allow();
-        }
-        PermissionGateResult result = permissionGate.request(request, tool, context, decision);
-        return result == null ? PermissionGateResult.deny("权限请求未获允许。") : result;
-    }
-
-    private boolean isBypassPermissionMode(ToolUseContext context) {
-        Object value = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_MODE);
-        if (value instanceof PermissionMode permissionMode) {
-            return permissionMode == PermissionMode.BYPASS;
-        }
-        if (value instanceof String permissionMode) {
-            return PermissionMode.valueOf(permissionMode) == PermissionMode.BYPASS;
-        }
-        return false;
-    }
-
-    private PermissionDecision effectiveDecision(PermissionDecision toolDecision, PermissionDecision securityDecision) {
-        if (isDeny(securityDecision)) {
-            return securityDecision;
-        }
-        if (isDeny(toolDecision)) {
-            return toolDecision;
-        }
-        if (isAsk(securityDecision)) {
-            return securityDecision;
-        }
-        if (isExplicitRuleAllow(securityDecision)) {
-            return securityDecision;
-        }
-        if (isAsk(toolDecision)) {
-            return toolDecision;
-        }
-        return securityDecision == null ? toolDecision : securityDecision;
-    }
-
-    private boolean isDeny(PermissionDecision decision) {
-        return decision == null || decision.behavior() == PermissionBehavior.DENY;
-    }
-
-    private boolean isAsk(PermissionDecision decision) {
-        return decision != null && decision.behavior() == PermissionBehavior.ASK;
-    }
-
-    private boolean isExplicitRuleAllow(PermissionDecision decision) {
-        return decision != null
-            && decision.behavior() == PermissionBehavior.ALLOW
-            && decision.reason() == PermissionDecisionReason.EXPLICIT_RULE;
-    }
-
-    private PermissionDecision allowDecision(String message) {
-        return new PermissionDecision(
-            PermissionBehavior.ALLOW,
-            PermissionDecisionReason.MODE_DEFAULT,
-            message,
-            Optional.empty(),
-            Map.of()
-        );
-    }
-
-    private PermissionDecision withSuggestedUpdate(
-        PermissionDecision decision,
-        Optional<PermissionUpdate> suggestedUpdate
-    ) {
-        if (decision == null || suggestedUpdate == null || suggestedUpdate.isEmpty() || decision.suggestedUpdate().isPresent()) {
-            return decision;
-        }
-        return new PermissionDecision(
-            decision.behavior(),
-            decision.reason(),
-            decision.message(),
-            suggestedUpdate,
-            decision.metadata()
-        );
-    }
-
     private ToolResult<?> permissionGateError(String toolUseId, PermissionGateResult result) {
         String message = result.message().orElse("权限请求未获允许。");
         if (result.status() == PermissionGateResult.Status.ABORT) {
             return errorResult(toolUseId, "工具权限请求已中断: " + message, ToolExecutionStatus.CANCELLED);
         }
         return errorResult(toolUseId, "权限请求未获允许: " + message);
-    }
-
-    private String decisionMessage(PermissionDecision decision) {
-        if (decision == null || decision.message() == null || decision.message().isBlank()) {
-            return "未提供原因。";
-        }
-        return decision.message();
     }
 
     private String joinMessages(ValidationResult result) {
