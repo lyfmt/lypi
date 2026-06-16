@@ -24,10 +24,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Semaphore;
 
 /**
  * 默认工具运行时。
@@ -52,6 +48,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final ToolLifecycleReporter lifecycleReporter;
     private final ToolResultFactory resultFactory;
     private final ToolPermissionCoordinator permissionCoordinator;
+    private final ToolBatchExecutor batchExecutor;
     private final int maxConcurrency;
 
     public DefaultToolRuntime(SecurityRuntimePort securityRuntime) {
@@ -379,6 +376,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             new BashSandboxRiskPolicy()
         );
         this.maxConcurrency = normalizedOptions.maxConcurrency();
+        this.batchExecutor = new ToolBatchExecutor(this.maxConcurrency);
     }
 
     @Override
@@ -470,35 +468,18 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolRuntimeInvocation invocation,
         List<ToolResult<?>> results
     ) {
-        if (!batch.parallel()) {
-            IndexedCall indexedCall = indexedBatch.getFirst();
-            results.set(indexedCall.index(), executeCall(
+        List<ToolResult<?>> batchResults = batchExecutor.execute(batch, (index, call) -> {
+            IndexedCall indexedCall = indexedBatch.get(index);
+            return executeCall(
                 indexedCall.request(),
                 indexedCall.originalToolName(),
                 indexedCall.tool(),
                 context,
                 invocation
-            ));
-            return;
-        }
-
-        try (BoundedVirtualExecutor executor = new BoundedVirtualExecutor(maxConcurrency)) {
-            List<CompletableFuture<IndexedResult>> futures = indexedBatch.stream()
-                .map(call -> CompletableFuture.supplyAsync(
-                    () -> new IndexedResult(call.index(), executeCall(
-                        call.request(),
-                        call.originalToolName(),
-                        call.tool(),
-                        context,
-                        invocation
-                    )),
-                    executor
-                ))
-                .toList();
-            for (CompletableFuture<IndexedResult> future : futures) {
-                IndexedResult result = future.join();
-                results.set(result.index(), result.result());
-            }
+            );
+        });
+        for (int index = 0; index < batchResults.size(); index++) {
+            results.set(indexedBatch.get(index).index(), batchResults.get(index));
         }
     }
 
@@ -783,113 +764,4 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
     private record ExecutedToolResult(ToolResult<?> result, boolean threw) {}
 
-    private record IndexedResult(
-        int index,
-        ToolResult<?> result
-    ) {}
-
-    private static final class BoundedVirtualExecutor implements ExecutorService, AutoCloseable {
-        private final ExecutorService delegate;
-        private final Semaphore semaphore;
-
-        private BoundedVirtualExecutor(int maxConcurrency) {
-            this.delegate = Executors.newVirtualThreadPerTaskExecutor();
-            this.semaphore = new Semaphore(Math.max(1, maxConcurrency));
-        }
-
-        @Override
-        public void execute(Runnable command) {
-            delegate.execute(() -> {
-                boolean acquired = false;
-                try {
-                    semaphore.acquire();
-                    acquired = true;
-                    command.run();
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("工具并发执行被中断。", exception);
-                } finally {
-                    if (acquired) {
-                        semaphore.release();
-                    }
-                }
-            });
-        }
-
-        @Override
-        public void close() {
-            delegate.close();
-        }
-
-        @Override
-        public void shutdown() {
-            delegate.shutdown();
-        }
-
-        @Override
-        public List<Runnable> shutdownNow() {
-            return delegate.shutdownNow();
-        }
-
-        @Override
-        public boolean isShutdown() {
-            return delegate.isShutdown();
-        }
-
-        @Override
-        public boolean isTerminated() {
-            return delegate.isTerminated();
-        }
-
-        @Override
-        public boolean awaitTermination(long timeout, java.util.concurrent.TimeUnit unit) throws InterruptedException {
-            return delegate.awaitTermination(timeout, unit);
-        }
-
-        @Override
-        public <T> java.util.concurrent.Future<T> submit(java.util.concurrent.Callable<T> task) {
-            return delegate.submit(task);
-        }
-
-        @Override
-        public <T> java.util.concurrent.Future<T> submit(Runnable task, T result) {
-            return delegate.submit(task, result);
-        }
-
-        @Override
-        public java.util.concurrent.Future<?> submit(Runnable task) {
-            return delegate.submit(task);
-        }
-
-        @Override
-        public <T> List<java.util.concurrent.Future<T>> invokeAll(
-            java.util.Collection<? extends java.util.concurrent.Callable<T>> tasks
-        ) throws InterruptedException {
-            return delegate.invokeAll(tasks);
-        }
-
-        @Override
-        public <T> List<java.util.concurrent.Future<T>> invokeAll(
-            java.util.Collection<? extends java.util.concurrent.Callable<T>> tasks,
-            long timeout,
-            java.util.concurrent.TimeUnit unit
-        ) throws InterruptedException {
-            return delegate.invokeAll(tasks, timeout, unit);
-        }
-
-        @Override
-        public <T> T invokeAny(java.util.Collection<? extends java.util.concurrent.Callable<T>> tasks)
-            throws InterruptedException, java.util.concurrent.ExecutionException {
-            return delegate.invokeAny(tasks);
-        }
-
-        @Override
-        public <T> T invokeAny(
-            java.util.Collection<? extends java.util.concurrent.Callable<T>> tasks,
-            long timeout,
-            java.util.concurrent.TimeUnit unit
-        ) throws InterruptedException, java.util.concurrent.ExecutionException, java.util.concurrent.TimeoutException {
-            return delegate.invokeAny(tasks, timeout, unit);
-        }
-    }
 }
