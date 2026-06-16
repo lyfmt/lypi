@@ -2,12 +2,7 @@ package cn.lypi.tool;
 
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
-import cn.lypi.contracts.context.AgentMessage;
-import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextSnapshot;
-import cn.lypi.contracts.context.MessageKind;
-import cn.lypi.contracts.context.MessageRole;
-import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
@@ -24,19 +19,12 @@ import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
-import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
-import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,8 +44,6 @@ import java.util.concurrent.Semaphore;
 public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrator {
     private static final String METADATA_ORIGINAL_TOOL_NAME = "originalToolName";
     private static final String METADATA_TOOL_USE_ID = "toolUseId";
-    private static final String METADATA_TURN_ID = "turnId";
-    private static final int OUTPUT_REF_PREVIEW_CHARS = 12;
 
     private final ToolRegistry registry;
     private final ToolSchemaValidator schemaValidator;
@@ -70,6 +56,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final PermissionUpdateStore permissionUpdateStore;
     private final List<PermissionRule> runtimePermissionRules = new CopyOnWriteArrayList<>();
     private final ToolExecutionEventPublisher eventPublisher;
+    private final ToolLifecycleReporter lifecycleReporter;
+    private final ToolResultFactory resultFactory;
     private final SandboxEscalationPolicy sandboxEscalationPolicy;
     private final BashSandboxRiskPolicy bashSandboxRiskPolicy;
     private final int maxConcurrency;
@@ -388,6 +376,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
         this.permissionUpdateStore = permissionUpdateStore == null ? PermissionUpdateStore.noop() : permissionUpdateStore;
         this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
+        this.lifecycleReporter = new ToolLifecycleReporter(this.eventPublisher);
+        this.resultFactory = new ToolResultFactory();
         this.sandboxEscalationPolicy = new SandboxEscalationPolicy();
         this.bashSandboxRiskPolicy = new BashSandboxRiskPolicy();
         this.maxConcurrency = normalizedOptions.maxConcurrency();
@@ -544,15 +534,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             toolName,
             toolName
         );
-        ToolExecutionEventPublisher.StartedToolExecution started = eventPublisher.start(
-            toolContext.sessionId(),
-            request.toolUseId(),
-            request.parentMessageId(),
-            stringMetadata(toolContext, METADATA_TURN_ID),
+        ToolExecutionEventPublisher.StartedToolExecution started = lifecycleReporter.start(
+            request,
+            toolContext,
             toolName,
-            displayTitle(toolName),
-            inputSummary(toolName, input),
-            inputMetadata(input, toolName, toolName)
+            toolName,
+            input
         );
         ToolResult<?> finalResult = null;
         try {
@@ -562,7 +549,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             finalResult = errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
             return finalResult;
         } finally {
-            publishToolEnd(
+            lifecycleReporter.end(
                 request,
                 toolContext,
                 toolName,
@@ -583,15 +570,12 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         Map<String, Object> input,
         ToolUseContext toolContext
     ) {
-        ToolExecutionEventPublisher.StartedToolExecution started = eventPublisher.start(
-            toolContext.sessionId(),
-            request.toolUseId(),
-            request.parentMessageId(),
-            stringMetadata(toolContext, METADATA_TURN_ID),
+        ToolExecutionEventPublisher.StartedToolExecution started = lifecycleReporter.start(
+            request,
+            toolContext,
             toolName,
-            displayTitle(toolName),
-            inputSummary(toolName, input),
-            inputMetadata(input, toolName, originalToolName)
+            originalToolName,
+            input
         );
         ToolResult<?> rawResult = null;
         ToolResult<?> finalResult = null;
@@ -676,7 +660,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             status = ToolExecutionStatus.FAILED;
             return finalResult;
         } finally {
-            publishToolEnd(request, toolContext, toolName, originalToolName, rawResult, finalResult, status, started.startedAt());
+            lifecycleReporter.end(request, toolContext, toolName, originalToolName, rawResult, finalResult, status, started.startedAt());
         }
     }
 
@@ -719,179 +703,6 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     ) {
         ToolResult<?> interceptedResult = interceptor.afterExecute(request, tool, toolContext, result);
         return interceptedResult == null ? result : interceptedResult;
-    }
-
-    private void publishToolEnd(
-        ToolUseRequest request,
-        ToolUseContext toolContext,
-        String toolName,
-        String originalToolName,
-        ToolResult<?> rawResult,
-        ToolResult<?> finalResult,
-        ToolExecutionStatus status,
-        Instant startedAt
-    ) {
-        Instant endedAt = Instant.now();
-        ToolResult<?> eventResult = rawResult == null ? finalResult : rawResult;
-        Map<String, Object> metadata = eventMetadata(toolName, originalToolName);
-        ToolResultSummary summary = resultSummary(toolName, eventResult, status, metadata);
-        ToolOutputRef resultRef = resultRef(
-            toolContext.sessionId(),
-            request.toolUseId(),
-            toolName,
-            eventResult,
-            finalResult != null && finalResult.replacement().isPresent()
-        );
-        eventPublisher.end(
-            toolContext.sessionId(),
-            request.toolUseId(),
-            status,
-            summary.exitCode(),
-            summary,
-            resultRef,
-            startedAt,
-            endedAt,
-            metadata
-        );
-    }
-
-    private ToolResultSummary resultSummary(
-        String toolName,
-        ToolResult<?> result,
-        ToolExecutionStatus status,
-        Map<String, Object> metadata
-    ) {
-        String outputText = outputText(result);
-        boolean error = status != ToolExecutionStatus.SUCCEEDED || result == null || result.isError();
-        return new ToolResultSummary(
-            toolName + " " + status.name().toLowerCase(),
-            summarize(outputText),
-            error,
-            exitCode(result),
-            status == ToolExecutionStatus.TIMED_OUT,
-            byteLength(outputText),
-            metadata
-        );
-    }
-
-    private ToolOutputRef resultRef(
-        String sessionId,
-        String toolUseId,
-        String toolName,
-        ToolResult<?> result,
-        boolean budgeted
-    ) {
-        if (result == null) {
-            return null;
-        }
-        String outputText = outputText(result);
-        if (!budgeted && result.replacement().isEmpty()) {
-            return null;
-        }
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("toolName", toolName);
-        metadata.put("preview", preview(outputText));
-        if (budgeted) {
-            metadata.put("truncated", true);
-            metadata.put("truncationReason", "budgeted");
-        }
-        return new ToolOutputRef(
-            "toolout_" + sessionId + "_" + toolUseId,
-            sessionId,
-            toolUseId,
-            "text/plain; charset=utf-8",
-            "pending",
-            "",
-            sha256(outputText),
-            byteLength(outputText),
-            metadata
-        );
-    }
-
-    private String outputText(ToolResult<?> result) {
-        if (result == null || result.newMessages() == null || result.newMessages().isEmpty()) {
-            return "";
-        }
-        List<String> parts = new ArrayList<>();
-        for (AgentMessage message : result.newMessages()) {
-            if (message.content() == null) {
-                continue;
-            }
-            for (ContentBlock block : message.content()) {
-                if (block instanceof ToolResultContentBlock toolResultBlock) {
-                    parts.add(toolResultBlock.text());
-                }
-            }
-        }
-        return String.join("\n", parts);
-    }
-
-    private String summarize(String outputText) {
-        if (outputText == null || outputText.isBlank()) {
-            return "";
-        }
-        return outputText.length() <= 200 ? outputText : outputText.substring(0, 200);
-    }
-
-    private String preview(String outputText) {
-        if (outputText == null || outputText.isEmpty()) {
-            return "";
-        }
-        return outputText.substring(0, Math.min(OUTPUT_REF_PREVIEW_CHARS, outputText.length()));
-    }
-
-    private long byteLength(String outputText) {
-        return outputText == null ? 0L : outputText.getBytes(StandardCharsets.UTF_8).length;
-    }
-
-    private String sha256(String outputText) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest((outputText == null ? "" : outputText).getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(hash.length * 2);
-            for (byte b : hash) {
-                hex.append(String.format("%02x", b));
-            }
-            return "sha256:" + hex;
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 algorithm is unavailable.", exception);
-        }
-    }
-
-    private Integer exitCode(ToolResult<?> result) {
-        Object output = result == null ? null : result.output();
-        if (output instanceof Map<?, ?> outputMap) {
-            Object exitCode = outputMap.get("exitCode");
-            if (exitCode instanceof Number number) {
-                return number.intValue();
-            }
-        }
-        return null;
-    }
-
-    private String displayTitle(String toolName) {
-        if (toolName == null || toolName.isBlank()) {
-            return "Tool";
-        }
-        return Character.toUpperCase(toolName.charAt(0)) + toolName.substring(1);
-    }
-
-    private String inputSummary(String toolName, Map<String, Object> input) {
-        return toolName + " " + input;
-    }
-
-    private Map<String, Object> inputMetadata(Map<String, Object> input, String toolName, String originalToolName) {
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        if (input != null) {
-            metadata.putAll(input);
-        }
-        metadata.putAll(originalToolMetadata(toolName, originalToolName));
-        return Collections.unmodifiableMap(metadata);
-    }
-
-    private String stringMetadata(ToolUseContext context, String key) {
-        Object value = context.metadata().get(key);
-        return value == null ? null : value.toString();
     }
 
     private ToolUseRequest canonicalRequest(ToolUseRequest request, Tool<Map<String, Object>, ?> tool) {
@@ -964,20 +775,6 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
     private static ToolExecutionEventPublisher lifecyclePublisher(EventBus eventBus) {
         return eventBus == null ? ToolExecutionEventPublisher.noop() : ToolExecutionEventPublisher.eventBus(eventBus);
-    }
-
-    private Map<String, Object> eventMetadata(String toolName, String originalToolName) {
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("toolName", toolName);
-        metadata.putAll(originalToolMetadata(toolName, originalToolName));
-        return Map.copyOf(metadata);
-    }
-
-    private Map<String, Object> originalToolMetadata(String toolName, String originalToolName) {
-        if (Objects.equals(toolName, originalToolName)) {
-            return Map.of();
-        }
-        return Map.of(METADATA_ORIGINAL_TOOL_NAME, originalToolName);
     }
 
     private boolean shouldSkipForAbort(Tool<Map<String, Object>, ?> tool, ToolUseContext context) {
@@ -1120,22 +917,11 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     }
 
     private ToolResult<String> errorResult(String toolUseId, String message) {
-        return errorResult(toolUseId, message, null);
+        return resultFactory.error(toolUseId, message);
     }
 
     private ToolResult<String> errorResult(String toolUseId, String message, ToolExecutionStatus status) {
-        String safeMessage = message == null || message.isBlank() ? "工具调用失败。" : message;
-        Map<String, Object> metadata = status == null ? Map.of() : Map.of("status", status.name());
-        AgentMessage agentMessage = new AgentMessage(
-            "msg_" + toolUseId,
-            MessageRole.TOOL_RESULT,
-            MessageKind.TOOL_RESULT,
-            List.of(new ToolResultContentBlock(toolUseId, safeMessage, true, metadata)),
-            Instant.now(),
-            Optional.empty(),
-            Optional.empty()
-        );
-        return new ToolResult<>(safeMessage, true, List.of(agentMessage), Optional.empty());
+        return resultFactory.error(toolUseId, message, status);
     }
 
     @SuppressWarnings("unchecked")
