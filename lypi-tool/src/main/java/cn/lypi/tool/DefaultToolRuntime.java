@@ -35,6 +35,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private static final String METADATA_TOOL_USE_ID = "toolUseId";
 
     private final ToolRegistry registry;
+    private final ToolCallResolver callResolver;
     private final ToolSchemaValidator schemaValidator;
     private final ToolExecutionPlanner executionPlanner;
     private final ToolResultBudgeter resultBudgeter;
@@ -356,6 +357,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     ) {
         ToolRuntimeOptions normalizedOptions = normalizeOptions(options);
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
+        this.callResolver = new ToolCallResolver(this.registry);
         this.schemaValidator = Objects.requireNonNull(schemaValidator, "schemaValidator must not be null");
         this.executionPlanner = Objects.requireNonNull(executionPlanner, "executionPlanner must not be null");
         this.resultBudgeter = Objects.requireNonNull(resultBudgeter, "resultBudgeter must not be null");
@@ -423,25 +425,22 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             results.add(null);
         }
 
-        List<IndexedCall> resolvedSegment = new ArrayList<>();
-        for (int index = 0; index < requests.size(); index++) {
-            ToolUseRequest request = requests.get(index);
-            Optional<Tool<?, ?>> tool = registry.resolve(request.toolName());
-            if (tool.isEmpty()) {
+        List<ToolCallResolver.ResolvedCall> resolvedSegment = new ArrayList<>();
+        for (ToolCallResolver.ResolvedCall call : callResolver.resolve(requests)) {
+            if (!call.known()) {
                 executeResolvedSegment(resolvedSegment, context, invocation, results);
                 resolvedSegment.clear();
-                results.set(index, executeUnknownCall(request, context, invocation));
+                results.set(call.index(), executeUnknownCall(call.request(), context, invocation));
                 continue;
             }
-            Tool<Map<String, Object>, ?> resolvedTool = castTool(tool.get());
-            resolvedSegment.add(new IndexedCall(index, canonicalRequest(request, resolvedTool), request.toolName(), resolvedTool));
+            resolvedSegment.add(call);
         }
         executeResolvedSegment(resolvedSegment, context, invocation, results);
         return List.copyOf(results);
     }
 
     private void executeResolvedSegment(
-        List<IndexedCall> resolvedCalls,
+        List<ToolCallResolver.ResolvedCall> resolvedCalls,
         ContextSnapshot context,
         ToolRuntimeInvocation invocation,
         List<ToolResult<?>> results
@@ -455,7 +454,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         List<ToolExecutionPlanner.Batch> batches = executionPlanner.plan(calls);
         int cursor = 0;
         for (ToolExecutionPlanner.Batch batch : batches) {
-            List<IndexedCall> indexedBatch = resolvedCalls.subList(cursor, cursor + batch.calls().size());
+            List<ToolCallResolver.ResolvedCall> indexedBatch = resolvedCalls.subList(cursor, cursor + batch.calls().size());
             executeBatch(batch, indexedBatch, context, invocation, results);
             cursor += batch.calls().size();
         }
@@ -463,13 +462,13 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
 
     private void executeBatch(
         ToolExecutionPlanner.Batch batch,
-        List<IndexedCall> indexedBatch,
+        List<ToolCallResolver.ResolvedCall> indexedBatch,
         ContextSnapshot context,
         ToolRuntimeInvocation invocation,
         List<ToolResult<?>> results
     ) {
         List<ToolResult<?>> batchResults = batchExecutor.execute(batch, (index, call) -> {
-            IndexedCall indexedCall = indexedBatch.get(index);
+            ToolCallResolver.ResolvedCall indexedCall = indexedBatch.get(index);
             return executeCall(
                 indexedCall.request(),
                 indexedCall.originalToolName(),
@@ -658,18 +657,6 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return interceptedResult == null ? result : interceptedResult;
     }
 
-    private ToolUseRequest canonicalRequest(ToolUseRequest request, Tool<Map<String, Object>, ?> tool) {
-        if (Objects.equals(request.toolName(), tool.name())) {
-            return request;
-        }
-        return new ToolUseRequest(
-            request.toolUseId(),
-            tool.name(),
-            request.input(),
-            request.parentMessageId()
-        );
-    }
-
     private ToolUseContext contextWithCallMetadata(
         ToolUseContext context,
         String toolUseId,
@@ -749,18 +736,6 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private ToolResult<String> errorResult(String toolUseId, String message, ToolExecutionStatus status) {
         return resultFactory.error(toolUseId, message, status);
     }
-
-    @SuppressWarnings("unchecked")
-    private Tool<Map<String, Object>, ?> castTool(Tool<?, ?> tool) {
-        return (Tool<Map<String, Object>, ?>) tool;
-    }
-
-    private record IndexedCall(
-        int index,
-        ToolUseRequest request,
-        String originalToolName,
-        Tool<Map<String, Object>, ?> tool
-    ) {}
 
     private record ExecutedToolResult(ToolResult<?> result, boolean threw) {}
 
