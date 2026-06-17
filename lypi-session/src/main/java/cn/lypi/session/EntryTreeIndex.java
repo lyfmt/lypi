@@ -31,6 +31,10 @@ final class EntryTreeIndex {
         return byId.isEmpty();
     }
 
+    boolean contains(String entryId) {
+        return byId.containsKey(entryId);
+    }
+
     List<SessionEntry> entries() {
         return List.copyOf(byId.values());
     }

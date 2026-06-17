@@ -316,6 +316,28 @@ class SessionManagerImplTest {
     }
 
     @Test
+    void refreshImportsExternalEntriesWithoutMovingLocalLeaf() {
+        SessionManager first = new SessionManagerImpl(tempDir);
+        first.openOrCreate("ses_main");
+        first.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        first.append(new CustomMessageEntry("local", "root", "local", Instant.parse("2026-06-01T00:01:00Z")));
+
+        SessionManager second = new SessionManagerImpl(tempDir);
+        second.openOrCreate("ses_main");
+        second.switchLeaf("root");
+        second.append(new CustomMessageEntry("external", "root", "external", Instant.parse("2026-06-01T00:02:00Z")));
+
+        assertThat(first.branch("external")).extracting(SessionEntry::id).containsExactly("root", "external");
+
+        SessionHandle refreshed = first.append(
+            new CustomMessageEntry("after_local", "local", "after local", Instant.parse("2026-06-01T00:03:00Z"))
+        );
+        assertThat(refreshed.leafId()).isEqualTo("after_local");
+        assertThat(first.branch("after_local")).extracting(SessionEntry::id).containsExactly("root", "local", "after_local");
+        assertThat(first.branch("external")).extracting(SessionEntry::id).containsExactly("root", "external");
+    }
+
+    @Test
     void refreshRejectsExternallyAppendedDuplicateEntryIds() {
         SessionManager first = new SessionManagerImpl(tempDir);
         first.openOrCreate("ses_main");

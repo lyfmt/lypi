@@ -298,7 +298,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
         new EntryTreeIndex(sessionFile.entries());
         header = sessionFile.header();
         for (SessionEntry entry : sessionFile.entries()) {
-            if (!index.byId().containsKey(entry.id())) {
+            if (!index.contains(entry.id())) {
                 index.importEntry(entry);
             }
         }
