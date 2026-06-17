@@ -1,16 +1,20 @@
 package cn.lypi.contracts.event;
 
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.ApprovalKind;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.security.ReviewDecision;
 import cn.lypi.contracts.security.PermissionUpdate;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -25,6 +29,10 @@ public record PermissionRequestEvent(
     String renderedToolUse,
     String message,
     PermissionDecision policyDecision,
+    ApprovalKind approvalKind,
+    List<ReviewDecision> availableDecisions,
+    Optional<AdditionalPermissionProfile> additionalPermissions,
+    boolean strictAutoReview,
     List<PermissionOption> options,
     String defaultOptionId,
     String cancelOptionId,
@@ -38,10 +46,14 @@ public record PermissionRequestEvent(
         renderedToolUse = renderedToolUse == null ? "" : renderedToolUse;
         policyDecision = policyDecision == null ? legacyDecision(message) : policyDecision;
         message = blankToDefault(message, policyDecision.message());
+        approvalKind = approvalKind == null ? ApprovalKind.COMMAND : approvalKind;
+        additionalPermissions = additionalPermissions == null ? Optional.empty() : additionalPermissions;
         options = normalizeOptions(options);
+        availableDecisions = normalizeAvailableDecisions(availableDecisions, options);
         defaultOptionId = blankToDefault(defaultOptionId, defaultOption(options).optionId());
         cancelOptionId = blankToDefault(cancelOptionId, cancelOption(options).optionId());
         validateOptionId("defaultOptionId", defaultOptionId, options);
+        validateOptionId("cancelOptionId", cancelOptionId, options);
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
     }
 
@@ -75,6 +87,10 @@ public record PermissionRequestEvent(
             renderedToolUse,
             policyDecision == null ? displayTitle : policyDecision.message(),
             policyDecision,
+            ApprovalKind.COMMAND,
+            List.of(),
+            Optional.empty(),
+            false,
             options,
             defaultOptionId,
             cancelOptionId,
@@ -104,6 +120,10 @@ public record PermissionRequestEvent(
             renderedToolUse,
             message,
             decision,
+            ApprovalKind.COMMAND,
+            List.of(),
+            Optional.empty(),
+            false,
             legacyOptions(),
             "allow_once",
             "cancel",
@@ -134,6 +154,24 @@ public record PermissionRequestEvent(
             return legacyOptions();
         }
         return List.copyOf(options);
+    }
+
+    private static List<ReviewDecision> normalizeAvailableDecisions(
+        List<ReviewDecision> availableDecisions,
+        List<PermissionOption> options
+    ) {
+        LinkedHashSet<ReviewDecision> optionDecisions = new LinkedHashSet<>();
+        for (PermissionOption option : options) {
+            reviewDecisionOf(option).ifPresent(optionDecisions::add);
+        }
+        if (availableDecisions != null && !availableDecisions.isEmpty()) {
+            LinkedHashSet<ReviewDecision> explicit = new LinkedHashSet<>(availableDecisions);
+            if (!optionDecisions.containsAll(explicit)) {
+                throw new IllegalArgumentException("availableDecisions must be represented by options");
+            }
+            return List.copyOf(explicit);
+        }
+        return List.copyOf(optionDecisions);
     }
 
     private static List<PermissionOption> legacyOptions() {
@@ -188,5 +226,16 @@ public record PermissionRequestEvent(
 
     private static String blankToDefault(String value, String defaultValue) {
         return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    private static Optional<ReviewDecision> reviewDecisionOf(PermissionOption option) {
+        Object value = option.metadata().get("reviewDecision");
+        if (value instanceof ReviewDecision reviewDecision) {
+            return Optional.of(reviewDecision);
+        }
+        if (value instanceof String name && !name.isBlank()) {
+            return Optional.of(ReviewDecision.valueOf(name));
+        }
+        return Optional.of(option.kind().reviewDecision());
     }
 }

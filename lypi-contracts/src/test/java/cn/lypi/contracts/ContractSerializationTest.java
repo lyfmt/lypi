@@ -48,13 +48,26 @@ import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.ApprovalKind;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
+import cn.lypi.contracts.security.FileSystemSpecialPath;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.security.PermissionOptionPolicy;
 import cn.lypi.contracts.security.PermissionResponse;
+import cn.lypi.contracts.security.PermissionGrantScope;
+import cn.lypi.contracts.security.RequestPermissionProfile;
+import cn.lypi.contracts.security.RequestPermissionsArgs;
+import cn.lypi.contracts.security.RequestPermissionsResponse;
+import cn.lypi.contracts.security.ReviewDecision;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
@@ -1044,6 +1057,127 @@ class ContractSerializationTest {
     }
 
     @Test
+    void structuredPermissionRequestEventRoundTripKeepsCanonicalApprovalFields() throws Exception {
+        PermissionOptionPolicy.Options options = PermissionOptionPolicy.forAdditionalPermissionsApproval();
+        AgentEvent event = new PermissionRequestEvent(
+            "ses_01",
+            "perm_01",
+            "toolu_01",
+            "bash",
+            "Additional permissions",
+            "bash {command=npm install}",
+            "command needs extra filesystem access",
+            new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.BASH_RISK,
+                "command needs extra filesystem access",
+                Optional.empty(),
+                Map.of()
+            ),
+            ApprovalKind.COMMAND,
+            options.reviewDecisions(),
+            Optional.of(new AdditionalPermissionProfile(
+                Optional.of(FileSystemPermissionPolicy.restricted(List.of(new FileSystemPermissionEntry(
+                    FileSystemPath.special(FileSystemSpecialPath.PROJECT_ROOTS),
+                    FileSystemAccessMode.WRITE
+                )))),
+                Optional.empty()
+            )),
+            true,
+            options.options(),
+            options.defaultOptionId(),
+            options.cancelOptionId(),
+            Map.of("source", "approval"),
+            Instant.parse("2026-06-01T12:00:00Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, restored);
+        assertEquals(ApprovalKind.COMMAND, request.approvalKind());
+        assertEquals(List.of(ReviewDecision.APPROVED, ReviewDecision.ABORT), request.availableDecisions());
+        assertTrue(request.additionalPermissions().isPresent());
+        assertTrue(request.strictAutoReview());
+    }
+
+    @Test
+    void structuredPermissionRequestEventRoundTripKeepsCombinedCommandDecisions() throws Exception {
+        PermissionOptionPolicy.Options options = PermissionOptionPolicy.forApproval(
+            ApprovalKind.COMMAND,
+            Optional.of(permissionUpdate(PermissionRuleSource.SESSION)),
+            true
+        );
+        AgentEvent event = new PermissionRequestEvent(
+            "ses_01",
+            "perm_01",
+            "toolu_01",
+            "bash",
+            "Command approval",
+            "bash {command=mvn test}",
+            "command needs approval",
+            new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.BASH_RISK,
+                "command needs approval",
+                Optional.empty(),
+                Map.of()
+            ),
+            ApprovalKind.COMMAND,
+            options.reviewDecisions(),
+            Optional.empty(),
+            false,
+            options.options(),
+            options.defaultOptionId(),
+            options.cancelOptionId(),
+            Map.of("source", "approval"),
+            Instant.parse("2026-06-01T12:00:01Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        PermissionRequestEvent request = assertInstanceOf(PermissionRequestEvent.class, restored);
+        assertEquals(List.of(
+            ReviewDecision.APPROVED,
+            ReviewDecision.APPROVED_EXEC_POLICY_AMENDMENT,
+            ReviewDecision.APPROVED_FOR_SESSION,
+            ReviewDecision.ABORT
+        ), request.availableDecisions());
+    }
+
+    @Test
+    void requestPermissionsContractsRoundTripNormalizeOptionalsAndDefaults() throws Exception {
+        RequestPermissionsArgs args = new RequestPermissionsArgs(
+            Optional.of("   "),
+            Optional.of("need workspace write"),
+            null
+        );
+        RequestPermissionsResponse response = new RequestPermissionsResponse(
+            null,
+            null,
+            true
+        );
+
+        RequestPermissionsArgs restoredArgs = mapper.readValue(
+            mapper.writeValueAsString(args),
+            RequestPermissionsArgs.class
+        );
+        RequestPermissionsResponse restoredResponse = mapper.readValue(
+            mapper.writeValueAsString(response),
+            RequestPermissionsResponse.class
+        );
+
+        assertTrue(restoredArgs.environmentId().isEmpty());
+        assertEquals(Optional.of("need workspace write"), restoredArgs.reason());
+        assertTrue(restoredArgs.permissions().additionalPermissions().fileSystem().isEmpty());
+        assertTrue(restoredArgs.permissions().additionalPermissions().network().isEmpty());
+        assertEquals(PermissionGrantScope.TURN, restoredResponse.scope());
+        assertTrue(restoredResponse.permissions().additionalPermissions().fileSystem().isEmpty());
+        assertTrue(restoredResponse.strictAutoReview());
+    }
+
+    @Test
     void structuredPermissionDecisionEventRoundTripContainsSelectedOptionAndAppliedUpdate() throws Exception {
         PermissionUpdate update = permissionUpdate(PermissionRuleSource.SESSION);
         PermissionDecision decision = new PermissionDecision(
@@ -1074,6 +1208,36 @@ class ContractSerializationTest {
         assertEquals("allow_remember_session", permissionDecision.selectedOptionId());
         assertEquals(update, permissionDecision.appliedUpdate().orElseThrow());
         assertEquals("applied", permissionDecision.metadata().get("updateStatus"));
+    }
+
+    @Test
+    void structuredPermissionDecisionEventRoundTripKeepsReviewDecision() throws Exception {
+        AgentEvent event = new PermissionDecisionEvent(
+            "ses_01",
+            "perm_01",
+            "toolu_01",
+            "bash",
+            "bash {command=npm test}",
+            "approved_for_session",
+            new PermissionDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.BASH_RISK,
+                "allowed for session",
+                Optional.empty(),
+                Map.of()
+            ),
+            ReviewDecision.APPROVED_FOR_SESSION,
+            Optional.<PermissionUpdate>empty(),
+            Map.<String, Object>of("updateStatus", "selected"),
+            Instant.parse("2026-06-01T12:00:02Z")
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        PermissionDecisionEvent permissionDecision = assertInstanceOf(PermissionDecisionEvent.class, restored);
+        assertEquals("approved_for_session", permissionDecision.selectedOptionId());
+        assertEquals(ReviewDecision.APPROVED_FOR_SESSION, permissionDecision.reviewDecision());
     }
 
     @Test
