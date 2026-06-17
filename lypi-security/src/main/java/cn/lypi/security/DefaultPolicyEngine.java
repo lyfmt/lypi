@@ -68,6 +68,11 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             return pathSafety.get();
         }
 
+        Optional<PermissionDecision> legacyWorkspaceBoundary = legacyWorkspaceBoundaryDecision(request, context);
+        if (legacyWorkspaceBoundary.isPresent()) {
+            return legacyWorkspaceBoundary.get();
+        }
+
         Optional<PermissionDecision> bashRedirectDecision = bashRedirectDecision(request, context, bashRisk);
         if (bashRedirectDecision.isPresent()) {
             return bashRedirectDecision.get();
@@ -175,6 +180,22 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         return pathSafetyChecker.check(request, context);
     }
 
+    private Optional<PermissionDecision> legacyWorkspaceBoundaryDecision(ToolUseRequest request, ToolUseContext context) {
+        // NOTE: Task 6 moves profile boundary out of PathSafetyChecker. The legacy policy engine still
+        // keeps its old workspace boundary until PermissionDecisionPipeline replaces this flow.
+        for (String fieldName : List.of("path", "filePath", "targetPath", "sourcePath", "destinationPath", "cwd")) {
+            Object rawPath = request.input().get(fieldName);
+            if (rawPath == null) {
+                continue;
+            }
+            Optional<PermissionDecision> decision = legacyWorkspacePathDecision(fieldName, rawPath.toString(), context.cwd(), context.cwd());
+            if (decision.isPresent()) {
+                return decision;
+            }
+        }
+        return Optional.empty();
+    }
+
     private Optional<PermissionDecision> bashRedirectDecision(
         ToolUseRequest request,
         ToolUseContext context,
@@ -185,6 +206,15 @@ public final class DefaultPolicyEngine implements PolicyEngine {
         }
         Path redirectBase = bashCwd(request, context);
         for (Path redirectTarget : bashRisk.redirectTargets()) {
+            Optional<PermissionDecision> boundaryDecision = legacyWorkspacePathDecision(
+                "bashRedirectTarget",
+                redirectTarget.toString(),
+                redirectBase,
+                context.cwd()
+            );
+            if (boundaryDecision.isPresent()) {
+                return Optional.of(withBashRisk(boundaryDecision.get(), bashRisk));
+            }
             Optional<PermissionDecision> pathDecision = pathSafetyChecker.checkPathInsideWorkspace(
                 "bashRedirectTarget",
                 redirectTarget.toString(),
@@ -194,6 +224,30 @@ public final class DefaultPolicyEngine implements PolicyEngine {
             if (pathDecision.isPresent()) {
                 return Optional.of(withBashRisk(pathDecision.get(), bashRisk));
             }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<PermissionDecision> legacyWorkspacePathDecision(
+        String fieldName,
+        String rawPath,
+        Path baseCwd,
+        Path workspaceCwd
+    ) {
+        Path workspace = workspaceCwd.toAbsolutePath().normalize();
+        Path target = baseCwd.toAbsolutePath().normalize().resolve(rawPath).normalize();
+        if (!target.startsWith(workspace)) {
+            return Optional.of(new PermissionDecision(
+                PermissionBehavior.DENY,
+                PermissionDecisionReason.PATH_SAFETY,
+                "工具路径越过当前工作目录: " + rawPath,
+                Optional.<PermissionUpdate>empty(),
+                Map.of(
+                    "pathField", fieldName,
+                    "path", rawPath,
+                    "normalizedPath", target.toString()
+                )
+            ));
         }
         return Optional.empty();
     }

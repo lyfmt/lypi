@@ -18,7 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class PathSafetyCheckerTest {
     @Test
-    void deniesPathsEscapingCurrentWorkingDirectory() {
+    void allowsOrdinaryPathsOutsideCurrentWorkingDirectoryForProfileBoundary() {
         PathSafetyChecker checker = new PathSafetyChecker();
 
         Optional<PermissionDecision> decision = checker.check(
@@ -26,9 +26,7 @@ class PathSafetyCheckerTest {
             context(PermissionMode.BYPASS)
         );
 
-        assertThat(decision).isPresent();
-        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision).isEmpty();
     }
 
     @Test
@@ -60,7 +58,26 @@ class PathSafetyCheckerTest {
     }
 
     @Test
-    void deniesExistingSymlinkThatEscapesCurrentWorkingDirectory(@TempDir Path tempDir) throws IOException {
+    void deniesAgentAndCodexMetadataPathsEvenInBypassMode() {
+        PathSafetyChecker checker = new PathSafetyChecker();
+
+        Optional<PermissionDecision> agentsDecision = checker.check(
+            request("write_file", Map.of("path", ".agents/config.json")),
+            context(PermissionMode.BYPASS)
+        );
+        Optional<PermissionDecision> codexDecision = checker.check(
+            request("write_file", Map.of("path", ".codex/settings.toml")),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertThat(agentsDecision).isPresent();
+        assertThat(agentsDecision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(codexDecision).isPresent();
+        assertThat(codexDecision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
+    }
+
+    @Test
+    void allowsExistingSymlinkThatEscapesCurrentWorkingDirectoryForProfileBoundary(@TempDir Path tempDir) throws IOException {
         Path workspace = tempDir.resolve("workspace");
         Path outside = tempDir.resolve("outside");
         Files.createDirectories(workspace);
@@ -73,13 +90,11 @@ class PathSafetyCheckerTest {
             new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
         );
 
-        assertThat(decision).isPresent();
-        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision).isEmpty();
     }
 
     @Test
-    void deniesDanglingSymlinkFileThatEscapesCurrentWorkingDirectory(@TempDir Path tempDir) throws IOException {
+    void allowsDanglingSymlinkFileThatEscapesCurrentWorkingDirectoryForProfileBoundary(@TempDir Path tempDir) throws IOException {
         Path workspace = tempDir.resolve("workspace");
         Path outside = tempDir.resolve("outside");
         Files.createDirectories(workspace);
@@ -92,9 +107,7 @@ class PathSafetyCheckerTest {
             new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
         );
 
-        assertThat(decision).isPresent();
-        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision).isEmpty();
     }
 
     @Test
@@ -115,7 +128,26 @@ class PathSafetyCheckerTest {
     }
 
     @Test
-    void deniesSymlinkParentTraversalThatEscapesCurrentWorkingDirectory(@TempDir Path tempDir) throws IOException {
+    void deniesBashRedirectSymlinkThatResolvesToProtectedProjectPath(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace.resolve(".git"));
+        Files.createSymbolicLink(workspace.resolve("git-link"), workspace.resolve(".git"));
+        PathSafetyChecker checker = new PathSafetyChecker();
+
+        Optional<PermissionDecision> decision = checker.checkPathInsideWorkspace(
+            "bashRedirectTarget",
+            "git-link/config",
+            new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS)),
+            workspace
+        );
+
+        assertThat(decision).isPresent();
+        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
+    @Test
+    void allowsSymlinkParentTraversalThatEscapesCurrentWorkingDirectoryForProfileBoundary(@TempDir Path tempDir) throws IOException {
         Path workspace = tempDir.resolve("workspace");
         Path outside = tempDir.resolve("outside");
         Files.createDirectories(workspace);
@@ -128,13 +160,11 @@ class PathSafetyCheckerTest {
             new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
         );
 
-        assertThat(decision).isPresent();
-        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision).isEmpty();
     }
 
     @Test
-    void deniesNestedSymlinkChainThatEscapesCurrentWorkingDirectory(@TempDir Path tempDir) throws IOException {
+    void allowsNestedSymlinkChainThatEscapesCurrentWorkingDirectoryForProfileBoundary(@TempDir Path tempDir) throws IOException {
         Path workspace = tempDir.resolve("workspace");
         Path safe = workspace.resolve("safe");
         Path outside = tempDir.resolve("outside");
@@ -149,13 +179,11 @@ class PathSafetyCheckerTest {
             new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
         );
 
-        assertThat(decision).isPresent();
-        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision).isEmpty();
     }
 
     @Test
-    void deniesSymlinkToSymlinkChainThatEscapesCurrentWorkingDirectory(@TempDir Path tempDir) throws IOException {
+    void allowsSymlinkToSymlinkChainThatEscapesCurrentWorkingDirectoryForProfileBoundary(@TempDir Path tempDir) throws IOException {
         Path workspace = tempDir.resolve("workspace");
         Path outside = tempDir.resolve("outside");
         Files.createDirectories(workspace);
@@ -169,9 +197,7 @@ class PathSafetyCheckerTest {
             new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
         );
 
-        assertThat(decision).isPresent();
-        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision).isEmpty();
     }
 
     @Test
@@ -192,7 +218,7 @@ class PathSafetyCheckerTest {
     }
 
     @Test
-    void checksCommonPathFieldsForEditLikeTools() {
+    void leavesCommonPathFieldBoundariesToProfileChecker() {
         PathSafetyChecker checker = new PathSafetyChecker();
 
         Optional<PermissionDecision> decision = checker.check(
@@ -200,12 +226,11 @@ class PathSafetyCheckerTest {
             context(PermissionMode.DEFAULT_EXECUTE)
         );
 
-        assertThat(decision).isPresent();
-        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision).isEmpty();
     }
 
     @Test
-    void checksCwdFieldForBashTools(@TempDir Path tempDir) throws IOException {
+    void leavesCwdFieldBoundariesToProfileChecker(@TempDir Path tempDir) throws IOException {
         Path workspace = tempDir.resolve("workspace");
         Path outside = tempDir.resolve("outside");
         Files.createDirectories(workspace);
@@ -218,9 +243,7 @@ class PathSafetyCheckerTest {
             new ToolUseContext("ses_1", "msg_1", workspace, Map.of("permissionMode", PermissionMode.BYPASS))
         );
 
-        assertThat(decision).isPresent();
-        assertThat(decision.get().behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.get().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision).isEmpty();
     }
 
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
