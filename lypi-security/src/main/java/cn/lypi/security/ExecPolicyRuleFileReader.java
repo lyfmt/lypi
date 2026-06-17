@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -20,6 +21,15 @@ public final class ExecPolicyRuleFileReader {
         "prefix_rule\\(\\s*pattern=\\[(?<pattern>.*)]\\s*,\\s*decision=\"allow\"\\s*\\)"
     );
     private static final Pattern QUOTED_TOKEN = Pattern.compile("\"((?:\\\\.|[^\"])*)\"");
+    private final LineReader lineReader;
+
+    public ExecPolicyRuleFileReader() {
+        this(Files::readAllLines);
+    }
+
+    ExecPolicyRuleFileReader(LineReader lineReader) {
+        this.lineReader = Objects.requireNonNull(lineReader, "lineReader");
+    }
 
     /**
      * 从规则文件读取可识别的 prefix allow 规则。
@@ -30,12 +40,12 @@ public final class ExecPolicyRuleFileReader {
         }
         try {
             List<PermissionRule> rules = new ArrayList<>();
-            for (String line : Files.readAllLines(rulesFile)) {
+            for (String line : lineReader.readAllLines(rulesFile)) {
                 parseLine(line).ifPresent(rules::add);
             }
             return List.copyOf(rules);
         } catch (IOException exception) {
-            throw new IllegalStateException("权限规则读取失败: " + exception.getMessage(), exception);
+            return List.of();
         }
     }
 
@@ -86,5 +96,10 @@ public final class ExecPolicyRuleFileReader {
             builder.append('\\');
         }
         return builder.toString();
+    }
+
+    @FunctionalInterface
+    interface LineReader {
+        List<String> readAllLines(Path path) throws IOException;
     }
 }
