@@ -75,13 +75,14 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 打开已有 session 或创建新 session。
      */
     @Override
-    public SessionHandle openOrCreate(String sessionId) {
+    public synchronized SessionHandle openOrCreate(String sessionId) {
         if (this.sessionId != null && this.sessionId.equals(sessionId) && header != null && index != null) {
             return handle();
         }
         this.sessionId = sessionId;
-        if (!store.exists(sessionId)) {
-            store.create(initialHeader(sessionId));
+        SessionHeader initialHeader = initialHeader(sessionId);
+        if (!store.exists(sessionId) && !store.tryCreate(initialHeader)) {
+            // NOTE: 另一个进程可能刚创建同名 session，继续按已有文件打开。
         }
         SessionFile sessionFile = store.read(sessionId);
         header = sessionFile.header();
@@ -94,7 +95,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 打开临时 session。
      */
     @Override
-    public SessionHandle openTemporary(String sessionId) {
+    public synchronized SessionHandle openTemporary(String sessionId) {
         this.sessionId = sessionId;
         if (store.exists(sessionId)) {
             SessionFile sessionFile = store.read(sessionId);
@@ -113,18 +114,18 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 追加 entry 并移动当前 leaf。
      */
     @Override
-    public SessionHandle append(SessionEntry entry) {
+    public synchronized SessionHandle append(SessionEntry entry) {
         ensureOpen();
+        refreshFromStoreIfPersistent();
         index.validateAppend(entry);
         if (persistent) {
             store.append(sessionId, entry);
+            index.add(entry);
         } else if (shouldPersist(entry)) {
-            List<SessionEntry> pendingEntries = new java.util.ArrayList<>(index.entries());
-            pendingEntries.add(entry);
-            store.createWithEntries(header, pendingEntries);
-            persistent = true;
+            persistTemporaryEntry(entry);
+        } else {
+            index.add(entry);
         }
-        index.add(entry);
         return handle();
     }
 
@@ -132,8 +133,9 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 切换当前 leaf。
      */
     @Override
-    public SessionHandle switchLeaf(String leafId) {
+    public synchronized SessionHandle switchLeaf(String leafId) {
         ensureOpen();
+        refreshFromStoreIfPersistent();
         index.switchLeaf(leafId);
         return handle();
     }
@@ -142,8 +144,9 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 查询指定 leaf 的 root-to-leaf 路径。
      */
     @Override
-    public List<SessionEntry> branch(String leafId) {
+    public synchronized List<SessionEntry> branch(String leafId) {
         ensureOpen();
+        refreshFromStoreIfPersistent();
         return index.branch(leafId);
     }
 
@@ -151,7 +154,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 收集从旧 leaf 离开时需要总结的旧路径后缀。
      */
     @Override
-    public BranchSummaryPlan collectBranchSummaryPlan(String oldLeafId, String targetLeafId) {
+    public synchronized BranchSummaryPlan collectBranchSummaryPlan(String oldLeafId, String targetLeafId) {
         ensureOpen();
         if (oldLeafId == null || oldLeafId.isBlank()) {
             return new BranchSummaryPlan(oldLeafId, targetLeafId, Optional.empty(), List.of());
@@ -180,37 +183,38 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
         return new BranchSummaryPlan(oldLeafId, targetLeafId, commonAncestorId, entries);
     }
 
-    List<SessionEntry> leafToRootPath(String leafId) {
+    synchronized List<SessionEntry> leafToRootPath(String leafId) {
         ensureOpen();
+        refreshFromStoreIfPersistent();
         return index.leafToRootPath(leafId);
     }
 
     @Override
-    public SessionView currentView() {
+    public synchronized SessionView currentView() {
         ensureOpen();
         return view(index.leafId());
     }
 
     @Override
-    public SessionView view(String leafId) {
+    public synchronized SessionView view(String leafId) {
         ensureOpen();
         return new SessionView(sessionId, leafId);
     }
 
     @Override
-    public List<AgentMessage> transcript(String leafId) {
+    public synchronized List<AgentMessage> transcript(String leafId) {
         ensureOpen();
         return replayProjector.transcript(header, branch(leafId));
     }
 
     @Override
-    public List<SessionFileView> files(String leafId) {
+    public synchronized List<SessionFileView> files(String leafId) {
         ensureOpen();
         return fileQuery.files(branch(leafId));
     }
 
     @Override
-    public SessionContext context(String leafId) {
+    public synchronized SessionContext context(String leafId) {
         ensureOpen();
         return replayProjector.context(header, branch(leafId));
     }
@@ -219,7 +223,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 返回该 manager 使用的 session 存储根目录。
      */
     @Override
-    public Path sessionStorageRoot() {
+    public synchronized Path sessionStorageRoot() {
         return cwd;
     }
 
@@ -227,7 +231,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 追加消息 entry。
      */
     @Override
-    public SessionHandle appendMessage(AgentMessage message) {
+    public synchronized SessionHandle appendMessage(AgentMessage message) {
         ensureOpen();
         String entryId = SessionEntryIds.newEntryId();
         MessageEntry entry = new MessageEntry(entryId, index.leafId(), message, message.timestamp());
@@ -238,7 +242,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 追加 branch summary entry。
      */
     @Override
-    public SessionHandle appendBranchSummary(String parentId, String fromId, String summary) {
+    public synchronized SessionHandle appendBranchSummary(String parentId, String fromId, String summary) {
         ensureOpen();
         if (summary == null || summary.isBlank()) {
             throw new SessionEngineException("Branch summary must not be blank");
@@ -251,8 +255,9 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 基于当前 session 创建 fork session。
      */
     @Override
-    public SessionHandle fork(ForkRequest request) {
+    public synchronized SessionHandle fork(ForkRequest request) {
         ensureOpen();
+        refreshFromStoreIfPersistent();
         if (request == null) {
             throw new SessionEngineException("Fork request is required");
         }
@@ -269,7 +274,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
      * 删除指定 session 的 JSONL 文件。
      */
     @Override
-    public void deleteSession(String sessionId) {
+    public synchronized void deleteSession(String sessionId) {
         if (this.sessionId != null && this.sessionId.equals(sessionId) && header != null && index != null) {
             store.delete(sessionId);
             this.sessionId = null;
@@ -283,6 +288,46 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
 
     private SessionHandle handle() {
         return new SessionHandle(sessionId, store.sessionFile(sessionId), index.leafId(), index.byId());
+    }
+
+    private void refreshFromStoreIfPersistent() {
+        if (!persistent) {
+            return;
+        }
+        SessionFile sessionFile = store.read(sessionId);
+        new EntryTreeIndex(sessionFile.entries());
+        header = sessionFile.header();
+        for (SessionEntry entry : sessionFile.entries()) {
+            if (!index.byId().containsKey(entry.id())) {
+                index.importEntry(entry);
+            }
+        }
+    }
+
+    private void persistTemporaryEntry(SessionEntry entry) {
+        List<SessionEntry> pendingEntries = new java.util.ArrayList<>(index.entries());
+        if (store.tryCreate(header)) {
+            for (SessionEntry pendingEntry : pendingEntries) {
+                store.append(header.id(), pendingEntry);
+            }
+            store.append(header.id(), entry);
+            index.add(entry);
+            persistent = true;
+            return;
+        }
+        SessionFile sessionFile = store.read(sessionId);
+        header = sessionFile.header();
+        EntryTreeIndex mergedIndex = new EntryTreeIndex(sessionFile.entries());
+        for (SessionEntry pendingEntry : pendingEntries) {
+            mergedIndex.validateAppend(pendingEntry);
+            store.append(sessionId, pendingEntry);
+            mergedIndex.add(pendingEntry);
+        }
+        mergedIndex.validateAppend(entry);
+        store.append(sessionId, entry);
+        mergedIndex.add(entry);
+        index = mergedIndex;
+        persistent = true;
     }
 
     private boolean shouldPersist(SessionEntry entry) {

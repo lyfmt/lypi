@@ -65,6 +65,15 @@ final class JsonlSessionStore {
      * 创建新的 session 文件并写入 header。
      */
     void create(SessionHeader header) {
+        if (!tryCreate(header)) {
+            throw new SessionEngineException("Session file already exists: " + sessionFile(header.id()));
+        }
+    }
+
+    /**
+     * 尝试创建新的 session 文件并写入 header。
+     */
+    boolean tryCreate(SessionHeader header) {
         Path file = sessionFile(header.id());
         try {
             Files.createDirectories(file.getParent());
@@ -74,8 +83,9 @@ final class JsonlSessionStore {
                 StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE_NEW
             );
+            return true;
         } catch (FileAlreadyExistsException e) {
-            throw new SessionEngineException("Session file already exists: " + file, e);
+            return false;
         } catch (IOException e) {
             throw new SessionEngineException("Failed to create session file: " + file, e);
         }

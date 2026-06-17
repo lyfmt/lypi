@@ -49,6 +49,14 @@ final class EntryTreeIndex {
     }
 
     /**
+     * 导入已存在于持久化文件中的 entry，不改变当前进程的 leaf。
+     */
+    void importEntry(SessionEntry entry) {
+        validateAppend(entry);
+        byId.put(entry.id(), entry);
+    }
+
+    /**
      * 切换当前 leaf。
      */
     void switchLeaf(String leafId) {

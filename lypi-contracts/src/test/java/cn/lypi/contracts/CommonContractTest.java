@@ -46,7 +46,7 @@ class CommonContractTest {
 
         assertAll(
             () -> assertTrue(generator.sessionId().startsWith("ses_")),
-            () -> assertTrue(generator.entryId().startsWith("ent_")),
+            () -> assertTrue(generator.entryId().startsWith("entry_")),
             () -> assertTrue(generator.turnId().startsWith("turn_")),
             () -> assertTrue(generator.messageId().startsWith("msg_")),
             () -> assertTrue(generator.toolUseId().startsWith("toolu_")),
