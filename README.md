@@ -246,6 +246,7 @@ lypi-boot/src/main/resources/application.yml.example
 - 所有功能开发放在独立 Git worktree 中，推荐目录为 `.worktrees/worktree-xxxxx`。
 - 普通功能 PR 目标分支为 `dev`，发布或稳定化 PR 再由 `dev` 合并到 `master`。
 - 提交前至少执行 `mvn verify`。
+- 完整 CI 规则见 `CONTRIBUTING.md`。
 - `docs/`、`.worktrees/`、`worktree-*/` 与各模块构建产物不得提交。
 
 ## 设计取向
