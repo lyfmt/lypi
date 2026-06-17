@@ -8,6 +8,7 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
@@ -15,6 +16,7 @@ import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
@@ -61,6 +63,9 @@ final class SessionReplayProjector {
         PermissionMode permissionMode = childSession
             ? header.initialPermissionMode().orElse(defaultPermissionMode)
             : defaultPermissionMode;
+        PermissionRuntimeState permissionRuntimeState = childSession && header.initialPermissionRuntimeState() != null
+            ? header.initialPermissionRuntimeState()
+            : PermissionRuntimeState.fromLegacy(permissionMode);
         List<AgentMessage> messages = new ArrayList<>();
         List<String> branchEntryIds = new ArrayList<>();
         CompactionEntry latestCompaction = null;
@@ -82,6 +87,9 @@ final class SessionReplayProjector {
                 mode = modeChange.agentMode();
             } else if (entry instanceof PermissionModeChangeEntry permissionChange) {
                 permissionMode = permissionChange.permissionMode();
+                permissionRuntimeState = PermissionRuntimeState.fromLegacy(permissionMode);
+            } else if (entry instanceof PermissionRuntimeStateChangeEntry permissionRuntimeChange) {
+                permissionRuntimeState = permissionRuntimeChange.permissionRuntimeState();
             } else if (entry instanceof CompactionEntry compactionEntry) {
                 latestCompaction = compactionEntry;
             }
@@ -100,7 +108,7 @@ final class SessionReplayProjector {
             model,
             thinkingLevel,
             mode,
-            permissionMode
+            permissionRuntimeState
         );
     }
 

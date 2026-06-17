@@ -160,7 +160,7 @@ public final class DefaultToolMicroCompactor implements ToolMicroCompactor {
             context.model(),
             context.thinkingLevel(),
             context.mode(),
-            context.permissionMode(),
+            context.permissionRuntimeState(),
             context.budget()
         );
     }

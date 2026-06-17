@@ -25,6 +25,8 @@ class SessionEntryBoundaryTest {
             "thinking_change",
             "mode_change",
             "permission_mode_change",
+            "permission_runtime_state_change",
+            "permission_amendment",
             "compaction",
             "branch_summary",
             "custom",

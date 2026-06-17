@@ -12,8 +12,10 @@ import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
+import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.tui.SessionTreeNodeView;
 import java.time.Instant;
@@ -34,13 +36,15 @@ class ResumeBranchTreeSelectorTest {
             assistant("asst-1", "user-1", "hi"),
             user("user-2", "asst-1", "active branch"),
             new ModelChangeEntry("model-1", "user-2", new ModelSelection("openai", "gpt-5.4", ThinkingLevel.MEDIUM), "test", NOW),
+            new PermissionRuntimeStateChangeEntry("permission-1", "model-1", PermissionMode.DEFAULT_EXECUTE, NOW),
             user("user-3", "asst-1", "sibling branch")
         );
 
-        ResumeBranchTreeSelector selector = new ResumeBranchTreeSelector(tree(entries), "model-1", 10);
+        ResumeBranchTreeSelector selector = new ResumeBranchTreeSelector(tree(entries), "permission-1", 10);
 
         assertEquals("user-2", selector.selectedEntry().orElseThrow().id());
         assertTrue(selector.render(100).stream().anyMatch(line -> line.contains("• user: active branch")));
+        assertTrue(selector.render(100).stream().noneMatch(line -> line.contains("permission-1")));
     }
 
     @Test

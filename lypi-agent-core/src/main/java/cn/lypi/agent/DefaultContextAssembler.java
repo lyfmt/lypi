@@ -47,7 +47,7 @@ public final class DefaultContextAssembler implements ContextAssembler {
             sessionContext.model(),
             sessionContext.thinkingLevel(),
             sessionContext.mode(),
-            sessionContext.permissionMode(),
+            sessionContext.permissionRuntimeState(),
             budget
         );
 

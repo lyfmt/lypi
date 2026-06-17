@@ -49,7 +49,7 @@ public final class ManualCompactionPlanner implements CompactionPlanner {
             context.model(),
             context.thinkingLevel(),
             context.mode(),
-            context.permissionMode(),
+            context.permissionRuntimeState(),
             budget
         );
     }

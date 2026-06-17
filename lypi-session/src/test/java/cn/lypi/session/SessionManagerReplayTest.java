@@ -9,8 +9,11 @@ import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.ApprovalMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.BranchSummaryEntry;
+import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CustomEntry;
@@ -101,6 +104,38 @@ class SessionManagerReplayTest {
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
         assertThat(context.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
+    }
+
+    @Test
+    void reopenedChildSessionPreservesCanonicalPermissionRuntimeStateFromHeader() {
+        PermissionRuntimeState runtimeState = PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS);
+        ChildSessionService childSessions = new ChildSessionService();
+        childSessions.create(new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            tempDir,
+            tempDir,
+            1,
+            Optional.empty(),
+            Optional.empty(),
+            Optional.of(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.PLAN),
+            runtimeState,
+            cn.lypi.contracts.subagent.SubagentToolPolicy.empty()
+        ));
+        SessionHeader header = new JsonlSessionStore(tempDir).read("ses_child").header();
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_child");
+
+        SessionContext context = manager.context(null);
+
+        assertThat(header.initialPermissionRuntimeState()).isEqualTo(runtimeState);
+        assertThat(header.initialPermissionMode()).contains(PermissionMode.BYPASS);
+        assertThat(context.permissionRuntimeState()).isEqualTo(runtimeState);
+        assertThat(context.permissionRuntimeState().approvalPolicy().mode()).isEqualTo(ApprovalMode.NEVER);
+        assertThat(context.permissionRuntimeState().activePermissionProfile().id()).isEqualTo(":danger-full-access");
     }
 
     @Test

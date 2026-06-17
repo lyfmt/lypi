@@ -14,8 +14,13 @@ import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
+import cn.lypi.contracts.security.ActivePermissionProfile;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.LegacyPermissionBehavior;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
@@ -138,6 +143,34 @@ class DefaultContextAssemblerTest {
 
         assertThat(assembly.snapshot().budget().effectiveContextWindow()).isEqualTo(80_000);
         assertThat(assembly.snapshot().budget().autoCompactThreshold()).isEqualTo(64_000);
+    }
+
+    @Test
+    void preservesCanonicalPermissionRuntimeStateFromSessionContext() {
+        PermissionRuntimeState runtimeState = customPermissionRuntimeState();
+        StubSessionManager sessionManager = new StubSessionManager(new SessionContext(
+            List.of(userMessage("msg-user", "hello")),
+            List.of("entry-user"),
+            List.of(),
+            new ModelSelection("fixture", "configured-model", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            runtimeState
+        ));
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            sessionManager,
+            fixedResourceRuntime("system"),
+            new ContextBudgetEstimator()
+        );
+
+        ContextAssembly assembly = assembler.build(new ContextBuildRequest(
+            "session-1",
+            Optional.of("entry-user"),
+            Path.of("."),
+            true
+        ));
+
+        assertThat(assembly.snapshot().permissionRuntimeState()).isEqualTo(runtimeState);
     }
 
     @Test
@@ -276,5 +309,14 @@ class DefaultContextAssemblerTest {
     private static int estimateText(String text) {
         String safeText = text == null ? "" : text;
         return Math.max(1, safeText.length() / 4);
+    }
+
+    private static PermissionRuntimeState customPermissionRuntimeState() {
+        return new PermissionRuntimeState(
+            new ApprovalPolicy(ApprovalMode.UNLESS_TRUSTED),
+            new ActivePermissionProfile(":workspace-write"),
+            new LegacyPermissionBehavior(false, false, false),
+            PermissionMode.DEFAULT_EXECUTE
+        );
     }
 }

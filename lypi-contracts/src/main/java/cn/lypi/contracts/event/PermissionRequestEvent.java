@@ -99,6 +99,42 @@ public record PermissionRequestEvent(
         );
     }
 
+    public PermissionRequestEvent(
+        String sessionId,
+        String requestId,
+        String toolUseId,
+        String toolName,
+        String displayTitle,
+        String renderedToolUse,
+        String message,
+        PermissionDecision policyDecision,
+        List<PermissionOption> options,
+        String defaultOptionId,
+        String cancelOptionId,
+        Map<String, Object> metadata,
+        Instant timestamp
+    ) {
+        this(
+            sessionId,
+            requestId,
+            toolUseId,
+            toolName,
+            displayTitle,
+            renderedToolUse,
+            message,
+            policyDecision,
+            ApprovalKind.COMMAND,
+            List.of(),
+            Optional.empty(),
+            false,
+            options,
+            defaultOptionId,
+            cancelOptionId,
+            metadata,
+            timestamp
+        );
+    }
+
     /**
      * NOTE: 兼容旧版权限请求事件构造方式；legacy 事件默认提供允许一次、拒绝和取消三个选项。
      */

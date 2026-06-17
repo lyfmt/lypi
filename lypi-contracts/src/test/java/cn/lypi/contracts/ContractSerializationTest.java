@@ -64,6 +64,7 @@ import cn.lypi.contracts.security.PermissionOptionKind;
 import cn.lypi.contracts.security.PermissionOptionPolicy;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.security.PermissionGrantScope;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.RequestPermissionProfile;
 import cn.lypi.contracts.security.RequestPermissionsArgs;
 import cn.lypi.contracts.security.RequestPermissionsResponse;
@@ -330,6 +331,35 @@ class ContractSerializationTest {
     }
 
     @Test
+    void sessionHeaderRoundTripKeepsCanonicalPermissionRuntimeState() throws Exception {
+        PermissionRuntimeState runtimeState = PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS);
+        SessionHeader header = new SessionHeader(
+            "session",
+            1,
+            "ses_child",
+            Path.of("/tmp/project"),
+            Optional.of("ses_parent"),
+            Optional.of("entry_spawn"),
+            2,
+            Optional.of("reviewer"),
+            Optional.of("code-review"),
+            Instant.parse("2026-06-09T00:00:00Z"),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            runtimeState
+        );
+
+        String json = mapper.writeValueAsString(header);
+        SessionHeader restored = mapper.readValue(json, SessionHeader.class);
+
+        assertTrue(json.contains("\"initialPermissionRuntimeState\""));
+        assertTrue(json.contains("\"initialPermissionMode\":\"BYPASS\""));
+        assertEquals(runtimeState, restored.initialPermissionRuntimeState());
+        assertEquals(Optional.of(PermissionMode.BYPASS), restored.initialPermissionMode());
+    }
+
+    @Test
     void sessionStateEventRoundTripKeepsRuntimeProjectionFields() throws Exception {
         AgentEvent event = new SessionStateEvent(
             "ses_1",
@@ -493,6 +523,43 @@ class ContractSerializationTest {
     }
 
     @Test
+    void subagentSpawnRequestJsonWithCanonicalPermissionStateMarksPermissionExplicit() throws Exception {
+        String json = """
+            {
+              "parentSessionId": "ses_parent",
+              "parentEntryId": "entry_parent",
+              "prompt": "请检查 contracts",
+              "cwd": "/tmp/project",
+              "allowedTools": ["read"],
+              "toolPolicy": {
+                "requestedTools": ["read"],
+                "effectiveTools": ["read", "grep"]
+              },
+              "permissionRuntimeState": {
+                "approvalPolicy": {
+                  "mode": "NEVER"
+                },
+                "activePermissionProfile": {
+                  "id": ":danger-full-access"
+                },
+                "legacyBehavior": {
+                  "defaultBashRequiresEscalation": false,
+                  "allowExplicitEscalationWithoutPrompt": true,
+                  "hardSafetyEnabled": true
+                },
+                "legacyPermissionMode": "BYPASS"
+              },
+              "timeoutSeconds": 120
+            }
+            """;
+
+        SubagentSpawnRequest restored = mapper.readValue(json, SubagentSpawnRequest.class);
+
+        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), restored.permissionRuntimeState());
+        assertTrue(restored.permissionModeSpecified());
+    }
+
+    @Test
     void childSessionRequestRoundTripKeepsInitialSubagentMetadata() throws Exception {
         ChildSessionRequest request = new ChildSessionRequest(
             "ses_child",
@@ -596,6 +663,45 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"thinkingLevel\":\"HIGH\""));
         assertTrue(json.contains("\"agentMode\":\"EXECUTE\""));
         assertTrue(json.contains("\"permissionMode\":\"ACCEPT_EDITS\""));
+    }
+
+    @Test
+    void subagentContinueRequestPrefersCanonicalPermissionStateWhenLegacyFieldAlsoExists() throws Exception {
+        String json = """
+            {
+              "parentSessionId": "ses_parent",
+              "parentEntryId": "entry_continue_parent",
+              "childSessionId": "ses_child",
+              "prompt": "继续完成剩余检查",
+              "cwd": "/tmp/project",
+              "allowedTools": ["read"],
+              "toolPolicy": {
+                "requestedTools": ["read"],
+                "effectiveTools": ["read", "grep"]
+              },
+              "permissionMode": "DEFAULT_EXECUTE",
+              "permissionRuntimeState": {
+                "approvalPolicy": {
+                  "mode": "NEVER"
+                },
+                "activePermissionProfile": {
+                  "id": ":danger-full-access"
+                },
+                "legacyBehavior": {
+                  "defaultBashRequiresEscalation": false,
+                  "allowExplicitEscalationWithoutPrompt": true,
+                  "hardSafetyEnabled": true
+                },
+                "legacyPermissionMode": "BYPASS"
+              },
+              "timeoutSeconds": 90
+            }
+            """;
+
+        SubagentContinueRequest restored = mapper.readValue(json, SubagentContinueRequest.class);
+
+        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), restored.permissionRuntimeState());
+        assertEquals(PermissionMode.BYPASS, restored.permissionMode());
     }
 
     @Test

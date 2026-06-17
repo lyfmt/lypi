@@ -253,7 +253,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             context.model(),
             context.thinkingLevel(),
             context.mode(),
-            context.permissionMode(),
+            context.permissionRuntimeState(),
             budget
         );
     }

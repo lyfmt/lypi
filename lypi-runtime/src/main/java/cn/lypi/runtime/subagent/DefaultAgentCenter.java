@@ -5,12 +5,13 @@ import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
-import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
@@ -38,6 +39,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSnapshotProvider {
+    private static final PermissionRuntimeState DEFAULT_PERMISSION_RUNTIME_STATE =
+        PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
+
     private final List<String> command;
     private final ChildSessionPort childSessions;
     private final SessionManagerPort parentSession;
@@ -88,9 +92,9 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         Instant now = Instant.now(clock);
         SubagentToolPolicy toolPolicy = request.toolPolicy();
         SessionContext parentContext = parentSession.context(request.parentEntryId());
-        PermissionMode effectivePermissionMode = request.permissionModeSpecified()
-            ? request.permissionMode()
-            : parentContext.permissionMode();
+        PermissionRuntimeState effectivePermissionRuntimeState = request.permissionModeSpecified()
+            ? request.permissionRuntimeState()
+            : parentContext.permissionRuntimeState();
         childSessions.create(new ChildSessionRequest(
             childSessionId,
             request.parentSessionId(),
@@ -103,7 +107,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             Optional.ofNullable(request.model().orElse(parentContext.model())),
             Optional.ofNullable(request.thinkingLevel().orElse(parentContext.thinkingLevel())),
             Optional.ofNullable(request.agentMode().orElse(parentContext.mode())),
-            Optional.ofNullable(effectivePermissionMode),
+            effectivePermissionRuntimeState,
             toolPolicy
         ));
         parentSession.append(new AgentLifecycleEntry(
@@ -128,9 +132,10 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             request.cwd(),
             request.allowedTools(),
             toolPolicy,
-            effectivePermissionMode,
+            effectivePermissionRuntimeState,
             request.timeoutSeconds(),
-            null
+            null,
+            List.of()
         );
         SubagentProcessHandle handle;
         try {
@@ -221,9 +226,10 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             request.cwd() == null ? parentCwd : request.cwd(),
             request.allowedTools(),
             request.toolPolicy(),
-            request.permissionMode(),
+            request.permissionRuntimeState(),
             request.timeoutSeconds(),
-            HeadlessSubagentRunMode.CONTINUE
+            HeadlessSubagentRunMode.CONTINUE,
+            List.of()
         );
         try {
             SubagentProcessHandle handle = processRunner.start(input);
@@ -250,7 +256,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         if (request.model().isEmpty()
             && request.thinkingLevel().isEmpty()
             && request.agentMode().isEmpty()
-            && request.permissionMode() == PermissionMode.DEFAULT_EXECUTE) {
+            && isDefaultPermissionRuntimeState(request.permissionRuntimeState())) {
             return;
         }
         SessionManagerPort childSession = sessionManagerFactory.open(existing.parentCwd(), existing.childSessionId());
@@ -271,10 +277,14 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             childSession.append(new ModeChangeEntry(entryId, parentId, request.agentMode().orElseThrow(), "subagent continue mode", now));
             parentId = entryId;
         }
-        if (request.permissionMode() != PermissionMode.DEFAULT_EXECUTE) {
+        if (!isDefaultPermissionRuntimeState(request.permissionRuntimeState())) {
             String entryId = "entry_permission_" + randomId();
-            childSession.append(new PermissionModeChangeEntry(entryId, parentId, request.permissionMode(), "subagent continue permission", now));
+            childSession.append(new PermissionRuntimeStateChangeEntry(entryId, parentId, request.permissionRuntimeState(), now));
         }
+    }
+
+    private boolean isDefaultPermissionRuntimeState(PermissionRuntimeState permissionRuntimeState) {
+        return DEFAULT_PERMISSION_RUNTIME_STATE.equals(permissionRuntimeState);
     }
 
     @Override

@@ -57,7 +57,7 @@ final class DefaultNewSessionController implements NewSessionController {
             context.model(),
             context.thinkingLevel(),
             context.mode(),
-            context.permissionMode(),
+            context.permissionRuntimeState(),
             Instant.now(clock)
         ));
         return new SessionRuntimeState(
@@ -67,7 +67,7 @@ final class DefaultNewSessionController implements NewSessionController {
             context.model(),
             context.thinkingLevel(),
             context.mode(),
-            context.permissionMode(),
+            context.permissionRuntimeState(),
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
             List.of(),
             false,
