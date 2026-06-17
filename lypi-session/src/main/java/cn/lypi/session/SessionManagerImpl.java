@@ -32,6 +32,8 @@ import java.util.stream.Collectors;
  * NOTE: 该实现编排 JSONL store、entry tree 和 fork 服务，不处理模型或工具执行。
  */
 public final class SessionManagerImpl implements SessionManager, SessionStorageRootPort {
+    private static final int SESSION_CREATE_READ_ATTEMPTS = 10;
+    private static final long SESSION_CREATE_READ_RETRY_MILLIS = 10;
     private final Path cwd;
     private final JsonlSessionStore store;
     private final Clock clock;
@@ -84,7 +86,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
         if (!store.exists(sessionId) && !store.tryCreate(initialHeader)) {
             // NOTE: 另一个进程可能刚创建同名 session，继续按已有文件打开。
         }
-        SessionFile sessionFile = store.read(sessionId);
+        SessionFile sessionFile = readAfterPossibleConcurrentCreate(sessionId);
         header = sessionFile.header();
         index = new EntryTreeIndex(sessionFile.entries());
         persistent = true;
@@ -98,7 +100,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     public synchronized SessionHandle openTemporary(String sessionId) {
         this.sessionId = sessionId;
         if (store.exists(sessionId)) {
-            SessionFile sessionFile = store.read(sessionId);
+            SessionFile sessionFile = readAfterPossibleConcurrentCreate(sessionId);
             header = sessionFile.header();
             index = new EntryTreeIndex(sessionFile.entries());
             persistent = true;
@@ -288,6 +290,41 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
 
     private SessionHandle handle() {
         return new SessionHandle(sessionId, store.sessionFile(sessionId), index.leafId(), index.byId());
+    }
+
+    private SessionFile readAfterPossibleConcurrentCreate(String sessionId) {
+        SessionEngineException lastFailure = null;
+        for (int attempt = 1; attempt <= SESSION_CREATE_READ_ATTEMPTS; attempt++) {
+            try {
+                return store.read(sessionId);
+            } catch (SessionEngineException e) {
+                if (!isLikelyConcurrentCreateReadFailure(e) || attempt == SESSION_CREATE_READ_ATTEMPTS) {
+                    throw e;
+                }
+                lastFailure = e;
+                sleepBeforeCreateReadRetry();
+            }
+        }
+        throw lastFailure;
+    }
+
+    private boolean isLikelyConcurrentCreateReadFailure(SessionEngineException e) {
+        String message = e.getMessage();
+        return message != null
+            && (message.contains("Session file is empty")
+                || (message.contains("Failed to read session JSONL line 1")
+                    && (message.contains("Unexpected end-of-input")
+                        || message.contains("Unexpected end-of-file")
+                        || message.contains("Unexpected end of input"))));
+    }
+
+    private void sleepBeforeCreateReadRetry() {
+        try {
+            Thread.sleep(SESSION_CREATE_READ_RETRY_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SessionEngineException("Interrupted while waiting for session file creation", e);
+        }
     }
 
     private void refreshFromStoreIfPersistent() {

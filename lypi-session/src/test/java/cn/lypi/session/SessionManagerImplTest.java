@@ -33,6 +33,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -847,6 +849,35 @@ class SessionManagerImplTest {
         assertThatThrownBy(() -> store.create(header))
             .isInstanceOf(SessionEngineException.class)
             .hasMessageContaining("Session file already exists");
+    }
+
+    @Test
+    void openOrCreateRetriesWhenConcurrentCreatorHasNotFinishedHeaderLine() throws Exception {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        Path sessionFile = store.sessionFile("ses_main");
+        Files.createDirectories(sessionFile.getParent());
+        Files.createFile(sessionFile);
+        CountDownLatch writerFinished = new CountDownLatch(1);
+        Thread writer = new Thread(() -> {
+            try {
+                Thread.sleep(20);
+                Files.writeString(
+                    sessionFile,
+                    new SessionJsonMapper().writeHeader(sessionHeader("ses_main")) + System.lineSeparator()
+                );
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            } finally {
+                writerFinished.countDown();
+            }
+        });
+        writer.start();
+
+        SessionHandle opened = new SessionManagerImpl(tempDir).openOrCreate("ses_main");
+
+        assertThat(opened.sessionId()).isEqualTo("ses_main");
+        assertThat(writerFinished.await(1, TimeUnit.SECONDS)).isTrue();
+        writer.join();
     }
 
     private static AgentMessage textMessage(String id, String text) {
