@@ -14,10 +14,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  maven-test:
-    name: Maven Test
+  maven-verify:
+    name: Maven Verify
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -30,14 +35,43 @@ jobs:
           java-version: 21
           cache: maven
 
-      - name: Run Maven tests
-        run: mvn -B test
+      - name: Verify Maven reactor
+        run: mvn -B -ntp verify
 
-  maven-package:
-    name: Maven Package
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: "**/target/surefire-reports/*"
+          if-no-files-found: error
+          retention-days: 14
+
+  script-lint:
+    name: Script and Workflow Lint
     runs-on: ubuntu-latest
-    needs: maven-test
-    if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Lint shell scripts
+        run: shellcheck scripts/*.sh
+
+      - name: Lint GitHub Actions workflows
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
+
+  package-smoke:
+    name: Package Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - maven-verify
+      - script-lint
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/master'
 
     steps:
       - name: Checkout
@@ -50,8 +84,15 @@ jobs:
           java-version: 21
           cache: maven
 
-      - name: Build packages
-        run: mvn -B package
+      - name: Build boot package
+        run: mvn -B -ntp -DskipTests package
+
+      - name: Smoke test boot jar
+        run: |
+          java -jar lypi-boot/target/lypi-boot-0.0.1-SNAPSHOT.jar \
+            --lypi.runtime.cwd="${RUNNER_TEMP}/lypi-ci-smoke" \
+            --lypi.runtime.session-id=ci-smoke \
+            --lypi.runtime.transport=headless
 
       - name: Upload Maven artifacts
         uses: actions/upload-artifact@v4
@@ -59,4 +100,6 @@ jobs:
           name: lypi-maven-artifacts
           path: |
             **/target/*.jar
-            !**/target/original-*.jar
+            !**/target/*.jar.original
+          if-no-files-found: error
+          retention-days: 14

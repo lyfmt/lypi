@@ -33,6 +33,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -279,6 +281,101 @@ class SessionManagerImplTest {
         assertThatThrownBy(() -> engine.append(duplicate))
             .isInstanceOf(SessionEngineException.class)
             .hasMessageContaining("already exists");
+    }
+
+    @Test
+    void appendImportsExternallyAppendedEntriesBeforeValidatingParent() {
+        SessionManager first = new SessionManagerImpl(tempDir);
+        first.openOrCreate("ses_main");
+        first.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+
+        SessionManager second = new SessionManagerImpl(tempDir);
+        second.openOrCreate("ses_main");
+        second.append(new CustomMessageEntry("external", "root", "external", Instant.parse("2026-06-01T00:01:00Z")));
+
+        SessionHandle handle = first.append(
+            new CustomMessageEntry("local", "external", "local", Instant.parse("2026-06-01T00:02:00Z"))
+        );
+
+        assertThat(handle.byId()).containsKeys("root", "external", "local");
+        assertThat(first.branch("local")).extracting(SessionEntry::id).containsExactly("root", "external", "local");
+    }
+
+    @Test
+    void switchLeafImportsExternallyAppendedLeaf() {
+        SessionManager first = new SessionManagerImpl(tempDir);
+        first.openOrCreate("ses_main");
+        first.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+
+        SessionManager second = new SessionManagerImpl(tempDir);
+        second.openOrCreate("ses_main");
+        second.append(new CustomMessageEntry("external", "root", "external", Instant.parse("2026-06-01T00:01:00Z")));
+
+        SessionHandle switched = first.switchLeaf("external");
+
+        assertThat(switched.leafId()).isEqualTo("external");
+        assertThat(first.branch("external")).extracting(SessionEntry::id).containsExactly("root", "external");
+    }
+
+    @Test
+    void refreshImportsExternalEntriesWithoutMovingLocalLeaf() {
+        SessionManager first = new SessionManagerImpl(tempDir);
+        first.openOrCreate("ses_main");
+        first.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        first.append(new CustomMessageEntry("local", "root", "local", Instant.parse("2026-06-01T00:01:00Z")));
+
+        SessionManager second = new SessionManagerImpl(tempDir);
+        second.openOrCreate("ses_main");
+        second.switchLeaf("root");
+        second.append(new CustomMessageEntry("external", "root", "external", Instant.parse("2026-06-01T00:02:00Z")));
+
+        assertThat(first.branch("external")).extracting(SessionEntry::id).containsExactly("root", "external");
+
+        SessionHandle refreshed = first.append(
+            new CustomMessageEntry("after_local", "local", "after local", Instant.parse("2026-06-01T00:03:00Z"))
+        );
+        assertThat(refreshed.leafId()).isEqualTo("after_local");
+        assertThat(first.branch("after_local")).extracting(SessionEntry::id).containsExactly("root", "local", "after_local");
+        assertThat(first.branch("external")).extracting(SessionEntry::id).containsExactly("root", "external");
+    }
+
+    @Test
+    void refreshRejectsExternallyAppendedDuplicateEntryIds() {
+        SessionManager first = new SessionManagerImpl(tempDir);
+        first.openOrCreate("ses_main");
+        first.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.append("ses_main", new CustomMessageEntry("root", null, "duplicate", Instant.parse("2026-06-01T00:01:00Z")));
+
+        assertThatThrownBy(() -> first.branch("root"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("already exists");
+    }
+
+    @Test
+    void openTemporaryPersistsPendingEntriesAsBranchWhenAnotherProcessCreatedSessionFile() throws Exception {
+        SessionManager first = new SessionManagerImpl(tempDir);
+        SessionHandle opened = first.openTemporary("ses_temp");
+        first.append(new SessionInfoEntry("entry_info", null, Map.of("source", "first"), Instant.parse("2026-06-01T00:00:00Z")));
+
+        SessionManager second = new SessionManagerImpl(tempDir);
+        second.openOrCreate("ses_temp");
+        second.append(new CustomMessageEntry("external", null, "external", Instant.parse("2026-06-01T00:01:00Z")));
+
+        SessionHandle persisted = first.append(
+            new MessageEntry(
+                "entry_user",
+                "entry_info",
+                textMessage("msg_user", "hello"),
+                Instant.parse("2026-06-01T00:02:00Z")
+            )
+        );
+
+        assertThat(persisted.sessionFile()).isEqualTo(opened.sessionFile());
+        assertThat(Files.readAllLines(opened.sessionFile())).hasSize(4);
+        assertThat(persisted.byId()).containsKeys("external", "entry_info", "entry_user");
+        assertThat(first.branch("entry_user")).extracting(SessionEntry::id).containsExactly("entry_info", "entry_user");
+        assertThat(first.branch("external")).extracting(SessionEntry::id).containsExactly("external");
     }
 
     @Test
@@ -752,6 +849,35 @@ class SessionManagerImplTest {
         assertThatThrownBy(() -> store.create(header))
             .isInstanceOf(SessionEngineException.class)
             .hasMessageContaining("Session file already exists");
+    }
+
+    @Test
+    void openOrCreateRetriesWhenConcurrentCreatorHasNotFinishedHeaderLine() throws Exception {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        Path sessionFile = store.sessionFile("ses_main");
+        Files.createDirectories(sessionFile.getParent());
+        Files.createFile(sessionFile);
+        CountDownLatch writerFinished = new CountDownLatch(1);
+        Thread writer = new Thread(() -> {
+            try {
+                Thread.sleep(20);
+                Files.writeString(
+                    sessionFile,
+                    new SessionJsonMapper().writeHeader(sessionHeader("ses_main")) + System.lineSeparator()
+                );
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            } finally {
+                writerFinished.countDown();
+            }
+        });
+        writer.start();
+
+        SessionHandle opened = new SessionManagerImpl(tempDir).openOrCreate("ses_main");
+
+        assertThat(opened.sessionId()).isEqualTo("ses_main");
+        assertThat(writerFinished.await(1, TimeUnit.SECONDS)).isTrue();
+        writer.join();
     }
 
     private static AgentMessage textMessage(String id, String text) {
