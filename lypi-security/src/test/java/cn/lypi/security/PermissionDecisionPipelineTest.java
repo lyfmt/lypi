@@ -227,6 +227,22 @@ class PermissionDecisionPipelineTest {
     }
 
     @Test
+    void dangerFullAccessRuntimeStateDoesNotUseLegacyCwdBoundaryAsAuthority() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("write", Map.of("path", "/outside-workspace/out.txt")),
+            context(
+                PermissionMode.DEFAULT_EXECUTE,
+                Map.of("permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS))
+            )
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
     void unapprovedAdditionalFilesystemPermissionsDoNotAllowWriteOutsideWorkspace() {
         PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
 
@@ -239,7 +255,7 @@ class PermissionDecisionPipelineTest {
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
     }
 
     @Test
@@ -266,9 +282,9 @@ class PermissionDecisionPipelineTest {
         );
 
         assertThat(unrestricted.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(unrestricted.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(unrestricted.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
         assertThat(specialRoot.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(specialRoot.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(specialRoot.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
     }
 
     @Test

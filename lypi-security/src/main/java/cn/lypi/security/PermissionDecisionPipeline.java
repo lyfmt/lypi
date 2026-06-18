@@ -12,6 +12,8 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionProfile;
+import cn.lypi.contracts.security.PermissionProfiles;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionUpdate;
@@ -91,9 +93,9 @@ public final class PermissionDecisionPipeline {
             return hardSafety(pathSafety.get());
         }
 
-        Optional<PermissionDecision> legacyWorkspaceBoundary = legacyWorkspaceBoundaryDecision(request, context);
-        if (legacyWorkspaceBoundary.isPresent()) {
-            return legacyWorkspaceBoundary.get();
+        Optional<PermissionDecision> profileBoundary = fileSystemProfileDecision(request, context);
+        if (profileBoundary.isPresent()) {
+            return profileBoundary.get();
         }
 
         Optional<PermissionDecision> bashRedirectDecision = bashRedirectDecision(request, context, bashRisk);
@@ -199,23 +201,24 @@ public final class PermissionDecisionPipeline {
         return pathSafetyChecker.check(request, context);
     }
 
-    private Optional<PermissionDecision> legacyWorkspaceBoundaryDecision(ToolUseRequest request, ToolUseContext context) {
+    private Optional<PermissionDecision> fileSystemProfileDecision(ToolUseRequest request, ToolUseContext context) {
+        PermissionProfile profile = activePermissionProfile(context);
         for (String fieldName : List.of("path", "filePath", "targetPath", "sourcePath", "destinationPath", "cwd")) {
             Object rawPath = request.input().get(fieldName);
             if (rawPath == null) {
                 continue;
             }
-            Optional<PermissionDecision> decision = legacyWorkspacePathDecision(
-                fieldName,
-                rawPath.toString(),
-                context.cwd(),
-                context.cwd()
-            );
-            if (decision.isPresent()) {
+            Optional<FileSystemAccessMode> accessMode = fileSystemAccessMode(request.toolName(), fieldName);
+            if (accessMode.isEmpty()) {
+                continue;
+            }
+            Path target = context.cwd().toAbsolutePath().normalize().resolve(rawPath.toString()).normalize();
+            PermissionDecision decision = fileSystemPolicyChecker.decide(profile, accessMode.get(), target, context);
+            if (decision.behavior() == PermissionBehavior.DENY) {
                 if (additionalFilesystemAllows(request, context, fieldName, rawPath.toString(), context.cwd())) {
                     continue;
                 }
-                return decision;
+                return Optional.of(decision);
             }
         }
         return Optional.empty();
@@ -231,11 +234,11 @@ public final class PermissionDecisionPipeline {
         }
         Path redirectBase = bashCwd(request, context);
         for (Path redirectTarget : bashRisk.redirectTargets()) {
-            Optional<PermissionDecision> boundaryDecision = legacyWorkspacePathDecision(
-                "bashRedirectTarget",
-                redirectTarget.toString(),
-                redirectBase,
-                context.cwd()
+            PermissionDecision boundaryDecision = fileSystemPolicyChecker.decide(
+                activePermissionProfile(context),
+                FileSystemAccessMode.WRITE,
+                redirectBase.toAbsolutePath().normalize().resolve(redirectTarget).normalize(),
+                context
             );
             Optional<PermissionDecision> pathDecision = pathSafetyChecker.checkPathInsideWorkspace(
                 "bashRedirectTarget",
@@ -246,14 +249,25 @@ public final class PermissionDecisionPipeline {
             if (pathDecision.isPresent()) {
                 return Optional.of(withBashRisk(hardSafety(pathDecision.get()), bashRisk));
             }
-            if (boundaryDecision.isPresent()) {
+            if (boundaryDecision.behavior() == PermissionBehavior.DENY) {
                 if (additionalFilesystemAllows(request, context, "bashRedirectTarget", redirectTarget.toString(), redirectBase)) {
                     continue;
                 }
-                return Optional.of(withBashRisk(boundaryDecision.get(), bashRisk));
+                return Optional.of(withBashRisk(boundaryDecision, bashRisk));
             }
         }
         return Optional.empty();
+    }
+
+    private PermissionProfile activePermissionProfile(ToolUseContext context) {
+        PermissionRuntimeState state = runtimeState(context);
+        return switch (state.activePermissionProfile().id()) {
+            case ":read-only" -> PermissionProfiles.readOnly();
+            case ":workspace" -> PermissionProfiles.workspace();
+            case ":danger-full-access" -> PermissionProfiles.dangerFullAccess();
+            case ":external" -> PermissionProfiles.external(cn.lypi.contracts.security.NetworkPermissionPolicy.restricted());
+            default -> PermissionProfiles.readOnly();
+        };
     }
 
     private boolean additionalFilesystemAllows(
@@ -310,30 +324,6 @@ public final class PermissionDecisionPipeline {
         }
         if ("write".equals(toolName) || "edit".equals(toolName)) {
             return Optional.of(FileSystemAccessMode.WRITE);
-        }
-        return Optional.empty();
-    }
-
-    private Optional<PermissionDecision> legacyWorkspacePathDecision(
-        String fieldName,
-        String rawPath,
-        Path baseCwd,
-        Path workspaceCwd
-    ) {
-        Path workspace = workspaceCwd.toAbsolutePath().normalize();
-        Path target = baseCwd.toAbsolutePath().normalize().resolve(rawPath).normalize();
-        if (!target.startsWith(workspace)) {
-            return Optional.of(new PermissionDecision(
-                PermissionBehavior.DENY,
-                PermissionDecisionReason.PATH_SAFETY,
-                "工具路径越过当前工作目录: " + rawPath,
-                Optional.<PermissionUpdate>empty(),
-                Map.of(
-                    "pathField", fieldName,
-                    "path", rawPath,
-                    "normalizedPath", target.toString()
-                )
-            ));
         }
         return Optional.empty();
     }

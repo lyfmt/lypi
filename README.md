@@ -128,7 +128,9 @@ Bash 命令会先做静态风险分析，区分低风险、写入、网络、远
 
 命令隔离由 Bubblewrap 执行链承接。构建器会处理只读路径、可写路径、网络隔离、`/tmp`、`/proc`、缺失路径遮蔽、符号链接、受保护元数据目录等边界。大量测试覆盖 `.git`、`.codex`、`.agents`、deny-read、allow-read、allow-write 和 symlink 组合，目标是让策略无法满足时显式失败，而不是静默放行。
 
-权限模型由 `PermissionMode`、`PermissionRule`、`PermissionDecision` 和 `PermissionUpdate` 组成。`DEFAULT_EXECUTE` 对低风险命令更顺滑，对写入、网络和远端变更保持询问；`ACCEPT_EDITS` 和 `BYPASS` 可以放宽默认行为，但仍不能越过硬安全线。显式 `DENY` 总是优先，显式 `ALLOW` 对 Bash 也只在风险静态可知且不是破坏性命令时生效。
+权限模型以 canonical `PermissionRuntimeState` 为中心，包含 approval policy、active permission profile、legacy behavior 和兼容用的 `legacyPermissionMode`。`PermissionMode` 只作为旧配置、旧 JSON 和 UI 展示的兼容入口；运行时判定优先读取 `permissionRuntimeState`。profile 决定文件系统和网络边界，approval policy 决定是否允许进入人工确认；显式 `DENY` 总是优先，显式 `ALLOW` 对 Bash 也只在风险静态可知且不是破坏性命令时生效。
+
+模型可以通过 `request_permissions` 请求临时或会话级 additional permissions，再用 `sandboxPermissions=withAdditionalPermissions` 让本次 Bash 在 managed sandbox 内扩大权限。是否弹出确认由 approval policy 决定；additional permissions 的批准动作仍是标准 review decision（例如 `APPROVED` / `ABORT`），不会引入专用批准枚举。
 
 路径安全检查覆盖文件工具入参、Bash cwd 和 Bash 重定向目标。工具不能通过 `../`、符号链接、重定向或隐藏元数据目录绕过 workspace 边界；当 sandbox 策略无法满足时，执行结果会携带 `retryWith=sandboxPermissions=requireEscalated`，由上层决定是否向用户请求升级，而不是自动提权。
 

@@ -17,7 +17,7 @@ import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
-import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
@@ -488,7 +488,7 @@ final class SlashCommandRouter {
         if (mode == null) {
             return SlashCommandResult.error("unknown permission mode: " + arguments.positionals().getFirst());
         }
-        append(new PermissionModeChangeEntry(newEntryId(), currentLeafId(), mode, reason, Instant.now()));
+        append(new PermissionRuntimeStateChangeEntry(newEntryId(), currentLeafId(), mode, Instant.now()));
         return SlashCommandResult.stateChangedNotice("permission-mode: " + mode.name());
     }
 
