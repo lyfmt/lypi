@@ -39,7 +39,7 @@ final class ImageReadProcessor {
             ResizeResult resizeResult = resize(bytes, mediaType, originalDimensions);
             outputBytes = resizeResult.bytes();
             displayDimensions = resizeResult.dimensions();
-            resized = true;
+            resized = resizeResult.resized();
         }
 
         Map<String, Object> metadata = new LinkedHashMap<>();
@@ -90,7 +90,7 @@ final class ImageReadProcessor {
         try {
             BufferedImage source = ImageIO.read(new ByteArrayInputStream(bytes));
             if (source == null || dimensions == null) {
-                return new ResizeResult(bytes, dimensions);
+                return new ResizeResult(bytes, dimensions, false);
             }
             double scale = Math.min(1.0, (double) MAX_DIMENSION / Math.max(dimensions.width(), dimensions.height()));
             int width = Math.max(1, (int) Math.round(dimensions.width() * scale));
@@ -104,9 +104,9 @@ final class ImageReadProcessor {
             } finally {
                 graphics.dispose();
             }
-            return new ResizeResult(writeImage(target, mediaType), new ImageDimensions(width, height));
+            return new ResizeResult(writeImage(target, mediaType), new ImageDimensions(width, height), true);
         } catch (IOException exception) {
-            return new ResizeResult(bytes, dimensions);
+            return new ResizeResult(bytes, dimensions, false);
         }
     }
 
@@ -143,6 +143,6 @@ final class ImageReadProcessor {
     private record ImageDimensions(int width, int height) {
     }
 
-    private record ResizeResult(byte[] bytes, ImageDimensions dimensions) {
+    private record ResizeResult(byte[] bytes, ImageDimensions dimensions, boolean resized) {
     }
 }

@@ -110,6 +110,35 @@ class ReadToolTest {
     }
 
     @Test
+    void rejectsInvalidUtf8InsteadOfReplacingBytes() throws Exception {
+        Files.write(tempDir.resolve("blob.dat"), new byte[] {(byte) 0xC3, 0x28});
+
+        ToolResult<String> result = new ReadTool().execute(Map.of("path", "blob.dat"), context(), progress -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("不能读取二进制文件"));
+    }
+
+    @Test
+    void reservedFutureFormatsDoNotBypassBinaryRejection() throws Exception {
+        Files.write(tempDir.resolve("paper.pdf"), new byte[] {'%', 'P', 'D', 'F', 0});
+        Files.write(tempDir.resolve("notes.ipynb"), new byte[] {'{', 0, '}'});
+
+        ReadTool tool = new ReadTool();
+
+        ToolResult<String> pdf = tool.execute(Map.of("path", "paper.pdf"), context(), progress -> {
+        });
+        ToolResult<String> notebook = tool.execute(Map.of("path", "notes.ipynb"), context(), progress -> {
+        });
+
+        assertTrue(pdf.isError());
+        assertTrue(pdf.output().contains("不能读取二进制文件"));
+        assertTrue(notebook.isError());
+        assertTrue(notebook.output().contains("不能读取二进制文件"));
+    }
+
+    @Test
     void exposesReadOnlyConcurrencySafeMetadata() {
         ReadTool tool = new ReadTool();
 

@@ -8,6 +8,10 @@ import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -69,7 +73,8 @@ public final class ReadTool extends AbstractFileTool {
             if (BinaryFileDetector.isUnsupportedBinary(fileName, bytes)) {
                 return error(toolUseId, "不能读取二进制文件。");
             }
-            List<String> lines = List.of(new String(bytes, StandardCharsets.UTF_8).split("\\R", -1));
+            String text = decodeUtf8(bytes);
+            List<String> lines = List.of(text.split("\\R", -1));
             if (!lines.isEmpty() && lines.getLast().isEmpty()) {
                 lines = lines.subList(0, lines.size() - 1);
             }
@@ -99,6 +104,19 @@ public final class ReadTool extends AbstractFileTool {
             return error(toolUseId, exception.getMessage());
         } catch (IOException exception) {
             return error(toolUseId, "读取文件失败: " + exception.getMessage());
+        }
+    }
+
+    private String decodeUtf8(byte[] bytes) {
+        try {
+            CharBuffer decoded = StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes));
+            return decoded.toString();
+        } catch (CharacterCodingException exception) {
+            throw new IllegalArgumentException("不能读取二进制文件。");
         }
     }
 

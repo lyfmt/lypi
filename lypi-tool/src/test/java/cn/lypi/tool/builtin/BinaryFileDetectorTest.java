@@ -15,10 +15,10 @@ class BinaryFileDetectorTest {
     }
 
     @Test
-    void rejectsNulByteBinaryButAllowsReservedFormats() {
+    void rejectsNulByteBinaryIncludingReservedFutureFormats() {
         assertTrue(BinaryFileDetector.isUnsupportedBinary("blob.dat", new byte[] {'a', 0, 'b'}));
-        assertFalse(BinaryFileDetector.isUnsupportedBinary("paper.pdf", new byte[] {'%', 'P', 'D', 'F', 0}));
-        assertFalse(BinaryFileDetector.isUnsupportedBinary("notes.ipynb", new byte[] {'{', 0, '}'}));
+        assertTrue(BinaryFileDetector.isUnsupportedBinary("paper.pdf", new byte[] {'%', 'P', 'D', 'F', 0}));
+        assertTrue(BinaryFileDetector.isUnsupportedBinary("notes.ipynb", new byte[] {'{', 0, '}'}));
     }
 
     private static byte[] zipHeader() {

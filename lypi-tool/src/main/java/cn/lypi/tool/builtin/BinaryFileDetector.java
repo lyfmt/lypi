@@ -8,7 +8,6 @@ final class BinaryFileDetector {
     private static final Set<String> UNSUPPORTED_BINARY_EXTENSIONS = Set.of(
         ".zip", ".jar", ".class", ".exe", ".so", ".dll", ".bin"
     );
-    private static final Set<String> RESERVED_FORMAT_EXTENSIONS = Set.of(".pdf", ".ipynb");
 
     private BinaryFileDetector() {
     }
@@ -18,9 +17,6 @@ final class BinaryFileDetector {
             return false;
         }
         String lowerFileName = fileName.toLowerCase(Locale.ROOT);
-        if (hasAnyExtension(lowerFileName, RESERVED_FORMAT_EXTENSIONS)) {
-            return false;
-        }
         if (hasAnyExtension(lowerFileName, UNSUPPORTED_BINARY_EXTENSIONS)) {
             return true;
         }
