@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.ai.spec.LypiGenerationOptions;
+import cn.lypi.ai.spec.LypiAttachmentBlock;
 import cn.lypi.ai.spec.LypiMessage;
 import cn.lypi.ai.spec.LypiModelRequest;
 import cn.lypi.ai.spec.LypiRole;
@@ -133,6 +134,76 @@ class OpenAiResponsesRequestBuilderTest {
         assertThat(body.at("/input/0/type").asText()).isEqualTo("function_call_output");
         assertThat(body.at("/input/0/call_id").asText()).isEqualTo("call-1");
         assertThat(body.at("/input/0/output").asText()).isEqualTo("contents");
+    }
+
+    @Test
+    void serializesPendingToolImageAttachmentsAsInputImages() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-pending-tool-image",
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiToolCallBlock(
+                        "call-1",
+                        "read",
+                        "",
+                        Map.of("input", Map.of("path", "diagram.png"))
+                    )),
+                    Map.of(
+                        "messageId", "msg-assistant-1",
+                        "providerConversationState", Map.of(
+                            "provider", "openai",
+                            "style", "responses",
+                            "previousResponseId", "resp-123"
+                        )
+                    )
+                ),
+                new LypiMessage(
+                    LypiRole.TOOL_RESULT,
+                    List.of(
+                        new LypiToolResultBlock(
+                            "call-1",
+                            "Read image file [image/png]",
+                            false,
+                            Map.of("openaiPendingToolOutput", true)
+                        ),
+                        new LypiAttachmentBlock(
+                            "att-1",
+                            "Image: image/png",
+                            "image/png",
+                            Map.of(
+                                "imageUrl", "data:image/png;base64,AAA",
+                                "detail", "high",
+                                "toolUseId", "call-1"
+                            )
+                        )
+                    ),
+                    Map.of()
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of("providerConversationState", Map.of(
+                "provider", "openai",
+                "style", "responses",
+                "previousResponseId", "resp-123",
+                "messageId", "msg-assistant-1"
+            ))
+        );
+
+        JsonNode body = new OpenAiResponsesRequestBuilder().build(request, config());
+
+        assertThat(body.get("input")).hasSize(1);
+        assertThat(body.at("/input/0/type").asText()).isEqualTo("function_call_output");
+        assertThat(body.at("/input/0/call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/input/0/output/0/type").asText()).isEqualTo("input_text");
+        assertThat(body.at("/input/0/output/0/text").asText()).isEqualTo("Read image file [image/png]");
+        assertThat(body.at("/input/0/output/1/type").asText()).isEqualTo("input_image");
+        assertThat(body.at("/input/0/output/1/image_url").asText()).isEqualTo("data:image/png;base64,AAA");
+        assertThat(body.at("/input/0/output/1/detail").asText()).isEqualTo("high");
     }
 
     @Test
