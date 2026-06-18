@@ -24,6 +24,7 @@ import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
 import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.session.SessionView;
@@ -549,11 +550,21 @@ public final class TuiEventReducer {
     private String formatAdditionalPermissions(AdditionalPermissionProfile profile) {
         StringBuilder builder = new StringBuilder();
         profile.fileSystem()
-            .map(FileSystemPermissionPolicy::kind)
-            .ifPresent(kind -> appendLine(builder, "filesystem=" + kind.name()));
+            .ifPresent(policy -> appendLine(builder, formatFileSystemPermissionPolicy(policy)));
         profile.network()
             .map(NetworkPermissionPolicy::mode)
             .ifPresent(mode -> appendLine(builder, "network=" + mode.name()));
+        return builder.toString();
+    }
+
+    private String formatFileSystemPermissionPolicy(FileSystemPermissionPolicy policy) {
+        StringBuilder builder = new StringBuilder("filesystem=" + policy.kind().name());
+        for (FileSystemPermissionEntry entry : policy.entries()) {
+            builder.append('\n')
+                .append(entry.access().name())
+                .append(' ')
+                .append(entry.path().value());
+        }
         return builder.toString();
     }
 

@@ -21,12 +21,21 @@ import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.ApprovalKind;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.security.PermissionOptionPolicy;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.security.ReviewDecision;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
@@ -214,6 +223,53 @@ class TuiContractEndToEndTest {
         assertEquals("toolu_bash", decisionEvent.toolUseId());
         assertEquals("remember", decisionEvent.selectedOptionId());
         assertEquals(update, decisionEvent.appliedUpdate().orElseThrow());
+    }
+
+    @Test
+    void requestPermissionsPromptProjectsCodexStyleAdditionalPermissions() {
+        TuiEventReducer reducer = new TuiEventReducer();
+        PermissionOptionPolicy.Options options = PermissionOptionPolicy.forAdditionalPermissionsApproval();
+        AdditionalPermissionProfile additionalPermissions = new AdditionalPermissionProfile(
+            Optional.of(FileSystemPermissionPolicy.restricted(List.of(new FileSystemPermissionEntry(
+                FileSystemPath.exactPath("/workspace/reports"),
+                FileSystemAccessMode.WRITE
+            )))),
+            Optional.of(NetworkPermissionPolicy.enabled())
+        );
+
+        reducer.reduce(new PermissionRequestEvent(
+            "ses_1",
+            "perm_2",
+            "toolu_request_permissions",
+            "request_permissions",
+            "Request additional permissions",
+            "{\"sandbox_permissions\":\"with_escalated_permissions\"}",
+            "需要写入 reports 目录并访问网络",
+            decision(PermissionBehavior.ASK, "review additional permissions", Optional.empty()),
+            ApprovalKind.REQUEST_PERMISSIONS,
+            List.of(ReviewDecision.APPROVED, ReviewDecision.ABORT),
+            Optional.of(additionalPermissions),
+            true,
+            options.options(),
+            options.defaultOptionId(),
+            options.cancelOptionId(),
+            Map.of("turnId", "turn_2"),
+            NOW
+        ));
+
+        PermissionPromptView prompt = reducer.view().permissionPrompt().orElseThrow();
+        assertEquals("perm_2", prompt.requestId());
+        assertEquals("toolu_request_permissions", prompt.toolUseId());
+        assertTrue(prompt.reason().contains("REQUEST_PERMISSIONS"));
+        assertTrue(prompt.reason().contains("需要写入 reports 目录并访问网络"));
+        assertTrue(prompt.reason().contains("APPROVED"));
+        assertTrue(prompt.reason().contains("ABORT"));
+        assertTrue(prompt.rule().contains("filesystem=RESTRICTED"));
+        assertTrue(prompt.rule().contains("/workspace/reports"));
+        assertTrue(prompt.rule().contains("network=ENABLED"));
+        assertEquals(List.of("approved", "abort"), prompt.options().stream().map(PermissionOption::optionId).toList());
+        assertEquals("approved", prompt.defaultOptionId());
+        assertEquals("abort", prompt.cancelOptionId());
     }
 
     @Test
