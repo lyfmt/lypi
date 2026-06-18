@@ -12,6 +12,7 @@ import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
@@ -57,11 +58,13 @@ import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.tool.builtin.BashTool;
+import cn.lypi.tool.builtin.ReadTool;
 import cn.lypi.tool.builtin.RequestPermissionsTool;
 import cn.lypi.tool.builtin.WriteTool;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -90,6 +93,30 @@ class DefaultToolRuntimeTest {
         assertFalse(results.getFirst().isError());
         ToolResultContentBlock block = (ToolResultContentBlock) results.getFirst().newMessages().getFirst().content().getFirst();
         assertEquals("hello", block.text());
+    }
+
+    @Test
+    void preservesReadImageAttachmentThroughRuntime() throws Exception {
+        Files.write(tempDir.resolve("image.png"), png1x1());
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(tempDir).build(),
+            allowAllSecurity(),
+            PermissionGate.denying(),
+            null
+        );
+        runtime.register(new ReadTool());
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "read", Map.of("path", "image.png"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertTrue(result.output().toString().contains("Read image file [image/png]"));
+        assertFalse(result.output().toString().contains("base64"));
+        assertEquals(2, result.newMessages().getFirst().content().size());
+        assertInstanceOf(ToolResultContentBlock.class, result.newMessages().getFirst().content().get(0));
+        assertInstanceOf(AttachmentContentBlock.class, result.newMessages().getFirst().content().get(1));
     }
 
     @Test
@@ -2503,6 +2530,11 @@ class DefaultToolRuntimeTest {
             PermissionGate.denying(),
             ToolExecutionEventPublisher.eventBus(eventBus)
         );
+    }
+
+    private static byte[] png1x1() {
+        return Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=");
     }
 
     private static final class RecordingEventBus implements EventBus {

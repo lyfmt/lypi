@@ -105,12 +105,14 @@ session entry 覆盖消息、压缩摘要、分支摘要、模型切换、thinki
 
 | 类型 | 工具 | 说明 |
 | --- | --- | --- |
-| 文件工具 | `read`、`write`、`edit` | 受路径安全和权限系统约束，输出按上下文预算折叠。 |
+| 文件工具 | `read`、`write`、`edit` | 受路径安全和权限系统约束；`read` 支持带行号文本和小图片附件，输出按上下文预算折叠。 |
 | 搜索工具 | `glob`、`grep` | 优先使用 ripgrep 能力，返回命中统计、分页和结构化结果。 |
 | 执行工具 | `bash` | 先经过 Bash 风险分析和 sandbox 策略，再进入 host 或 Bubblewrap executor。 |
 | 子代理工具 | `spawn_agent`、`list_agents`、`wait_agent`、`read_agent_result`、`read_mailbox`、`accept`、`stash`、`discard`、`continue`、`interrupt` | 把异步任务和 mailbox 操作显式建模为工具调用。 |
 
 MCP 工具接入时会把外部 server、tool schema 和 tool result 映射到内部契约。名称映射由 `McpToolName` 负责，避免外部工具名和内建工具名直接冲突；结果映射会把 MCP 文本、结构化内容和错误统一成 `ToolResult`，供事件、TUI 和上下文预算继续处理。
+
+`read` 工具读取文本文件时返回带行号内容；读取 PNG、JPEG、GIF 或 WEBP 图片时只返回短摘要，并把图片作为模型可见附件传给支持多模态输入的 Provider。第一版会对 PNG/JPEG 尝试尺寸缩放和压缩，GIF/WEBP 只执行大小限制；未知二进制文件会被拒绝，避免把二进制内容当 UTF-8 文本塞进上下文。
 
 工具中断也有契约边界。每个工具可以声明 `InterruptBehavior`；运行时在收到中断后通过 abort signal 通知执行链，并把最终状态归一为 success、error、denied、cancelled 或 interrupted，避免 TUI、session 和模型上下文对同一次工具调用产生不同理解。
 

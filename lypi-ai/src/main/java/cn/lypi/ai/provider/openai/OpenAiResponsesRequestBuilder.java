@@ -122,6 +122,10 @@ public final class OpenAiResponsesRequestBuilder {
         boolean allowProtocolToolItems,
         boolean replayToolInteractionsAsProtocolItems
     ) {
+        if (message.role() == LypiRole.TOOL_RESULT) {
+            appendToolResultMessage(input, message, allowProtocolToolItems, replayToolInteractionsAsProtocolItems);
+            return;
+        }
         for (LypiContentBlock block : message.content()) {
             if (block instanceof LypiToolCallBlock toolCall) {
                 if (replayToolInteractionsAsProtocolItems || allowProtocolToolItems && pendingToolCall(toolCall)) {
@@ -132,6 +136,29 @@ public final class OpenAiResponsesRequestBuilder {
                     input.add(functionCallOutput(toolResult));
                 }
             } else {
+                input.add(message(message, block));
+            }
+        }
+    }
+
+    private void appendToolResultMessage(
+        ArrayNode input,
+        LypiMessage message,
+        boolean allowProtocolToolItems,
+        boolean replayToolInteractionsAsProtocolItems
+    ) {
+        Optional<LypiToolResultBlock> toolResult = message.content().stream()
+            .filter(LypiToolResultBlock.class::isInstance)
+            .map(LypiToolResultBlock.class::cast)
+            .findFirst();
+        if (toolResult.isPresent()
+            && (replayToolInteractionsAsProtocolItems
+                || allowProtocolToolItems && pendingToolOutput(toolResult.get()))) {
+            input.add(functionCallOutput(toolResult.get(), imageAttachments(message)));
+            return;
+        }
+        for (LypiContentBlock block : message.content()) {
+            if (!(block instanceof LypiToolResultBlock)) {
                 input.add(message(message, block));
             }
         }
@@ -156,10 +183,23 @@ public final class OpenAiResponsesRequestBuilder {
     }
 
     private ObjectNode functionCallOutput(LypiToolResultBlock toolResult) {
+        return functionCallOutput(toolResult, List.of());
+    }
+
+    private ObjectNode functionCallOutput(LypiToolResultBlock toolResult, List<LypiAttachmentBlock> imageAttachments) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("type", "function_call_output");
         node.put("call_id", toolResult.toolUseId());
-        node.put("output", toolResult.text());
+        if (imageAttachments.isEmpty()) {
+            node.put("output", toolResult.text());
+        } else {
+            ArrayNode output = objectMapper.createArrayNode();
+            output.add(textContent(LypiRole.USER, toolResult.text()));
+            for (LypiAttachmentBlock attachment : imageAttachments) {
+                output.add(imageContent(attachment));
+            }
+            node.set("output", output);
+        }
         return node;
     }
 
@@ -188,6 +228,23 @@ public final class OpenAiResponsesRequestBuilder {
         node.put("type", role == LypiRole.ASSISTANT ? "output_text" : "input_text");
         node.put("text", text);
         return node;
+    }
+
+    private ObjectNode imageContent(LypiAttachmentBlock attachment) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "input_image");
+        node.put("image_url", String.valueOf(attachment.metadata().get("imageUrl")));
+        Object detail = attachment.metadata().getOrDefault("detail", "high");
+        node.put("detail", String.valueOf(detail));
+        return node;
+    }
+
+    private List<LypiAttachmentBlock> imageAttachments(LypiMessage message) {
+        return message.content().stream()
+            .filter(LypiAttachmentBlock.class::isInstance)
+            .map(LypiAttachmentBlock.class::cast)
+            .filter(attachment -> attachment.metadata().get("imageUrl") != null)
+            .toList();
     }
 
     private String arguments(LypiToolCallBlock toolCall) {
