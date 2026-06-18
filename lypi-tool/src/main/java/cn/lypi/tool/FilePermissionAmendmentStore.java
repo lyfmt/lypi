@@ -1,6 +1,7 @@
 package cn.lypi.tool;
 
 import cn.lypi.contracts.security.NetworkPolicyAmendment;
+import cn.lypi.contracts.security.PermissionAmendment;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionGrantScope;
 import cn.lypi.contracts.security.PermissionRule;
@@ -316,10 +317,13 @@ public final class FilePermissionAmendmentStore implements PermissionAmendmentSt
             return new PermissionAmendmentEntry(
                 id,
                 parentId,
-                permissionUpdate,
-                networkPolicyAmendment,
+                permissionAmendment(),
                 Instant.parse(timestamp)
             );
+        }
+
+        private PermissionAmendment permissionAmendment() {
+            return new PermissionAmendment(permissionUpdate, networkPolicyAmendment);
         }
     }
 }

@@ -1,12 +1,16 @@
 package cn.lypi.contracts.session;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
+import cn.lypi.contracts.security.NetworkPolicyAmendment;
+import cn.lypi.contracts.security.PermissionAmendment;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionRule;
@@ -69,7 +73,22 @@ class PermissionRuntimeStateEntryTest {
 
         assertEquals(Optional.of(update), restored.permissionUpdate());
         assertEquals(Optional.empty(), restored.networkPolicyAmendment());
+        assertEquals(new PermissionAmendment(Optional.of(update), Optional.empty()), restored.permissionAmendment());
         assertTrue(json.contains("\"permissionUpdate\""));
+        assertFalse(json.contains("\"permissionAmendment\""));
+    }
+
+    @Test
+    void permissionAmendmentContractRequiresAtLeastOnePayloadAndRoundTrips() throws Exception {
+        NetworkPolicyAmendment networkAmendment = new NetworkPolicyAmendment(NetworkPermissionPolicy.enabled());
+        PermissionAmendment amendment = new PermissionAmendment(Optional.empty(), Optional.of(networkAmendment));
+
+        String json = mapper.writeValueAsString(amendment);
+        PermissionAmendment restored = mapper.readValue(json, PermissionAmendment.class);
+
+        assertEquals(Optional.empty(), restored.permissionUpdate());
+        assertEquals(Optional.of(networkAmendment), restored.networkPolicyAmendment());
+        assertThrows(IllegalArgumentException.class, () -> new PermissionAmendment(Optional.empty(), Optional.empty()));
     }
 
     @Test
@@ -81,6 +100,40 @@ class PermissionRuntimeStateEntryTest {
             Optional.empty(),
             Instant.parse("2026-06-17T00:00:00Z")
         ));
+    }
+
+    @Test
+    void permissionAmendmentEntryReadsLegacyFlatJsonPayload() throws Exception {
+        String json = """
+            {
+              "type": "permission_amendment",
+              "id": "entry_permission_amendment",
+              "parentId": "entry_parent",
+              "permissionUpdate": {
+                "targetSource": "SESSION",
+                "rule": {
+                  "source": "SESSION",
+                  "behavior": "ALLOW",
+                  "value": {
+                    "toolName": "bash",
+                    "pattern": "prefix:mvn test"
+                  },
+                  "reason": "remember current session approval"
+                }
+              },
+              "networkPolicyAmendment": null,
+              "timestamp": "2026-06-17T00:00:00Z"
+            }
+            """;
+
+        PermissionAmendmentEntry restored = assertInstanceOf(
+            PermissionAmendmentEntry.class,
+            mapper.readValue(json, SessionEntry.class)
+        );
+
+        assertTrue(restored.permissionUpdate().isPresent());
+        assertEquals(Optional.empty(), restored.networkPolicyAmendment());
+        assertEquals(restored.permissionUpdate(), restored.permissionAmendment().permissionUpdate());
     }
 
     @Test
