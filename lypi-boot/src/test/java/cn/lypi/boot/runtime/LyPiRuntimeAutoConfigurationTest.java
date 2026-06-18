@@ -487,6 +487,13 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(bootstrap.toolRegistry().tools()).isNotEmpty();
                 assertThat(bootstrap.modelSelection()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
                 assertThat(bootstrap.systemPrompt()).isNotNull();
+                assertThat(bootstrap.systemPrompt().content())
+                    .contains("## Permissions")
+                    .contains("approval policy: ON_REQUEST")
+                    .contains("active sandbox profile: :workspace")
+                    .contains("request_permissions")
+                    .contains("sandboxPermissions=requireEscalated")
+                    .contains("sandboxPermissions=withAdditionalPermissions");
             });
     }
 

@@ -63,6 +63,20 @@ class RequestPermissionsToolTest {
     Path tempDir;
 
     @Test
+    void inputSchemaDescribesApprovalPolicyAndAdditionalPermissionsFlow() {
+        RequestPermissionsTool tool = new RequestPermissionsTool();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+
+        assertTrue(tool.description().contains("approval policy"));
+        assertTrue(properties.get("permissions").toString().contains("additional filesystem or network permissions"));
+        assertTrue(properties.get("scope").toString().contains("turn"));
+        assertTrue(properties.get("scope").toString().contains("session"));
+        assertTrue(properties.get("strictAutoReview").toString().contains("following command should still be reviewed"));
+    }
+
+    @Test
     void emptyPermissionsRequestReturnsToolErrorWithoutPrompt() {
         AtomicInteger prompts = new AtomicInteger();
         DefaultToolRuntime runtime = runtime(

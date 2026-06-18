@@ -69,10 +69,20 @@ public final class BashTool extends AbstractFileTool {
                 "timeoutSeconds", Map.of("type", "integer", "minimum", 1),
                 INPUT_SANDBOX_PERMISSIONS, Map.of(
                     "type", "string",
-                    "enum", List.of("useDefault", "requireEscalated", "withAdditionalPermissions")
+                    "enum", List.of("useDefault", "requireEscalated", "withAdditionalPermissions"),
+                    "description",
+                    "useDefault follows the active sandbox profile. requireEscalated asks to run outside the sandbox; "
+                        + "the approval policy decides whether a prompt is shown. withAdditionalPermissions uses "
+                        + "permissions approved by request_permissions."
                 ),
-                INPUT_ADDITIONAL_PERMISSIONS, Map.of("type", "object"),
-                INPUT_JUSTIFICATION, Map.of("type", "string"),
+                INPUT_ADDITIONAL_PERMISSIONS, Map.of(
+                    "type", "object",
+                    "description", "Requested additional permissions; normally obtain these through request_permissions before running bash with sandboxPermissions=withAdditionalPermissions."
+                ),
+                INPUT_JUSTIFICATION, Map.of(
+                    "type", "string",
+                    "description", "required when sandboxPermissions=requireEscalated"
+                ),
                 "prefix_rule", Map.of(
                     "type", "array",
                     "minItems", 1,

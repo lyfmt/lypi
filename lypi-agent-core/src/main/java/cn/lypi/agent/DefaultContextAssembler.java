@@ -35,11 +35,11 @@ public final class DefaultContextAssembler implements ContextAssembler {
         SessionHandle handle = sessionManager.openOrCreate(request.sessionId());
         String leafId = request.leafEntryId().orElse(handle.leafId());
         ResourceSnapshot resources = resourceRuntime.load(request.cwd());
+        SessionContext sessionContext = sessionManager.context(leafId);
         SystemPrompt systemPrompt = request.includeSystemPrompt() ? withSkillInjections(
-            resourceRuntime.buildSystemPrompt(resources),
+            resourceRuntime.buildSystemPrompt(resources, sessionContext.permissionRuntimeState()),
             request.skillMentions()
         ) : null;
-        SessionContext sessionContext = sessionManager.context(leafId);
         ContextBudget budget = budgetEstimator.estimate(systemPrompt, sessionContext.messages(), sessionContext.model());
         ContextSnapshot snapshot = new ContextSnapshot(
             systemPrompt,

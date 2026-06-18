@@ -31,7 +31,8 @@ public final class ContinueAgentTool extends AbstractSubagentTool {
     @Override
     public String description() {
         return "向已有 child subagent session 追加一轮新输入。只读跟进默认已有 read/grep/glob，"
-            + "不要默认加入 bash；只有用户明确需要 shell 命令，且 permissionMode 允许 headless 非交互执行时才加入 bash。"
+            + "不要默认加入 bash；只有用户明确需要 shell 命令时才加入 bash。"
+            + "permissionRuntimeState 是新协议优先字段，会传递给 child runtime 决定审批和沙盒行为；permissionMode 仅兼容旧入口。"
             + "继续后必须用 wait_agent 等待，再用 read_agent_result 读取结果。";
     }
 

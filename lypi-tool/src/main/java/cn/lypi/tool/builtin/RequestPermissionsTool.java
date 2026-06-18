@@ -51,7 +51,8 @@ public final class RequestPermissionsTool implements Tool<Map<String, Object>, R
 
     @Override
     public String description() {
-        return "Request additional filesystem or network permissions for the current turn or session.";
+        return "Request additional filesystem or network permissions for the current turn or session. "
+            + "The model may request permissions; the active approval policy decides whether a prompt is shown.";
     }
 
     @Override
@@ -67,9 +68,17 @@ public final class RequestPermissionsTool implements Tool<Map<String, Object>, R
             "properties", Map.of(
                 "environmentId", Map.of("type", "string"),
                 INPUT_REASON, Map.of("type", "string"),
-                INPUT_SCOPE, Map.of("type", "string"),
-                INPUT_STRICT_AUTO_REVIEW, Map.of("type", "boolean"),
-                INPUT_PERMISSIONS, Map.of()
+                INPUT_SCOPE, Map.of(
+                    "type", "string",
+                    "description", "Permission grant scope: turn for the current turn, or session for this session."
+                ),
+                INPUT_STRICT_AUTO_REVIEW, Map.of(
+                    "type", "boolean",
+                    "description", "When true, the following command should still be reviewed after these permissions are approved."
+                ),
+                INPUT_PERMISSIONS, Map.of(
+                    "description", "Requested additional filesystem or network permissions. Supports filesystem and network deltas."
+                )
             )
         ));
     }

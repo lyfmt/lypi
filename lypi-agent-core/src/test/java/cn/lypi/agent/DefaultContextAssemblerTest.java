@@ -14,6 +14,8 @@ import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
+import cn.lypi.contracts.resource.ResourceSnapshot;
+import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.security.ActivePermissionProfile;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.ApprovalMode;
@@ -174,6 +176,36 @@ class DefaultContextAssemblerTest {
     }
 
     @Test
+    void passesCanonicalPermissionRuntimeStateIntoSystemPromptBuilder() {
+        PermissionRuntimeState runtimeState = customPermissionRuntimeState();
+        RecordingResourceRuntime resourceRuntime = new RecordingResourceRuntime();
+        StubSessionManager sessionManager = new StubSessionManager(new SessionContext(
+            List.of(userMessage("msg-user", "hello")),
+            List.of("entry-user"),
+            List.of(),
+            new ModelSelection("fixture", "configured-model", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            runtimeState
+        ));
+        DefaultContextAssembler assembler = new DefaultContextAssembler(
+            sessionManager,
+            resourceRuntime,
+            new ContextBudgetEstimator()
+        );
+
+        ContextAssembly assembly = assembler.build(new ContextBuildRequest(
+            "session-1",
+            Optional.of("entry-user"),
+            Path.of("."),
+            true
+        ));
+
+        assertThat(resourceRuntime.promptPermissionRuntimeState).isEqualTo(runtimeState);
+        assertThat(assembly.snapshot().systemPrompt().content()).contains("runtime=UNLESS_TRUSTED");
+    }
+
+    @Test
     void usesCurrentLeafWhenRequestLeafIsAbsent() {
         AgentMessage userMessage = userMessage("msg-user", "hello");
         StubSessionManager sessionManager = new StubSessionManager(new SessionContext(
@@ -268,6 +300,31 @@ class DefaultContextAssemblerTest {
         @Override
         public List<SessionEntry> branch(String leafId) {
             return List.of();
+        }
+    }
+
+    private static final class RecordingResourceRuntime implements ResourceRuntimePort {
+        private final ResourceSnapshot resources = AgentCoreTestFixtures.emptyResources();
+        private PermissionRuntimeState promptPermissionRuntimeState;
+
+        @Override
+        public ResourceSnapshot load(Path cwd) {
+            return resources;
+        }
+
+        @Override
+        public SystemPrompt buildSystemPrompt(ResourceSnapshot resources, PermissionRuntimeState permissionRuntimeState) {
+            promptPermissionRuntimeState = permissionRuntimeState;
+            return new SystemPrompt(
+                "runtime=" + permissionRuntimeState.approvalPolicy().mode(),
+                List.of("test"),
+                "hash"
+            );
+        }
+
+        @Override
+        public SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
+            throw new AssertionError("canonical permission runtime state overload must be used");
         }
     }
 

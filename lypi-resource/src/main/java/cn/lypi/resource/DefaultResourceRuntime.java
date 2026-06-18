@@ -6,6 +6,7 @@ import cn.lypi.contracts.prompt.PromptTemplate;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import java.nio.file.Path;
 
 /**
@@ -46,6 +47,11 @@ public class DefaultResourceRuntime implements ResourceRuntimePort {
     @Override
     public SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
         return systemPromptBuilder.build(resources);
+    }
+
+    @Override
+    public SystemPrompt buildSystemPrompt(ResourceSnapshot resources, PermissionRuntimeState permissionRuntimeState) {
+        return systemPromptBuilder.build(resources, permissionRuntimeState);
     }
 
     @Override

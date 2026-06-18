@@ -122,6 +122,9 @@ class SubagentToolsTest {
         assertTrue(mode.get("description").toString().contains("general"));
         assertTrue(model.get("description").toString().contains("继承父 session"));
         assertTrue(thinkingLevel.get("description").toString().contains("继承父 session"));
+        assertTrue(tool.description().contains("permissionRuntimeState"));
+        assertTrue(tool.description().contains("child runtime"));
+        assertTrue(tool.description().contains("permissionMode 仅兼容旧入口"));
     }
 
     @Test
