@@ -707,6 +707,46 @@ class DefaultAgentCenterTest {
     }
 
     @Test
+    void waitForPublishesMailboxBeforeReturningAlreadyCompletedFutureResult() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        AlreadyCompletedProcessRunner processRunner = new AlreadyCompletedProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            sessionFactory(parentSession),
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "即时完成"));
+        SubagentWaitResult waited = center.waitFor(new SubagentWaitRequest(
+            Optional.of(spawned.agentId()),
+            Optional.empty(),
+            Optional.empty(),
+            5,
+            true
+        ));
+
+        assertThat(waited.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+        assertThat(mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
+            .singleElement()
+            .satisfies(message -> {
+                assertThat(message.summary()).isEqualTo("already done");
+                assertThat(message.contentRef().finalEntryId()).isEqualTo("entry_already_done");
+            });
+    }
+
+    @Test
     void multipleSubagentsCanBeWaitedIndependentlyWithoutResultMixing() {
         CapturingChildSessions childSessions = new CapturingChildSessions();
         CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
@@ -1337,6 +1377,29 @@ class DefaultAgentCenterTest {
 
         private void complete(String childSessionId, HeadlessSubagentOutput output) {
             completions.get(childSessionId).complete(output);
+        }
+    }
+
+    private static final class AlreadyCompletedProcessRunner implements SubagentProcessRunner {
+        @Override
+        public SubagentProcessHandle start(HeadlessSubagentInput input) {
+            CompletableFuture<HeadlessSubagentOutput> completion = CompletableFuture.completedFuture(new HeadlessSubagentOutput(
+                input.childSessionId(),
+                SubagentRunStatus.SUCCEEDED,
+                "already done",
+                Optional.of("entry_already_done"),
+                Optional.empty()
+            ));
+            return new SubagentProcessHandle() {
+                @Override
+                public CompletableFuture<HeadlessSubagentOutput> completion() {
+                    return completion;
+                }
+
+                @Override
+                public void interrupt() {
+                }
+            };
         }
     }
 

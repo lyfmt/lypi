@@ -300,6 +300,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             HeadlessSubagentOutput output = running.handle()
                 .completion()
                 .get(Math.max(0, request.timeoutSeconds()), TimeUnit.SECONDS);
+            complete(running.agentId(), output, null);
             return waitResult(running.agentId(), running.parentSpawnEntryId(), output);
         } catch (TimeoutException exception) {
             return SubagentWaitResultFactory.timedOut(running);
