@@ -27,7 +27,8 @@ public record SubagentContinueRequest(
     int timeoutSeconds,
     Optional<ModelSelection> model,
     Optional<ThinkingLevel> thinkingLevel,
-    Optional<AgentMode> agentMode
+    Optional<AgentMode> agentMode,
+    boolean permissionRuntimeStateSpecified
 ) {
     public SubagentContinueRequest {
         allowedTools = allowedTools == null ? List.of() : List.copyOf(allowedTools);
@@ -59,7 +60,8 @@ public record SubagentContinueRequest(
             timeoutSeconds,
             Optional.empty(),
             Optional.empty(),
-            Optional.empty()
+            Optional.empty(),
+            false
         );
     }
 
@@ -81,7 +83,8 @@ public record SubagentContinueRequest(
             timeoutSeconds,
             Optional.empty(),
             Optional.empty(),
-            Optional.empty()
+            Optional.empty(),
+            false
         );
     }
 
@@ -111,7 +114,39 @@ public record SubagentContinueRequest(
             timeoutSeconds,
             model,
             thinkingLevel,
-            agentMode
+            agentMode,
+            true
+        );
+    }
+
+    public SubagentContinueRequest(
+        String parentSessionId,
+        String parentEntryId,
+        String childSessionId,
+        String prompt,
+        Path cwd,
+        List<String> allowedTools,
+        SubagentToolPolicy toolPolicy,
+        PermissionRuntimeState permissionRuntimeState,
+        int timeoutSeconds,
+        Optional<ModelSelection> model,
+        Optional<ThinkingLevel> thinkingLevel,
+        Optional<AgentMode> agentMode
+    ) {
+        this(
+            parentSessionId,
+            parentEntryId,
+            childSessionId,
+            prompt,
+            cwd,
+            allowedTools,
+            toolPolicy,
+            permissionRuntimeState,
+            timeoutSeconds,
+            model,
+            thinkingLevel,
+            agentMode,
+            true
         );
     }
 
@@ -140,8 +175,12 @@ public record SubagentContinueRequest(
         @JsonProperty("timeoutSeconds") int timeoutSeconds,
         @JsonProperty("model") Optional<ModelSelection> model,
         @JsonProperty("thinkingLevel") Optional<ThinkingLevel> thinkingLevel,
-        @JsonProperty("agentMode") Optional<AgentMode> agentMode
+        @JsonProperty("agentMode") Optional<AgentMode> agentMode,
+        @JsonProperty("permissionRuntimeStateSpecified") Boolean permissionRuntimeStateSpecified
     ) {
+        boolean effectivePermissionRuntimeStateSpecified = permissionRuntimeStateSpecified == null
+            ? permissionRuntimeState != null || permissionMode != null
+            : permissionRuntimeStateSpecified;
         return new SubagentContinueRequest(
             parentSessionId,
             parentEntryId,
@@ -154,7 +193,8 @@ public record SubagentContinueRequest(
             timeoutSeconds,
             model,
             thinkingLevel,
-            agentMode
+            agentMode,
+            effectivePermissionRuntimeStateSpecified
         );
     }
 

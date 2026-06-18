@@ -10,8 +10,13 @@ import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.ActivePermissionProfile;
+import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.LegacyPermissionBehavior;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
@@ -160,6 +165,32 @@ class SubagentToolsTest {
     }
 
     @Test
+    void spawnAgentPassesCanonicalPermissionRuntimeStateAndMarksItExplicit() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        SpawnAgentTool tool = new SpawnAgentTool(agentCenter);
+        PermissionRuntimeState runtimeState = customPermissionRuntimeState();
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "prompt", "检查测试失败原因",
+            "permissionRuntimeState", Map.of(
+                "approvalPolicy", Map.of("mode", "UNLESS_TRUSTED"),
+                "activePermissionProfile", Map.of("id", ":workspace-write"),
+                "legacyBehavior", Map.of(
+                    "defaultBashRequiresEscalation", false,
+                    "allowExplicitEscalationWithoutPrompt", false,
+                    "hardSafetyEnabled", false
+                ),
+                "legacyPermissionMode", "DEFAULT_EXECUTE"
+            )
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertEquals(runtimeState, agentCenter.spawnRequest.permissionRuntimeState());
+        assertTrue(agentCenter.spawnRequest.permissionModeSpecified());
+    }
+
+    @Test
     void spawnAgentKeepsExplicitProviderQualifiedModel() {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
         SpawnAgentTool tool = new SpawnAgentTool(agentCenter);
@@ -299,6 +330,48 @@ class SubagentToolsTest {
         assertEquals(Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.continueRequest.model());
         assertEquals(Optional.of(ThinkingLevel.HIGH), agentCenter.continueRequest.thinkingLevel());
         assertEquals(Optional.of(AgentMode.EXECUTE), agentCenter.continueRequest.agentMode());
+    }
+
+    @Test
+    void continueAgentOmitsPermissionOverrideWhenPermissionFieldsAreMissing() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        ContinueAgentTool tool = new ContinueAgentTool(agentCenter);
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "childSessionId", "ses_child",
+            "prompt", "继续检查"
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertFalse(agentCenter.continueRequest.permissionRuntimeStateSpecified());
+    }
+
+    @Test
+    void continueAgentPassesCanonicalPermissionRuntimeStateOnlyWhenExplicit() {
+        RecordingAgentCenter agentCenter = new RecordingAgentCenter();
+        ContinueAgentTool tool = new ContinueAgentTool(agentCenter);
+        PermissionRuntimeState runtimeState = customPermissionRuntimeState();
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "childSessionId", "ses_child",
+            "prompt", "继续检查",
+            "permissionRuntimeState", Map.of(
+                "approvalPolicy", Map.of("mode", "UNLESS_TRUSTED"),
+                "activePermissionProfile", Map.of("id", ":workspace-write"),
+                "legacyBehavior", Map.of(
+                    "defaultBashRequiresEscalation", false,
+                    "allowExplicitEscalationWithoutPrompt", false,
+                    "hardSafetyEnabled", false
+                ),
+                "legacyPermissionMode", "DEFAULT_EXECUTE"
+            )
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(agentCenter.continueRequest.permissionRuntimeStateSpecified());
+        assertEquals(runtimeState, agentCenter.continueRequest.permissionRuntimeState());
     }
 
     @Test
@@ -570,6 +643,15 @@ class SubagentToolsTest {
                 "permissionMode", PermissionMode.DEFAULT_EXECUTE,
                 "parentEntryId", "entry_tool_call"
             )
+        );
+    }
+
+    private PermissionRuntimeState customPermissionRuntimeState() {
+        return new PermissionRuntimeState(
+            new ApprovalPolicy(ApprovalMode.UNLESS_TRUSTED),
+            new ActivePermissionProfile(":workspace-write"),
+            new LegacyPermissionBehavior(false, false, false),
+            PermissionMode.DEFAULT_EXECUTE
         );
     }
 

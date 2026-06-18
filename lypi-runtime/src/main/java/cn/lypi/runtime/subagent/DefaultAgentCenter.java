@@ -4,7 +4,6 @@ import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
-import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
@@ -39,9 +38,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSnapshotProvider {
-    private static final PermissionRuntimeState DEFAULT_PERMISSION_RUNTIME_STATE =
-        PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
-
     private final List<String> command;
     private final ChildSessionPort childSessions;
     private final SessionManagerPort parentSession;
@@ -206,7 +202,9 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         }
         String parentContinueEntryId = "entry_continue_" + randomId();
         RunningAgent running = existing.withParentSpawnEntryId(parentContinueEntryId).withHandle(null);
-        applyContinueContextChanges(existing, request);
+        SessionManagerPort childSession = sessionManagerFactory.open(existing.parentCwd(), existing.childSessionId());
+        PermissionRuntimeState effectivePermissionRuntimeState = effectiveContinuePermissionRuntimeState(childSession, request);
+        applyContinueContextChanges(childSession, request);
         parentSession.append(new AgentLifecycleEntry(
             parentContinueEntryId,
             request.parentEntryId(),
@@ -226,7 +224,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             request.cwd() == null ? parentCwd : request.cwd(),
             request.allowedTools(),
             request.toolPolicy(),
-            request.permissionRuntimeState(),
+            effectivePermissionRuntimeState,
             request.timeoutSeconds(),
             HeadlessSubagentRunMode.CONTINUE,
             List.of()
@@ -252,14 +250,23 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         }
     }
 
-    private void applyContinueContextChanges(RunningAgent existing, SubagentContinueRequest request) {
+    private PermissionRuntimeState effectiveContinuePermissionRuntimeState(
+        SessionManagerPort childSession,
+        SubagentContinueRequest request
+    ) {
+        if (request.permissionRuntimeStateSpecified()) {
+            return request.permissionRuntimeState();
+        }
+        return childSession.context(childSession.currentView().leafId()).permissionRuntimeState();
+    }
+
+    private void applyContinueContextChanges(SessionManagerPort childSession, SubagentContinueRequest request) {
         if (request.model().isEmpty()
             && request.thinkingLevel().isEmpty()
             && request.agentMode().isEmpty()
-            && isDefaultPermissionRuntimeState(request.permissionRuntimeState())) {
+            && !request.permissionRuntimeStateSpecified()) {
             return;
         }
-        SessionManagerPort childSession = sessionManagerFactory.open(existing.parentCwd(), existing.childSessionId());
         String parentId = childSession.currentView().leafId();
         Instant now = Instant.now(clock);
         if (request.model().isPresent()) {
@@ -277,14 +284,10 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             childSession.append(new ModeChangeEntry(entryId, parentId, request.agentMode().orElseThrow(), "subagent continue mode", now));
             parentId = entryId;
         }
-        if (!isDefaultPermissionRuntimeState(request.permissionRuntimeState())) {
+        if (request.permissionRuntimeStateSpecified()) {
             String entryId = "entry_permission_" + randomId();
             childSession.append(new PermissionRuntimeStateChangeEntry(entryId, parentId, request.permissionRuntimeState(), now));
         }
-    }
-
-    private boolean isDefaultPermissionRuntimeState(PermissionRuntimeState permissionRuntimeState) {
-        return DEFAULT_PERMISSION_RUNTIME_STATE.equals(permissionRuntimeState);
     }
 
     @Override

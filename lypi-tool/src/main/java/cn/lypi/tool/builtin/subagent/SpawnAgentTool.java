@@ -53,6 +53,8 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
         properties.put("thinking", thinkingLevelSchema());
         properties.put("mode", agentModeSchema());
         properties.put("agentMode", agentModeSchema());
+        properties.put("permissionRuntimeState", permissionRuntimeStateSchema());
+        properties.put("permission_runtime_state", permissionRuntimeStateSchema());
         properties.put("permissionMode", permissionModeSchema());
         properties.put("permission_mode", permissionModeSchema());
         return new JsonSchema(Map.of(
@@ -79,14 +81,14 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
                 cwd(input, context),
                 toolPolicy.effectiveTools(),
                 toolPolicy,
-                permissionMode(input, context),
+                permissionRuntimeState(input),
                 timeoutSeconds(input),
                 optionalStringInput(input, "agentName", "agent_name"),
                 optionalStringInput(input, "role", "agentRole", "agent_role"),
                 model(input),
                 thinkingLevel(input),
                 agentMode(input),
-                value(input, "permissionMode", "permission_mode") != null
+                permissionRuntimeStateSpecified(input)
             ));
             if (result.status() == SubagentRunStatus.FAILED) {
                 return error(context, result.message().orElse("subagent 启动失败。"));

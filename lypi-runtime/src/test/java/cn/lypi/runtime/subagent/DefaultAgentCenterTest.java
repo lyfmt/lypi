@@ -235,6 +235,39 @@ class DefaultAgentCenterTest {
     }
 
     @Test
+    void spawnLegacyPermissionModeConstructorStillMarksPermissionAsExplicitOverride() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        parentSession.sessionContext = new SessionContext(
+            List.of(),
+            List.of(),
+            List.of(),
+            new ModelSelection("parent-provider", "parent-model", ThinkingLevel.MAX),
+            ThinkingLevel.MAX,
+            AgentMode.PLAN,
+            PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS)
+        );
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultAgentCenter center = center(childSessions, parentSession, processRunner);
+
+        center.spawn(new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请审查代码",
+            tempDir,
+            List.of(),
+            PermissionMode.ACCEPT_EDITS,
+            30,
+            Optional.empty(),
+            Optional.empty()
+        ));
+
+        PermissionRuntimeState explicitRuntimeState = PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS);
+        assertThat(childSessions.request.permissionRuntimeState()).contains(explicitRuntimeState);
+        assertThat(processRunner.input.permissionRuntimeState()).isEqualTo(explicitRuntimeState);
+    }
+
+    @Test
     void spawnUsesCanonicalPermissionRuntimeStateFromJsonRequestWithoutLegacySpecifiedFlag() throws Exception {
         CapturingChildSessions childSessions = new CapturingChildSessions();
         CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
@@ -337,6 +370,127 @@ class DefaultAgentCenterTest {
             .isInstanceOfSatisfying(PermissionRuntimeStateChangeEntry.class, entry -> {
                 assertThat(entry.parentId()).isEqualTo("entry_child_leaf");
                 assertThat(entry.permissionRuntimeState()).isEqualTo(runtimeState);
+            });
+    }
+
+    @Test
+    void continueRunInheritsCurrentChildPermissionRuntimeStateWhenPermissionIsOmitted() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        PermissionRuntimeState childRuntimeState = customPermissionRuntimeState();
+        CapturingParentSession childSession = new CapturingParentSession("ses_child", "entry_child_leaf");
+        childSession.sessionContext = new SessionContext(
+            List.of(),
+            List.of(),
+            List.of(),
+            new ModelSelection("child-provider", "child-model", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            childRuntimeState
+        );
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            (cwd, sessionId) -> "ses_parent".equals(sessionId) ? parentSession : childSession,
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "第一轮"));
+        processRunner.complete(new HeadlessSubagentOutput(
+            spawned.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "第一轮完成",
+            Optional.of("entry_final_1"),
+            Optional.empty()
+        ));
+
+        center.continueRun(new SubagentContinueRequest(
+            "ses_parent",
+            "entry_parent_continue",
+            spawned.childSessionId(),
+            "第二轮",
+            tempDir,
+            List.of(),
+            30
+        ));
+
+        assertThat(processRunner.input.permissionRuntimeState()).isEqualTo(childRuntimeState);
+        assertThat(childSession.entries).isEmpty();
+    }
+
+    @Test
+    void continueRunExplicitDefaultPermissionRuntimeStateAppendsChangeEntryToClearChildState() {
+        CapturingChildSessions childSessions = new CapturingChildSessions();
+        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_parent");
+        PermissionRuntimeState childRuntimeState = customPermissionRuntimeState();
+        CapturingParentSession childSession = new CapturingParentSession("ses_child", "entry_child_leaf");
+        childSession.sessionContext = new SessionContext(
+            List.of(),
+            List.of(),
+            List.of(),
+            new ModelSelection("child-provider", "child-model", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            childRuntimeState
+        );
+        CompletingProcessRunner processRunner = new CompletingProcessRunner();
+        DefaultMailboxService mailbox = new DefaultMailboxService(
+            new JsonlMailboxStore(tempDir),
+            parentSession,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        DefaultAgentCenter center = new DefaultAgentCenter(
+            List.of("lypi", "headless-subagent"),
+            childSessions,
+            parentSession,
+            tempDir,
+            (cwd, sessionId) -> "ses_parent".equals(sessionId) ? parentSession : childSession,
+            processRunner,
+            mailbox,
+            new MailboxDeliveryService(mailbox, ignored -> false),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        SubagentSpawnResult spawned = center.spawn(request("ses_parent", "entry_parent", "第一轮"));
+        processRunner.complete(new HeadlessSubagentOutput(
+            spawned.childSessionId(),
+            SubagentRunStatus.SUCCEEDED,
+            "第一轮完成",
+            Optional.of("entry_final_1"),
+            Optional.empty()
+        ));
+        PermissionRuntimeState defaultRuntimeState = PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
+
+        center.continueRun(new SubagentContinueRequest(
+            "ses_parent",
+            "entry_parent_continue",
+            spawned.childSessionId(),
+            "第二轮",
+            tempDir,
+            List.of(),
+            SubagentToolPolicy.empty(),
+            PermissionMode.DEFAULT_EXECUTE,
+            30,
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty()
+        ));
+
+        assertThat(processRunner.input.permissionRuntimeState()).isEqualTo(defaultRuntimeState);
+        assertThat(childSession.entries)
+            .singleElement()
+            .isInstanceOfSatisfying(PermissionRuntimeStateChangeEntry.class, entry -> {
+                assertThat(entry.parentId()).isEqualTo("entry_child_leaf");
+                assertThat(entry.permissionRuntimeState()).isEqualTo(defaultRuntimeState);
             });
     }
 
@@ -1062,10 +1216,15 @@ class DefaultAgentCenterTest {
             prompt,
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            SubagentToolPolicy.empty(),
+            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
             30,
             Optional.empty(),
-            Optional.empty()
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            false
         );
     }
 

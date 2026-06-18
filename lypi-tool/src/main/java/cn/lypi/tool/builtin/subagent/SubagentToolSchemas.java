@@ -29,6 +29,13 @@ final class SubagentToolSchemas {
         );
     }
 
+    static Map<String, Object> permissionRuntimeStateSchema() {
+        return Map.of(
+            "type", "object",
+            "description", "子 Agent canonical 权限运行态。新协议优先使用该字段；permissionMode 仅作为兼容旧入口。"
+        );
+    }
+
     static Map<String, Object> agentModeSchema() {
         return Map.of(
             "type", "string",

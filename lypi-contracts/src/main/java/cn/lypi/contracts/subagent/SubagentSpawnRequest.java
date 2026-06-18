@@ -56,7 +56,7 @@ public record SubagentSpawnRequest(
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),
-            false
+            true
         );
     }
 
@@ -86,7 +86,7 @@ public record SubagentSpawnRequest(
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),
-            false
+            true
         );
     }
 

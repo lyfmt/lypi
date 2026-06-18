@@ -523,6 +523,24 @@ class ContractSerializationTest {
     }
 
     @Test
+    void subagentSpawnLegacyPermissionModeConstructorMarksPermissionExplicit() {
+        SubagentSpawnRequest request = new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "请检查 contracts",
+            Path.of("/tmp/project"),
+            List.of("read"),
+            PermissionMode.ACCEPT_EDITS,
+            120,
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS), request.permissionRuntimeState());
+        assertTrue(request.permissionModeSpecified());
+    }
+
+    @Test
     void subagentSpawnRequestJsonWithCanonicalPermissionStateMarksPermissionExplicit() throws Exception {
         String json = """
             {
