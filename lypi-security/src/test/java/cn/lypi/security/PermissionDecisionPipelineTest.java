@@ -7,6 +7,7 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
@@ -141,6 +142,22 @@ class PermissionDecisionPipelineTest {
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
         assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
         assertThat(decision.message()).contains("strictAutoReview");
+    }
+
+    @Test
+    void permissionRuntimeStateMetadataSupersedesLegacyPermissionModeMetadata() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("bash", Map.of("command", "git push origin feature/security")),
+            context(
+                PermissionMode.DEFAULT_EXECUTE,
+                Map.of("permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS))
+            )
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
     }
 
     private ToolUseRequest request(String toolName, Map<String, Object> input) {

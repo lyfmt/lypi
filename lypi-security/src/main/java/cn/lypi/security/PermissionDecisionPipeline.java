@@ -7,6 +7,7 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -23,6 +24,7 @@ import java.util.regex.Pattern;
  */
 public final class PermissionDecisionPipeline {
     private static final String METADATA_AGENT_MODE = "agentMode";
+    private static final String METADATA_PERMISSION_RUNTIME_STATE = "permissionRuntimeState";
     private static final String METADATA_PERMISSION_MODE = "permissionMode";
     private static final String METADATA_PERMISSION_RULES = "permissionRules";
     private static final String METADATA_STRICT_AUTO_REVIEW = "strictAutoReview";
@@ -409,6 +411,10 @@ public final class PermissionDecisionPipeline {
     }
 
     private PermissionMode permissionMode(ToolUseContext context) {
+        Object runtimeStateValue = context.metadata().get(METADATA_PERMISSION_RUNTIME_STATE);
+        if (runtimeStateValue instanceof PermissionRuntimeState runtimeState) {
+            return runtimeState.legacyPermissionMode();
+        }
         Object value = context.metadata().get(METADATA_PERMISSION_MODE);
         if (value instanceof PermissionMode permissionMode) {
             return permissionMode;

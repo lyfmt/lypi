@@ -4,6 +4,7 @@ import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
@@ -19,6 +20,7 @@ import java.util.Objects;
 public final class ToolRuntimeContextFactory {
     static final String METADATA_AGENT_MODE = "agentMode";
     static final String METADATA_PERMISSION_MODE = "permissionMode";
+    static final String METADATA_PERMISSION_RUNTIME_STATE = "permissionRuntimeState";
 
     private final ToolRuntimeOptions options;
 
@@ -44,10 +46,14 @@ public final class ToolRuntimeContextFactory {
         Objects.requireNonNull(request, "request must not be null");
         Map<String, Object> metadata = new LinkedHashMap<>();
         AgentMode agentMode = context == null ? AgentMode.EXECUTE : context.mode();
-        PermissionMode permissionMode = context == null ? PermissionMode.DEFAULT_EXECUTE : context.permissionMode();
-        metadata.put(METADATA_AGENT_MODE, agentMode);
-        metadata.put(METADATA_PERMISSION_MODE, permissionMode);
+        PermissionRuntimeState permissionRuntimeState = context == null
+            ? PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE)
+            : context.permissionRuntimeState();
+        PermissionMode permissionMode = permissionRuntimeState.legacyPermissionMode();
         metadata.putAll(options.metadata());
+        metadata.put(METADATA_AGENT_MODE, agentMode);
+        metadata.put(METADATA_PERMISSION_RUNTIME_STATE, permissionRuntimeState);
+        metadata.put(METADATA_PERMISSION_MODE, permissionMode);
         String turnId = invocation == null ? null : invocation.turnId();
         if (turnId != null && !turnId.isBlank()) {
             metadata.put("turnId", turnId);
