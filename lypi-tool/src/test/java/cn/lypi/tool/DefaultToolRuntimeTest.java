@@ -33,6 +33,7 @@ import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionGrantScope;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.security.PermissionRule;
@@ -287,12 +288,13 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void allowAndRememberAppendsExecPolicyRuleAndUpdatesRuntimeMemory() throws Exception {
+    void allowAndRememberAppendsPermissionAmendmentAndUpdatesRuntimeMemory() {
         AtomicInteger gateCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
             gateCalls.incrementAndGet();
             return PermissionGateResult.allow(decision.suggestedUpdate());
         };
+        FilePermissionAmendmentStore amendmentStore = new FilePermissionAmendmentStore(tempDir);
         DefaultToolRuntime runtime = new DefaultToolRuntime(
             new DefaultToolRegistry(),
             new ToolSchemaValidator(),
@@ -303,7 +305,7 @@ class DefaultToolRuntimeTest {
             prefixMemorySecurity(),
             gate,
             ToolExecutionEventPublisher.noop(),
-            new FilePermissionUpdateStore(tempDir)
+            amendmentStore
         );
         AtomicInteger executeCalls = new AtomicInteger();
         runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
@@ -317,7 +319,7 @@ class DefaultToolRuntimeTest {
         ToolUseRequest second = new ToolUseRequest(
             "toolu_2",
             "bash",
-            Map.of("command", "go test ./...", "text", "second"),
+            Map.of("command", "go test ./...", "text", "second", "prefix_rule", List.of("go", "test")),
             "msg_1"
         );
 
@@ -328,8 +330,62 @@ class DefaultToolRuntimeTest {
         assertFalse(secondResult.isError());
         assertEquals(1, gateCalls.get());
         assertEquals(2, executeCalls.get());
-        String rules = Files.readString(tempDir.resolve("rules/default.rules"));
-        assertTrue(rules.contains("prefix_rule(pattern=[\"go\", \"test\"], decision=\"allow\")"));
+        assertEquals(List.of(prefixUpdate("go test")), amendmentStore.readPermissionUpdates(PermissionGrantScope.SESSION));
+        assertFalse(Files.exists(tempDir.resolve("rules/default.rules")));
+    }
+
+    @Test
+    void rememberedPermissionAmendmentDoesNotLeakAcrossSessions() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            if ("ses_1".equals(context.sessionId())) {
+                return PermissionGateResult.allow(decision.suggestedUpdate());
+            }
+            return PermissionGateResult.allow();
+        };
+        FilePermissionAmendmentStore amendmentStore = new FilePermissionAmendmentStore(tempDir);
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            ToolExecutionInterceptors.noop(),
+            prefixMemorySecurity(),
+            gate,
+            ToolExecutionEventPublisher.noop(),
+            amendmentStore
+        );
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, new AtomicInteger()));
+
+        ToolUseRequest first = new ToolUseRequest(
+            "toolu_1",
+            "bash",
+            Map.of("command", "go test ./...", "text", "first", "prefix_rule", List.of("go", "test")),
+            "msg_1"
+        );
+        ToolUseRequest second = new ToolUseRequest(
+            "toolu_2",
+            "bash",
+            Map.of("command", "go test ./...", "text", "second", "prefix_rule", List.of("go", "test")),
+            "msg_1"
+        );
+
+        runtime.execute(
+            List.of(first),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1")
+        );
+        runtime.execute(
+            List.of(second),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_2", "turn_2")
+        );
+
+        assertEquals(2, gateCalls.get());
+        assertEquals(List.of(prefixUpdate("go test")), amendmentStore.readPermissionUpdates(PermissionGrantScope.SESSION, "ses_1"));
+        assertTrue(amendmentStore.readPermissionUpdates(PermissionGrantScope.SESSION, "ses_2").isEmpty());
     }
 
     @Test

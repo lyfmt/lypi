@@ -37,6 +37,7 @@ import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.transport.TransportAdapter;
@@ -65,7 +66,6 @@ import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
-import cn.lypi.security.DefaultPolicyEngine;
 import cn.lypi.security.ExecPolicyRuleFileReader;
 import cn.lypi.session.ChildSessionService;
 import cn.lypi.session.ChildSessionView;
@@ -77,6 +77,7 @@ import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransport;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
+import cn.lypi.tool.FilePermissionAmendmentStore;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -101,7 +102,8 @@ final class RuntimeBeanFactories {
 
     static SecurityRuntimePort securityRuntime(LyPiRuntimeProperties properties) {
         Path rulesFile = properties.getCwd().resolve("rules").resolve("default.rules");
-        return new DefaultPolicyEngine(new ExecPolicyRuleFileReader().read(rulesFile));
+        List<PermissionRule> legacyRules = new ExecPolicyRuleFileReader().read(rulesFile);
+        return new AmendmentAwareSecurityRuntime(legacyRules, new FilePermissionAmendmentStore(properties.getCwd()));
     }
 
     static SessionManagerPort sessionManager(LyPiRuntimeProperties properties) {

@@ -10,7 +10,6 @@ import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -19,17 +18,6 @@ import java.util.Optional;
 final class BashPrefixPolicy {
     static final String PATTERN_PREFIX = "prefix:";
 
-    private static final List<List<String>> BANNED_PREFIXES = List.of(
-        List.of("bash", "-lc"),
-        List.of("bash"),
-        List.of("sh"),
-        List.of("sh", "-c"),
-        List.of("zsh"),
-        List.of("zsh", "-c"),
-        List.of("python"),
-        List.of("python3"),
-        List.of("git")
-    );
     private final BashCommandNormalizer normalizer;
 
     BashPrefixPolicy(BashCommandNormalizer normalizer) {
@@ -120,8 +108,8 @@ final class BashPrefixPolicy {
     }
 
     private Optional<List<String>> validPrefix(List<String> tokens) {
-        List<String> normalized = normalizeTokens(tokens);
-        if (normalized.size() < 2 || isBanned(normalized)) {
+        List<String> normalized = BashPrefixRuleValidator.normalizeTokens(tokens);
+        if (!BashPrefixRuleValidator.isValid(normalized)) {
             return Optional.empty();
         }
         return Optional.of(List.copyOf(normalized));
@@ -157,32 +145,14 @@ final class BashPrefixPolicy {
         }
         List<List<String>> segments = new ArrayList<>();
         for (String parsedCommand : bashRisk.parsedCommands()) {
-            List<String> tokens = normalizeTokens(List.of(normalizer.stripSafeWrappers(parsedCommand).split("\\s+")));
+            List<String> tokens = BashPrefixRuleValidator.normalizeTokens(
+                List.of(normalizer.stripSafeWrappers(parsedCommand).split("\\s+"))
+            );
             if (!tokens.isEmpty()) {
                 segments.add(tokens);
             }
         }
         return List.copyOf(segments);
-    }
-
-    private List<String> normalizeTokens(List<String> tokens) {
-        List<String> normalized = new ArrayList<>();
-        for (String token : tokens) {
-            if (token == null || token.isBlank()) {
-                continue;
-            }
-            normalized.add(token.trim().toLowerCase(Locale.ROOT));
-        }
-        return normalized;
-    }
-
-    private boolean isBanned(List<String> prefix) {
-        for (List<String> bannedPrefix : BANNED_PREFIXES) {
-            if (prefix.equals(bannedPrefix)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private PermissionUpdate update(List<String> prefix, String reason) {

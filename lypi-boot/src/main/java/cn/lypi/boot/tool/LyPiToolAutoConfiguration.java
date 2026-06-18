@@ -14,7 +14,8 @@ import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.tool.BlockingPermissionGate;
 import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.EventPublishingPermissionGate;
-import cn.lypi.tool.FilePermissionUpdateStore;
+import cn.lypi.tool.FilePermissionAmendmentStore;
+import cn.lypi.tool.PermissionUpdateStore;
 import cn.lypi.tool.FilteredToolRuntime;
 import cn.lypi.tool.MemoryConsolidationToolRuntime;
 import cn.lypi.tool.MemoryConsolidationWritePolicy;
@@ -172,7 +173,7 @@ public class LyPiToolAutoConfiguration {
                     securityRuntime,
                     runtimeResponseGate,
                     runtimePromptPort,
-                    new FilePermissionUpdateStore(runtimeCwd)
+                    new FilePermissionAmendmentStore(runtimeCwd)
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
                 AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
@@ -283,7 +284,7 @@ public class LyPiToolAutoConfiguration {
         SecurityRuntimePort securityRuntime,
         PermissionResponseGate responseGate,
         PermissionPromptPort promptPort,
-        FilePermissionUpdateStore permissionUpdateStore
+        PermissionUpdateStore permissionUpdateStore
     ) {
         if (eventBus != null && responseGate != null) {
             return new DefaultToolRuntime(

@@ -43,6 +43,25 @@ final class ToolPermissionCoordinator {
         this.bashSandboxRiskPolicy = bashSandboxRiskPolicy == null ? new BashSandboxRiskPolicy() : bashSandboxRiskPolicy;
     }
 
+    ToolPermissionCoordinator(
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        PermissionUpdateStore permissionUpdateStore,
+        RuntimePermissionRuleStore runtimePermissionRules,
+        SandboxEscalationPolicy sandboxEscalationPolicy,
+        BashSandboxRiskPolicy bashSandboxRiskPolicy
+    ) {
+        this.securityRuntime = securityRuntime;
+        this.approvalCoordinator = new ApprovalCoordinator(
+            permissionGate,
+            permissionUpdateStore,
+            runtimePermissionRules,
+            new ApprovalRequestFactory()
+        );
+        this.sandboxEscalationPolicy = sandboxEscalationPolicy == null ? new SandboxEscalationPolicy() : sandboxEscalationPolicy;
+        this.bashSandboxRiskPolicy = bashSandboxRiskPolicy == null ? new BashSandboxRiskPolicy() : bashSandboxRiskPolicy;
+    }
+
     Result authorize(
         ToolUseRequest request,
         Tool<Map<String, Object>, ?> tool,

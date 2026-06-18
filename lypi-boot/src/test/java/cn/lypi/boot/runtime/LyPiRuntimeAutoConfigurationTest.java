@@ -60,7 +60,12 @@ import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionGrantScope;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.tui.BranchSummaryOffer;
 import cn.lypi.contracts.session.ChildSessionRequest;
@@ -104,11 +109,11 @@ import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
-import cn.lypi.security.DefaultPolicyEngine;
 import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
+import cn.lypi.tool.FilePermissionAmendmentStore;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.MemoryConsolidationToolRuntime;
@@ -266,7 +271,7 @@ class LyPiRuntimeAutoConfigurationTest {
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(SecurityRuntimePort.class);
-                assertThat(context.getBean(SecurityRuntimePort.class)).isInstanceOf(DefaultPolicyEngine.class);
+                assertThat(context.getBean(SecurityRuntimePort.class)).isInstanceOf(AmendmentAwareSecurityRuntime.class);
                 assertThat(context).hasSingleBean(SessionManagerPort.class);
                 assertThat(context).hasSingleBean(ResourceRuntimePort.class);
                 assertThat(context).hasSingleBean(AiProviderRuntimePort.class);
@@ -304,6 +309,41 @@ class LyPiRuntimeAutoConfigurationTest {
                 );
 
                 assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+            });
+    }
+
+    @Test
+    void defaultSecurityRuntimeLoadsPermissionAmendmentsFromRuntimeCwd() {
+        FilePermissionAmendmentStore store = new FilePermissionAmendmentStore(tempDir);
+        store.appendPermissionUpdate(
+            new PermissionUpdate(
+                PermissionRuleSource.USER,
+                new PermissionRule(
+                    PermissionRuleSource.USER,
+                    PermissionBehavior.ALLOW,
+                    new PermissionRuleValue("bash", "prefix:cargo build"),
+                    "允许 Bash prefix: cargo build"
+                )
+            ),
+            PermissionGrantScope.SESSION,
+            "ses_1"
+        );
+
+        runtimeConfiguration()
+            .run(context -> {
+                SecurityRuntimePort security = context.getBean(SecurityRuntimePort.class);
+
+                PermissionDecision decision = security.decide(
+                    new ToolUseRequest("toolu_1", "bash", Map.of("command", "cargo build --workspace"), "msg_1"),
+                    new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.DEFAULT_EXECUTE))
+                );
+
+                assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+                PermissionDecision otherSessionDecision = security.decide(
+                    new ToolUseRequest("toolu_2", "bash", Map.of("command", "cargo build --workspace"), "msg_1"),
+                    new ToolUseContext("ses_2", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.DEFAULT_EXECUTE))
+                );
+                assertThat(otherSessionDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
             });
     }
 

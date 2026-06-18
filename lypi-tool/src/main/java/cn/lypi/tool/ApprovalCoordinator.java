@@ -7,6 +7,7 @@ import cn.lypi.contracts.security.ApprovalPolicy;
 import cn.lypi.contracts.security.GranularApprovalPolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionGrantScope;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
@@ -25,13 +26,27 @@ import java.util.Optional;
 public final class ApprovalCoordinator {
     private final PermissionGate permissionGate;
     private final PermissionUpdateStore permissionUpdateStore;
-    private final List<PermissionRule> runtimePermissionRules;
+    private final RuntimePermissionRuleStore runtimePermissionRules;
     private final ApprovalRequestFactory requestFactory;
 
     public ApprovalCoordinator(
         PermissionGate permissionGate,
         PermissionUpdateStore permissionUpdateStore,
         List<PermissionRule> runtimePermissionRules,
+        ApprovalRequestFactory requestFactory
+    ) {
+        this(
+            permissionGate,
+            permissionUpdateStore,
+            new RuntimePermissionRuleStore(runtimePermissionRules),
+            requestFactory
+        );
+    }
+
+    public ApprovalCoordinator(
+        PermissionGate permissionGate,
+        PermissionUpdateStore permissionUpdateStore,
+        RuntimePermissionRuleStore runtimePermissionRules,
         ApprovalRequestFactory requestFactory
     ) {
         this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
@@ -62,7 +77,7 @@ public final class ApprovalCoordinator {
         PermissionGateResult result = permissionGate.request(request, tool, context, decision);
         PermissionGateResult safeResult = result == null ? PermissionGateResult.deny("权限请求未获允许。") : result;
         if (safeResult.status() == PermissionGateResult.Status.ALLOW) {
-            safeResult.permissionUpdate().ifPresent(this::applyPermissionUpdate);
+            safeResult.permissionUpdate().ifPresent(update -> applyPermissionUpdate(update, context));
         }
         return safeResult;
     }
@@ -81,14 +96,28 @@ public final class ApprovalCoordinator {
         return resolve(request, tool, context, decision);
     }
 
-    private void applyPermissionUpdate(PermissionUpdate update) {
+    private void applyPermissionUpdate(PermissionUpdate update, ToolUseContext context) {
         if (update == null) {
             return;
         }
-        permissionUpdateStore.append(update);
-        if (update.rule() != null) {
-            runtimePermissionRules.add(update.rule());
+        if (permissionUpdateStore instanceof PermissionAmendmentStore amendmentStore) {
+            amendmentStore.appendPermissionUpdate(
+                update,
+                PermissionGrantScope.SESSION,
+                context.sessionId(),
+                turnId(context)
+            );
+        } else {
+            permissionUpdateStore.append(update);
         }
+        if (update.rule() != null) {
+            runtimePermissionRules.add(context.sessionId(), update.rule());
+        }
+    }
+
+    private String turnId(ToolUseContext context) {
+        Object value = context.metadata().get("turnId");
+        return value == null ? null : value.toString();
     }
 
     private ApprovalDecision evaluatePolicy(ToolUseContext context, ApprovalKind approvalKind) {

@@ -23,7 +23,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 默认工具运行时。
@@ -44,7 +43,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final SecurityRuntimePort securityRuntime;
     private final PermissionGate permissionGate;
     private final PermissionUpdateStore permissionUpdateStore;
-    private final List<PermissionRule> runtimePermissionRules = new CopyOnWriteArrayList<>();
+    private final RuntimePermissionRuleStore runtimePermissionRules = new RuntimePermissionRuleStore();
     private final ToolExecutionEventPublisher eventPublisher;
     private final ToolLifecycleReporter lifecycleReporter;
     private final ToolResultFactory resultFactory;
@@ -665,7 +664,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     ) {
         Map<String, Object> metadata = new LinkedHashMap<>(context.metadata());
         metadata.put(METADATA_TOOL_USE_ID, toolUseId);
-        if (!runtimePermissionRules.isEmpty()) {
+        List<PermissionRule> sessionRules = runtimePermissionRules.rulesFor(context.sessionId());
+        if (!sessionRules.isEmpty()) {
             List<PermissionRule> effectiveRules = new ArrayList<>();
             Object metadataRules = metadata.get("permissionRules");
             if (metadataRules instanceof Iterable<?> iterable) {
@@ -675,7 +675,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                     }
                 }
             }
-            effectiveRules.addAll(runtimePermissionRules);
+            effectiveRules.addAll(sessionRules);
             metadata.put("permissionRules", List.copyOf(effectiveRules));
         }
         if (!Objects.equals(originalToolName, canonicalToolName)) {

@@ -48,10 +48,10 @@ public final class ExecPolicyRuleFileReader {
             return java.util.Optional.empty();
         }
         List<String> tokens = tokens(matcher.group("pattern"));
-        if (tokens.size() < 2) {
+        if (!BashPrefixRuleValidator.isValid(tokens)) {
             return java.util.Optional.empty();
         }
-        String pattern = BashPrefixPolicy.PATTERN_PREFIX + String.join(" ", tokens);
+        String pattern = BashPrefixPolicy.PATTERN_PREFIX + String.join(" ", BashPrefixRuleValidator.normalizeTokens(tokens));
         return java.util.Optional.of(new PermissionRule(
             PermissionRuleSource.USER,
             PermissionBehavior.ALLOW,
