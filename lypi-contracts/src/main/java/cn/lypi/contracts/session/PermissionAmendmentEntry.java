@@ -2,7 +2,6 @@ package cn.lypi.contracts.session;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonGetter;
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import cn.lypi.contracts.security.NetworkPolicyAmendment;
 import cn.lypi.contracts.security.PermissionAmendment;
@@ -16,7 +15,7 @@ import java.util.Optional;
 public record PermissionAmendmentEntry(
     String id,
     String parentId,
-    @JsonIgnore
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     PermissionAmendment permissionAmendment,
     Instant timestamp
 ) implements SessionEntry {

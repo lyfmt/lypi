@@ -137,6 +137,35 @@ class PermissionRuntimeStateEntryTest {
     }
 
     @Test
+    void permissionAmendmentEntryReadsCanonicalNestedJsonPayload() throws Exception {
+        String json = """
+            {
+              "type": "permission_amendment",
+              "id": "entry_permission_amendment",
+              "parentId": "entry_parent",
+              "permissionAmendment": {
+                "permissionUpdate": null,
+                "networkPolicyAmendment": {
+                  "networkPolicy": {
+                    "mode": "ENABLED"
+                  }
+                }
+              },
+              "timestamp": "2026-06-17T00:00:00Z"
+            }
+            """;
+
+        PermissionAmendmentEntry restored = assertInstanceOf(
+            PermissionAmendmentEntry.class,
+            mapper.readValue(json, SessionEntry.class)
+        );
+
+        assertEquals(Optional.empty(), restored.permissionUpdate());
+        assertTrue(restored.networkPolicyAmendment().isPresent());
+        assertEquals(restored.networkPolicyAmendment(), restored.permissionAmendment().networkPolicyAmendment());
+    }
+
+    @Test
     void permissionAmendmentEntryRejectsJsonWithEmptyPayloads() {
         String json = """
             {
