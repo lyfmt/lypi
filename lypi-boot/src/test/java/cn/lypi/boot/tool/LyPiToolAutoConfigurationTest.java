@@ -37,6 +37,9 @@ import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.FileSystemPolicyKind;
+import cn.lypi.contracts.security.NetworkPolicyMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -66,6 +69,7 @@ import cn.lypi.tool.shell.ExecutorRegistry;
 import cn.lypi.tool.shell.HostExecutor;
 import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
+import cn.lypi.security.PermissionProfileConfigCompiler;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -159,6 +163,106 @@ class LyPiToolAutoConfigurationTest {
 
                 assertThat(policy.autoAllowBashIfSandboxed()).isFalse();
             });
+    }
+
+    @Test
+    void bindsCodexStylePermissionsConfigAndUsesCompiledProfileResolver() {
+        Path extraRoot = Path.of("/tmp/lypi-extra-root").toAbsolutePath().normalize();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.permissions.default-permissions=dev",
+                "lypi.permissions.approval-policy.mode=granular",
+                "lypi.permissions.approval-policy.granular.sandbox-approval=on_request",
+                "lypi.permissions.approval-policy.granular.rules=never",
+                "lypi.permissions.approval-policy.granular.skill-approval=on_request",
+                "lypi.permissions.approval-policy.granular.request-permissions=on_request",
+                "lypi.permissions.approval-policy.granular.mcp-elicitations=never",
+                "lypi.permissions.profiles.dev.description=Developer profile",
+                "lypi.permissions.profiles.dev.extends-profile=:workspace",
+                "lypi.permissions.profiles.dev.workspace-roots[0]=" + extraRoot,
+                "lypi.permissions.profiles.dev.file-system.kind=restricted",
+                "lypi.permissions.profiles.dev.file-system.entries[0].path.kind=special",
+                "lypi.permissions.profiles.dev.file-system.entries[0].path.value=:root",
+                "lypi.permissions.profiles.dev.file-system.entries[0].access=read",
+                "lypi.permissions.profiles.dev.file-system.entries[1].path.kind=exact_path",
+                "lypi.permissions.profiles.dev.file-system.entries[1].path.value=/tmp/lypi-cache",
+                "lypi.permissions.profiles.dev.file-system.entries[1].access=write",
+                "lypi.permissions.profiles.dev.network.mode=enabled"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                assertThat(context).hasSingleBean(LyPiPermissionsProperties.class);
+                assertThat(context).hasSingleBean(PermissionProfileConfigCompiler.class);
+
+                LyPiPermissionsProperties properties = context.getBean(LyPiPermissionsProperties.class);
+                assertThat(properties.getDefaultPermissions()).isEqualTo("dev");
+                assertThat(properties.getApprovalPolicy().toApprovalPolicy().mode()).isEqualTo(ApprovalMode.GRANULAR);
+                assertThat(properties.getApprovalPolicy().toApprovalPolicy().granularApprovalPolicy().orElseThrow().rules())
+                    .isEqualTo(ApprovalMode.NEVER);
+                assertThat(properties.getProfiles().get("dev").toConfig().workspaceRoots()).contains(extraRoot);
+                assertThat(properties.getProfiles().get("dev").toConfig().fileSystem().orElseThrow().kind())
+                    .isEqualTo(FileSystemPolicyKind.RESTRICTED);
+                assertThat(properties.getProfiles().get("dev").toConfig().network().orElseThrow().mode())
+                    .isEqualTo(NetworkPolicyMode.ENABLED);
+
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+                cn.lypi.contracts.runtime.SandboxRuntimePolicy policy = resolver.resolve(
+                    Path.of(".").toAbsolutePath(),
+                    Path.of(".").toAbsolutePath()
+                );
+
+                assertThat(policy.kind()).isEqualTo(SandboxRuntimePolicyKind.MANAGED);
+                assertThat(policy.networkMode()).isEqualTo(NetworkMode.HOST);
+                assertThat(policy.allowRead()).contains(Path.of("/"));
+                assertThat(policy.allowWrite()).contains(Path.of("/tmp/lypi-cache"));
+                assertThat(policy.allowWrite()).contains(extraRoot);
+            });
+    }
+
+    @Test
+    void explicitPermissionsProfileTakesPrecedenceOverLegacySandboxNetworkMode() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.tool.sandbox.network-mode=host",
+                "lypi.permissions.default-permissions=:read-only"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+
+                cn.lypi.contracts.runtime.SandboxRuntimePolicy policy = resolver.resolve(
+                    Path.of(".").toAbsolutePath(),
+                    Path.of(".").toAbsolutePath()
+                );
+
+                assertThat(policy.networkMode()).isEqualTo(NetworkMode.DISABLED);
+            });
+    }
+
+    @Test
+    void rejectsRelativeOrEscapingPermissionWorkspaceRoots() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.permissions.default-permissions=dev",
+                "lypi.permissions.profiles.dev.extends-profile=:workspace",
+                "lypi.permissions.profiles.dev.workspace-roots[0]=../outside"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> assertThat(context).hasFailed());
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.permissions.default-permissions=dev",
+                "lypi.permissions.profiles.dev.extends-profile=:workspace",
+                "lypi.permissions.profiles.dev.workspace-roots[0]=/tmp/project/../outside"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> assertThat(context).hasFailed());
     }
 
     @Test

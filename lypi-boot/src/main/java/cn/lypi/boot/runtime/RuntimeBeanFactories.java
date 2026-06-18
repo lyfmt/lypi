@@ -16,6 +16,7 @@ import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.DefaultCompactionCoordinator;
 import cn.lypi.agent.compact.DefaultCompactionPlanner;
 import cn.lypi.boot.BootstrapService;
+import cn.lypi.boot.tool.LyPiPermissionsProperties;
 import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.EventBus;
@@ -37,6 +38,8 @@ import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PermissionProfileSelection;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
@@ -67,6 +70,7 @@ import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.security.ExecPolicyRuleFileReader;
+import cn.lypi.security.PermissionProfileConfigCompiler;
 import cn.lypi.session.ChildSessionService;
 import cn.lypi.session.ChildSessionView;
 import cn.lypi.session.DefaultSessionManagerFactory;
@@ -107,12 +111,38 @@ final class RuntimeBeanFactories {
     }
 
     static SessionManagerPort sessionManager(LyPiRuntimeProperties properties) {
+        return sessionManager(properties, PermissionRuntimeState.fromLegacy(properties.getPermissionMode()));
+    }
+
+    static SessionManagerPort sessionManager(
+        LyPiRuntimeProperties properties,
+        LyPiPermissionsProperties permissionsProperties,
+        PermissionProfileConfigCompiler profileConfigCompiler
+    ) {
+        PermissionProfileSelection selection = profileConfigCompiler.compile(
+            permissionsProperties.profileConfigs(),
+            permissionsProperties.getDefaultPermissions()
+        );
+        PermissionRuntimeState legacyState = PermissionRuntimeState.fromLegacy(properties.getPermissionMode());
+        PermissionRuntimeState runtimeState = new PermissionRuntimeState(
+            permissionsProperties.getApprovalPolicy().toApprovalPolicy(),
+            selection.activePermissionProfile(),
+            legacyState.legacyBehavior(),
+            properties.getPermissionMode()
+        );
+        return sessionManager(properties, runtimeState);
+    }
+
+    private static SessionManagerPort sessionManager(
+        LyPiRuntimeProperties properties,
+        PermissionRuntimeState permissionRuntimeState
+    ) {
         return new SessionManagerImpl(
             properties.getCwd(),
             new ModelSelection(properties.getDefaultProvider(), properties.getDefaultModel(), properties.getThinkingLevel()),
             properties.getThinkingLevel(),
             properties.getAgentMode(),
-            properties.getPermissionMode()
+            permissionRuntimeState
         );
     }
 

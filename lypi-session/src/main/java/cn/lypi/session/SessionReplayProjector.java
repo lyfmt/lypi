@@ -34,6 +34,7 @@ final class SessionReplayProjector {
     private final ThinkingLevel defaultThinkingLevel;
     private final AgentMode defaultMode;
     private final PermissionMode defaultPermissionMode;
+    private final PermissionRuntimeState defaultPermissionRuntimeState;
 
     SessionReplayProjector() {
         this(DEFAULT_MODEL, ThinkingLevel.MEDIUM, AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE);
@@ -45,10 +46,28 @@ final class SessionReplayProjector {
         AgentMode defaultMode,
         PermissionMode defaultPermissionMode
     ) {
+        this(
+            defaultModel,
+            defaultThinkingLevel,
+            defaultMode,
+            PermissionRuntimeState.fromLegacy(defaultPermissionMode)
+        );
+    }
+
+    SessionReplayProjector(
+        ModelSelection defaultModel,
+        ThinkingLevel defaultThinkingLevel,
+        AgentMode defaultMode,
+        PermissionRuntimeState defaultPermissionRuntimeState
+    ) {
         this.defaultModel = Objects.requireNonNull(defaultModel, "defaultModel must not be null");
         this.defaultThinkingLevel = Objects.requireNonNull(defaultThinkingLevel, "defaultThinkingLevel must not be null");
         this.defaultMode = Objects.requireNonNull(defaultMode, "defaultMode must not be null");
-        this.defaultPermissionMode = Objects.requireNonNull(defaultPermissionMode, "defaultPermissionMode must not be null");
+        this.defaultPermissionRuntimeState = Objects.requireNonNull(
+            defaultPermissionRuntimeState,
+            "defaultPermissionRuntimeState must not be null"
+        );
+        this.defaultPermissionMode = defaultPermissionRuntimeState.legacyPermissionMode();
     }
 
     SessionContext context(List<SessionEntry> branch) {
@@ -63,9 +82,7 @@ final class SessionReplayProjector {
         PermissionMode permissionMode = childSession
             ? header.initialPermissionMode().orElse(defaultPermissionMode)
             : defaultPermissionMode;
-        PermissionRuntimeState permissionRuntimeState = childSession && header.initialPermissionRuntimeState() != null
-            ? header.initialPermissionRuntimeState()
-            : PermissionRuntimeState.fromLegacy(permissionMode);
+        PermissionRuntimeState permissionRuntimeState = initialPermissionRuntimeState(header, childSession, permissionMode);
         List<AgentMessage> messages = new ArrayList<>();
         List<String> branchEntryIds = new ArrayList<>();
         CompactionEntry latestCompaction = null;
@@ -134,6 +151,27 @@ final class SessionReplayProjector {
 
     PermissionMode defaultPermissionMode() {
         return defaultPermissionMode;
+    }
+
+    PermissionRuntimeState defaultPermissionRuntimeState() {
+        return defaultPermissionRuntimeState;
+    }
+
+    private PermissionRuntimeState initialPermissionRuntimeState(
+        SessionHeader header,
+        boolean childSession,
+        PermissionMode permissionMode
+    ) {
+        if (!childSession) {
+            return defaultPermissionRuntimeState;
+        }
+        if (header.initialPermissionRuntimeState() != null) {
+            return header.initialPermissionRuntimeState();
+        }
+        if (header.initialPermissionMode().isPresent()) {
+            return PermissionRuntimeState.fromLegacy(permissionMode);
+        }
+        return defaultPermissionRuntimeState;
     }
 
     private List<AgentMessage> applyCompaction(

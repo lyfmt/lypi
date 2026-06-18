@@ -57,6 +57,7 @@ import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.ApprovalMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -165,6 +166,34 @@ class LyPiRuntimeAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasSingleBean(EventBus.class);
                 assertThat(context.getBean(EventBus.class)).isInstanceOf(InMemoryEventBus.class);
+            });
+    }
+
+    @Test
+    void sessionManagerUsesCodexStylePermissionsConfigAsDefaultRuntimeState() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.permissions.default-permissions=:read-only",
+                "lypi.permissions.approval-policy.mode=granular",
+                "lypi.permissions.approval-policy.granular.sandbox-approval=on_request",
+                "lypi.permissions.approval-policy.granular.rules=never",
+                "lypi.permissions.approval-policy.granular.skill-approval=on_request",
+                "lypi.permissions.approval-policy.granular.request-permissions=on_request",
+                "lypi.permissions.approval-policy.granular.mcp-elicitations=never"
+            )
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_permissions_config");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo(":read-only");
+                assertThat(sessionContext.permissionRuntimeState().approvalPolicy().mode())
+                    .isEqualTo(ApprovalMode.GRANULAR);
+                assertThat(sessionContext.permissionRuntimeState().approvalPolicy().granularApprovalPolicy().orElseThrow().rules())
+                    .isEqualTo(ApprovalMode.NEVER);
+                assertThat(sessionContext.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
             });
     }
 

@@ -10,11 +10,12 @@ import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
-import cn.lypi.contracts.security.ManagedPermissionProfile;
 import cn.lypi.contracts.security.NetworkPermissionPolicy;
-import cn.lypi.contracts.security.PermissionProfiles;
+import cn.lypi.contracts.security.PermissionProfileConfig;
+import cn.lypi.contracts.security.PermissionProfileSelection;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
+import cn.lypi.security.PermissionProfileConfigCompiler;
 import cn.lypi.tool.BlockingPermissionGate;
 import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.EventPublishingPermissionGate;
@@ -43,6 +44,9 @@ import cn.lypi.transport.headless.HeadlessTransport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -53,7 +57,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 
 @AutoConfiguration
-@EnableConfigurationProperties(LyPiToolProperties.class)
+@EnableConfigurationProperties({LyPiToolProperties.class, LyPiPermissionsProperties.class})
 public class LyPiToolAutoConfiguration {
     /**
      * 创建默认宿主机命令执行器。
@@ -79,21 +83,48 @@ public class LyPiToolAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(SandboxPolicyResolver.class)
-    public SandboxPolicyResolver sandboxPolicyResolver(LyPiToolProperties properties) {
-        LyPiToolProperties.SandboxProperties sandbox = properties.getSandbox();
-        return new PermissionProfileSandboxPolicyResolver(defaultPermissionProfile(sandbox), new SandboxPolicyOptions(
+    public SandboxPolicyResolver sandboxPolicyResolver(
+        LyPiToolProperties toolProperties,
+        LyPiPermissionsProperties permissionsProperties,
+        PermissionProfileConfigCompiler profileConfigCompiler
+    ) {
+        LyPiToolProperties.SandboxProperties sandbox = toolProperties.getSandbox();
+        PermissionProfileSelection profileSelection = profileSelection(permissionsProperties, sandbox, profileConfigCompiler);
+        return new PermissionProfileSandboxPolicyResolver(profileSelection.permissionProfile(), new SandboxPolicyOptions(
             NetworkMode.DISABLED,
             sandbox.isFailIfUnavailable(),
             sandbox.isEnabled() && sandbox.isAutoAllowBashIfSandboxed()
         ));
     }
 
-    private ManagedPermissionProfile defaultPermissionProfile(LyPiToolProperties.SandboxProperties sandbox) {
-        ManagedPermissionProfile workspace = PermissionProfiles.workspace();
-        NetworkPermissionPolicy network = sandbox.getNetworkMode() == NetworkMode.HOST
-            ? NetworkPermissionPolicy.enabled()
-            : NetworkPermissionPolicy.restricted();
-        return new ManagedPermissionProfile(workspace.fileSystem(), network);
+    /**
+     * 创建权限 profile 配置编译器。
+     */
+    @Bean
+    @ConditionalOnMissingBean(PermissionProfileConfigCompiler.class)
+    public PermissionProfileConfigCompiler permissionProfileConfigCompiler() {
+        return new PermissionProfileConfigCompiler();
+    }
+
+    private PermissionProfileSelection profileSelection(
+        LyPiPermissionsProperties permissionsProperties,
+        LyPiToolProperties.SandboxProperties sandbox,
+        PermissionProfileConfigCompiler profileConfigCompiler
+    ) {
+        if (permissionsProperties.hasCustomProfileConfig() || sandbox.getNetworkMode() != NetworkMode.HOST) {
+            return profileConfigCompiler.compile(
+                permissionsProperties.profileConfigs(),
+                permissionsProperties.getDefaultPermissions()
+            );
+        }
+        PermissionProfileConfig legacyWorkspaceNetwork = new PermissionProfileConfig(
+            "Legacy lypi.tool.sandbox.network-mode=host compatibility profile",
+            Optional.of(":workspace"),
+            List.of(),
+            Optional.empty(),
+            Optional.of(NetworkPermissionPolicy.enabled())
+        );
+        return profileConfigCompiler.compile(Map.of("legacy-workspace-network", legacyWorkspaceNetwork), "legacy-workspace-network");
     }
 
     /**
