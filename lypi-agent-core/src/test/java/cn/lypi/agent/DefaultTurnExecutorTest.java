@@ -902,6 +902,9 @@ class DefaultTurnExecutorTest {
         assertThat(invocation.sessionId()).isEqualTo("session-1");
         assertThat(invocation.turnId()).isEqualTo("turn-1");
         assertThat(invocation.parentEntryId()).isEqualTo("entry-msg-tool-call");
+        assertThat(tools.clearedInvocations).hasSize(1);
+        assertThat(tools.clearedInvocations.getFirst().sessionId()).isEqualTo("session-1");
+        assertThat(tools.clearedInvocations.getFirst().turnId()).isEqualTo("turn-1");
     }
 
     @Test

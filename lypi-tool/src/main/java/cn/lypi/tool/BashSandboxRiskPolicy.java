@@ -6,6 +6,7 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -26,18 +27,18 @@ final class BashSandboxRiskPolicy {
         if (!isDefaultBashRequest(request)) {
             return Optional.empty();
         }
-        PermissionMode permissionMode = permissionMode(context);
-        if (permissionMode == PermissionMode.BYPASS) {
+        PermissionRuntimeState runtimeState = runtimeState(context);
+        if (runtimeState.legacyBehavior().allowExplicitEscalationWithoutPrompt()) {
             return Optional.empty();
         }
         BashRiskAnalysis bashRisk = bashRisk(securityDecision);
-        if (permissionMode == PermissionMode.ACCEPT_EDITS) {
+        if (runtimeState.legacyBehavior().defaultBashRequiresEscalation()) {
             return Optional.of(deny(
                 "ACCEPT_EDITS 权限模式下默认 Bash 请求需要显式沙箱提权。",
                 bashRisk
             ));
         }
-        if (permissionMode == PermissionMode.DEFAULT_EXECUTE && isCodexDangerous(bashRisk)) {
+        if (isCodexDangerous(bashRisk)) {
             return Optional.of(deny(
                 "默认执行模式下危险 Bash 命令需要显式沙箱提权。",
                 bashRisk
@@ -52,15 +53,19 @@ final class BashSandboxRiskPolicy {
             && SandboxPermissions.fromToolValue(stringInput(request.input(), "sandboxPermissions")) == SandboxPermissions.USE_DEFAULT;
     }
 
-    private PermissionMode permissionMode(ToolUseContext context) {
+    private PermissionRuntimeState runtimeState(ToolUseContext context) {
+        Object runtimeState = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_RUNTIME_STATE);
+        if (runtimeState instanceof PermissionRuntimeState permissionRuntimeState) {
+            return permissionRuntimeState;
+        }
         Object value = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_MODE);
         if (value instanceof PermissionMode permissionMode) {
-            return permissionMode;
+            return PermissionRuntimeState.fromLegacy(permissionMode);
         }
         if (value instanceof String permissionMode) {
-            return PermissionMode.valueOf(permissionMode);
+            return PermissionRuntimeState.fromLegacy(PermissionMode.valueOf(permissionMode));
         }
-        return PermissionMode.DEFAULT_EXECUTE;
+        return PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
     }
 
     private BashRiskAnalysis bashRisk(PermissionDecision securityDecision) {

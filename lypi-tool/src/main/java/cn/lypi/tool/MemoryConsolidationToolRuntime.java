@@ -94,6 +94,11 @@ public final class MemoryConsolidationToolRuntime implements ToolRuntimePort {
         return List.copyOf(results);
     }
 
+    @Override
+    public void clearTurnState(ToolRuntimeInvocation invocation) {
+        delegate.clearTurnState(invocation);
+    }
+
     private ContextSnapshot forceDefaultPermissionMode(ContextSnapshot context) {
         if (context == null || context.permissionMode() == PermissionMode.DEFAULT_EXECUTE) {
             return context;

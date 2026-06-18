@@ -111,7 +111,7 @@ public final class PermissionDecisionPipeline {
             return strictAutoReviewDecision(context, explicitAllow.get());
         }
 
-        Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, permissionMode(context), bashRisk);
+        Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, runtimeState(context), bashRisk);
         if (bashRiskDecision.isPresent()) {
             return bashRiskDecision.get();
         }
@@ -375,7 +375,7 @@ public final class PermissionDecisionPipeline {
 
     private Optional<PermissionDecision> bashRiskDecision(
         ToolUseRequest request,
-        PermissionMode mode,
+        PermissionRuntimeState runtimeState,
         BashRiskAnalysis bashRisk
     ) {
         // NOTE: BYPASS 仍不能越过未知 Bash；DEFAULT_EXECUTE 对非低风险 Bash 更保守。
@@ -400,7 +400,9 @@ public final class PermissionDecisionPipeline {
                 Optional.empty()
             ));
         }
-        if (mode == PermissionMode.DEFAULT_EXECUTE && bashRisk.riskLevel() != BashRiskLevel.LOW) {
+        if (!runtimeState.legacyBehavior().defaultBashRequiresEscalation()
+            && !runtimeState.legacyBehavior().allowExplicitEscalationWithoutPrompt()
+            && bashRisk.riskLevel() != BashRiskLevel.LOW) {
             return Optional.of(decisionWithSuggestedUpdate(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.BASH_RISK,
@@ -481,19 +483,19 @@ public final class PermissionDecisionPipeline {
         return AgentMode.EXECUTE;
     }
 
-    private PermissionMode permissionMode(ToolUseContext context) {
+    private PermissionRuntimeState runtimeState(ToolUseContext context) {
         Object runtimeStateValue = context.metadata().get(METADATA_PERMISSION_RUNTIME_STATE);
         if (runtimeStateValue instanceof PermissionRuntimeState runtimeState) {
-            return runtimeState.legacyPermissionMode();
+            return runtimeState;
         }
         Object value = context.metadata().get(METADATA_PERMISSION_MODE);
         if (value instanceof PermissionMode permissionMode) {
-            return permissionMode;
+            return PermissionRuntimeState.fromLegacy(permissionMode);
         }
         if (value instanceof String permissionMode) {
-            return PermissionMode.valueOf(permissionMode);
+            return PermissionRuntimeState.fromLegacy(PermissionMode.valueOf(permissionMode));
         }
-        return PermissionMode.DEFAULT_EXECUTE;
+        return PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
     }
 
     private boolean strictAutoReview(ToolUseContext context) {

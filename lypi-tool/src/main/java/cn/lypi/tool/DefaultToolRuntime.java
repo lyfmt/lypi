@@ -453,6 +453,14 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return List.copyOf(results);
     }
 
+    @Override
+    public void clearTurnState(ToolRuntimeInvocation invocation) {
+        String key = turnStateKey(invocation);
+        if (key != null) {
+            turnPermissionStates.remove(key);
+        }
+    }
+
     private void executeResolvedSegment(
         List<ToolCallResolver.ResolvedCall> resolvedCalls,
         ContextSnapshot context,
@@ -773,13 +781,18 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     }
 
     private TurnPermissionState turnState(ToolRuntimeInvocation invocation) {
-        if (invocation == null || isBlank(invocation.sessionId()) || isBlank(invocation.turnId())) {
+        String key = turnStateKey(invocation);
+        if (key == null) {
             return new TurnPermissionState();
         }
-        return turnPermissionStates.computeIfAbsent(
-            invocation.sessionId() + "\n" + invocation.turnId(),
-            ignored -> new TurnPermissionState()
-        );
+        return turnPermissionStates.computeIfAbsent(key, ignored -> new TurnPermissionState());
+    }
+
+    private String turnStateKey(ToolRuntimeInvocation invocation) {
+        if (invocation == null || isBlank(invocation.sessionId()) || isBlank(invocation.turnId())) {
+            return null;
+        }
+        return invocation.sessionId() + "\n" + invocation.turnId();
     }
 
     private AdditionalPermissionProfile effectiveAdditionalPermissions(

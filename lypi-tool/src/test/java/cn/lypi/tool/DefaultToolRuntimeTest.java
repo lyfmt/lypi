@@ -1815,6 +1815,46 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void clearTurnStateDropsStrictAutoReviewForCompletedTurn() {
+        AtomicReference<Map<String, Object>> clearedTurnMetadata = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        SecurityRuntimePort security = (request, context) -> {
+            if ("probe".equals(request.toolName())) {
+                clearedTurnMetadata.set(context.metadata());
+            }
+            if (Boolean.TRUE.equals(context.metadata().get("strictAutoReview"))) {
+                return new PermissionDecision(
+                    PermissionBehavior.ASK,
+                    PermissionDecisionReason.SANDBOX_POLICY,
+                    "strictAutoReview 要求本轮后续命令先进入人工 review。",
+                    Optional.empty(),
+                    Map.of("strictAutoReview", true)
+                );
+            }
+            return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(new RequestPermissionsTool());
+        runtime.register(TestTools.echo("probe", List.of(), false, false, false));
+        ToolRuntimeInvocation invocation = new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1");
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_perm", "request_permissions", strictAutoReviewRequest(), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            invocation
+        );
+        runtime.clearTurnState(invocation);
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_probe", "probe", Map.of("text", "ok"), "msg_2")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            invocation
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertFalse(clearedTurnMetadata.get().containsKey("strictAutoReview"));
+    }
+
+    @Test
     void requestPermissionsAdditionalPermissionsPersistAcrossToolRoundsByScope() {
         AtomicReference<Map<String, Object>> turnMetadata = new AtomicReference<>();
         AtomicReference<Map<String, Object>> otherTurnMetadata = new AtomicReference<>();

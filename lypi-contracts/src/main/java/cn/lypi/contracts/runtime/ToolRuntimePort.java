@@ -59,4 +59,12 @@ public interface ToolRuntimePort {
     ) {
         return execute(requests, context);
     }
+
+    /**
+     * 清理指定 turn 的临时工具权限状态。
+     *
+     * NOTE: turn-scoped `request_permissions` 和 `strictAutoReview` 不应跨 turn 保留。
+     */
+    default void clearTurnState(ToolRuntimeInvocation invocation) {
+    }
 }

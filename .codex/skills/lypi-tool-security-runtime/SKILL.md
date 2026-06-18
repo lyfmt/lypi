@@ -12,7 +12,7 @@ All tool execution goes through the unified runtime. Do not bypass registry reso
 ## Boundaries
 
 - `lypi-tool` owns tool registry, execution planning, built-in tools, MCP adapters, permission gate integration, result budgeting and shell executors.
-- `lypi-tool` owns Codex-style approval coordination after a `PermissionDecision` is produced: approval policy checks, prompt gate calls, permission amendments and turn-scoped additional permissions.
+- `lypi-tool` owns Codex-style approval coordination after a `PermissionDecision` is produced: approval policy checks, prompt gate calls, permission amendments and turn-scoped additional permissions. `ToolPermissionCoordinator` should stay a thin orchestration adapter; detailed approval handling belongs in focused collaborators.
 - `lypi-security` owns policy decisions, path safety, Bash normalization, risk analysis, rule matching, filesystem/network profile checks and hard-safety gates.
 - Contract records and enums live in `lypi-contracts`.
 
@@ -25,6 +25,7 @@ All tool execution goes through the unified runtime. Do not bypass registry reso
 - `lypi-tool/src/main/java/cn/lypi/tool/ToolExecutionEventPublisher.java`
 - `lypi-tool/src/main/java/cn/lypi/tool/ApprovalCoordinator.java`
 - `lypi-tool/src/main/java/cn/lypi/tool/ApprovalRequestFactory.java`
+- `lypi-tool/src/main/java/cn/lypi/tool/InlineAdditionalPermissionsAuthorizer.java`
 - `lypi-tool/src/main/java/cn/lypi/tool/PermissionAmendmentStore.java`
 - `lypi-tool/src/main/java/cn/lypi/tool/builtin/BuiltInTools.java`
 - `lypi-tool/src/main/java/cn/lypi/tool/builtin/RequestPermissionsTool.java`
@@ -56,12 +57,13 @@ All tool execution goes through the unified runtime. Do not bypass registry reso
 6. `DefaultToolRuntime` rejects non-read-only calls in `AgentMode.PLAN` before security policy evaluation.
 7. Build `ToolUseContext` metadata with canonical `permissionRuntimeState`, legacy `permissionMode`, invocation ids, strict auto review and approved additional permissions.
 8. Ask `SecurityRuntimePort` and tool-specific permission checks for decisions.
-9. Apply sandbox escalation, Bash sandbox risk decisions and additional permission sandbox projection.
-10. Use `ApprovalCoordinator` and `PermissionGate` for ASK decisions.
-11. Run interceptors, abort handling and tool execution.
-12. Record successful `request_permissions` responses into turn/session permission state.
-13. Apply `ToolResultBudgeter`.
-14. Publish tool end event with summary and optional output ref.
+9. Apply sandbox escalation and Bash sandbox risk decisions through focused policy collaborators that read canonical `PermissionRuntimeState` and use legacy mode only as fallback mapping.
+10. Delegate inline `sandboxPermissions=withAdditionalPermissions` approval to `InlineAdditionalPermissionsAuthorizer`.
+11. Use `ApprovalCoordinator` and `PermissionGate` for ASK decisions.
+12. Run interceptors, abort handling and tool execution.
+13. Record successful `request_permissions` responses into turn/session permission state.
+14. Apply `ToolResultBudgeter`.
+15. Publish tool end event with summary and optional output ref.
 
 ## Current Policy Order
 
@@ -82,7 +84,7 @@ All tool execution goes through the unified runtime. Do not bypass registry reso
 
 ## Request Permissions
 
-`request_permissions` asks for turn or session scoped additional filesystem/network permissions. The first implementation supports restricted filesystem entries with exact paths and network enablement. When approved, `DefaultToolRuntime` records the additional permissions in runtime state for the current turn or session. When `strictAutoReview` is approved, later commands in the same turn receive `strictAutoReview` metadata and should be reviewed before execution. `PermissionAmendmentStore` is for durable `PermissionUpdate` rule amendments, not for `request_permissions` additional-permission payloads.
+`request_permissions` asks for turn or session scoped additional filesystem/network permissions. The first implementation supports restricted filesystem entries with exact paths and network enablement. When approved, `DefaultToolRuntime` records the additional permissions in runtime state for the current turn or session. When `strictAutoReview` is approved, later commands in the same turn receive `strictAutoReview` metadata and should be reviewed before execution. `DefaultTurnExecutor` must call `ToolRuntimePort.clearTurnState(...)` when the turn ends so turn-scoped permissions and `strictAutoReview` cannot leak. `PermissionAmendmentStore` is for durable `PermissionUpdate` rule amendments, not for `request_permissions` additional-permission payloads.
 
 ## Invariants
 
@@ -93,6 +95,7 @@ All tool execution goes through the unified runtime. Do not bypass registry reso
 - Path safety applies to file tools and Bash redirection targets.
 - `AgentMode.PLAN` rejects non-read-only tool calls and explicit sandbox/additional-permission escalation.
 - `request_permissions` may grant additional permissions for later tool calls, but direct inline `sandboxPermissions=withAdditionalPermissions` without approval should ask or fail.
+- Turn-scoped additional permissions and `strictAutoReview` are cleared through `ToolRuntimePort.clearTurnState(...)` at turn completion; session-scoped additional permissions remain session runtime state.
 - MCP tools share registry, permissions, result budgets and TUI events.
 
 ## Tests To Check

@@ -60,6 +60,14 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     @Override
     public TurnState execute(TurnRequest request) {
         String turnId = ids.newTurnId();
+        try {
+            return executeWithTurnId(request, turnId);
+        } finally {
+            ports.toolRuntime().clearTurnState(new ToolRuntimeInvocation(request.sessionId(), turnId));
+        }
+    }
+
+    private TurnState executeWithTurnId(TurnRequest request, String turnId) {
         List<AgentMessage> newMessages = new ArrayList<>();
         ports.sessionManager().openOrCreate(request.sessionId());
         request.parentEntryId().ifPresent(parentEntryId -> ports.sessionManager().switchLeaf(parentEntryId));

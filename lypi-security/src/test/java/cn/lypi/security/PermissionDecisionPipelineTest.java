@@ -189,6 +189,26 @@ class PermissionDecisionPipelineTest {
     }
 
     @Test
+    void permissionRuntimeStateBehaviorSupersedesLegacyModeForBashRiskDecision() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+        PermissionRuntimeState bypassBehaviorWithDefaultLegacyMode = runtimeStateWithLegacyMode(
+            PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS),
+            PermissionMode.DEFAULT_EXECUTE
+        );
+
+        PermissionDecision decision = pipeline.decide(
+            request("bash", Map.of("command", "git push origin feature/security")),
+            context(
+                PermissionMode.DEFAULT_EXECUTE,
+                Map.of("permissionRuntimeState", bypassBehaviorWithDefaultLegacyMode)
+            )
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
     void additionalFilesystemPermissionsAllowApprovedWriteOutsideWorkspace() {
         PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
 
@@ -352,6 +372,15 @@ class PermissionDecisionPipelineTest {
                 new FileSystemPermissionEntry(FileSystemPath.special(FileSystemSpecialPath.ROOT), accessMode)
             ))),
             Optional.empty()
+        );
+    }
+
+    private PermissionRuntimeState runtimeStateWithLegacyMode(PermissionRuntimeState source, PermissionMode legacyMode) {
+        return new PermissionRuntimeState(
+            source.approvalPolicy(),
+            source.activePermissionProfile(),
+            source.legacyBehavior(),
+            legacyMode
         );
     }
 }

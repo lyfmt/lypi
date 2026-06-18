@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.ApprovalKind;
+import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.ApprovalPolicy;
 import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.security.FileSystemPath;
 import cn.lypi.contracts.security.FileSystemPermissionEntry;
@@ -107,7 +109,7 @@ class ToolPermissionCoordinatorTest {
             context(PermissionMode.DEFAULT_EXECUTE)
         );
 
-        assertTrue(result.allowed());
+        assertTrue(result.allowed(), () -> result.gateResult().status() + " " + result.gateResult().message().orElse(""));
         assertEquals(1, gateCalls.get());
     }
 
@@ -140,6 +142,62 @@ class ToolPermissionCoordinatorTest {
 
         assertTrue(result.allowed());
         assertEquals(1, gateCalls.get());
+    }
+
+    @Test
+    void sandboxEscalationUsesCanonicalRuntimeBehaviorInsteadOfLegacyModeMetadata() {
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
+            (request, tool, context, decision) -> PermissionGateResult.deny("should not ask"),
+            PermissionUpdateStore.noop(),
+            List.of()
+        );
+        Map<String, Object> input = Map.of(
+            "command", "id",
+            "sandboxPermissions", "requireEscalated",
+            "justification", "host inspection"
+        );
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("bash", input),
+            TestTools.permission("bash", PermissionBehavior.ALLOW),
+            input,
+            contextWithRuntimeState(
+                PermissionMode.DEFAULT_EXECUTE,
+                runtimeStateWithLegacyMode(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), PermissionMode.DEFAULT_EXECUTE)
+            )
+        );
+
+        assertTrue(result.allowed(), () -> result.gateResult().status() + " " + result.gateResult().message().orElse(""));
+    }
+
+    @Test
+    void defaultBashSandboxRiskUsesCanonicalRuntimeBehaviorInsteadOfLegacyModeMetadata() {
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.BASH_RISK,
+                "默认执行模式下 Bash 写入、网络或远端变更需要用户确认。",
+                Optional.empty(),
+                Map.of()
+            ),
+            (request, tool, context, decision) -> PermissionGateResult.deny("should not ask"),
+            PermissionUpdateStore.noop(),
+            List.of()
+        );
+        Map<String, Object> input = Map.of("command", "rm -rf build");
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("bash", input),
+            TestTools.permission("bash", PermissionBehavior.ALLOW),
+            input,
+            contextWithRuntimeState(
+                PermissionMode.DEFAULT_EXECUTE,
+                runtimeStateWithLegacyMode(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), PermissionMode.DEFAULT_EXECUTE)
+            )
+        );
+
+        assertTrue(result.allowed());
     }
 
     @Test
@@ -314,6 +372,23 @@ class ToolPermissionCoordinatorTest {
         metadata.put("additionalPermissions", additionalPermissions);
         metadata.put("approvedAdditionalPermissions", true);
         return new ToolUseContext(base.sessionId(), base.messageId(), base.cwd(), Map.copyOf(metadata));
+    }
+
+    private ToolUseContext contextWithRuntimeState(PermissionMode permissionMode, PermissionRuntimeState runtimeState) {
+        ToolUseContext base = context(permissionMode);
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>(base.metadata());
+        metadata.put(ToolRuntimeContextFactory.METADATA_PERMISSION_RUNTIME_STATE, runtimeState);
+        metadata.put(ToolRuntimeContextFactory.METADATA_PERMISSION_MODE, permissionMode);
+        return new ToolUseContext(base.sessionId(), base.messageId(), base.cwd(), Map.copyOf(metadata));
+    }
+
+    private PermissionRuntimeState runtimeStateWithLegacyMode(PermissionRuntimeState source, PermissionMode legacyMode) {
+        return new PermissionRuntimeState(
+            new ApprovalPolicy(ApprovalMode.ON_REQUEST),
+            source.activePermissionProfile(),
+            source.legacyBehavior(),
+            legacyMode
+        );
     }
 
     private AdditionalPermissionProfile additionalWrite(String path) {
