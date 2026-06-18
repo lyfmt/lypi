@@ -10,6 +10,7 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.security.ApprovalKind;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -221,6 +222,32 @@ class EventPublishingPermissionGateTest {
         assertEquals(0, requestEvent.options().stream()
             .filter(option -> option.kind() == PermissionOptionKind.ALLOW_AND_REMEMBER)
             .count());
+    }
+
+    @Test
+    void invalidResponseForCanonicalApprovalFallsBackToCancelInsteadOfAllowing() {
+        RecordingEventBus events = new RecordingEventBus();
+        EventPublishingPermissionGate gate = new EventPublishingPermissionGate(
+            events,
+            requestEvent -> new PermissionResponse(requestEvent.sessionId(), requestEvent.requestId(), "deny", false, Instant.now())
+        );
+
+        PermissionGateResult result = gate.request(
+            new ToolUseRequest("toolu_1", "bash", Map.of("command", "rm target"), "msg_1"),
+            TestTools.echo("bash", List.of(), false, false, true),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.BASH_RISK,
+                "command approval",
+                java.util.Optional.empty(),
+                Map.of("approvalKind", ApprovalKind.COMMAND)
+            )
+        );
+
+        assertEquals(PermissionGateResult.Status.ABORT, result.status());
+        PermissionDecisionEvent decisionEvent = assertInstanceOf(PermissionDecisionEvent.class, events.events.get(1));
+        assertEquals("abort", decisionEvent.selectedOptionId());
     }
 
     @Test

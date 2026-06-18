@@ -7,7 +7,6 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
-import cn.lypi.contracts.security.PermissionOptionPolicy;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -26,17 +25,20 @@ public final class EventPublishingPermissionGate implements PermissionGate {
     private final EventBus eventBus;
     private final PermissionGate legacyDelegate;
     private final PermissionResponseGate responseDelegate;
+    private final ApprovalRequestFactory requestFactory;
 
     public EventPublishingPermissionGate(EventBus eventBus, PermissionGate delegate) {
         this.eventBus = Objects.requireNonNull(eventBus, "eventBus must not be null");
         this.legacyDelegate = delegate == null ? PermissionGate.denying() : delegate;
         this.responseDelegate = null;
+        this.requestFactory = new ApprovalRequestFactory();
     }
 
     public EventPublishingPermissionGate(EventBus eventBus, PermissionResponseGate delegate) {
         this.eventBus = Objects.requireNonNull(eventBus, "eventBus must not be null");
         this.legacyDelegate = null;
         this.responseDelegate = delegate == null ? requestEvent -> fallbackDenyResponse(requestEvent) : delegate;
+        this.requestFactory = new ApprovalRequestFactory();
     }
 
     @Override
@@ -46,33 +48,16 @@ public final class EventPublishingPermissionGate implements PermissionGate {
         ToolUseContext context,
         PermissionDecision decision
     ) {
-        String renderedToolUse = renderToolUse(request, tool);
-        String message = decisionMessage(decision);
-        PermissionOptionPolicy.Options optionPolicy = PermissionOptionPolicy.fromDecision(decision);
-        PermissionRequestEvent requestEvent = new PermissionRequestEvent(
-            context.sessionId(),
-            requestId(request),
-            request.toolUseId(),
-            tool.name(),
-            message,
-            renderedToolUse,
-            message,
-            decision,
-            optionPolicy.options(),
-            optionPolicy.defaultOptionId(),
-            optionPolicy.cancelOptionId(),
-            Map.of("toolName", tool.name()),
-            Instant.now()
-        );
+        PermissionRequestEvent requestEvent = requestFactory.create(request, tool, context, decision);
         safePublish(requestEvent);
 
-        PermissionSelection selection = selection(requestEvent, request, tool, context, decision, message);
+        PermissionSelection selection = selection(requestEvent, request, tool, context, decision, requestEvent.message());
         safePublish(new PermissionDecisionEvent(
             context.sessionId(),
             requestEvent.requestId(),
             request.toolUseId(),
             tool.name(),
-            renderedToolUse,
+            requestEvent.renderedToolUse(),
             selection.selectedOptionId(),
             decisionFromResult(selection.result(), selection.selectedOption(), decision),
             null,
@@ -146,13 +131,6 @@ public final class EventPublishingPermissionGate implements PermissionGate {
         return new PermissionResponse(requestEvent.sessionId(), requestEvent.requestId(), "deny", false, Instant.now());
     }
 
-    @SuppressWarnings("unchecked")
-    private String renderToolUse(ToolUseRequest request, Tool<?, ?> tool) {
-        Tool<Map<String, Object>, ?> typedTool = (Tool<Map<String, Object>, ?>) tool;
-        Map<String, Object> input = request.input() == null ? Map.of() : request.input();
-        return typedTool.renderForUser(input);
-    }
-
     private PermissionDecision decisionFromResult(PermissionGateResult result, PermissionDecision originalDecision) {
         return decisionFromResult(result, null, originalDecision);
     }
@@ -182,16 +160,20 @@ public final class EventPublishingPermissionGate implements PermissionGate {
             return requestEvent.options().stream()
                 .filter(option -> option.optionId().equals(requestEvent.cancelOptionId()))
                 .findFirst()
-                .orElseGet(() -> requestEvent.options().stream()
-                    .filter(option -> option.kind() == PermissionOptionKind.DENY)
-                    .findFirst()
-                    .orElse(requestEvent.options().getFirst()));
+                .orElseGet(() -> fallbackRejectOption(requestEvent));
         }
         return requestEvent.options().stream()
             .filter(option -> option.optionId().equals(response.selectedOptionId()))
             .findFirst()
+            .orElseGet(() -> fallbackRejectOption(requestEvent));
+    }
+
+    private PermissionOption fallbackRejectOption(PermissionRequestEvent requestEvent) {
+        return requestEvent.options().stream()
+            .filter(option -> option.kind() == PermissionOptionKind.DENY)
+            .findFirst()
             .orElseGet(() -> requestEvent.options().stream()
-                .filter(option -> option.kind() == PermissionOptionKind.DENY)
+                .filter(option -> option.kind() == PermissionOptionKind.CANCEL)
                 .findFirst()
                 .orElse(requestEvent.options().getFirst()));
     }
@@ -229,10 +211,6 @@ public final class EventPublishingPermissionGate implements PermissionGate {
             .map(PermissionOption::optionId)
             .findFirst()
             .orElse("allow_once");
-    }
-
-    private String requestId(ToolUseRequest request) {
-        return "perm_" + request.toolUseId();
     }
 
     private String decisionMessage(PermissionDecision decision) {

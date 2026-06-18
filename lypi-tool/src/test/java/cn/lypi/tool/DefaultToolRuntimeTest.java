@@ -951,7 +951,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void bypassAutoAllowsToolSpecificAskWithoutPermissionGate() {
+    void neverApprovalPolicyDeniesToolSpecificAskWithoutPermissionGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -966,13 +966,14 @@ class DefaultToolRuntimeTest {
             TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
         ).getFirst();
 
-        assertFalse(result.isError());
+        assertTrue(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(1, executeCalls.get());
+        assertEquals(0, executeCalls.get());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("never policy"));
     }
 
     @Test
-    void bypassAutoAllowsSecurityAskWithoutPermissionGate() {
+    void neverApprovalPolicyDeniesSecurityAskWithoutPermissionGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -988,9 +989,10 @@ class DefaultToolRuntimeTest {
             TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
         ).getFirst();
 
-        assertFalse(result.isError());
+        assertTrue(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(1, executeCalls.get());
+        assertEquals(0, executeCalls.get());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("never policy"));
     }
 
     @Test

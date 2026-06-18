@@ -11,6 +11,7 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -51,7 +52,7 @@ class ToolPermissionCoordinatorTest {
     }
 
     @Test
-    void bypassAllowsAskWithoutCallingGate() {
+    void neverPolicyDeniesAskWithoutCallingGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         ToolPermissionCoordinator coordinator = coordinator(
             (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask"),
@@ -70,12 +71,12 @@ class ToolPermissionCoordinatorTest {
             context(PermissionMode.BYPASS)
         );
 
-        assertTrue(result.allowed());
+        assertEquals(PermissionGateResult.Status.DENY, result.gateResult().status());
         assertEquals(0, gateCalls.get());
     }
 
     @Test
-    void bypassStillPromptsForStrictAutoReviewAsk() {
+    void onRequestPolicyStillPromptsForStrictAutoReviewAsk() {
         AtomicInteger gateCalls = new AtomicInteger();
         ToolPermissionCoordinator coordinator = coordinator(
             (request, context) -> new PermissionDecision(
@@ -97,7 +98,7 @@ class ToolPermissionCoordinatorTest {
             request("write", Map.of("text", "ok")),
             TestTools.permission("write", PermissionBehavior.ALLOW),
             Map.of("text", "ok"),
-            context(PermissionMode.BYPASS)
+            context(PermissionMode.DEFAULT_EXECUTE)
         );
 
         assertTrue(result.allowed());
@@ -105,7 +106,7 @@ class ToolPermissionCoordinatorTest {
     }
 
     @Test
-    void defaultSandboxBashDoesNotBypassStrictAutoReviewAsk() {
+    void defaultSandboxBashDelegatesStrictAutoReviewAskUnderOnRequestPolicy() {
         AtomicInteger gateCalls = new AtomicInteger();
         ToolPermissionCoordinator coordinator = coordinator(
             (request, context) -> new PermissionDecision(
@@ -128,7 +129,7 @@ class ToolPermissionCoordinatorTest {
             request("bash", input),
             TestTools.permission("bash", PermissionBehavior.ALLOW),
             input,
-            context(PermissionMode.BYPASS)
+            context(PermissionMode.DEFAULT_EXECUTE)
         );
 
         assertTrue(result.allowed());
@@ -213,6 +214,7 @@ class ToolPermissionCoordinatorTest {
     }
 
     private ToolUseContext context(PermissionMode permissionMode) {
+        PermissionRuntimeState runtimeState = PermissionRuntimeState.fromLegacy(permissionMode);
         return new ToolUseContext(
             "ses_1",
             "msg_1",
@@ -221,7 +223,9 @@ class ToolPermissionCoordinatorTest {
                 ToolRuntimeContextFactory.METADATA_AGENT_MODE,
                 AgentMode.EXECUTE,
                 ToolRuntimeContextFactory.METADATA_PERMISSION_MODE,
-                permissionMode
+                permissionMode,
+                ToolRuntimeContextFactory.METADATA_PERMISSION_RUNTIME_STATE,
+                runtimeState
             )
         );
     }

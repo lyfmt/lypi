@@ -6,7 +6,6 @@ import cn.lypi.contracts.security.BashRiskAnalysis;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
-import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.Tool;
@@ -21,9 +20,7 @@ import java.util.Optional;
  */
 final class ToolPermissionCoordinator {
     private final SecurityRuntimePort securityRuntime;
-    private final PermissionGate permissionGate;
-    private final PermissionUpdateStore permissionUpdateStore;
-    private final List<PermissionRule> runtimePermissionRules;
+    private final ApprovalCoordinator approvalCoordinator;
     private final SandboxEscalationPolicy sandboxEscalationPolicy;
     private final BashSandboxRiskPolicy bashSandboxRiskPolicy;
 
@@ -36,9 +33,12 @@ final class ToolPermissionCoordinator {
         BashSandboxRiskPolicy bashSandboxRiskPolicy
     ) {
         this.securityRuntime = securityRuntime;
-        this.permissionGate = permissionGate == null ? PermissionGate.denying() : permissionGate;
-        this.permissionUpdateStore = permissionUpdateStore == null ? PermissionUpdateStore.noop() : permissionUpdateStore;
-        this.runtimePermissionRules = runtimePermissionRules;
+        this.approvalCoordinator = new ApprovalCoordinator(
+            permissionGate,
+            permissionUpdateStore,
+            runtimePermissionRules,
+            new ApprovalRequestFactory()
+        );
         this.sandboxEscalationPolicy = sandboxEscalationPolicy == null ? new SandboxEscalationPolicy() : sandboxEscalationPolicy;
         this.bashSandboxRiskPolicy = bashSandboxRiskPolicy == null ? new BashSandboxRiskPolicy() : bashSandboxRiskPolicy;
     }
@@ -83,41 +83,12 @@ final class ToolPermissionCoordinator {
             return Result.denied(PermissionGateResult.deny(decisionMessage(effectiveDecision)));
         }
 
-        PermissionGateResult permissionResult = resolvePermission(request, tool, context, effectiveDecision);
+        PermissionGateResult permissionResult = approvalCoordinator.resolve(request, tool, context, effectiveDecision);
         if (permissionResult.status() != PermissionGateResult.Status.ALLOW) {
             return new Result(false, permissionResult);
         }
 
-        permissionResult.permissionUpdate().ifPresent(this::applyPermissionUpdate);
         return new Result(true, permissionResult);
-    }
-
-    private void applyPermissionUpdate(PermissionUpdate update) {
-        permissionUpdateStore.append(update);
-        if (update != null && update.rule() != null) {
-            runtimePermissionRules.add(update.rule());
-        }
-    }
-
-    private PermissionGateResult resolvePermission(
-        ToolUseRequest request,
-        Tool<Map<String, Object>, ?> tool,
-        ToolUseContext context,
-        PermissionDecision decision
-    ) {
-        if (decision == null || decision.behavior() == PermissionBehavior.DENY) {
-            return PermissionGateResult.deny(decisionMessage(decision));
-        }
-        if (decision.behavior() == PermissionBehavior.ALLOW) {
-            return PermissionGateResult.allow();
-        }
-        if (decision.behavior() == PermissionBehavior.ASK
-            && isBypassPermissionMode(context)
-            && !isStrictAutoReview(decision)) {
-            return PermissionGateResult.allow();
-        }
-        PermissionGateResult result = permissionGate.request(request, tool, context, decision);
-        return result == null ? PermissionGateResult.deny("权限请求未获允许。") : result;
     }
 
     private PermissionDecision effectiveDecision(PermissionDecision toolDecision, PermissionDecision securityDecision) {
@@ -161,17 +132,6 @@ final class ToolPermissionCoordinator {
     private String stringInput(Map<String, Object> input, String key) {
         Object value = input == null ? null : input.get(key);
         return value == null ? "" : value.toString();
-    }
-
-    private boolean isBypassPermissionMode(ToolUseContext context) {
-        Object value = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_MODE);
-        if (value instanceof PermissionMode permissionMode) {
-            return permissionMode == PermissionMode.BYPASS;
-        }
-        if (value instanceof String permissionMode) {
-            return PermissionMode.valueOf(permissionMode) == PermissionMode.BYPASS;
-        }
-        return false;
     }
 
     private boolean isStrictAutoReview(PermissionDecision decision) {
