@@ -4,6 +4,7 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.io.IOException;
@@ -13,6 +14,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 public final class ReadTool extends AbstractFileTool {
     @Override
@@ -53,7 +55,19 @@ public final class ReadTool extends AbstractFileTool {
                 return error(toolUseId, "不能读取目录: " + relativePath(path, context));
             }
             progress.progress(ToolProgress.phase("reading", "读取文件"));
-            List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+            byte[] bytes = Files.readAllBytes(path);
+            String fileName = path.getFileName().toString();
+            Optional<String> mediaType = ImageFileDetector.detect(bytes, fileName);
+            if (mediaType.isPresent()) {
+                return imageSuccess(toolUseId, fileName, bytes, mediaType.get());
+            }
+            if (BinaryFileDetector.isUnsupportedBinary(fileName, bytes)) {
+                return error(toolUseId, "不能读取二进制文件。");
+            }
+            List<String> lines = List.of(new String(bytes, StandardCharsets.UTF_8).split("\\R", -1));
+            if (!lines.isEmpty() && lines.getLast().isEmpty()) {
+                lines = lines.subList(0, lines.size() - 1);
+            }
             int offset = intInput(input, "offset", 1, 1, Math.max(1, lines.size()));
             int limit = intInput(input, "limit", lines.size(), 1, Math.max(1, lines.size()));
             int startIndex = offset - 1;
@@ -96,6 +110,32 @@ public final class ReadTool extends AbstractFileTool {
     @Override
     public boolean isDestructive(Map<String, Object> input) {
         return false;
+    }
+
+    private ToolResult<String> imageSuccess(String toolUseId, String fileName, byte[] bytes, String mediaType) {
+        ImageReadProcessor.Result result = ImageReadProcessor.process(bytes, mediaType);
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>(result.metadata());
+        metadata.put("source", "read");
+        metadata.put("toolUseId", toolUseId);
+        metadata.put("imageUrl", result.imageUrl());
+        metadata.put("detail", "high");
+        metadata.put("fileName", fileName);
+        metadata.put("sizeBytes", result.sizeBytes());
+        String text = "Read image file [" + mediaType + "]";
+        if (Boolean.TRUE.equals(result.metadata().get("resized"))) {
+            Object width = result.metadata().get("displayWidth");
+            Object height = result.metadata().get("displayHeight");
+            if (width != null && height != null) {
+                text += " resized to " + width + "x" + height;
+            }
+        }
+        AttachmentContentBlock attachment = new AttachmentContentBlock(
+            "read-image-" + toolUseId,
+            "Image: " + mediaType,
+            mediaType,
+            Map.copyOf(metadata)
+        );
+        return ToolMessages.success(toolUseId, text, List.of(attachment));
     }
 
     @Override

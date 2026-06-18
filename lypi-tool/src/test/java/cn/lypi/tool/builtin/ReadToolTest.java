@@ -6,11 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
+import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -58,6 +60,17 @@ class ReadToolTest {
     }
 
     @Test
+    void readsSingleLineFileWithoutTrailingNewline() throws Exception {
+        Files.writeString(tempDir.resolve("notes.txt"), "alpha");
+
+        ToolResult<String> result = new ReadTool().execute(Map.of("path", "notes.txt"), context(), message -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("1 | alpha"));
+    }
+
+    @Test
     void returnsToolErrorForMissingFileAndDirectory() throws Exception {
         Files.createDirectory(tempDir.resolve("dir"));
         ReadTool tool = new ReadTool();
@@ -66,6 +79,34 @@ class ReadToolTest {
         }).isError());
         assertTrue(tool.execute(Map.of("path", "dir"), context(), message -> {
         }).isError());
+    }
+
+    @Test
+    void readsImageAsAttachmentWithoutPrintingPathOrBase64() throws Exception {
+        Files.write(tempDir.resolve("image.png"), png1x1());
+        ReadTool tool = new ReadTool();
+
+        ToolResult<String> result = tool.execute(Map.of("path", "image.png"), context(), progress -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("Read image file [image/png]"));
+        assertFalse(result.output().contains("image.png"));
+        assertFalse(result.output().contains("base64"));
+        assertEquals(2, result.newMessages().getFirst().content().size());
+        assertTrue(result.newMessages().getFirst().content().get(0) instanceof ToolResultContentBlock);
+        assertTrue(result.newMessages().getFirst().content().get(1) instanceof AttachmentContentBlock);
+    }
+
+    @Test
+    void rejectsUnsupportedBinaryFiles() throws Exception {
+        Files.write(tempDir.resolve("archive.zip"), new byte[] {'P', 'K', 0x03, 0x04});
+
+        ToolResult<String> result = new ReadTool().execute(Map.of("path", "archive.zip"), context(), progress -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("不能读取二进制文件"));
     }
 
     @Test
@@ -80,5 +121,10 @@ class ReadToolTest {
 
     private ToolUseContext context() {
         return new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("toolUseId", "toolu_1"));
+    }
+
+    private static byte[] png1x1() {
+        return Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=");
     }
 }
