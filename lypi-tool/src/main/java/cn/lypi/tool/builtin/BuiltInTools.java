@@ -43,6 +43,7 @@ public final class BuiltInTools {
             new ReadTool(),
             new WriteTool(),
             new EditTool(),
+            new RequestPermissionsTool(),
             new BashTool(executor, sandboxPolicyResolver),
             new GrepTool(executor),
             new GlobTool()

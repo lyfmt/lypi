@@ -5,6 +5,7 @@ import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.runtime.Executor;
+import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.io.IOException;
@@ -86,11 +87,11 @@ public final class GrepTool extends AbstractFileTool {
         String toolUseId = toolUseId(context);
         try {
             GrepQuery query = GrepQuery.fromInput(input);
-            Path root = resolvePath(input, context, "path");
+            Path root = resolvePath(input, context, "path", FileSystemAccessMode.READ);
             if (!Files.exists(root)) {
                 return error(toolUseId, "搜索路径不存在: " + relativePath(root, context));
             }
-            requireRealPathInsideWorkspace(root, context);
+            requireRealPathInsideWorkspace(root, context, FileSystemAccessMode.READ);
             progress.progress(ToolProgress.phase("scanning", "扫描文件"));
             RipgrepSearchResult searchResult = runner.search(query, root, context, progress);
             if (searchResult.isError()) {

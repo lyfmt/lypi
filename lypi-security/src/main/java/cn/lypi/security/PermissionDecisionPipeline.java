@@ -1,8 +1,13 @@
 package cn.lypi.security;
 
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.BashRiskAnalysis;
 import cn.lypi.contracts.security.BashRiskLevel;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPolicyKind;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -28,12 +33,15 @@ public final class PermissionDecisionPipeline {
     private static final String METADATA_PERMISSION_MODE = "permissionMode";
     private static final String METADATA_PERMISSION_RULES = "permissionRules";
     private static final String METADATA_STRICT_AUTO_REVIEW = "strictAutoReview";
+    private static final String METADATA_ADDITIONAL_PERMISSIONS = "additionalPermissions";
+    private static final String METADATA_APPROVED_ADDITIONAL_PERMISSIONS = "approvedAdditionalPermissions";
     private static final String INPUT_SANDBOX_PERMISSIONS = "sandboxPermissions";
     private static final String REQUEST_PERMISSIONS_TOOL = "request_permissions";
 
     private final List<PermissionRule> rules;
     private final BashRiskAnalyzer bashRiskAnalyzer;
     private final PathSafetyChecker pathSafetyChecker;
+    private final FileSystemPolicyChecker fileSystemPolicyChecker;
     private final BashRuleMatcher bashRuleMatcher;
     private final BashPrefixPolicy bashPrefixPolicy;
 
@@ -49,6 +57,7 @@ public final class PermissionDecisionPipeline {
         this.rules = rules == null ? List.of() : List.copyOf(rules);
         this.bashRiskAnalyzer = bashRiskAnalyzer;
         this.pathSafetyChecker = new PathSafetyChecker();
+        this.fileSystemPolicyChecker = new FileSystemPolicyChecker();
         BashCommandNormalizer normalizer = new BashCommandNormalizer();
         this.bashRuleMatcher = new BashRuleMatcher(normalizer);
         this.bashPrefixPolicy = new BashPrefixPolicy(normalizer);
@@ -191,8 +200,6 @@ public final class PermissionDecisionPipeline {
     }
 
     private Optional<PermissionDecision> legacyWorkspaceBoundaryDecision(ToolUseRequest request, ToolUseContext context) {
-        // NOTE: Task 6 moves profile boundary out of PathSafetyChecker. The legacy path boundary remains
-        // here until the profile projection is wired into this pipeline.
         for (String fieldName : List.of("path", "filePath", "targetPath", "sourcePath", "destinationPath", "cwd")) {
             Object rawPath = request.input().get(fieldName);
             if (rawPath == null) {
@@ -205,6 +212,9 @@ public final class PermissionDecisionPipeline {
                 context.cwd()
             );
             if (decision.isPresent()) {
+                if (additionalFilesystemAllows(request, context, fieldName, rawPath.toString(), context.cwd())) {
+                    continue;
+                }
                 return decision;
             }
         }
@@ -227,9 +237,6 @@ public final class PermissionDecisionPipeline {
                 redirectBase,
                 context.cwd()
             );
-            if (boundaryDecision.isPresent()) {
-                return Optional.of(withBashRisk(boundaryDecision.get(), bashRisk));
-            }
             Optional<PermissionDecision> pathDecision = pathSafetyChecker.checkPathInsideWorkspace(
                 "bashRedirectTarget",
                 redirectTarget.toString(),
@@ -239,6 +246,70 @@ public final class PermissionDecisionPipeline {
             if (pathDecision.isPresent()) {
                 return Optional.of(withBashRisk(hardSafety(pathDecision.get()), bashRisk));
             }
+            if (boundaryDecision.isPresent()) {
+                if (additionalFilesystemAllows(request, context, "bashRedirectTarget", redirectTarget.toString(), redirectBase)) {
+                    continue;
+                }
+                return Optional.of(withBashRisk(boundaryDecision.get(), bashRisk));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private boolean additionalFilesystemAllows(
+        ToolUseRequest request,
+        ToolUseContext context,
+        String fieldName,
+        String rawPath,
+        Path baseCwd
+    ) {
+        Optional<FileSystemPermissionPolicy> policy = additionalFileSystemPolicy(context);
+        Optional<FileSystemAccessMode> accessMode = fileSystemAccessMode(request.toolName(), fieldName);
+        if (policy.isEmpty() || accessMode.isEmpty()) {
+            return false;
+        }
+        Path target = baseCwd.toAbsolutePath().normalize().resolve(rawPath).normalize();
+        PermissionDecision decision = fileSystemPolicyChecker.decide(policy.get(), accessMode.get(), target, context);
+        return decision.behavior() == PermissionBehavior.ALLOW;
+    }
+
+    private Optional<FileSystemPermissionPolicy> additionalFileSystemPolicy(ToolUseContext context) {
+        // NOTE: approvedAdditionalPermissions 只能由 DefaultToolRuntime 在 request_permissions 批准后写入。
+        if (!approvedAdditionalPermissions(context)) {
+            return Optional.empty();
+        }
+        Object value = context.metadata().get(METADATA_ADDITIONAL_PERMISSIONS);
+        if (value instanceof AdditionalPermissionProfile additionalPermissions) {
+            return additionalPermissions.fileSystem().filter(this::isSupportedAdditionalFileSystemPolicy);
+        }
+        return Optional.empty();
+    }
+
+    private boolean isSupportedAdditionalFileSystemPolicy(FileSystemPermissionPolicy policy) {
+        return policy.kind() == FileSystemPolicyKind.RESTRICTED
+            && policy.entries().stream().allMatch(entry ->
+                entry.path().kind() == FileSystemPath.Kind.EXACT_PATH
+                    && entry.access() != FileSystemAccessMode.DENY
+            );
+    }
+
+    private boolean approvedAdditionalPermissions(ToolUseContext context) {
+        Object value = context.metadata().get(METADATA_APPROVED_ADDITIONAL_PERMISSIONS);
+        if (value instanceof Boolean approved) {
+            return approved;
+        }
+        return value instanceof String approved && Boolean.parseBoolean(approved);
+    }
+
+    private Optional<FileSystemAccessMode> fileSystemAccessMode(String toolName, String fieldName) {
+        if ("bashRedirectTarget".equals(fieldName)) {
+            return Optional.of(FileSystemAccessMode.WRITE);
+        }
+        if ("read".equals(toolName) || "grep".equals(toolName) || "glob".equals(toolName)) {
+            return Optional.of(FileSystemAccessMode.READ);
+        }
+        if ("write".equals(toolName) || "edit".equals(toolName)) {
+            return Optional.of(FileSystemAccessMode.WRITE);
         }
         return Optional.empty();
     }

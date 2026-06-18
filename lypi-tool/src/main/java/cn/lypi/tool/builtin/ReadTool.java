@@ -4,6 +4,7 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.io.IOException;
@@ -45,7 +46,7 @@ public final class ReadTool extends AbstractFileTool {
     public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
         String toolUseId = toolUseId(context);
         try {
-            Path path = resolvePath(input, context, "path");
+            Path path = resolvePath(input, context, "path", FileSystemAccessMode.READ);
             if (!Files.exists(path)) {
                 return error(toolUseId, "文件不存在: " + relativePath(path, context));
             }

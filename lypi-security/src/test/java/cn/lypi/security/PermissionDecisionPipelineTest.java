@@ -2,7 +2,13 @@ package cn.lypi.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
+import cn.lypi.contracts.security.FileSystemSpecialPath;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -13,10 +19,14 @@ import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class PermissionDecisionPipelineTest {
     @Test
@@ -160,6 +170,128 @@ class PermissionDecisionPipelineTest {
         assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
     }
 
+    @Test
+    void additionalFilesystemPermissionsAllowApprovedWriteOutsideWorkspace() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("write", Map.of("path", "/approved/outside.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+                "additionalPermissions",
+                additionalFileSystem("/approved", FileSystemAccessMode.WRITE),
+                "approvedAdditionalPermissions",
+                true
+            ))
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
+    void unapprovedAdditionalFilesystemPermissionsDoNotAllowWriteOutsideWorkspace() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("write", Map.of("path", "/approved/outside.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+                "additionalPermissions",
+                additionalFileSystem("/approved", FileSystemAccessMode.WRITE)
+            ))
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
+    @Test
+    void additionalFilesystemPermissionsDoNotConsumeWidePoliciesInPipeline() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision unrestricted = pipeline.decide(
+            request("write", Map.of("path", "/approved/outside.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+                "additionalPermissions",
+                new AdditionalPermissionProfile(Optional.of(FileSystemPermissionPolicy.unrestricted()), Optional.empty()),
+                "approvedAdditionalPermissions",
+                true
+            ))
+        );
+        PermissionDecision specialRoot = pipeline.decide(
+            request("write", Map.of("path", "/approved/outside.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+                "additionalPermissions",
+                additionalRootFileSystem(FileSystemAccessMode.WRITE),
+                "approvedAdditionalPermissions",
+                true
+            ))
+        );
+
+        assertThat(unrestricted.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(unrestricted.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(specialRoot.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(specialRoot.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
+    @Test
+    void additionalFilesystemPermissionsAllowApprovedBashRedirectOutsideWorkspace() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("bash", Map.of("command", "echo ok > /approved/output.txt")),
+            context(PermissionMode.BYPASS, Map.of(
+                "additionalPermissions",
+                additionalFileSystem("/approved", FileSystemAccessMode.WRITE),
+                "approvedAdditionalPermissions",
+                true
+            ))
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
+    void additionalFilesystemPermissionsDoNotBypassHardSafety() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("edit", Map.of("path", ".git/config")),
+            context(PermissionMode.BYPASS, Map.of(
+                "additionalPermissions",
+                additionalFileSystem(".git", FileSystemAccessMode.WRITE),
+                "approvedAdditionalPermissions",
+                true
+            ))
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.HARD_SAFETY);
+    }
+
+    @Test
+    void additionalFilesystemPermissionsDoNotBypassBashRedirectHardSafety(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Path approved = tempDir.resolve("approved");
+        Files.createDirectories(workspace.resolve(".git"));
+        Files.createDirectories(approved);
+        Files.createSymbolicLink(approved.resolve("git-link"), workspace.resolve(".git"));
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("bash", Map.of("command", "echo ok > " + approved.resolve("git-link/config"))),
+            context(PermissionMode.BYPASS, workspace, Map.of(
+                "additionalPermissions",
+                additionalRootFileSystem(FileSystemAccessMode.WRITE),
+                "approvedAdditionalPermissions",
+                true
+            ))
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.HARD_SAFETY);
+    }
+
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
         return new ToolUseRequest("toolu_1", toolName, input, "msg_1");
     }
@@ -169,9 +301,13 @@ class PermissionDecisionPipelineTest {
     }
 
     private ToolUseContext context(PermissionMode mode, Map<String, Object> extraMetadata) {
+        return context(mode, Path.of("/workspace"), extraMetadata);
+    }
+
+    private ToolUseContext context(PermissionMode mode, Path cwd, Map<String, Object> extraMetadata) {
         java.util.LinkedHashMap<String, Object> metadata = new java.util.LinkedHashMap<>(extraMetadata);
         metadata.put("permissionMode", mode);
-        return new ToolUseContext("ses_1", "msg_1", Path.of("/workspace"), metadata);
+        return new ToolUseContext("ses_1", "msg_1", cwd, metadata);
     }
 
     private PermissionRule rule(PermissionBehavior behavior, String toolName, String pattern, String reason) {
@@ -180,6 +316,24 @@ class PermissionDecisionPipelineTest {
             behavior,
             new PermissionRuleValue(toolName, pattern),
             reason
+        );
+    }
+
+    private AdditionalPermissionProfile additionalFileSystem(String path, FileSystemAccessMode accessMode) {
+        return new AdditionalPermissionProfile(
+            Optional.of(FileSystemPermissionPolicy.restricted(List.of(
+                new FileSystemPermissionEntry(FileSystemPath.exactPath(path), accessMode)
+            ))),
+            Optional.empty()
+        );
+    }
+
+    private AdditionalPermissionProfile additionalRootFileSystem(FileSystemAccessMode accessMode) {
+        return new AdditionalPermissionProfile(
+            Optional.of(FileSystemPermissionPolicy.restricted(List.of(
+                new FileSystemPermissionEntry(FileSystemPath.special(FileSystemSpecialPath.ROOT), accessMode)
+            ))),
+            Optional.empty()
         );
     }
 }
