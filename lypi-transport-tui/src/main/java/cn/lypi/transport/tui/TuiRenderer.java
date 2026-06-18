@@ -156,9 +156,9 @@ final class TuiRenderer {
     private List<String> transcriptLines(TuiViewModel view, int width, boolean toolOutputExpanded, int lineBudget) {
         List<String> lines = transcriptLines(view.blocks(), width, toolOutputExpanded, lineBudget);
         view.permissionPrompt().ifPresent(prompt -> {
-            appendWithinBudget(lines, wrap("permission " + prompt.toolUseId() + ": " + prompt.reason(), width), lineBudget);
+            appendPrefixedMultiline(lines, "permission " + prompt.toolUseId() + ": ", prompt.reason(), width, lineBudget);
             if (!prompt.rule().isBlank()) {
-                appendWithinBudget(lines, wrap("rule: " + prompt.rule(), width), lineBudget);
+                appendPrefixedMultiline(lines, "rule: ", prompt.rule(), width, lineBudget);
             }
             for (PermissionOption option : prompt.options()) {
                 String prefix = option.optionId().equals(prompt.selectedOptionId()) ? "> " : "  ";
@@ -172,6 +172,26 @@ final class TuiRenderer {
             appendWithinBudget(lines, wrap("· " + view.runtimeLine(), width), lineBudget);
         }
         return lines;
+    }
+
+    private void appendPrefixedMultiline(
+        List<String> lines,
+        String prefix,
+        String text,
+        int width,
+        int lineBudget
+    ) {
+        String safe = text == null ? "" : text;
+        String[] logicalLines = safe.split("\\R", -1);
+        if (logicalLines.length == 0) {
+            appendWithinBudget(lines, wrap(prefix, width), lineBudget);
+            return;
+        }
+        for (int index = 0; index < logicalLines.length; index++) {
+            String logicalLine = logicalLines[index];
+            String rendered = index == 0 ? prefix + logicalLine : logicalLine;
+            appendWithinBudget(lines, wrap(rendered, width), lineBudget);
+        }
     }
 
     private String optionLabel(PermissionOption option) {
@@ -266,7 +286,14 @@ final class TuiRenderer {
     private String statusLine(StatusBarState status, TuiScreen screen, int width) {
         String full = String.join(
             " ",
-            List.of(nullToEmpty(status.sessionId()), nullToEmpty(status.model()), nullToEmpty(status.mode()), nullToEmpty(status.permissionMode()))
+            List.of(
+                nullToEmpty(status.sessionId()),
+                nullToEmpty(status.model()),
+                nullToEmpty(status.mode()),
+                nullToEmpty(status.permissionMode()),
+                nullToEmpty(status.approvalMode()),
+                nullToEmpty(status.activePermissionProfileId())
+            )
         ).trim();
         if (AnsiWidth.displayWidth(full) <= width) {
             return full;

@@ -12,6 +12,7 @@ import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.security.ReviewDecision;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,6 +48,18 @@ class PermissionOverlayTest {
         assertEquals("bash:npm test", PermissionOverlay.formatRule(stringDecision));
         assertEquals("bash:npm test", PermissionOverlay.formatRule(ruleDecision));
         assertEquals("bash:npm test", PermissionOverlay.formatRule(suggestedDecision));
+    }
+
+    @Test
+    void formatsCodexReviewDecisionSummary() {
+        assertEquals(
+            "APPROVED, APPROVED_FOR_SESSION, ABORT",
+            PermissionOverlay.formatReviewDecisions(List.of(
+                ReviewDecision.APPROVED,
+                ReviewDecision.APPROVED_FOR_SESSION,
+                ReviewDecision.ABORT
+            ))
+        );
     }
 
     private List<PermissionOption> options() {

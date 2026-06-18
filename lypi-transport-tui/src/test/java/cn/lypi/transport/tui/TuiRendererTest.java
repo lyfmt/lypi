@@ -72,6 +72,35 @@ class TuiRendererTest {
     }
 
     @Test
+    void statusBarWithApprovalProjectionTruncatesOnNarrowWidth() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState(
+                "ses_1",
+                "gpt-5.4",
+                "EXECUTE",
+                "DEFAULT_EXECUTE",
+                "ON_REQUEST",
+                ":workspace",
+                "",
+                "",
+                "",
+                false
+            ),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(20, 3), "");
+
+        assertTrue(AnsiWidth.displayWidth(lines.getLast()) <= 20);
+        assertFalse(lines.getLast().contains("\n"));
+    }
+
+    @Test
     void statusBarDoesNotRenderApplicationScrollbackCounter() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
@@ -445,6 +474,41 @@ class TuiRendererTest {
         assertEquals("rule: bash:npm test", lines.get(1));
         assertEquals("> 允许一次", lines.get(2));
         assertEquals("  允许并记住", lines.get(3));
+    }
+
+    @Test
+    void multilinePermissionPromptIsSplitIntoFrameLines() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(8);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.of(new PermissionPromptView(
+                "perm_toolu_1",
+                "toolu_1",
+                "REQUEST_PERMISSIONS\nNeed network\ndecisions: APPROVED, DENIED",
+                "filesystem=UNRESTRICTED\nnetwork=ENABLED",
+                "approved",
+                "abort",
+                List.of(
+                    new PermissionOption("approved", PermissionOptionKind.ALLOW_ONCE, "Approve", "", Optional.empty(), Map.of()),
+                    new PermissionOption("abort", PermissionOptionKind.CANCEL, "Abort", "", Optional.empty(), Map.of())
+                ),
+                "approved"
+            )),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(80, 12), "");
+
+        assertTrue(lines.stream().noneMatch(line -> line.contains("\n")));
+        assertEquals("permission toolu_1: REQUEST_PERMISSIONS", lines.get(0));
+        assertEquals("Need network", lines.get(1));
+        assertEquals("decisions: APPROVED, DENIED", lines.get(2));
+        assertEquals("rule: filesystem=UNRESTRICTED", lines.get(3));
+        assertEquals("network=ENABLED", lines.get(4));
+        assertEquals("> Approve", lines.get(5));
     }
 
     @Test

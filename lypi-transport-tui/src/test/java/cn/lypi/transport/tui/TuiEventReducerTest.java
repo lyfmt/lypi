@@ -31,7 +31,14 @@ import cn.lypi.contracts.event.SessionStartEvent;
 import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.security.ActivePermissionProfile;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.ApprovalKind;
+import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
@@ -41,6 +48,10 @@ import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionOption;
+import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.security.PermissionRuntimeState;
+import cn.lypi.contracts.security.ReviewDecision;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
@@ -452,6 +463,8 @@ class TuiEventReducerTest {
         assertEquals("gpt-5.4", reducer.view().statusBar().model());
         assertEquals("EXECUTE", reducer.view().statusBar().mode());
         assertEquals("DEFAULT_EXECUTE", reducer.view().statusBar().permissionMode());
+        assertEquals("ON_REQUEST", reducer.view().statusBar().approvalMode());
+        assertEquals(":workspace", reducer.view().statusBar().activePermissionProfileId());
         assertEquals("ly-pi", reducer.view().statusBar().cwd());
         assertEquals("leaf_1", reducer.view().statusBar().branchLeafId());
         assertEquals("1234/200000tok", reducer.view().statusBar().budget());
@@ -466,6 +479,36 @@ class TuiEventReducerTest {
 
         assertEquals("EXECUTE", reducer.view().statusBar().mode());
         assertFalse(reducer.view().statusBar().hasInterruptibleTool());
+    }
+
+    @Test
+    void runtimeStateProjectsCanonicalApprovalModeAndProfileId() {
+        SessionRuntimeState runtimeState = new SessionRuntimeState(
+            "ses_1",
+            Path.of("/home/lyfmt/src/study/ly-pi"),
+            "leaf_1",
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            new PermissionRuntimeState(
+                new ApprovalPolicy(ApprovalMode.ON_FAILURE),
+                new ActivePermissionProfile("project-dev", Optional.of(":workspace")),
+                PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS).legacyBehavior(),
+                PermissionMode.ACCEPT_EDITS
+            ),
+            TestRuntimeStates.basic("ses_1").budget(),
+            List.of(),
+            false,
+            false,
+            false,
+            false
+        );
+
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(runtimeState);
+
+        assertEquals("ACCEPT_EDITS", reducer.view().statusBar().permissionMode());
+        assertEquals("ON_FAILURE", reducer.view().statusBar().approvalMode());
+        assertEquals("project-dev", reducer.view().statusBar().activePermissionProfileId());
     }
 
     @Test
@@ -597,13 +640,20 @@ class TuiEventReducerTest {
             new ModelSelection("anthropic", "claude-sonnet", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.DEFAULT_EXECUTE,
+            new PermissionRuntimeState(
+                new ApprovalPolicy(ApprovalMode.NEVER),
+                new ActivePermissionProfile(":danger-full-access"),
+                PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS).legacyBehavior(),
+                PermissionMode.BYPASS
+            ),
             NOW
         ));
 
         assertEquals("claude-sonnet", reducer.view().statusBar().model());
         assertEquals("PLAN", reducer.view().statusBar().mode());
-        assertEquals("DEFAULT_EXECUTE", reducer.view().statusBar().permissionMode());
+        assertEquals("BYPASS", reducer.view().statusBar().permissionMode());
+        assertEquals("NEVER", reducer.view().statusBar().approvalMode());
+        assertEquals(":danger-full-access", reducer.view().statusBar().activePermissionProfileId());
         assertEquals("leaf_2", reducer.view().statusBar().branchLeafId());
     }
 
@@ -790,6 +840,53 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void requestPermissionsPromptProjectsAvailableDecisionsAndRequestedDelta() {
+        TuiEventReducer reducer = new TuiEventReducer();
+
+        reducer.reduce(new PermissionRequestEvent(
+            "ses_1",
+            "req_1",
+            "toolu_1",
+            "request_permissions",
+            "Request permissions",
+            "{\"network\":\"enabled\"}",
+            "Need network for dependency download",
+            new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.TOOL_SPECIFIC,
+                "Need network for dependency download",
+                Optional.empty(),
+                Map.of()
+            ),
+            ApprovalKind.REQUEST_PERMISSIONS,
+            List.of(ReviewDecision.APPROVED, ReviewDecision.DENIED, ReviewDecision.ABORT),
+            Optional.of(new AdditionalPermissionProfile(
+                Optional.of(FileSystemPermissionPolicy.unrestricted()),
+                Optional.of(NetworkPermissionPolicy.enabled())
+            )),
+            false,
+            List.of(
+                option("approved", PermissionOptionKind.ALLOW_ONCE, "Approve", ReviewDecision.APPROVED),
+                option("denied", PermissionOptionKind.DENY, "Deny", ReviewDecision.DENIED),
+                option("abort", PermissionOptionKind.CANCEL, "Abort", ReviewDecision.ABORT)
+            ),
+            "approved",
+            "abort",
+            Map.of(),
+            NOW
+        ));
+
+        var prompt = reducer.view().permissionPrompt().orElseThrow();
+        assertEquals("req_1", prompt.requestId());
+        assertTrue(prompt.reason().contains("REQUEST_PERMISSIONS"));
+        assertTrue(prompt.reason().contains("Need network for dependency download"));
+        assertTrue(prompt.rule().contains("filesystem=UNRESTRICTED"));
+        assertTrue(prompt.rule().contains("network=ENABLED"));
+        assertEquals(List.of("approved", "denied", "abort"),
+            prompt.options().stream().map(PermissionOption::optionId).toList());
+    }
+
+    @Test
     void interruptClearsPermissionPromptOverlay() {
         TuiEventReducer reducer = new TuiEventReducer();
 
@@ -800,6 +897,15 @@ class TuiEventReducerTest {
 
         assertTrue(reducer.view().permissionPrompt().isEmpty());
         assertEquals("interrupted esc", reducer.view().runtimeLine());
+    }
+
+    private PermissionOption option(
+        String id,
+        PermissionOptionKind kind,
+        String label,
+        ReviewDecision reviewDecision
+    ) {
+        return new PermissionOption(id, kind, label, "", Optional.empty(), Map.of("reviewDecision", reviewDecision.name()));
     }
 
     @Test

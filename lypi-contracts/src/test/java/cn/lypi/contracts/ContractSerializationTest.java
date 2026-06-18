@@ -1645,6 +1645,8 @@ class ContractSerializationTest {
                 "gpt-5.4",
                 "running",
                 "main",
+                "on_request",
+                ":workspace",
                 "ly-pi",
                 "leaf_01",
                 "1234/200000tok",
@@ -1680,6 +1682,8 @@ class ContractSerializationTest {
         assertInstanceOf(TuiErrorBlock.class, restored.blocks().get(3));
         TuiToolBlock tool = (TuiToolBlock) restored.blocks().get(2);
         assertEquals("ly-pi", restored.statusBar().cwd());
+        assertEquals("on_request", restored.statusBar().approvalMode());
+        assertEquals(":workspace", restored.statusBar().activePermissionProfileId());
         assertEquals("leaf_01", restored.statusBar().branchLeafId());
         assertEquals("1234/200000tok", restored.statusBar().budget());
         assertTrue(restored.statusBar().hasInterruptibleTool());
@@ -1718,6 +1722,8 @@ class ContractSerializationTest {
         assertEquals("gpt-5.4", restored.model());
         assertEquals("execute", restored.mode());
         assertEquals("default_execute", restored.permissionMode());
+        assertEquals("", restored.approvalMode());
+        assertEquals("", restored.activePermissionProfileId());
         assertEquals("", restored.cwd());
         assertEquals("", restored.branchLeafId());
         assertEquals("", restored.budget());
