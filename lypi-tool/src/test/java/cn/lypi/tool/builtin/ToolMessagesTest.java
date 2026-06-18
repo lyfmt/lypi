@@ -5,11 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.util.List;
 import java.nio.file.Path;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -48,6 +50,28 @@ class ToolMessagesTest {
         ToolUseContext context = new ToolUseContext("ses_1", "msg_1", Path.of("."), Map.of());
 
         assertEquals("toolu_unknown", ToolMessages.toolUseId(context));
+    }
+
+    @Test
+    void createsToolResultWithAdditionalContentBlocks() {
+        AttachmentContentBlock attachment = new AttachmentContentBlock(
+            "att-1",
+            "Image: image/png",
+            "image/png",
+            Map.of("imageUrl", "data:image/png;base64,AAA", "toolUseId", "toolu_1")
+        );
+
+        ToolResult<String> result = ToolMessages.success(
+            "toolu_1",
+            "Read image file [image/png]",
+            List.of(attachment)
+        );
+
+        assertFalse(result.isError());
+        assertEquals("Read image file [image/png]", result.output());
+        assertEquals(2, result.newMessages().getFirst().content().size());
+        assertBlock(result, "toolu_1", "Read image file [image/png]", false);
+        assertEquals(attachment, result.newMessages().getFirst().content().get(1));
     }
 
     private static void assertBlock(ToolResult<String> result, String toolUseId, String text, boolean error) {
