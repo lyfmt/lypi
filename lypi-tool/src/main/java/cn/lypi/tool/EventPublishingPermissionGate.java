@@ -75,6 +75,7 @@ public final class EventPublishingPermissionGate implements PermissionGate {
             renderedToolUse,
             selection.selectedOptionId(),
             decisionFromResult(selection.result(), selection.selectedOption(), decision),
+            null,
             Optional.empty(),
             decisionMetadata(selection.selectedOption(), selection.responseMatches()),
             Instant.now()

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
@@ -71,6 +72,67 @@ class ToolPermissionCoordinatorTest {
 
         assertTrue(result.allowed());
         assertEquals(0, gateCalls.get());
+    }
+
+    @Test
+    void bypassStillPromptsForStrictAutoReviewAsk() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.SANDBOX_POLICY,
+                "strictAutoReview 要求本轮后续命令先进入人工 review。",
+                Optional.empty(),
+                Map.of("strictAutoReview", true)
+            ),
+            (request, tool, context, decision) -> {
+                gateCalls.incrementAndGet();
+                return PermissionGateResult.allow();
+            },
+            PermissionUpdateStore.noop(),
+            List.of()
+        );
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("write", Map.of("text", "ok")),
+            TestTools.permission("write", PermissionBehavior.ALLOW),
+            Map.of("text", "ok"),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertTrue(result.allowed());
+        assertEquals(1, gateCalls.get());
+    }
+
+    @Test
+    void defaultSandboxBashDoesNotBypassStrictAutoReviewAsk() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.SANDBOX_POLICY,
+                "strictAutoReview 要求本轮后续命令先进入人工 review。",
+                Optional.empty(),
+                Map.of("strictAutoReview", true)
+            ),
+            (request, tool, context, decision) -> {
+                gateCalls.incrementAndGet();
+                return PermissionGateResult.allow();
+            },
+            PermissionUpdateStore.noop(),
+            List.of()
+        );
+        Map<String, Object> input = Map.of("command", "pwd");
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("bash", input),
+            TestTools.permission("bash", PermissionBehavior.ALLOW),
+            input,
+            context(PermissionMode.BYPASS)
+        );
+
+        assertTrue(result.allowed());
+        assertEquals(1, gateCalls.get());
     }
 
     @Test

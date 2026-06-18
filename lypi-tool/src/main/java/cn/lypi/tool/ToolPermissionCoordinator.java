@@ -54,6 +54,8 @@ final class ToolPermissionCoordinator {
         if (isDefaultSandboxBashRequest(request) && canEnterDefaultSandbox(securityDecision)) {
             effectiveDecision = isDeny(securityDecision)
                 ? securityDecision
+                : isStrictAutoReview(securityDecision)
+                    ? securityDecision
                 : allowDecision("默认 Bash 请求先进入沙箱执行。");
         } else {
             PermissionDecision toolDecision = tool.checkPermissions(input, context);
@@ -109,7 +111,9 @@ final class ToolPermissionCoordinator {
         if (decision.behavior() == PermissionBehavior.ALLOW) {
             return PermissionGateResult.allow();
         }
-        if (decision.behavior() == PermissionBehavior.ASK && isBypassPermissionMode(context)) {
+        if (decision.behavior() == PermissionBehavior.ASK
+            && isBypassPermissionMode(context)
+            && !isStrictAutoReview(decision)) {
             return PermissionGateResult.allow();
         }
         PermissionGateResult result = permissionGate.request(request, tool, context, decision);
@@ -168,6 +172,14 @@ final class ToolPermissionCoordinator {
             return PermissionMode.valueOf(permissionMode) == PermissionMode.BYPASS;
         }
         return false;
+    }
+
+    private boolean isStrictAutoReview(PermissionDecision decision) {
+        Object value = decision.metadata().get("strictAutoReview");
+        if (value instanceof Boolean strictAutoReview) {
+            return strictAutoReview;
+        }
+        return value instanceof String strictAutoReview && Boolean.parseBoolean(strictAutoReview);
     }
 
     private boolean isDeny(PermissionDecision decision) {
