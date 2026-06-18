@@ -113,6 +113,9 @@ class ReadToolTest {
     void exposesReadOnlyConcurrencySafeMetadata() {
         ReadTool tool = new ReadTool();
 
+        assertTrue(tool.description().contains("image"));
+        assertTrue(tool.description().contains("PNG"));
+        assertTrue(tool.description().contains("JPEG"));
         assertTrue(tool.isReadOnly(Map.of("path", "notes.txt")));
         assertTrue(tool.isConcurrencySafe(Map.of("path", "notes.txt")));
         assertFalse(tool.isDestructive(Map.of("path", "notes.txt")));

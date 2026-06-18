@@ -23,6 +23,11 @@ public final class ReadTool extends AbstractFileTool {
     }
 
     @Override
+    public String description() {
+        return "Read text files with line numbers. Also reads PNG, JPEG, GIF, and WEBP images as visual model input.";
+    }
+
+    @Override
     public JsonSchema inputSchema() {
         return new JsonSchema(Map.of(
             "type", "object",
