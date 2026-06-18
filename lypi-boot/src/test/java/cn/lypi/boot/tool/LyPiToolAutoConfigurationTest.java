@@ -33,6 +33,7 @@ import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.security.AgentMode;
@@ -63,6 +64,7 @@ import cn.lypi.runtime.event.InMemoryEventBus;
 import cn.lypi.tool.shell.BubblewrapExecutor;
 import cn.lypi.tool.shell.ExecutorRegistry;
 import cn.lypi.tool.shell.HostExecutor;
+import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -91,6 +93,8 @@ class LyPiToolAutoConfigurationTest {
                 assertThat(context).hasSingleBean(HostExecutor.class);
                 assertThat(context).hasSingleBean(BubblewrapExecutor.class);
                 assertThat(context).hasSingleBean(SandboxPolicyResolver.class);
+                assertThat(context.getBean(SandboxPolicyResolver.class))
+                    .isInstanceOf(PermissionProfileSandboxPolicyResolver.class);
                 assertThat(context).hasSingleBean(ExecutorRegistry.class);
                 assertThat(context.getBean(Executor.class).name()).isEqualTo("executor-registry");
 
@@ -131,6 +135,7 @@ class LyPiToolAutoConfigurationTest {
 
                 cn.lypi.contracts.runtime.SandboxRuntimePolicy policy = resolver.resolve(Path.of(".").toAbsolutePath(), Path.of(".").toAbsolutePath());
 
+                assertThat(policy.kind()).isEqualTo(SandboxRuntimePolicyKind.MANAGED);
                 assertThat(policy.networkMode()).isEqualTo(NetworkMode.HOST);
                 assertThat(policy.failIfUnavailable()).isTrue();
                 assertThat(policy.autoAllowBashIfSandboxed()).isTrue();

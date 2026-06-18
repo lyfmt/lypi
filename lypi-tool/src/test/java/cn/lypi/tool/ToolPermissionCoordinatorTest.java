@@ -4,6 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.ApprovalKind;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -193,6 +199,75 @@ class ToolPermissionCoordinatorTest {
         assertEquals(List.of(update.rule()), runtimeRules);
     }
 
+    @Test
+    void freshInlineAdditionalPermissionsPromptAndReturnApprovedPayload() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        AdditionalPermissionProfile permissions = additionalWrite("/workspace/cache");
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
+            (request, tool, context, decision) -> {
+                requestedDecision.set(decision);
+                return PermissionGateResult.allow();
+            },
+            PermissionUpdateStore.noop(),
+            List.of()
+        );
+        Map<String, Object> input = Map.of(
+            "command", "touch cache/out",
+            "sandboxPermissions", "withAdditionalPermissions",
+            "additionalPermissions", permissions
+        );
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("bash", input),
+            TestTools.permission("bash", PermissionBehavior.ALLOW),
+            input,
+            context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        assertTrue(result.allowed());
+        assertEquals(Optional.of(permissions), result.approvedAdditionalPermissions());
+        assertEquals(ApprovalKind.REQUEST_PERMISSIONS, requestedDecision.get().metadata().get("approvalKind"));
+        assertEquals(permissions, requestedDecision.get().metadata().get("additionalPermissions"));
+    }
+
+    @Test
+    void inlineAdditionalPermissionsMergeWithPreapprovedContextPermissions() {
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
+        AdditionalPermissionProfile preapproved = additionalWrite("/workspace/cache");
+        AdditionalPermissionProfile requested = additionalWrite("/workspace/output");
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
+            (request, tool, context, decision) -> {
+                requestedDecision.set(decision);
+                return PermissionGateResult.allow();
+            },
+            PermissionUpdateStore.noop(),
+            List.of()
+        );
+        Map<String, Object> input = Map.of(
+            "command", "touch output/out",
+            "sandboxPermissions", "withAdditionalPermissions",
+            "additionalPermissions", requested
+        );
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("bash", input),
+            TestTools.permission("bash", PermissionBehavior.ALLOW),
+            input,
+            contextWithAdditionalPermissions(PermissionMode.DEFAULT_EXECUTE, preapproved)
+        );
+
+        assertTrue(result.allowed());
+        AdditionalPermissionProfile merged = result.approvedAdditionalPermissions().orElseThrow();
+        assertTrue(merged.fileSystem().orElseThrow().entries().containsAll(List.of(
+            preapproved.fileSystem().orElseThrow().entries().getFirst(),
+            requested.fileSystem().orElseThrow().entries().getFirst()
+        )));
+        assertEquals(ApprovalKind.REQUEST_PERMISSIONS, requestedDecision.get().metadata().get("approvalKind"));
+        assertEquals(requested, requestedDecision.get().metadata().get("additionalPermissions"));
+    }
+
     private ToolPermissionCoordinator coordinator(
         cn.lypi.contracts.runtime.SecurityRuntimePort security,
         PermissionGate gate,
@@ -227,6 +302,29 @@ class ToolPermissionCoordinatorTest {
                 ToolRuntimeContextFactory.METADATA_PERMISSION_RUNTIME_STATE,
                 runtimeState
             )
+        );
+    }
+
+    private ToolUseContext contextWithAdditionalPermissions(
+        PermissionMode permissionMode,
+        AdditionalPermissionProfile additionalPermissions
+    ) {
+        ToolUseContext base = context(permissionMode);
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>(base.metadata());
+        metadata.put("additionalPermissions", additionalPermissions);
+        metadata.put("approvedAdditionalPermissions", true);
+        return new ToolUseContext(base.sessionId(), base.messageId(), base.cwd(), Map.copyOf(metadata));
+    }
+
+    private AdditionalPermissionProfile additionalWrite(String path) {
+        return new AdditionalPermissionProfile(
+            Optional.of(FileSystemPermissionPolicy.restricted(List.of(
+                new FileSystemPermissionEntry(
+                    FileSystemPath.exactPath(path),
+                    FileSystemAccessMode.WRITE
+                )
+            ))),
+            Optional.empty()
         );
     }
 }

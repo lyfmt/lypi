@@ -47,6 +47,7 @@ import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.ApprovalKind;
@@ -145,6 +146,10 @@ class ContractSerializationTest {
         assertEquals(SandboxPermissions.USE_DEFAULT, SandboxPermissions.fromToolValue(null));
         assertEquals(SandboxPermissions.USE_DEFAULT, SandboxPermissions.fromToolValue("useDefault"));
         assertEquals(SandboxPermissions.REQUIRE_ESCALATED, SandboxPermissions.fromToolValue("requireEscalated"));
+        assertEquals(
+            SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+            SandboxPermissions.fromToolValue("withAdditionalPermissions")
+        );
     }
 
     @Test
@@ -158,7 +163,33 @@ class ContractSerializationTest {
         );
 
         assertEquals(SandboxPermissions.USE_DEFAULT, request.sandboxPermissions());
+        assertEquals(Optional.empty(), request.additionalPermissions());
         assertEquals(Optional.empty(), request.justification());
+    }
+
+    @Test
+    void executionRequestKeepsInlineAdditionalPermissions() {
+        AdditionalPermissionProfile additionalPermissions = new AdditionalPermissionProfile(
+            Optional.of(FileSystemPermissionPolicy.restricted(List.of(new FileSystemPermissionEntry(
+                FileSystemPath.exactPath("cache"),
+                FileSystemAccessMode.WRITE
+            )))),
+            Optional.empty()
+        );
+
+        ExecutionRequest request = new ExecutionRequest(
+            List.of("bash", "-lc", "true"),
+            Path.of("."),
+            Map.of(),
+            Duration.ofSeconds(1),
+            null,
+            SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+            Optional.of(additionalPermissions),
+            Optional.empty()
+        );
+
+        assertEquals(SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS, request.sandboxPermissions());
+        assertEquals(Optional.of(additionalPermissions), request.additionalPermissions());
     }
 
     @Test
@@ -179,9 +210,60 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"networkMode\":\"DISABLED\""));
         assertTrue(!json.contains("allowedDomains"));
         assertTrue(!json.contains("deniedDomains"));
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, restored.kind());
         assertEquals(NetworkMode.DISABLED, restored.networkMode());
         assertEquals(false, restored.failIfUnavailable());
         assertEquals(false, restored.autoAllowBashIfSandboxed());
+    }
+
+    @Test
+    void sandboxRuntimePolicyDefaultsMissingKindToManagedForOldJson() throws Exception {
+        String oldJson = """
+            {
+              "allowRead": ["/usr"],
+              "denyRead": [],
+              "allowWrite": ["/workspace"],
+              "denyWrite": [],
+              "networkMode": "DISABLED",
+              "failIfUnavailable": false,
+              "autoAllowBashIfSandboxed": false
+            }
+            """;
+
+        SandboxRuntimePolicy restored = mapper.readValue(oldJson, SandboxRuntimePolicy.class);
+
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, restored.kind());
+        assertEquals(NetworkMode.DISABLED, restored.networkMode());
+    }
+
+    @Test
+    void sandboxRuntimePolicyRoundTripKeepsDisabledAndExternalKinds() throws Exception {
+        SandboxRuntimePolicy disabled = new SandboxRuntimePolicy(
+            SandboxRuntimePolicyKind.DISABLED,
+            List.of(Path.of("/")),
+            List.of(),
+            List.of(Path.of("/")),
+            List.of(),
+            NetworkMode.HOST,
+            false,
+            true
+        );
+        SandboxRuntimePolicy external = new SandboxRuntimePolicy(
+            SandboxRuntimePolicyKind.EXTERNAL,
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            NetworkMode.HOST,
+            false,
+            true
+        );
+
+        SandboxRuntimePolicy restoredDisabled = mapper.readValue(mapper.writeValueAsString(disabled), SandboxRuntimePolicy.class);
+        SandboxRuntimePolicy restoredExternal = mapper.readValue(mapper.writeValueAsString(external), SandboxRuntimePolicy.class);
+
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, restoredDisabled.kind());
+        assertEquals(SandboxRuntimePolicyKind.EXTERNAL, restoredExternal.kind());
     }
 
     @Test

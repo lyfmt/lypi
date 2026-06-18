@@ -2,7 +2,13 @@ package cn.lypi.tool;
 
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.BashRiskAnalysis;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
+import cn.lypi.contracts.security.FileSystemPolicyKind;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
+import cn.lypi.contracts.security.NetworkPolicyMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -11,6 +17,7 @@ import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -19,6 +26,11 @@ import java.util.Optional;
  * 协调安全运行时、工具权限和交互式权限确认。
  */
 final class ToolPermissionCoordinator {
+    private static final String INPUT_ADDITIONAL_PERMISSIONS = "additionalPermissions";
+    private static final String INPUT_SANDBOX_PERMISSIONS = "sandboxPermissions";
+    private static final String METADATA_ADDITIONAL_PERMISSIONS = "additionalPermissions";
+    private static final String METADATA_APPROVED_ADDITIONAL_PERMISSIONS = "approvedAdditionalPermissions";
+
     private final SecurityRuntimePort securityRuntime;
     private final ApprovalCoordinator approvalCoordinator;
     private final SandboxEscalationPolicy sandboxEscalationPolicy;
@@ -69,6 +81,16 @@ final class ToolPermissionCoordinator {
         ToolUseContext context
     ) {
         PermissionDecision securityDecision = securityRuntime.decide(request, context);
+        Optional<Result> additionalPermissionsResult = additionalPermissionsResult(
+            request,
+            tool,
+            context,
+            securityDecision
+        );
+        if (additionalPermissionsResult.isPresent()) {
+            return additionalPermissionsResult.get();
+        }
+
         PermissionDecision effectiveDecision;
         if (isDefaultSandboxBashRequest(request) && canEnterDefaultSandbox(securityDecision)) {
             effectiveDecision = isDeny(securityDecision)
@@ -104,10 +126,10 @@ final class ToolPermissionCoordinator {
 
         PermissionGateResult permissionResult = approvalCoordinator.resolve(request, tool, context, effectiveDecision);
         if (permissionResult.status() != PermissionGateResult.Status.ALLOW) {
-            return new Result(false, permissionResult);
+            return Result.disallowed(permissionResult);
         }
 
-        return new Result(true, permissionResult);
+        return Result.allowed(permissionResult);
     }
 
     private PermissionDecision effectiveDecision(PermissionDecision toolDecision, PermissionDecision securityDecision) {
@@ -133,7 +155,125 @@ final class ToolPermissionCoordinator {
         return request != null
             && "bash".equals(request.toolName())
             && !hasPrefixRule(request.input())
-            && SandboxPermissions.fromToolValue(stringInput(request.input(), "sandboxPermissions")) == SandboxPermissions.USE_DEFAULT;
+            && SandboxPermissions.fromToolValue(stringInput(request.input(), INPUT_SANDBOX_PERMISSIONS)) == SandboxPermissions.USE_DEFAULT;
+    }
+
+    private Optional<Result> additionalPermissionsResult(
+        ToolUseRequest request,
+        Tool<Map<String, Object>, ?> tool,
+        ToolUseContext context,
+        PermissionDecision securityDecision
+    ) {
+        if (request == null || !"bash".equals(request.toolName())) {
+            return Optional.empty();
+        }
+        if (SandboxPermissions.fromToolValue(stringInput(request.input(), INPUT_SANDBOX_PERMISSIONS))
+            != SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS) {
+            return Optional.empty();
+        }
+        Optional<AdditionalPermissionProfile> preapproved = approvedAdditionalPermissions(context);
+        if (isDeny(securityDecision)) {
+            return Optional.of(Result.denied(PermissionGateResult.deny(decisionMessage(securityDecision))));
+        }
+        Object rawPermissions = request.input() == null ? null : request.input().get(INPUT_ADDITIONAL_PERMISSIONS);
+        if (rawPermissions == null) {
+            return Optional.of(Result.denied(PermissionGateResult.deny(
+                "sandboxPermissions=withAdditionalPermissions 时 additionalPermissions 不能为空。"
+            )));
+        }
+        AdditionalPermissionProfile additionalPermissions;
+        try {
+            additionalPermissions = AdditionalPermissionsInputParser.parse(rawPermissions, INPUT_ADDITIONAL_PERMISSIONS);
+        } catch (IllegalArgumentException exception) {
+            return Optional.of(Result.denied(PermissionGateResult.deny(exception.getMessage())));
+        }
+        if (AdditionalPermissionsInputParser.isEmpty(additionalPermissions)) {
+            return Optional.of(Result.denied(PermissionGateResult.deny(
+                "sandboxPermissions=withAdditionalPermissions 时 additionalPermissions 不能为空。"
+            )));
+        }
+        String reason = securityDecision == null || securityDecision.message() == null || securityDecision.message().isBlank()
+            ? "请求额外权限。"
+            : securityDecision.message();
+        PermissionGateResult permissionResult = approvalCoordinator.resolveAdditionalPermissions(
+            request,
+            tool,
+            context,
+            reason,
+            additionalPermissions
+        );
+        if (permissionResult.status() != PermissionGateResult.Status.ALLOW) {
+            return Optional.of(Result.disallowed(permissionResult));
+        }
+        return Optional.of(Result.allowed(
+            permissionResult,
+            mergeAdditionalPermissions(preapproved.orElse(AdditionalPermissionProfile.empty()), additionalPermissions)
+        ));
+    }
+
+    private Optional<AdditionalPermissionProfile> approvedAdditionalPermissions(ToolUseContext context) {
+        Object marker = context.metadata().get(METADATA_APPROVED_ADDITIONAL_PERMISSIONS);
+        boolean approved = false;
+        if (marker instanceof Boolean booleanMarker) {
+            approved = booleanMarker;
+        } else if (marker instanceof String stringMarker) {
+            approved = Boolean.parseBoolean(stringMarker);
+        }
+        if (!approved) {
+            return Optional.empty();
+        }
+        Object value = context.metadata().get(METADATA_ADDITIONAL_PERMISSIONS);
+        return value instanceof AdditionalPermissionProfile permissions ? Optional.of(permissions) : Optional.empty();
+    }
+
+    private AdditionalPermissionProfile mergeAdditionalPermissions(
+        AdditionalPermissionProfile first,
+        AdditionalPermissionProfile second
+    ) {
+        AdditionalPermissionProfile left = first == null ? AdditionalPermissionProfile.empty() : first;
+        AdditionalPermissionProfile right = second == null ? AdditionalPermissionProfile.empty() : second;
+        return new AdditionalPermissionProfile(
+            mergeFileSystem(left, right),
+            mergeNetwork(left, right)
+        );
+    }
+
+    private Optional<FileSystemPermissionPolicy> mergeFileSystem(
+        AdditionalPermissionProfile left,
+        AdditionalPermissionProfile right
+    ) {
+        if (left.fileSystem().isEmpty()) {
+            return right.fileSystem();
+        }
+        if (right.fileSystem().isEmpty()) {
+            return left.fileSystem();
+        }
+        FileSystemPermissionPolicy leftPolicy = left.fileSystem().orElseThrow();
+        FileSystemPermissionPolicy rightPolicy = right.fileSystem().orElseThrow();
+        if (leftPolicy.kind() != rightPolicy.kind()
+            || leftPolicy.kind() != FileSystemPolicyKind.RESTRICTED) {
+            return right.fileSystem();
+        }
+        ArrayList<FileSystemPermissionEntry> entries = new ArrayList<>(leftPolicy.entries());
+        entries.addAll(rightPolicy.entries());
+        return Optional.of(FileSystemPermissionPolicy.restricted(entries));
+    }
+
+    private Optional<NetworkPermissionPolicy> mergeNetwork(
+        AdditionalPermissionProfile left,
+        AdditionalPermissionProfile right
+    ) {
+        if (left.network().isEmpty()) {
+            return right.network();
+        }
+        if (right.network().isEmpty()) {
+            return left.network();
+        }
+        if (left.network().orElseThrow().mode() == NetworkPolicyMode.ENABLED
+            || right.network().orElseThrow().mode() == NetworkPolicyMode.ENABLED) {
+            return Optional.of(NetworkPermissionPolicy.enabled());
+        }
+        return left.network();
     }
 
     private boolean canEnterDefaultSandbox(PermissionDecision securityDecision) {
@@ -208,9 +348,38 @@ final class ToolPermissionCoordinator {
         return decision.message();
     }
 
-    record Result(boolean allowed, PermissionGateResult gateResult) {
+    record Result(
+        boolean allowed,
+        PermissionGateResult gateResult,
+        Optional<AdditionalPermissionProfile> approvedAdditionalPermissions
+    ) {
+        Result(boolean allowed, PermissionGateResult gateResult) {
+            this(allowed, gateResult, Optional.empty());
+        }
+
+        Result {
+            approvedAdditionalPermissions = approvedAdditionalPermissions == null
+                ? Optional.empty()
+                : approvedAdditionalPermissions;
+        }
+
+        private static Result allowed(PermissionGateResult result) {
+            return new Result(true, result, Optional.empty());
+        }
+
+        private static Result disallowed(PermissionGateResult result) {
+            return new Result(false, result, Optional.empty());
+        }
+
+        private static Result allowed(
+            PermissionGateResult result,
+            AdditionalPermissionProfile additionalPermissions
+        ) {
+            return new Result(true, result, Optional.of(additionalPermissions));
+        }
+
         private static Result denied(PermissionGateResult result) {
-            return new Result(false, result);
+            return new Result(false, result, Optional.empty());
         }
     }
 }

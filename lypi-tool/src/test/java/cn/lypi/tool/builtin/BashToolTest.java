@@ -16,6 +16,11 @@ import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -43,7 +48,7 @@ class BashToolTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> sandboxPermissions = (Map<String, Object>) properties.get("sandboxPermissions");
 
-        assertEquals(List.of("useDefault", "requireEscalated"), sandboxPermissions.get("enum"));
+        assertEquals(List.of("useDefault", "requireEscalated", "withAdditionalPermissions"), sandboxPermissions.get("enum"));
         assertEquals(Map.of("type", "string"), properties.get("justification"));
     }
 
@@ -194,6 +199,65 @@ class BashToolTest {
             Optional.of("Need host access to inspect local process state."),
             executor.request.get().justification()
         );
+        assertEquals(Optional.empty(), executor.request.get().additionalPermissions());
+    }
+
+    @Test
+    void mapsApprovedAdditionalPermissionsToSingleExecutionRequest() throws Exception {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+        Path cacheDir = Files.createDirectory(tempDir.resolve("cache"));
+        AdditionalPermissionProfile permissions = additionalWrite(cacheDir);
+
+        ToolResult<String> widenedResult = tool.execute(
+            Map.of(
+                "command", "touch cache/out",
+                "sandboxPermissions", "withAdditionalPermissions"
+            ),
+            context(Map.of(
+                "additionalPermissions", permissions,
+                "approvedAdditionalPermissions", true
+            )),
+            message -> {
+            }
+        );
+
+        assertFalse(widenedResult.isError());
+        assertEquals(SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS, executor.request.get().sandboxPermissions());
+        assertEquals(Optional.of(permissions), executor.request.get().additionalPermissions());
+        assertEquals(Optional.empty(), executor.request.get().justification());
+
+        ToolResult<String> defaultResult = tool.execute(
+            Map.of("command", "true"),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(defaultResult.isError());
+        assertEquals(SandboxPermissions.USE_DEFAULT, executor.request.get().sandboxPermissions());
+        assertEquals(Optional.empty(), executor.request.get().additionalPermissions());
+    }
+
+    @Test
+    void rejectsAdditionalPermissionsWithoutApprovedMarker() throws Exception {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+        Path cacheDir = Files.createDirectory(tempDir.resolve("cache"));
+
+        ToolResult<String> result = tool.execute(
+            Map.of(
+                "command", "touch cache/out",
+                "sandboxPermissions", "withAdditionalPermissions",
+                "additionalPermissions", additionalWrite(cacheDir)
+            ),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertTrue(result.isError());
+        assertEquals(null, executor.request.get());
     }
 
     @Test
@@ -340,6 +404,18 @@ class BashToolTest {
             NetworkMode.DISABLED,
             failIfUnavailable,
             autoAllowBashIfSandboxed
+        );
+    }
+
+    private AdditionalPermissionProfile additionalWrite(Path path) {
+        return new AdditionalPermissionProfile(
+            Optional.of(FileSystemPermissionPolicy.restricted(List.of(
+                new FileSystemPermissionEntry(
+                    FileSystemPath.exactPath(path.toString()),
+                    FileSystemAccessMode.WRITE
+                )
+            ))),
+            Optional.empty()
         );
     }
 

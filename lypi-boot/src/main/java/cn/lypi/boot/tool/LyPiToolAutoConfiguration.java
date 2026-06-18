@@ -6,9 +6,13 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.ManagedPermissionProfile;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
+import cn.lypi.contracts.security.PermissionProfiles;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.tool.BlockingPermissionGate;
@@ -30,9 +34,9 @@ import cn.lypi.tool.mcp.McpToolAdapter;
 import cn.lypi.tool.mcp.McpToolResultMapper;
 import cn.lypi.tool.mcp.stdio.StdioMcpClient;
 import cn.lypi.tool.shell.BubblewrapExecutor;
-import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.ExecutorRegistry;
 import cn.lypi.tool.shell.HostExecutor;
+import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import cn.lypi.transport.headless.HeadlessTransport;
@@ -77,11 +81,19 @@ public class LyPiToolAutoConfiguration {
     @ConditionalOnMissingBean(SandboxPolicyResolver.class)
     public SandboxPolicyResolver sandboxPolicyResolver(LyPiToolProperties properties) {
         LyPiToolProperties.SandboxProperties sandbox = properties.getSandbox();
-        return new DefaultSandboxPolicyResolver(new SandboxPolicyOptions(
-            sandbox.getNetworkMode(),
+        return new PermissionProfileSandboxPolicyResolver(defaultPermissionProfile(sandbox), new SandboxPolicyOptions(
+            NetworkMode.DISABLED,
             sandbox.isFailIfUnavailable(),
             sandbox.isEnabled() && sandbox.isAutoAllowBashIfSandboxed()
         ));
+    }
+
+    private ManagedPermissionProfile defaultPermissionProfile(LyPiToolProperties.SandboxProperties sandbox) {
+        ManagedPermissionProfile workspace = PermissionProfiles.workspace();
+        NetworkPermissionPolicy network = sandbox.getNetworkMode() == NetworkMode.HOST
+            ? NetworkPermissionPolicy.enabled()
+            : NetworkPermissionPolicy.restricted();
+        return new ManagedPermissionProfile(workspace.fileSystem(), network);
     }
 
     /**

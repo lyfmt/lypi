@@ -505,7 +505,9 @@ public final class PermissionDecisionPipeline {
     }
 
     private boolean requiresSandboxEscalation(ToolUseRequest request) {
-        return "requireEscalated".equals(stringInput(request.input(), INPUT_SANDBOX_PERMISSIONS));
+        String sandboxPermissions = stringInput(request.input(), INPUT_SANDBOX_PERMISSIONS);
+        return "requireEscalated".equals(sandboxPermissions)
+            || "withAdditionalPermissions".equals(sandboxPermissions);
     }
 
     private boolean isBashTool(String toolName) {

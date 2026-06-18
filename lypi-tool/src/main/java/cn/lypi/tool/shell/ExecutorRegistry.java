@@ -7,6 +7,7 @@ import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.SandboxPermissions;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import java.util.Optional;
 import java.util.Objects;
 
@@ -31,7 +32,7 @@ public final class ExecutorRegistry implements Executor {
 
     @Override
     public ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal) {
-        if (request != null && request.sandboxPermissions() == SandboxPermissions.REQUIRE_ESCALATED) {
+        if (request != null && routesToHost(request)) {
             return hostExecutor.execute(request, progress, signal);
         }
         if (sandboxEnabled && request != null && request.sandboxPolicy() != null) {
@@ -45,5 +46,14 @@ public final class ExecutorRegistry implements Executor {
             Optional.empty(),
             ExecutionMetadata.sandboxUnavailable(name(), "default execution requires sandbox")
         );
+    }
+
+    private boolean routesToHost(ExecutionRequest request) {
+        if (request.sandboxPermissions() == SandboxPermissions.REQUIRE_ESCALATED) {
+            return true;
+        }
+        return request.sandboxPolicy() != null
+            && (request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.DISABLED
+                || request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.EXTERNAL);
     }
 }

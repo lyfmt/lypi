@@ -96,6 +96,24 @@ class PermissionDecisionPipelineTest {
     }
 
     @Test
+    void planModeDeniesAdditionalPermissionsSandboxOverride() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("bash", Map.of(
+                "command", "touch cache/out",
+                "sandboxPermissions", "withAdditionalPermissions",
+                "additionalPermissions", Map.of()
+            )),
+            context(PermissionMode.BYPASS, Map.of("agentMode", AgentMode.PLAN))
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
+        assertThat(decision.message()).contains("AgentMode.PLAN");
+    }
+
+    @Test
     void unknownBashAsksEvenWhenBypassWouldAllow() {
         PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
 

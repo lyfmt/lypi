@@ -10,6 +10,7 @@ import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -28,9 +29,12 @@ public final class BashTool extends AbstractFileTool {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(120);
     private static final AbortSignal NOT_ABORTED = () -> false;
     private static final String INPUT_SANDBOX_PERMISSIONS = "sandboxPermissions";
+    private static final String INPUT_ADDITIONAL_PERMISSIONS = "additionalPermissions";
     private static final String INPUT_JUSTIFICATION = "justification";
     private static final String INPUT_SHELL = "shell";
     private static final String INPUT_LOGIN_SHELL = "loginShell";
+    private static final String METADATA_ADDITIONAL_PERMISSIONS = "additionalPermissions";
+    private static final String METADATA_APPROVED_ADDITIONAL_PERMISSIONS = "approvedAdditionalPermissions";
     private static final List<String> ALLOWED_SHELLS = List.of("bash", "sh", "zsh");
 
     private final Executor executor;
@@ -65,8 +69,9 @@ public final class BashTool extends AbstractFileTool {
                 "timeoutSeconds", Map.of("type", "integer", "minimum", 1),
                 INPUT_SANDBOX_PERMISSIONS, Map.of(
                     "type", "string",
-                    "enum", List.of("useDefault", "requireEscalated")
+                    "enum", List.of("useDefault", "requireEscalated", "withAdditionalPermissions")
                 ),
+                INPUT_ADDITIONAL_PERMISSIONS, Map.of("type", "object"),
                 INPUT_JUSTIFICATION, Map.of("type", "string"),
                 "prefix_rule", Map.of(
                     "type", "array",
@@ -112,8 +117,9 @@ public final class BashTool extends AbstractFileTool {
             Path cwd = resolvePath(input, context, "cwd");
             requireRealPathInsideWorkspace(cwd, context);
             Duration timeout = Duration.ofSeconds(intInput(input, "timeoutSeconds", (int) DEFAULT_TIMEOUT.toSeconds(), 1, 86_400));
-            SandboxRuntimePolicy sandboxPolicy = sandboxPolicyResolver.resolve(context.cwd(), cwd);
             SandboxPermissions sandboxPermissions = sandboxPermissions(input);
+            Optional<AdditionalPermissionProfile> additionalPermissions = additionalPermissionsForRequest(context, sandboxPermissions);
+            SandboxRuntimePolicy sandboxPolicy = sandboxPolicy(context.cwd(), cwd, additionalPermissions);
             ExecutionRequest request = new ExecutionRequest(
                 shellCommand(input),
                 cwd,
@@ -121,6 +127,7 @@ public final class BashTool extends AbstractFileTool {
                 timeout,
                 sandboxPolicy,
                 sandboxPermissions,
+                additionalPermissions,
                 sandboxPermissions == SandboxPermissions.REQUIRE_ESCALATED
                     ? Optional.of(stringInput(input, INPUT_JUSTIFICATION))
                     : Optional.empty()
@@ -197,6 +204,52 @@ public final class BashTool extends AbstractFileTool {
 
     private SandboxPermissions sandboxPermissions(Map<String, Object> input) {
         return SandboxPermissions.fromToolValue(stringInput(input, INPUT_SANDBOX_PERMISSIONS));
+    }
+
+    private Optional<AdditionalPermissionProfile> additionalPermissionsForRequest(
+        ToolUseContext context,
+        SandboxPermissions sandboxPermissions
+    ) {
+        if (sandboxPermissions != SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS) {
+            return Optional.empty();
+        }
+        AdditionalPermissionProfile permissions = approvedAdditionalPermissions(context)
+            .orElse(AdditionalPermissionProfile.empty());
+        if (isEmpty(permissions)) {
+            throw new IllegalArgumentException("sandboxPermissions=withAdditionalPermissions 时 additionalPermissions 不能为空。");
+        }
+        return Optional.of(permissions);
+    }
+
+    private SandboxRuntimePolicy sandboxPolicy(
+        Path workspace,
+        Path cwd,
+        Optional<AdditionalPermissionProfile> additionalPermissions
+    ) {
+        if (additionalPermissions.isPresent()) {
+            return sandboxPolicyResolver.resolve(workspace, cwd, additionalPermissions.orElseThrow());
+        }
+        return sandboxPolicyResolver.resolve(workspace, cwd);
+    }
+
+    private Optional<AdditionalPermissionProfile> approvedAdditionalPermissions(ToolUseContext context) {
+        if (!approvedAdditionalPermissionsMarker(context)) {
+            return Optional.empty();
+        }
+        Object value = context.metadata().get(METADATA_ADDITIONAL_PERMISSIONS);
+        return value instanceof AdditionalPermissionProfile permissions ? Optional.of(permissions) : Optional.empty();
+    }
+
+    private boolean approvedAdditionalPermissionsMarker(ToolUseContext context) {
+        Object value = context.metadata().get(METADATA_APPROVED_ADDITIONAL_PERMISSIONS);
+        if (value instanceof Boolean approved) {
+            return approved;
+        }
+        return value instanceof String approved && Boolean.parseBoolean(approved);
+    }
+
+    private boolean isEmpty(AdditionalPermissionProfile permissions) {
+        return permissions.fileSystem().isEmpty() && permissions.network().isEmpty();
     }
 
     private List<String> shellCommand(Map<String, Object> input) {

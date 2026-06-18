@@ -126,6 +126,7 @@ public final class BubblewrapExecutor implements Executor {
             timeout(request),
             request.sandboxPolicy(),
             request.sandboxPermissions(),
+            request.additionalPermissions(),
             request.justification()
         );
         ProtectedCreateLease protectedCreateLease = PROTECTED_CREATE_COORDINATOR.acquire(buildResult.protectedCreateTargets());

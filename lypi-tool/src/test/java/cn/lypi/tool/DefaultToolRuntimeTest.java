@@ -27,6 +27,7 @@ import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
+import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
@@ -1951,6 +1952,62 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void inlineAdditionalPermissionsApprovalAppliesOnlyCurrentBashExecution() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Path approved = tempDir.resolve("approved");
+        Files.createDirectories(workspace);
+        Files.createDirectories(approved);
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .cwd(workspace)
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            allowAllSecurity(),
+            gate
+        );
+        runtime.register(new BashTool(executor));
+        AdditionalPermissionProfile permissions = additionalFileSystem(approved);
+
+        ToolResult<?> bashResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_bash",
+                "bash",
+                Map.of(
+                    "command", "touch outside.txt",
+                    "sandboxPermissions", "withAdditionalPermissions",
+                    "additionalPermissions", additionalPermissionsInput(approved)
+                ),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
+        ).getFirst();
+        ToolResult<?> nextResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_next",
+                "bash",
+                Map.of("command", "true", "sandboxPermissions", "withAdditionalPermissions"),
+                "msg_2"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
+        ).getFirst();
+
+        assertFalse(bashResult.isError());
+        assertEquals(SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS, executor.request.get().sandboxPermissions());
+        assertEquals(Optional.of(permissions), executor.request.get().additionalPermissions());
+        assertTrue(executor.request.get().sandboxPolicy().allowWrite().contains(approved.toRealPath()));
+        assertTrue(nextResult.isError());
+        assertEquals(1, executor.calls.get());
+    }
+
+    @Test
     void metadataInjectedAdditionalPermissionsDoNotAllowWriteOutsideWorkspace() throws Exception {
         Path workspace = tempDir.resolve("workspace");
         Path approved = tempDir.resolve("approved");
@@ -2109,6 +2166,17 @@ class DefaultToolRuntimeTest {
                 )
             ))),
             Optional.empty()
+        );
+    }
+
+    private Map<String, Object> additionalPermissionsInput(Path path) {
+        return Map.of(
+            "fileSystem", Map.of(
+                "entries", List.of(Map.of(
+                    "path", path.toString(),
+                    "access", "WRITE"
+                ))
+            )
         );
     }
 
