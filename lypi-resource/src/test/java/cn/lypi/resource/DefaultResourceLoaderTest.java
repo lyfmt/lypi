@@ -196,17 +196,8 @@ class DefaultResourceLoaderTest {
                     assertThat(skill.source()).isEqualTo(SkillSource.USER);
                     assertThat(skill.skillFile()).isEqualTo(home.resolve(".ly-pi/skills/memory-settlement/SKILL.md").toAbsolutePath().normalize());
                 });
-            assertThat(snapshot.skillIndex().skills())
-                .anySatisfy(skill -> {
-                    assertThat(skill.name()).isEqualTo("memory-lint");
-                    assertThat(skill.source()).isEqualTo(SkillSource.USER);
-                    assertThat(skill.skillFile()).isEqualTo(home.resolve(".ly-pi/skills/memory-lint/SKILL.md").toAbsolutePath().normalize());
-                });
-            assertThat(snapshot.promptTemplates())
-                .anySatisfy(template -> {
-                    assertThat(template.name()).isEqualTo("memory-lint");
-                    assertThat(template.templateBody()).contains("$memory-lint").contains("{{layers}}");
-                });
+            assertThat(snapshot.skillIndex().skills()).noneMatch(skill -> skill.name().equals("memory-lint"));
+            assertThat(snapshot.promptTemplates()).noneMatch(template -> template.name().equals("memory-lint"));
         } finally {
             if (previousHome == null) {
                 properties.remove("user.home");

@@ -63,15 +63,8 @@ class ResourceLocationResolverTest {
             assertThat(Files.readString(userRoot.resolve("skills/memory-settlement/SKILL.md")))
                 .contains("name: memory-settlement")
                 .contains("No Verification, No Memory");
-            assertThat(userRoot.resolve("skills/memory-lint/SKILL.md")).exists();
-            assertThat(Files.readString(userRoot.resolve("skills/memory-lint/SKILL.md")))
-                .contains("name: memory-lint")
-                .contains("No Verification, No Memory");
-            assertThat(userRoot.resolve("prompts/memory-lint.md")).exists();
-            assertThat(Files.readString(userRoot.resolve("prompts/memory-lint.md")))
-                .contains("name: memory-lint")
-                .contains("{{layers}}")
-                .contains("$memory-lint");
+            assertThat(userRoot.resolve("skills/memory-lint/SKILL.md")).doesNotExist();
+            assertThat(userRoot.resolve("prompts/memory-lint.md")).doesNotExist();
         } finally {
             if (previousHome == null) {
                 properties.remove("user.home");

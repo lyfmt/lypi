@@ -38,7 +38,7 @@ public final class MemoryWriteDetector {
     }
 
     private boolean isMemoryWriteToolCall(ContentBlock block, Set<String> successfulToolUseIds) {
-        if (!(block instanceof ToolCallContentBlock toolCall) || !isWriteTool(toolCall.toolName())) {
+        if (!(block instanceof ToolCallContentBlock toolCall)) {
             return false;
         }
         if (!successfulToolUseIds.contains(toolCall.toolUseId()) || !Boolean.TRUE.equals(toolCall.metadata().get("complete"))) {
@@ -46,6 +46,13 @@ public final class MemoryWriteDetector {
         }
         Object rawInput = toolCall.metadata() == null ? null : toolCall.metadata().get("input");
         if (!(rawInput instanceof Map<?, ?> input)) {
+            return false;
+        }
+        if (isBashTool(toolCall.toolName())) {
+            Object rawCommand = input.get("command");
+            return rawCommand instanceof String command && containsMemoryPath(command);
+        }
+        if (!isWriteTool(toolCall.toolName())) {
             return false;
         }
         Object rawPath = input.get("path");
@@ -76,6 +83,21 @@ public final class MemoryWriteDetector {
             || normalized.equals("write")
             || normalized.equals("multi_edit")
             || normalized.equals("multiedit");
+    }
+
+    private boolean isBashTool(String toolName) {
+        return toolName != null && toolName.toLowerCase(Locale.ROOT).equals("bash");
+    }
+
+    private boolean containsMemoryPath(String command) {
+        if (command == null || command.isBlank()) {
+            return false;
+        }
+        String normalized = command.replace('\\', '/');
+        return normalized.contains("MEMORY.md")
+            || normalized.contains(".ly-pi/memory.md")
+            || normalized.contains(".ly-pi/memory/")
+            || normalized.contains(".ly-pi/skills/");
     }
 
     private boolean isMemoryPath(String rawPath) {

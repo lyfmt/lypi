@@ -267,9 +267,34 @@ class MemoryConsolidationTurnEndListenerTest {
         eventBus.publish(completedEvent(1_000L, 31));
 
         assertThat(runner.requests).isEmpty();
+        assertThat(auditSink.stages()).contains(
+            MemoryConsolidationAuditStage.ELIGIBLE,
+            MemoryConsolidationAuditStage.SUBMITTED,
+            MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE
+        );
+    }
+
+    @Test
+    void doesNotReadTranscriptBeforeSubmittingBackgroundTask() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
+        FailingTranscriptSessionManager sessionManager = new FailingTranscriptSessionManager("ses_main", "leaf-1");
+        List<Runnable> queued = new ArrayList<>();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            sessionManager,
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new RecordingRunner(),
+            queued::add,
+            auditSink
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 31));
+
+        assertThat(queued).hasSize(1);
         assertThat(auditSink.stages()).containsExactly(
             MemoryConsolidationAuditStage.ELIGIBLE,
-            MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE
+            MemoryConsolidationAuditStage.SUBMITTED
         );
     }
 
@@ -298,6 +323,33 @@ class MemoryConsolidationTurnEndListenerTest {
 
         assertThat(runner.requests).containsExactly(new MemoryConsolidationRequest("ses_main", "leaf-1"));
         assertThat(auditSink.stages()).doesNotContain(MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE);
+    }
+
+    @Test
+    void skipsBackgroundRunWhenMainTurnBashWroteMemory() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingRunner runner = new RecordingRunner();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new MutableSessionManager(
+                "ses_main",
+                "leaf-1",
+                List.of(
+                    assistantToolCall("bash", Map.of("command", "printf fact >> .ly-pi/memory/project/facts.md"), true),
+                    toolResult(false)
+                )
+            ),
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            runner,
+            Runnable::run,
+            auditSink
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 31));
+
+        assertThat(runner.requests).isEmpty();
+        assertThat(auditSink.stages()).contains(MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE);
     }
 
     @Test
@@ -352,10 +404,10 @@ class MemoryConsolidationTurnEndListenerTest {
 
         assertThat(runner.requests).containsExactly(new MemoryConsolidationRequest("ses_main", "leaf-1"));
         assertThat(auditSink.stages()).contains(
-            MemoryConsolidationAuditStage.RUNNER_FAILED,
+            MemoryConsolidationAuditStage.DIRECT_WRITE_DETECTION_FAILED,
             MemoryConsolidationAuditStage.SUBMITTED
         );
-        assertThat(auditSink.record(MemoryConsolidationAuditStage.RUNNER_FAILED).reason())
+        assertThat(auditSink.record(MemoryConsolidationAuditStage.DIRECT_WRITE_DETECTION_FAILED).reason())
             .contains("direct memory write detection failed");
     }
 

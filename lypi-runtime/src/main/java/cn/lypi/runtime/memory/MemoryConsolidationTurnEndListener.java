@@ -82,10 +82,6 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
             audit(MemoryConsolidationAuditStage.SKIPPED_NO_FORK_POINT, event, null, null, "missing fork point", null);
             return;
         }
-        if (mainTurnAlreadyWroteMemory(event, forkPointEntryId)) {
-            audit(MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE, event, forkPointEntryId, null, "main turn wrote memory", null);
-            return;
-        }
         MemoryConsolidationRequest request = new MemoryConsolidationRequest(event.sessionId(), forkPointEntryId);
         if (coalesceOrMarkRunning(request, event)) {
             return;
@@ -100,15 +96,13 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
         }
     }
 
-    private boolean mainTurnAlreadyWroteMemory(TurnEndEvent event, String forkPointEntryId) {
+    private boolean mainTurnAlreadyWroteMemory(MemoryConsolidationRequest request) {
         try {
-            return memoryWriteDetector.hasMemoryWrite(sessionManager.transcript(forkPointEntryId));
+            return memoryWriteDetector.hasMemoryWrite(sessionManager.transcript(request.forkPointEntryId()));
         } catch (RuntimeException exception) {
             audit(
-                MemoryConsolidationAuditStage.RUNNER_FAILED,
-                event,
-                forkPointEntryId,
-                null,
+                MemoryConsolidationAuditStage.DIRECT_WRITE_DETECTION_FAILED,
+                request,
                 "direct memory write detection failed",
                 exception
             );
@@ -149,6 +143,10 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
     }
 
     private void runQuietly(MemoryConsolidationRequest request) {
+        if (mainTurnAlreadyWroteMemory(request)) {
+            audit(MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE, request, "main turn wrote memory", null);
+            return;
+        }
         try {
             runner.run(request);
         } catch (RuntimeException exception) {

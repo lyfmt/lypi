@@ -24,8 +24,6 @@ import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.time.Instant;
 import java.util.List;
@@ -38,7 +36,6 @@ import java.util.UUID;
 final class SlashCommandRouter {
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/compact",
-        "/memory-lint",
         "/model",
         "/new",
         "/permission-mode",
@@ -131,7 +128,6 @@ final class SlashCommandRouter {
             case "/permission-mode" -> routePermissionMode(arguments, input);
             case "/plan" -> routePlan(arguments, input);
             case "/compact" -> routeCompact(arguments);
-            case "/memory-lint" -> routeMemoryLint(arguments);
             case "/new" -> routeNew(arguments);
             default -> routeExternalOrPromptTemplate(match.command().orElseThrow(), arguments);
         };
@@ -273,53 +269,6 @@ final class SlashCommandRouter {
         } catch (RuntimeException exception) {
             return SlashCommandResult.error("new: " + errorMessage(exception));
         }
-    }
-
-    private SlashCommandResult routeMemoryLint(SlashCommandArguments arguments) {
-        List<String> layers;
-        try {
-            layers = memoryLintLayers(arguments);
-        } catch (IllegalArgumentException exception) {
-            return SlashCommandResult.error(exception.getMessage());
-        }
-        Optional<PromptTemplate> template = findPromptTemplate("memory-lint");
-        if (template.isEmpty()) {
-            return SlashCommandResult.error("memory-lint: prompt template memory-lint is unavailable");
-        }
-        PromptRenderResult rendered = resourceRuntime.renderPrompt(
-            template.orElseThrow(),
-            new PromptRenderRequest("memory-lint", Map.of("layers", String.join(",", layers)), arguments.commandName())
-        );
-        Optional<String> warning = firstWarning(rendered);
-        if (warning.isPresent()) {
-            return SlashCommandResult.error("memory-lint: " + warning.orElseThrow());
-        }
-        return SlashCommandResult.submitPrompt(rendered.content());
-    }
-
-    private List<String> memoryLintLayers(SlashCommandArguments arguments) {
-        if (!arguments.named().isEmpty() || arguments.positionals().size() > 1) {
-            throw new IllegalArgumentException(memoryLintUsage());
-        }
-        List<String> raw = arguments.positionals().isEmpty()
-            ? List.of()
-            : Arrays.asList(arguments.positionals().getFirst().split(",", -1));
-        if (raw.isEmpty()) {
-            raw = List.of("L2", "L3");
-        }
-        LinkedHashSet<String> normalized = new LinkedHashSet<>();
-        for (String layer : raw) {
-            String value = layer == null ? "" : layer.trim().toUpperCase(Locale.ROOT);
-            if (!List.of("L0", "L1", "L2", "L3").contains(value)) {
-                throw new IllegalArgumentException(memoryLintUsage());
-            }
-            normalized.add(value);
-        }
-        return List.copyOf(normalized);
-    }
-
-    private String memoryLintUsage() {
-        return "usage: /memory-lint [L0,L1,L2,L3]";
     }
 
     private SlashCommandResult routePromptTemplate(String templateName, SlashCommandArguments arguments) {
