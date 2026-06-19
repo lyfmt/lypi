@@ -4,6 +4,7 @@ import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.runtime.memory.MemoryConsolidationAuditRecord;
 import cn.lypi.runtime.memory.MemoryConsolidationAuditSink;
@@ -16,7 +17,6 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Function;
 
 /**
  * Boot 层后台记忆沉淀执行器。
@@ -29,7 +29,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
     private final AgentCoreFactoryPort agentCoreFactory;
     private final MemoryConsolidationPromptFactory promptFactory;
     private final MemoryConsolidationAuditSink auditSink;
-    private final Function<Path, SessionManagerPort> forkSessionManagerFactory;
+    private final ForkSessionManagerFactory forkSessionManagerFactory;
 
     public BootMemoryConsolidationRunner(
         Path cwd,
@@ -47,7 +47,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
         MemoryConsolidationPromptFactory promptFactory,
         MemoryConsolidationAuditSink auditSink
     ) {
-        this(cwd, mainSessionManager, agentCoreFactory, promptFactory, auditSink, SessionManagerImpl::new);
+        this(cwd, mainSessionManager, agentCoreFactory, promptFactory, auditSink, BootMemoryConsolidationRunner::createForkSessionManager);
     }
 
     BootMemoryConsolidationRunner(
@@ -56,7 +56,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
         AgentCoreFactoryPort agentCoreFactory,
         MemoryConsolidationPromptFactory promptFactory,
         MemoryConsolidationAuditSink auditSink,
-        Function<Path, SessionManagerPort> forkSessionManagerFactory
+        ForkSessionManagerFactory forkSessionManagerFactory
     ) {
         this.cwd = Objects.requireNonNull(cwd, "cwd must not be null").toAbsolutePath().normalize();
         this.mainSessionManager = Objects.requireNonNull(mainSessionManager, "mainSessionManager must not be null");
@@ -78,6 +78,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
         SessionHandle forked = null;
         SessionManagerPort forkSessionManager = null;
         try {
+            SessionContext forkPointContext = mainSessionManager.context(request.forkPointEntryId());
             forked = mainSessionManager.fork(new ForkRequest(
                 request.sessionId(),
                 request.forkPointEntryId(),
@@ -85,7 +86,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
                 FORK_REASON
             ));
             audit(MemoryConsolidationAuditStage.FORK_CREATED, request, forked.sessionId(), "forked", null);
-            forkSessionManager = forkSessionManagerFactory.apply(cwd);
+            forkSessionManager = forkSessionManagerFactory.create(cwd, forkPointContext);
             forkSessionManager.openOrCreate(forked.sessionId());
             var turnState = agentCoreFactory.create(cwd, forkSessionManager)
                 .execute(new TurnRequest(
@@ -151,5 +152,20 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
         }
         String message = error.getMessage();
         return error.getClass().getSimpleName() + (message == null || message.isBlank() ? "" : ": " + message);
+    }
+
+    private static SessionManagerPort createForkSessionManager(Path cwd, SessionContext context) {
+        return new SessionManagerImpl(
+            cwd,
+            context.model(),
+            context.thinkingLevel(),
+            context.mode(),
+            context.permissionRuntimeState()
+        );
+    }
+
+    @FunctionalInterface
+    interface ForkSessionManagerFactory {
+        SessionManagerPort create(Path cwd, SessionContext context);
     }
 }
