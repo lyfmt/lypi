@@ -4,6 +4,7 @@ import cn.lypi.agent.ContextAssembler;
 import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.boot.BootstrapService;
+import cn.lypi.boot.tool.LyPiPermissionsProperties;
 import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.model.ModelCatalogPort;
@@ -22,6 +23,7 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PermissionProfileSelection;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.NewSessionController;
@@ -40,6 +42,7 @@ import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
+import cn.lypi.security.PermissionProfileConfigCompiler;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
@@ -58,7 +61,11 @@ import org.springframework.context.annotation.Bean;
     cn.lypi.boot.ai.LyPiAiAutoConfiguration.class,
     cn.lypi.boot.tool.LyPiToolAutoConfiguration.class
 })
-@EnableConfigurationProperties({LyPiRuntimeProperties.class, LyPiSubagentProperties.class})
+@EnableConfigurationProperties({
+    LyPiRuntimeProperties.class,
+    LyPiSubagentProperties.class,
+    LyPiPermissionsProperties.class
+})
 public class LyPiRuntimeAutoConfiguration {
     /**
      * 创建默认事件总线。
@@ -79,12 +86,42 @@ public class LyPiRuntimeAutoConfiguration {
     }
 
     /**
+     * 创建权限 profile 配置编译器。
+     */
+    @Bean
+    @ConditionalOnMissingBean(PermissionProfileConfigCompiler.class)
+    public PermissionProfileConfigCompiler permissionProfileConfigCompiler() {
+        return new PermissionProfileConfigCompiler();
+    }
+
+    /**
+     * 创建默认权限 profile 编译结果。
+     *
+     * NOTE: 加载工具自动配置时，工具侧会提供包含沙盒 legacy 兼容逻辑的共享结果。
+     */
+    @Bean
+    @ConditionalOnMissingBean(PermissionProfileSelection.class)
+    public PermissionProfileSelection permissionProfileSelection(
+        LyPiPermissionsProperties permissionsProperties,
+        PermissionProfileConfigCompiler profileConfigCompiler
+    ) {
+        return profileConfigCompiler.compile(
+            permissionsProperties.profileConfigs(),
+            permissionsProperties.getDefaultPermissions()
+        );
+    }
+
+    /**
      * 创建默认 session 管理器。
      */
     @Bean
     @ConditionalOnMissingBean(SessionManagerPort.class)
-    public SessionManagerPort sessionManager(LyPiRuntimeProperties properties) {
-        return RuntimeBeanFactories.sessionManager(properties);
+    public SessionManagerPort sessionManager(
+        LyPiRuntimeProperties properties,
+        LyPiPermissionsProperties permissionsProperties,
+        PermissionProfileSelection profileSelection
+    ) {
+        return RuntimeBeanFactories.sessionManager(properties, permissionsProperties, profileSelection);
     }
 
     /**

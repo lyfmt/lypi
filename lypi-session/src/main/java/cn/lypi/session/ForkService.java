@@ -45,7 +45,7 @@ final class ForkService {
             sourceHeader.initialModel(),
             sourceHeader.initialThinkingLevel(),
             sourceHeader.initialAgentMode(),
-            sourceHeader.initialPermissionMode()
+            sourceHeader.initialPermissionRuntimeState()
         );
         JsonlSessionStore targetStore = new JsonlSessionStore(request.targetCwd());
         targetStore.create(header);

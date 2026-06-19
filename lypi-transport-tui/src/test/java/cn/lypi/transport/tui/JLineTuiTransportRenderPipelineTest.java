@@ -112,7 +112,7 @@ class JLineTuiTransportRenderPipelineTest {
         ));
 
         assertEquals(
-            "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE",
+            "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE ON_REQUEST :workspace",
             frames.getLast().getLast()
         );
     }
@@ -195,7 +195,7 @@ class JLineTuiTransportRenderPipelineTest {
         transport.drainInputForTest();
 
         assertEquals(
-            "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE",
+            "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE ON_REQUEST :workspace",
             frames.getLast().getLast()
         );
         assertEquals(inputContent("> draft|CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));

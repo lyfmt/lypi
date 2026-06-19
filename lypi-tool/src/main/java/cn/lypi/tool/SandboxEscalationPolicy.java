@@ -5,6 +5,7 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -30,8 +31,8 @@ final class SandboxEscalationPolicy {
                 Map.of("sandboxPermissions", "requireEscalated")
             ));
         }
-        PermissionMode permissionMode = permissionMode(context);
-        if (permissionMode == PermissionMode.BYPASS) {
+        PermissionRuntimeState runtimeState = runtimeState(context);
+        if (runtimeState.legacyBehavior().allowExplicitEscalationWithoutPrompt()) {
             return Optional.of(decision(
                 PermissionBehavior.ALLOW,
                 "BYPASS 权限模式允许沙箱提权执行。",
@@ -64,15 +65,19 @@ final class SandboxEscalationPolicy {
         return AgentMode.EXECUTE;
     }
 
-    private PermissionMode permissionMode(ToolUseContext context) {
+    private PermissionRuntimeState runtimeState(ToolUseContext context) {
+        Object runtimeState = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_RUNTIME_STATE);
+        if (runtimeState instanceof PermissionRuntimeState permissionRuntimeState) {
+            return permissionRuntimeState;
+        }
         Object value = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_MODE);
         if (value instanceof PermissionMode permissionMode) {
-            return permissionMode;
+            return PermissionRuntimeState.fromLegacy(permissionMode);
         }
         if (value instanceof String permissionMode) {
-            return PermissionMode.valueOf(permissionMode);
+            return PermissionRuntimeState.fromLegacy(PermissionMode.valueOf(permissionMode));
         }
-        return PermissionMode.DEFAULT_EXECUTE;
+        return PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
     }
 
     private String stringInput(Map<String, Object> input, String key) {

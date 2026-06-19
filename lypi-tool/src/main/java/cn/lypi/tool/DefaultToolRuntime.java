@@ -7,8 +7,16 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
+import cn.lypi.contracts.security.FileSystemPolicyKind;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
+import cn.lypi.contracts.security.NetworkPolicyMode;
+import cn.lypi.contracts.security.PermissionGrantScope;
 import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.RequestPermissionsResponse;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -23,7 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 默认工具运行时。
@@ -33,6 +41,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrator {
     private static final String METADATA_ORIGINAL_TOOL_NAME = "originalToolName";
     private static final String METADATA_TOOL_USE_ID = "toolUseId";
+    private static final String METADATA_ADDITIONAL_PERMISSIONS = "additionalPermissions";
+    private static final String METADATA_APPROVED_ADDITIONAL_PERMISSIONS = "approvedAdditionalPermissions";
+    private static final String REQUEST_PERMISSIONS_TOOL = "request_permissions";
 
     private final ToolRegistry registry;
     private final ToolCallResolver callResolver;
@@ -44,12 +55,14 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private final SecurityRuntimePort securityRuntime;
     private final PermissionGate permissionGate;
     private final PermissionUpdateStore permissionUpdateStore;
-    private final List<PermissionRule> runtimePermissionRules = new CopyOnWriteArrayList<>();
+    private final RuntimePermissionRuleStore runtimePermissionRules = new RuntimePermissionRuleStore();
     private final ToolExecutionEventPublisher eventPublisher;
     private final ToolLifecycleReporter lifecycleReporter;
     private final ToolResultFactory resultFactory;
     private final ToolPermissionCoordinator permissionCoordinator;
     private final ToolBatchExecutor batchExecutor;
+    private final Map<String, TurnPermissionState> turnPermissionStates = new ConcurrentHashMap<>();
+    private final Map<String, AdditionalPermissionProfile> sessionAdditionalPermissions = new ConcurrentHashMap<>();
     private final int maxConcurrency;
 
     public DefaultToolRuntime(SecurityRuntimePort securityRuntime) {
@@ -425,25 +438,35 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             results.add(null);
         }
 
+        TurnPermissionState turnState = turnState(invocation);
         List<ToolCallResolver.ResolvedCall> resolvedSegment = new ArrayList<>();
         for (ToolCallResolver.ResolvedCall call : callResolver.resolve(requests)) {
             if (!call.known()) {
-                executeResolvedSegment(resolvedSegment, context, invocation, results);
+                executeResolvedSegment(resolvedSegment, context, invocation, results, turnState);
                 resolvedSegment.clear();
-                results.set(call.index(), executeUnknownCall(call.request(), context, invocation));
+                results.set(call.index(), executeUnknownCall(call.request(), context, invocation, turnState));
                 continue;
             }
             resolvedSegment.add(call);
         }
-        executeResolvedSegment(resolvedSegment, context, invocation, results);
+        executeResolvedSegment(resolvedSegment, context, invocation, results, turnState);
         return List.copyOf(results);
+    }
+
+    @Override
+    public void clearTurnState(ToolRuntimeInvocation invocation) {
+        String key = turnStateKey(invocation);
+        if (key != null) {
+            turnPermissionStates.remove(key);
+        }
     }
 
     private void executeResolvedSegment(
         List<ToolCallResolver.ResolvedCall> resolvedCalls,
         ContextSnapshot context,
         ToolRuntimeInvocation invocation,
-        List<ToolResult<?>> results
+        List<ToolResult<?>> results,
+        TurnPermissionState turnState
     ) {
         if (resolvedCalls.isEmpty()) {
             return;
@@ -455,7 +478,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         int cursor = 0;
         for (ToolExecutionPlanner.Batch batch : batches) {
             List<ToolCallResolver.ResolvedCall> indexedBatch = resolvedCalls.subList(cursor, cursor + batch.calls().size());
-            executeBatch(batch, indexedBatch, context, invocation, results);
+            executeBatch(batch, indexedBatch, context, invocation, results, turnState);
             cursor += batch.calls().size();
         }
     }
@@ -465,7 +488,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         List<ToolCallResolver.ResolvedCall> indexedBatch,
         ContextSnapshot context,
         ToolRuntimeInvocation invocation,
-        List<ToolResult<?>> results
+        List<ToolResult<?>> results,
+        TurnPermissionState turnState
     ) {
         List<ToolResult<?>> batchResults = batchExecutor.execute(batch, (index, call) -> {
             ToolCallResolver.ResolvedCall indexedCall = indexedBatch.get(index);
@@ -474,7 +498,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 indexedCall.originalToolName(),
                 indexedCall.tool(),
                 context,
-                invocation
+                invocation,
+                turnState
             );
         });
         for (int index = 0; index < batchResults.size(); index++) {
@@ -487,22 +512,25 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         String originalToolName,
         Tool<Map<String, Object>, ?> tool,
         ContextSnapshot context,
-        ToolRuntimeInvocation invocation
+        ToolRuntimeInvocation invocation,
+        TurnPermissionState turnState
     ) {
         Map<String, Object> input = request.input() == null ? Map.of() : request.input();
         ToolUseContext toolContext = contextWithCallMetadata(
             contextFactory.create(request, context, invocation),
             request.toolUseId(),
             originalToolName,
-            request.toolName()
+            request.toolName(),
+            turnState
         );
-        return executeStartedCall(request, originalToolName, tool.name(), tool, input, toolContext);
+        return executeStartedCall(request, originalToolName, tool.name(), tool, input, toolContext, turnState);
     }
 
     private ToolResult<?> executeUnknownCall(
         ToolUseRequest request,
         ContextSnapshot context,
-        ToolRuntimeInvocation invocation
+        ToolRuntimeInvocation invocation,
+        TurnPermissionState turnState
     ) {
         Map<String, Object> input = request.input() == null ? Map.of() : request.input();
         String toolName = request.toolName();
@@ -510,7 +538,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             contextFactory.create(request, context, invocation),
             request.toolUseId(),
             toolName,
-            toolName
+            toolName,
+            turnState
         );
         ToolExecutionEventPublisher.StartedToolExecution started = lifecycleReporter.start(
             request,
@@ -546,7 +575,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         String toolName,
         Tool<Map<String, Object>, ?> tool,
         Map<String, Object> input,
-        ToolUseContext toolContext
+        ToolUseContext toolContext,
+        TurnPermissionState turnState
     ) {
         ToolExecutionEventPublisher.StartedToolExecution started = lifecycleReporter.start(
             request,
@@ -589,6 +619,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 finalResult = permissionGateError(request.toolUseId(), permissionResult.gateResult());
                 return finalResult;
             }
+            toolContext = withApprovedAdditionalPermissions(toolContext, permissionResult);
             ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
             if (beforeResult != null && beforeResult.blocked()) {
                 finalResult = errorResult(request.toolUseId(), beforeResult.message());
@@ -605,6 +636,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             status = execution.threw() || finalResult.isError()
                 ? ToolExecutionStatus.FAILED
                 : ToolExecutionStatus.SUCCEEDED;
+            recordTurnState(tool.name(), finalResult, turnState, toolContext);
             return finalResult;
         } catch (RuntimeException exception) {
             finalResult = errorResult(request.toolUseId(), "工具执行失败: " + exception.getMessage());
@@ -657,15 +689,45 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return interceptedResult == null ? result : interceptedResult;
     }
 
+    private ToolUseContext withApprovedAdditionalPermissions(
+        ToolUseContext context,
+        ToolPermissionCoordinator.Result permissionResult
+    ) {
+        if (permissionResult == null || permissionResult.approvedAdditionalPermissions().isEmpty()) {
+            return context;
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>(context.metadata());
+        metadata.put(METADATA_ADDITIONAL_PERMISSIONS, permissionResult.approvedAdditionalPermissions().orElseThrow());
+        metadata.put(METADATA_APPROVED_ADDITIONAL_PERMISSIONS, true);
+        return new ToolUseContext(
+            context.sessionId(),
+            context.messageId(),
+            context.cwd(),
+            Map.copyOf(metadata)
+        );
+    }
+
     private ToolUseContext contextWithCallMetadata(
         ToolUseContext context,
         String toolUseId,
         String originalToolName,
-        String canonicalToolName
+        String canonicalToolName,
+        TurnPermissionState turnState
     ) {
         Map<String, Object> metadata = new LinkedHashMap<>(context.metadata());
         metadata.put(METADATA_TOOL_USE_ID, toolUseId);
-        if (!runtimePermissionRules.isEmpty()) {
+        metadata.remove(METADATA_ADDITIONAL_PERMISSIONS);
+        metadata.remove(METADATA_APPROVED_ADDITIONAL_PERMISSIONS);
+        if (turnState != null && turnState.strictAutoReview()) {
+            metadata.put("strictAutoReview", true);
+        }
+        AdditionalPermissionProfile additionalPermissions = effectiveAdditionalPermissions(context.sessionId(), turnState, metadata);
+        if (!isEmptyAdditionalPermissions(additionalPermissions)) {
+            metadata.put(METADATA_ADDITIONAL_PERMISSIONS, additionalPermissions);
+            metadata.put(METADATA_APPROVED_ADDITIONAL_PERMISSIONS, true);
+        }
+        List<PermissionRule> sessionRules = runtimePermissionRules.rulesFor(context.sessionId());
+        if (!sessionRules.isEmpty()) {
             List<PermissionRule> effectiveRules = new ArrayList<>();
             Object metadataRules = metadata.get("permissionRules");
             if (metadataRules instanceof Iterable<?> iterable) {
@@ -675,7 +737,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                     }
                 }
             }
-            effectiveRules.addAll(runtimePermissionRules);
+            effectiveRules.addAll(sessionRules);
             metadata.put("permissionRules", List.copyOf(effectiveRules));
         }
         if (!Objects.equals(originalToolName, canonicalToolName)) {
@@ -687,6 +749,126 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             context.cwd(),
             Map.copyOf(metadata)
         );
+    }
+
+    private void recordTurnState(
+        String toolName,
+        ToolResult<?> result,
+        TurnPermissionState turnState,
+        ToolUseContext context
+    ) {
+        if (turnState == null || result == null || result.isError()) {
+            return;
+        }
+        if (REQUEST_PERMISSIONS_TOOL.equals(toolName) && result.output() instanceof RequestPermissionsResponse response) {
+            if (response.strictAutoReview()) {
+                turnState.enableStrictAutoReview();
+            }
+            AdditionalPermissionProfile additionalPermissions = response.permissions().additionalPermissions();
+            if (isEmptyAdditionalPermissions(additionalPermissions)) {
+                return;
+            }
+            if (response.scope() == PermissionGrantScope.SESSION) {
+                sessionAdditionalPermissions.merge(
+                    context.sessionId(),
+                    additionalPermissions,
+                    this::mergeAdditionalPermissions
+                );
+            } else {
+                turnState.addAdditionalPermissions(additionalPermissions);
+            }
+        }
+    }
+
+    private TurnPermissionState turnState(ToolRuntimeInvocation invocation) {
+        String key = turnStateKey(invocation);
+        if (key == null) {
+            return new TurnPermissionState();
+        }
+        return turnPermissionStates.computeIfAbsent(key, ignored -> new TurnPermissionState());
+    }
+
+    private String turnStateKey(ToolRuntimeInvocation invocation) {
+        if (invocation == null || isBlank(invocation.sessionId()) || isBlank(invocation.turnId())) {
+            return null;
+        }
+        return invocation.sessionId() + "\n" + invocation.turnId();
+    }
+
+    private AdditionalPermissionProfile effectiveAdditionalPermissions(
+        String sessionId,
+        TurnPermissionState turnState,
+        Map<String, Object> metadata
+    ) {
+        AdditionalPermissionProfile session = isBlank(sessionId)
+            ? AdditionalPermissionProfile.empty()
+            : sessionAdditionalPermissions.getOrDefault(sessionId, AdditionalPermissionProfile.empty());
+        AdditionalPermissionProfile turn = turnState == null
+            ? AdditionalPermissionProfile.empty()
+            : turnState.additionalPermissions();
+        return mergeAdditionalPermissions(session, turn);
+    }
+
+    private AdditionalPermissionProfile mergeAdditionalPermissions(
+        AdditionalPermissionProfile first,
+        AdditionalPermissionProfile second
+    ) {
+        AdditionalPermissionProfile left = first == null ? AdditionalPermissionProfile.empty() : first;
+        AdditionalPermissionProfile right = second == null ? AdditionalPermissionProfile.empty() : second;
+        return new AdditionalPermissionProfile(
+            mergeFileSystem(left.fileSystem(), right.fileSystem()),
+            mergeNetwork(left.network(), right.network())
+        );
+    }
+
+    private Optional<FileSystemPermissionPolicy> mergeFileSystem(
+        Optional<FileSystemPermissionPolicy> first,
+        Optional<FileSystemPermissionPolicy> second
+    ) {
+        if (first.isEmpty()) {
+            return second;
+        }
+        if (second.isEmpty()) {
+            return first;
+        }
+        FileSystemPermissionPolicy left = first.orElseThrow();
+        FileSystemPermissionPolicy right = second.orElseThrow();
+        if (left.kind() != right.kind()) {
+            return second;
+        }
+        if (left.kind() != FileSystemPolicyKind.RESTRICTED) {
+            return first;
+        }
+        List<FileSystemPermissionEntry> entries = new ArrayList<>(left.entries());
+        entries.addAll(right.entries());
+        return Optional.of(FileSystemPermissionPolicy.restricted(entries));
+    }
+
+    private Optional<NetworkPermissionPolicy> mergeNetwork(
+        Optional<NetworkPermissionPolicy> first,
+        Optional<NetworkPermissionPolicy> second
+    ) {
+        if (first.isEmpty()) {
+            return second;
+        }
+        if (second.isEmpty()) {
+            return first;
+        }
+        if (first.orElseThrow().mode() == NetworkPolicyMode.ENABLED || second.orElseThrow().mode() == NetworkPolicyMode.ENABLED) {
+            return Optional.of(NetworkPermissionPolicy.enabled());
+        }
+        return first;
+    }
+
+    private boolean isEmptyAdditionalPermissions(AdditionalPermissionProfile additionalPermissions) {
+        AdditionalPermissionProfile safe = additionalPermissions == null
+            ? AdditionalPermissionProfile.empty()
+            : additionalPermissions;
+        return safe.fileSystem().isEmpty() && safe.network().isEmpty();
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static ToolRuntimeOptions normalizeOptions(ToolRuntimeOptions options) {
@@ -738,5 +920,26 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     }
 
     private record ExecutedToolResult(ToolResult<?> result, boolean threw) {}
+
+    private final class TurnPermissionState {
+        private boolean strictAutoReview;
+        private AdditionalPermissionProfile additionalPermissions = AdditionalPermissionProfile.empty();
+
+        private boolean strictAutoReview() {
+            return strictAutoReview;
+        }
+
+        private void enableStrictAutoReview() {
+            strictAutoReview = true;
+        }
+
+        private AdditionalPermissionProfile additionalPermissions() {
+            return additionalPermissions;
+        }
+
+        private void addAdditionalPermissions(AdditionalPermissionProfile additionalPermissions) {
+            this.additionalPermissions = mergeAdditionalPermissions(this.additionalPermissions, additionalPermissions);
+        }
+    }
 
 }

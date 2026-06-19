@@ -8,7 +8,6 @@ import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
-import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
@@ -89,24 +88,14 @@ public final class MemoryConsolidationToolRuntime implements ToolRuntimePort {
                 results.add(errorResult(request, "Memory consolidation denied write path: " + pathInput(request)));
                 continue;
             }
-            results.add(delegate.execute(List.of(request), forceDefaultPermissionMode(context), invocation).getFirst());
+            results.add(delegate.execute(List.of(request), context, invocation).getFirst());
         }
         return List.copyOf(results);
     }
 
-    private ContextSnapshot forceDefaultPermissionMode(ContextSnapshot context) {
-        if (context == null || context.permissionMode() == PermissionMode.DEFAULT_EXECUTE) {
-            return context;
-        }
-        return new ContextSnapshot(
-            context.systemPrompt(),
-            context.messages(),
-            context.model(),
-            context.thinkingLevel(),
-            context.mode(),
-            PermissionMode.DEFAULT_EXECUTE,
-            context.budget()
-        );
+    @Override
+    public void clearTurnState(ToolRuntimeInvocation invocation) {
+        delegate.clearTurnState(invocation);
     }
 
     private boolean isAllowedTool(String toolName) {

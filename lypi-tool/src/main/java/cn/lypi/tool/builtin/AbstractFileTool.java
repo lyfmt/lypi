@@ -3,6 +3,7 @@ package cn.lypi.tool.builtin;
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -68,6 +69,15 @@ abstract class AbstractFileTool implements Tool<Map<String, Object>, String> {
         return WorkspacePaths.resolvePath(input, context, fieldName);
     }
 
+    protected Path resolvePath(
+        Map<String, Object> input,
+        ToolUseContext context,
+        String fieldName,
+        FileSystemAccessMode accessMode
+    ) {
+        return WorkspacePaths.resolvePath(input, context, fieldName, accessMode);
+    }
+
     protected String relativePath(Path path, ToolUseContext context) {
         return WorkspacePaths.relativePath(path, context);
     }
@@ -76,8 +86,20 @@ abstract class AbstractFileTool implements Tool<Map<String, Object>, String> {
         return WorkspacePaths.requireRealPathInsideWorkspace(path, context);
     }
 
+    protected Path requireRealPathInsideWorkspace(
+        Path path,
+        ToolUseContext context,
+        FileSystemAccessMode accessMode
+    ) throws IOException {
+        return WorkspacePaths.requireRealPathInsideWorkspace(path, context, accessMode);
+    }
+
     protected boolean realPathInsideWorkspace(Path path, ToolUseContext context) {
         return WorkspacePaths.realPathInsideWorkspace(path, context);
+    }
+
+    protected boolean realPathInsideWorkspace(Path path, ToolUseContext context, FileSystemAccessMode accessMode) {
+        return WorkspacePaths.realPathInsideWorkspace(path, context, accessMode);
     }
 
     protected int intInput(Map<String, Object> input, String fieldName, int defaultValue, int min, int max) {

@@ -13,6 +13,7 @@ import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionHandle;
 import java.nio.file.Path;
 import java.util.Map;
@@ -55,7 +56,8 @@ final class DefaultBootstrapService implements BootstrapService {
             ? sessionManager.openOrCreate(sessionId)
             : sessionManager.openTemporary(sessionId);
         ResourceSnapshot resources = resourceRuntime.load(cwd);
-        SystemPrompt systemPrompt = resourceRuntime.buildSystemPrompt(resources);
+        SessionContext sessionContext = sessionManager.context(session.leafId());
+        SystemPrompt systemPrompt = resourceRuntime.buildSystemPrompt(resources, sessionContext.permissionRuntimeState());
         ModelSelection modelSelection = new ModelSelection(
             properties.getDefaultProvider(),
             properties.getDefaultModel(),

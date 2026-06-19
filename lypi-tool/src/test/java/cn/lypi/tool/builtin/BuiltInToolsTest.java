@@ -36,7 +36,7 @@ class BuiltInToolsTest {
 
         Set<String> names = tools.stream().map(Tool::name).collect(Collectors.toSet());
 
-        assertEquals(Set.of("read", "write", "edit", "bash", "grep", "glob"), names);
+        assertEquals(Set.of("read", "write", "edit", "request_permissions", "bash", "grep", "glob"), names);
     }
 
     @Test
@@ -54,6 +54,7 @@ class BuiltInToolsTest {
         BuiltInTools.registerDefaults(runtime, executor());
 
         assertTrue(runtime.resolve("read").isPresent());
+        assertTrue(runtime.resolve("request_permissions").isPresent());
         assertTrue(runtime.resolve("bash").isPresent());
     }
 
@@ -65,7 +66,7 @@ class BuiltInToolsTest {
         Set<String> defaultNames = defaultTools.stream().map(Tool::name).collect(Collectors.toSet());
         Set<String> subagentNames = subagentTools.stream().map(Tool::name).collect(Collectors.toSet());
 
-        assertEquals(Set.of("read", "write", "edit", "bash", "grep", "glob"), defaultNames);
+        assertEquals(Set.of("read", "write", "edit", "request_permissions", "bash", "grep", "glob"), defaultNames);
         assertEquals(Set.of(
             "spawn_agent",
             "continue_agent",

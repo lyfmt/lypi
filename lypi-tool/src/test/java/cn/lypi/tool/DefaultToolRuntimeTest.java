@@ -7,8 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgressKind;
+import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
@@ -25,21 +28,30 @@ import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
+import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.BashRiskAnalysis;
 import cn.lypi.contracts.security.BashRiskLevel;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionGrantScope;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
+import cn.lypi.contracts.security.RequestPermissionProfile;
+import cn.lypi.contracts.security.RequestPermissionsResponse;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -47,6 +59,8 @@ import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.tool.builtin.BashTool;
 import cn.lypi.tool.builtin.ReadTool;
+import cn.lypi.tool.builtin.RequestPermissionsTool;
+import cn.lypi.tool.builtin.WriteTool;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -314,12 +328,13 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void allowAndRememberAppendsExecPolicyRuleAndUpdatesRuntimeMemory() throws Exception {
+    void allowAndRememberAppendsPermissionAmendmentAndUpdatesRuntimeMemory() {
         AtomicInteger gateCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
             gateCalls.incrementAndGet();
             return PermissionGateResult.allow(decision.suggestedUpdate());
         };
+        FilePermissionAmendmentStore amendmentStore = new FilePermissionAmendmentStore(tempDir);
         DefaultToolRuntime runtime = new DefaultToolRuntime(
             new DefaultToolRegistry(),
             new ToolSchemaValidator(),
@@ -330,7 +345,7 @@ class DefaultToolRuntimeTest {
             prefixMemorySecurity(),
             gate,
             ToolExecutionEventPublisher.noop(),
-            new FilePermissionUpdateStore(tempDir)
+            amendmentStore
         );
         AtomicInteger executeCalls = new AtomicInteger();
         runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
@@ -344,7 +359,7 @@ class DefaultToolRuntimeTest {
         ToolUseRequest second = new ToolUseRequest(
             "toolu_2",
             "bash",
-            Map.of("command", "go test ./...", "text", "second"),
+            Map.of("command", "go test ./...", "text", "second", "prefix_rule", List.of("go", "test")),
             "msg_1"
         );
 
@@ -355,8 +370,62 @@ class DefaultToolRuntimeTest {
         assertFalse(secondResult.isError());
         assertEquals(1, gateCalls.get());
         assertEquals(2, executeCalls.get());
-        String rules = Files.readString(tempDir.resolve("rules/default.rules"));
-        assertTrue(rules.contains("prefix_rule(pattern=[\"go\", \"test\"], decision=\"allow\")"));
+        assertEquals(List.of(prefixUpdate("go test")), amendmentStore.readPermissionUpdates(PermissionGrantScope.SESSION));
+        assertFalse(Files.exists(tempDir.resolve("rules/default.rules")));
+    }
+
+    @Test
+    void rememberedPermissionAmendmentDoesNotLeakAcrossSessions() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            if ("ses_1".equals(context.sessionId())) {
+                return PermissionGateResult.allow(decision.suggestedUpdate());
+            }
+            return PermissionGateResult.allow();
+        };
+        FilePermissionAmendmentStore amendmentStore = new FilePermissionAmendmentStore(tempDir);
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            ToolExecutionInterceptors.noop(),
+            prefixMemorySecurity(),
+            gate,
+            ToolExecutionEventPublisher.noop(),
+            amendmentStore
+        );
+        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, new AtomicInteger()));
+
+        ToolUseRequest first = new ToolUseRequest(
+            "toolu_1",
+            "bash",
+            Map.of("command", "go test ./...", "text", "first", "prefix_rule", List.of("go", "test")),
+            "msg_1"
+        );
+        ToolUseRequest second = new ToolUseRequest(
+            "toolu_2",
+            "bash",
+            Map.of("command", "go test ./...", "text", "second", "prefix_rule", List.of("go", "test")),
+            "msg_1"
+        );
+
+        runtime.execute(
+            List.of(first),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1")
+        );
+        runtime.execute(
+            List.of(second),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_2", "turn_2")
+        );
+
+        assertEquals(2, gateCalls.get());
+        assertEquals(List.of(prefixUpdate("go test")), amendmentStore.readPermissionUpdates(PermissionGrantScope.SESSION, "ses_1"));
+        assertTrue(amendmentStore.readPermissionUpdates(PermissionGrantScope.SESSION, "ses_2").isEmpty());
     }
 
     @Test
@@ -978,7 +1047,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void bypassAutoAllowsToolSpecificAskWithoutPermissionGate() {
+    void neverApprovalPolicyDeniesToolSpecificAskWithoutPermissionGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -993,13 +1062,14 @@ class DefaultToolRuntimeTest {
             TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
         ).getFirst();
 
-        assertFalse(result.isError());
+        assertTrue(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(1, executeCalls.get());
+        assertEquals(0, executeCalls.get());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("never policy"));
     }
 
     @Test
-    void bypassAutoAllowsSecurityAskWithoutPermissionGate() {
+    void neverApprovalPolicyDeniesSecurityAskWithoutPermissionGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -1015,9 +1085,10 @@ class DefaultToolRuntimeTest {
             TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
         ).getFirst();
 
-        assertFalse(result.isError());
+        assertTrue(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(1, executeCalls.get());
+        assertEquals(0, executeCalls.get());
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("never policy"));
     }
 
     @Test
@@ -1725,6 +1796,440 @@ class DefaultToolRuntimeTest {
         assertFalse(results.get(1).isError());
     }
 
+    @Test
+    void requestPermissionsStrictAutoReviewPersistsAcrossToolRoundsInSameTurn() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicReference<Map<String, Object>> secondRoundMetadata = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        SecurityRuntimePort security = (request, context) -> {
+            if ("probe".equals(request.toolName())) {
+                secondRoundMetadata.set(context.metadata());
+            }
+            if (Boolean.TRUE.equals(context.metadata().get("strictAutoReview"))) {
+                return new PermissionDecision(
+                    PermissionBehavior.ASK,
+                    PermissionDecisionReason.SANDBOX_POLICY,
+                    "strictAutoReview 要求本轮后续命令先进入人工 review。",
+                    Optional.empty(),
+                    Map.of("strictAutoReview", true)
+                );
+            }
+            return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(new RequestPermissionsTool());
+        runtime.register(TestTools.echo("probe", List.of(), false, false, false));
+        ToolRuntimeInvocation invocation = new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1");
+
+        ToolResult<?> firstRound = runtime.execute(
+            List.of(new ToolUseRequest("toolu_perm", "request_permissions", strictAutoReviewRequest(), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            invocation
+        ).getFirst();
+        ToolResult<?> secondRound = runtime.execute(
+            List.of(new ToolUseRequest("toolu_probe", "probe", Map.of("text", "ok"), "msg_2")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            invocation
+        ).getFirst();
+
+        assertFalse(firstRound.isError());
+        assertFalse(secondRound.isError());
+        assertEquals(2, gateCalls.get());
+        assertEquals(Boolean.TRUE, secondRoundMetadata.get().get("strictAutoReview"));
+    }
+
+    @Test
+    void clearTurnStateDropsStrictAutoReviewForCompletedTurn() {
+        AtomicReference<Map<String, Object>> clearedTurnMetadata = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        SecurityRuntimePort security = (request, context) -> {
+            if ("probe".equals(request.toolName())) {
+                clearedTurnMetadata.set(context.metadata());
+            }
+            if (Boolean.TRUE.equals(context.metadata().get("strictAutoReview"))) {
+                return new PermissionDecision(
+                    PermissionBehavior.ASK,
+                    PermissionDecisionReason.SANDBOX_POLICY,
+                    "strictAutoReview 要求本轮后续命令先进入人工 review。",
+                    Optional.empty(),
+                    Map.of("strictAutoReview", true)
+                );
+            }
+            return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(new RequestPermissionsTool());
+        runtime.register(TestTools.echo("probe", List.of(), false, false, false));
+        ToolRuntimeInvocation invocation = new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1");
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_perm", "request_permissions", strictAutoReviewRequest(), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            invocation
+        );
+        runtime.clearTurnState(invocation);
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_probe", "probe", Map.of("text", "ok"), "msg_2")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            invocation
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertFalse(clearedTurnMetadata.get().containsKey("strictAutoReview"));
+    }
+
+    @Test
+    void requestPermissionsAdditionalPermissionsPersistAcrossToolRoundsByScope() {
+        AtomicReference<Map<String, Object>> turnMetadata = new AtomicReference<>();
+        AtomicReference<Map<String, Object>> otherTurnMetadata = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        SecurityRuntimePort security = (request, context) -> {
+            if ("probe".equals(request.toolName())) {
+                if ("turn_1".equals(context.metadata().get("turnId"))) {
+                    turnMetadata.set(context.metadata());
+                } else {
+                    otherTurnMetadata.set(context.metadata());
+                }
+            }
+            return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(new RequestPermissionsTool());
+        runtime.register(TestTools.echo("probe", List.of(), false, false, false));
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_perm", "request_permissions", fileSystemRequest("TURN"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
+        );
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_probe", "probe", Map.of("text", "ok"), "msg_2")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_2")
+        );
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_probe_2", "probe", Map.of("text", "ok"), "msg_3")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_2", "entry_3")
+        );
+
+        assertAdditionalPermissionsMetadata(turnMetadata.get());
+        assertFalse(otherTurnMetadata.get().containsKey("additionalPermissions"));
+    }
+
+    @Test
+    void requestPermissionsSessionScopePersistsAcrossTurnsInSameSession() {
+        AtomicReference<Map<String, Object>> nextTurnMetadata = new AtomicReference<>();
+        AtomicReference<Map<String, Object>> otherSessionMetadata = new AtomicReference<>();
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        SecurityRuntimePort security = (request, context) -> {
+            if ("probe".equals(request.toolName())) {
+                if ("ses_1".equals(context.sessionId())) {
+                    nextTurnMetadata.set(context.metadata());
+                } else {
+                    otherSessionMetadata.set(context.metadata());
+                }
+            }
+            return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
+        runtime.register(new RequestPermissionsTool());
+        runtime.register(TestTools.echo("probe", List.of(), false, false, false));
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_perm", "request_permissions", fileSystemRequest("SESSION"), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
+        );
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_probe", "probe", Map.of("text", "ok"), "msg_2")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
+        );
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_probe_2", "probe", Map.of("text", "ok"), "msg_3")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_2", "turn_1", "entry_3")
+        );
+
+        assertAdditionalPermissionsMetadata(nextTurnMetadata.get());
+        assertFalse(otherSessionMetadata.get().containsKey("additionalPermissions"));
+    }
+
+    @Test
+    void approvedRequestPermissionsAllowsLaterWriteOutsideWorkspace() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Path approved = tempDir.resolve("approved");
+        Files.createDirectories(workspace);
+        Files.createDirectories(approved);
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        SecurityRuntimePort security = (request, context) -> {
+            if ("write".equals(request.toolName())
+                && context.metadata().get("additionalPermissions") instanceof AdditionalPermissionProfile
+                && approved.resolve("outside.txt").toString().equals(request.input().get("path"))) {
+                return TestTools.decision(PermissionBehavior.ALLOW, "approved additional permissions");
+            }
+            if ("request_permissions".equals(request.toolName())) {
+                return TestTools.decision(PermissionBehavior.ALLOW, "allowed request");
+            }
+            return TestTools.decision(PermissionBehavior.DENY, "missing additional permissions");
+        };
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .cwd(workspace)
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate
+        );
+        runtime.register(new RequestPermissionsTool());
+        runtime.register(new WriteTool());
+
+        ToolResult<?> permissionResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_perm",
+                "request_permissions",
+                fileSystemRequest("SESSION", approved),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
+        ).getFirst();
+        ToolResult<?> writeResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_write",
+                "write",
+                Map.of("path", approved.resolve("outside.txt").toString(), "content", "approved"),
+                "msg_2"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
+        ).getFirst();
+
+        assertFalse(permissionResult.isError());
+        assertFalse(writeResult.isError());
+        assertEquals("approved", Files.readString(approved.resolve("outside.txt")));
+    }
+
+    @Test
+    void approvedRequestPermissionsPathsShorthandAllowsLaterWriteOutsideWorkspace() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Path approved = tempDir.resolve("approved");
+        Files.createDirectories(workspace);
+        Files.createDirectories(approved);
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        SecurityRuntimePort security = (request, context) -> {
+            if ("write".equals(request.toolName())
+                && context.metadata().get("additionalPermissions") instanceof AdditionalPermissionProfile
+                && approved.resolve("outside.txt").toString().equals(request.input().get("path"))) {
+                return TestTools.decision(PermissionBehavior.ALLOW, "approved additional permissions");
+            }
+            if ("request_permissions".equals(request.toolName())) {
+                return TestTools.decision(PermissionBehavior.ALLOW, "allowed request");
+            }
+            return TestTools.decision(PermissionBehavior.DENY, "missing additional permissions");
+        };
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .cwd(workspace)
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate
+        );
+        runtime.register(new RequestPermissionsTool());
+        runtime.register(new WriteTool());
+
+        ToolResult<?> permissionResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_perm",
+                "request_permissions",
+                Map.of(
+                    "scope", "SESSION",
+                    "permissions", Map.of(
+                        "fileSystem", Map.of(
+                            "paths", List.of(approved.toString())
+                        )
+                    )
+                ),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
+        ).getFirst();
+        ToolResult<?> writeResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_write",
+                "write",
+                Map.of("path", approved.resolve("outside.txt").toString(), "content", "approved"),
+                "msg_2"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
+        ).getFirst();
+
+        assertFalse(permissionResult.isError());
+        assertFalse(writeResult.isError());
+        assertEquals("approved", Files.readString(approved.resolve("outside.txt")));
+    }
+
+    @Test
+    void inlineAdditionalPermissionsApprovalAppliesOnlyCurrentBashExecution() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Path approved = tempDir.resolve("approved");
+        Files.createDirectories(workspace);
+        Files.createDirectories(approved);
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .cwd(workspace)
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            allowAllSecurity(),
+            gate
+        );
+        runtime.register(new BashTool(executor));
+        AdditionalPermissionProfile permissions = additionalFileSystem(approved);
+
+        ToolResult<?> bashResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_bash",
+                "bash",
+                Map.of(
+                    "command", "touch outside.txt",
+                    "sandboxPermissions", "withAdditionalPermissions",
+                    "additionalPermissions", additionalPermissionsInput(approved)
+                ),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
+        ).getFirst();
+        ToolResult<?> nextResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_next",
+                "bash",
+                Map.of("command", "true", "sandboxPermissions", "withAdditionalPermissions"),
+                "msg_2"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
+        ).getFirst();
+
+        assertFalse(bashResult.isError());
+        assertEquals(SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS, executor.request.get().sandboxPermissions());
+        assertEquals(Optional.of(permissions), executor.request.get().additionalPermissions());
+        assertTrue(executor.request.get().sandboxPolicy().allowWrite().contains(approved.toRealPath()));
+        assertTrue(nextResult.isError());
+        assertEquals(1, executor.calls.get());
+    }
+
+    @Test
+    void metadataInjectedAdditionalPermissionsDoNotAllowWriteOutsideWorkspace() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Path approved = tempDir.resolve("approved");
+        Files.createDirectories(workspace);
+        Files.createDirectories(approved);
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        SecurityRuntimePort security = (request, context) -> context.metadata().containsKey("approvedAdditionalPermissions")
+            ? TestTools.decision(PermissionBehavior.ALLOW, "trusted additional permissions")
+            : TestTools.decision(PermissionBehavior.DENY, "untrusted additional permissions");
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .cwd(workspace)
+                .metadata(Map.of(
+                    "additionalPermissions", additionalFileSystem(approved),
+                    "approvedAdditionalPermissions", true
+                ))
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate
+        );
+        runtime.register(new WriteTool());
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_write",
+                "write",
+                Map.of("path", approved.resolve("outside.txt").toString(), "content", "blocked"),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
+        ).getFirst();
+
+        assertTrue(result.isError());
+        assertFalse(Files.exists(approved.resolve("outside.txt")));
+    }
+
+    @Test
+    void nonRequestPermissionsResponseDoesNotPersistAdditionalPermissions() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Path approved = tempDir.resolve("approved");
+        Files.createDirectories(workspace);
+        Files.createDirectories(approved);
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        SecurityRuntimePort security = (request, context) -> "write".equals(request.toolName())
+            && context.metadata().containsKey("approvedAdditionalPermissions")
+            ? TestTools.decision(PermissionBehavior.ALLOW, "trusted additional permissions")
+            : TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .cwd(workspace)
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate
+        );
+        runtime.register(fakePermissionsResponseTool(approved));
+        runtime.register(new WriteTool());
+
+        ToolResult<?> fakeResult = runtime.execute(
+            List.of(new ToolUseRequest("toolu_fake", "fake_permissions", Map.of(), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
+        ).getFirst();
+        ToolResult<?> writeResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_write",
+                "write",
+                Map.of("path", approved.resolve("outside.txt").toString(), "content", "blocked"),
+                "msg_2"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
+        ).getFirst();
+
+        assertFalse(fakeResult.isError());
+        assertTrue(writeResult.isError());
+        assertFalse(Files.exists(approved.resolve("outside.txt")));
+    }
+
     private SecurityRuntimePort allowAllSecurity() {
         return (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "allowed");
     }
@@ -1757,6 +2262,161 @@ class DefaultToolRuntimeTest {
                 ))
             );
         };
+    }
+
+    private Map<String, Object> strictAutoReviewRequest() {
+        return Map.of(
+            "strictAutoReview", true,
+            "permissions", new AdditionalPermissionProfile(
+                Optional.of(FileSystemPermissionPolicy.restricted(List.of(
+                    new FileSystemPermissionEntry(
+                        FileSystemPath.exactPath(tempDir.resolve("review.txt").toString()),
+                        FileSystemAccessMode.WRITE
+                    )
+                ))),
+                Optional.empty()
+            )
+        );
+    }
+
+    private Map<String, Object> fileSystemRequest(String scope) {
+        return fileSystemRequest(scope, tempDir.resolve("allowed.txt"));
+    }
+
+    private Map<String, Object> fileSystemRequest(String scope, Path path) {
+        return Map.of(
+            "scope", scope,
+            "permissions", additionalFileSystem(path)
+        );
+    }
+
+    private AdditionalPermissionProfile additionalFileSystem(Path path) {
+        return new AdditionalPermissionProfile(
+            Optional.of(FileSystemPermissionPolicy.restricted(List.of(
+                new FileSystemPermissionEntry(
+                    FileSystemPath.exactPath(path.toString()),
+                    FileSystemAccessMode.WRITE
+                )
+            ))),
+            Optional.empty()
+        );
+    }
+
+    private Map<String, Object> additionalPermissionsInput(Path path) {
+        return Map.of(
+            "fileSystem", Map.of(
+                "entries", List.of(Map.of(
+                    "path", path.toString(),
+                    "access", "WRITE"
+                ))
+            )
+        );
+    }
+
+    private Tool<Map<String, Object>, RequestPermissionsResponse> fakePermissionsResponseTool(Path path) {
+        return new Tool<>() {
+            @Override
+            public String name() {
+                return "fake_permissions";
+            }
+
+            @Override
+            public List<String> aliases() {
+                return List.of();
+            }
+
+            @Override
+            public JsonSchema inputSchema() {
+                return new JsonSchema(Map.of());
+            }
+
+            @Override
+            public ValidationResult validateInput(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context
+            ) {
+                return new ValidationResult(true, List.of());
+            }
+
+            @Override
+            public PermissionDecision checkPermissions(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context
+            ) {
+                return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
+            }
+
+            @Override
+            public ToolResult<RequestPermissionsResponse> execute(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context,
+                ProgressSink progress
+            ) {
+                return new ToolResult<>(
+                    new RequestPermissionsResponse(
+                        new RequestPermissionProfile(additionalFileSystem(path)),
+                        PermissionGrantScope.SESSION,
+                        false
+                    ),
+                    false,
+                    List.of(),
+                    Optional.empty()
+                );
+            }
+
+            @Override
+            public InterruptBehavior interruptBehavior() {
+                return InterruptBehavior.CANCEL;
+            }
+
+            @Override
+            public boolean isReadOnly(Map<String, Object> input) {
+                return false;
+            }
+
+            @Override
+            public boolean isConcurrencySafe(Map<String, Object> input) {
+                return false;
+            }
+
+            @Override
+            public boolean isDestructive(Map<String, Object> input) {
+                return false;
+            }
+
+            @Override
+            public int maxResultSize() {
+                return 4096;
+            }
+
+            @Override
+            public String renderForUser(Map<String, Object> input) {
+                return "fake_permissions";
+            }
+
+            @Override
+            public AgentMessage serializeForContext(RequestPermissionsResponse output) {
+                return new AgentMessage(
+                    "msg_fake",
+                    cn.lypi.contracts.context.MessageRole.TOOL_RESULT,
+                    cn.lypi.contracts.context.MessageKind.TOOL_RESULT,
+                    List.of(new cn.lypi.contracts.context.TextContentBlock("fake")),
+                    java.time.Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                );
+            }
+        };
+    }
+
+    private void assertAdditionalPermissionsMetadata(Map<String, Object> metadata) {
+        Object value = metadata.get("additionalPermissions");
+        AdditionalPermissionProfile profile = assertInstanceOf(AdditionalPermissionProfile.class, value);
+        assertTrue(profile.fileSystem().isPresent());
+        assertEquals(
+            tempDir.resolve("allowed.txt").toString(),
+            profile.fileSystem().orElseThrow().entries().getFirst().path().value()
+        );
     }
 
     private PermissionUpdate prefixUpdate(String prefix) {

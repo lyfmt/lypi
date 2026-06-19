@@ -3,6 +3,7 @@ package cn.lypi.resource;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ContextFile;
 import cn.lypi.contracts.resource.ResourceSnapshot;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -14,10 +15,16 @@ import java.util.List;
 public class DefaultSystemPromptBuilder implements SystemPromptBuilder {
     @Override
     public SystemPrompt build(ResourceSnapshot resources) {
+        return build(resources, null);
+    }
+
+    @Override
+    public SystemPrompt build(ResourceSnapshot resources, PermissionRuntimeState permissionRuntimeState) {
         StringBuilder content = new StringBuilder();
         List<String> sourceNames = new ArrayList<>();
 
         new BaseAgentPromptSection().appendTo(content, sourceNames);
+        new PermissionPromptSection(permissionRuntimeState).appendTo(content, sourceNames);
         appendContextFiles(content, sourceNames, resources.agentFiles());
         new MemoryPromptSection(resources.memorySources()).appendTo(content, sourceNames);
         new SkillPromptSection(resources.skillIndex().skills()).appendTo(content, sourceNames);

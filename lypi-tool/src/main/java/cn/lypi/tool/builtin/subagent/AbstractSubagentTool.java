@@ -10,6 +10,7 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.tool.InterruptBehavior;
@@ -125,6 +126,14 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
         return SubagentToolInputs.permissionMode(input);
     }
 
+    protected PermissionRuntimeState permissionRuntimeState(Map<String, Object> input) {
+        return SubagentToolInputs.permissionRuntimeState(input);
+    }
+
+    protected boolean permissionRuntimeStateSpecified(Map<String, Object> input) {
+        return SubagentToolInputs.permissionRuntimeStateSpecified(input);
+    }
+
     protected Optional<ModelSelection> model(Map<String, Object> input) {
         return SubagentToolInputs.model(input);
     }
@@ -139,6 +148,10 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
 
     protected Map<String, Object> permissionModeSchema() {
         return SubagentToolSchemas.permissionModeSchema();
+    }
+
+    protected Map<String, Object> permissionRuntimeStateSchema() {
+        return SubagentToolSchemas.permissionRuntimeStateSchema();
     }
 
     protected Map<String, Object> agentModeSchema() {

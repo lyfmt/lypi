@@ -4,6 +4,7 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.io.IOException;
@@ -48,7 +49,7 @@ public final class GlobTool extends AbstractFileTool {
         String pattern = input.get("pattern").toString();
         int maxResults = intInput(input, "maxResults", 100, 1, 1_000);
         try {
-            Path root = resolvePath(input, context, "path");
+            Path root = resolvePath(input, context, "path", FileSystemAccessMode.READ);
             if (!Files.exists(root)) {
                 return error(toolUseId, "匹配路径不存在: " + relativePath(root, context));
             }
@@ -57,7 +58,7 @@ public final class GlobTool extends AbstractFileTool {
             List<Path> files;
             try (var walk = Files.walk(root)) {
                 files = walk.filter(Files::isRegularFile)
-                    .filter(path -> realPathInsideWorkspace(path, context))
+                    .filter(path -> realPathInsideWorkspace(path, context, FileSystemAccessMode.READ))
                     .filter(path -> !ignored(path))
                     .toList();
             }

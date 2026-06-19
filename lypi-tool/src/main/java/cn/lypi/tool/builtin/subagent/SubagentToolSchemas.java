@@ -25,7 +25,14 @@ final class SubagentToolSchemas {
         return Map.of(
             "type", "string",
             "enum", PERMISSION_MODE_VALUES,
-            "description", "子 Agent 权限模式。默认请省略或使用 DEFAULT_EXECUTE；兼容 useDefault/use_default。"
+            "description", "legacy 子 Agent 权限模式。新协议优先使用 permissionRuntimeState；默认请省略或使用 DEFAULT_EXECUTE；兼容 useDefault/use_default。"
+        );
+    }
+
+    static Map<String, Object> permissionRuntimeStateSchema() {
+        return Map.of(
+            "type", "object",
+            "description", "子 Agent canonical 权限运行态。新协议优先使用该字段；包含 approvalPolicy、activePermissionProfile、permissionProfile、legacyBehavior 和 legacyPermissionMode；permissionMode 仅作为兼容旧入口。"
         );
     }
 

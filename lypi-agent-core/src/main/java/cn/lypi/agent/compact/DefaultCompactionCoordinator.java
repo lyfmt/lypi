@@ -167,7 +167,7 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
             snapshot.model(),
             snapshot.thinkingLevel(),
             snapshot.mode(),
-            snapshot.permissionMode(),
+            snapshot.permissionRuntimeState(),
             snapshot.budget()
         );
         return budgetEstimator.estimate(compactedSnapshot).estimatedContextTokens();
@@ -275,7 +275,7 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
             snapshot.model(),
             snapshot.thinkingLevel(),
             snapshot.mode(),
-            snapshot.permissionMode(),
+            snapshot.permissionRuntimeState(),
             budget
         );
     }

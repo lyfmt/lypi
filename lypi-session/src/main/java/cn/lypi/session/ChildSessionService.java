@@ -50,7 +50,7 @@ public final class ChildSessionService implements ChildSessionPort {
             request.initialModel(),
             request.initialThinkingLevel(),
             request.initialAgentMode(),
-            request.initialPermissionMode()
+            request.initialPermissionRuntimeState()
         );
         store.create(header);
 

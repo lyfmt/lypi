@@ -31,6 +31,10 @@ final class PathSafetyChecker {
     private static final List<String> PROTECTED_PATH_PREFIXES = List.of(
         ".git",
         ".git/",
+        ".agents",
+        ".agents/",
+        ".codex",
+        ".codex/",
         ".gitconfig",
         ".gitmodules",
         ".mcp.json",
@@ -60,24 +64,8 @@ final class PathSafetyChecker {
     Optional<PermissionDecision> checkPath(String fieldName, String rawPath, ToolUseContext context) {
         Path cwd = context.cwd().toAbsolutePath().normalize();
         Path target = cwd.resolve(rawPath).normalize();
-        if (!target.startsWith(cwd)) {
-            return Optional.of(decision(
-                "工具路径越过当前工作目录: " + rawPath,
-                fieldName,
-                rawPath,
-                target
-            ));
-        }
         Optional<Path> realCwd = realPathForCwd(cwd);
         Optional<Path> realPath = realCwd.map(path -> realPathForSafetyCheck(rawPath, path));
-        if (realPath.isPresent() && !realPath.get().startsWith(realCwd.get())) {
-            return Optional.of(decision(
-                "工具路径经符号链接越过当前工作目录: " + rawPath,
-                fieldName,
-                rawPath,
-                realPath.get()
-            ));
-        }
         if (realPath.isPresent() && realPath.get().startsWith(realCwd.get())) {
             String realRelativePath = realCwd.get().relativize(realPath.get()).toString().replace('\\', '/');
             if (isProtectedPath(realRelativePath)) {
@@ -89,8 +77,7 @@ final class PathSafetyChecker {
                 ));
             }
         }
-        String relativePath = cwd.relativize(target).toString().replace('\\', '/');
-        if (isProtectedPath(relativePath)) {
+        if (target.startsWith(cwd) && isProtectedPath(cwd.relativize(target).toString().replace('\\', '/'))) {
             return Optional.of(decision(
                 "工具路径命中受保护路径: " + rawPath,
                 fieldName,
@@ -110,16 +97,22 @@ final class PathSafetyChecker {
         Path workspace = context.cwd().toAbsolutePath().normalize();
         Path base = baseCwd.toAbsolutePath().normalize();
         Path target = base.resolve(rawPath).normalize();
-        if (!target.startsWith(workspace)) {
-            return Optional.of(decision(
-                "工具路径越过当前工作目录: " + rawPath,
-                fieldName,
-                rawPath,
-                target
-            ));
+        Optional<Path> realWorkspace = realPathForCwd(workspace);
+        Optional<Path> realBase = realPathForCwd(base);
+        Optional<Path> realPath = realBase.map(path -> realPathForSafetyCheck(rawPath, path));
+        if (realWorkspace.isPresent() && realPath.isPresent() && realPath.get().startsWith(realWorkspace.get())) {
+            String realRelativePath = realWorkspace.get().relativize(realPath.get()).toString().replace('\\', '/');
+            if (isProtectedPath(realRelativePath)) {
+                return Optional.of(decision(
+                    "工具路径经符号链接命中受保护路径: " + rawPath,
+                    fieldName,
+                    rawPath,
+                    realPath.get()
+                ));
+            }
         }
-        String relativePath = workspace.relativize(target).toString().replace('\\', '/');
-        if (isProtectedPath(relativePath)) {
+        if (target.startsWith(workspace)
+            && isProtectedPath(workspace.relativize(target).toString().replace('\\', '/'))) {
             return Optional.of(decision(
                 "工具路径命中受保护路径: " + rawPath,
                 fieldName,

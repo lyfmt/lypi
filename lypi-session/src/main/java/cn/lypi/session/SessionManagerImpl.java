@@ -7,6 +7,8 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.BranchSummaryPlan;
 import cn.lypi.contracts.session.ForkRequest;
@@ -63,6 +65,20 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
             cwd,
             Clock.systemUTC(),
             new SessionReplayProjector(defaultModel, defaultThinkingLevel, defaultMode, defaultPermissionMode)
+        );
+    }
+
+    public SessionManagerImpl(
+        Path cwd,
+        ModelSelection defaultModel,
+        ThinkingLevel defaultThinkingLevel,
+        AgentMode defaultMode,
+        PermissionRuntimeState defaultPermissionRuntimeState
+    ) {
+        this(
+            cwd,
+            Clock.systemUTC(),
+            new SessionReplayProjector(defaultModel, defaultThinkingLevel, defaultMode, defaultPermissionRuntimeState)
         );
     }
 
@@ -388,7 +404,7 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
             Optional.of(replayProjector.defaultModel()),
             Optional.of(replayProjector.defaultThinkingLevel()),
             Optional.of(replayProjector.defaultMode()),
-            Optional.of(replayProjector.defaultPermissionMode())
+            replayProjector.defaultPermissionRuntimeState()
         );
     }
 

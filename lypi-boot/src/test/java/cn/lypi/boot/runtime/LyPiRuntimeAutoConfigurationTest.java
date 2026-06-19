@@ -56,11 +56,22 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPolicyKind;
+import cn.lypi.contracts.security.NetworkPolicyMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionGrantScope;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuleSource;
+import cn.lypi.contracts.security.PermissionRuleValue;
+import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.tui.BranchSummaryOffer;
 import cn.lypi.contracts.session.ChildSessionRequest;
@@ -104,14 +115,15 @@ import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
-import cn.lypi.security.DefaultPolicyEngine;
 import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
+import cn.lypi.tool.FilePermissionAmendmentStore;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.MemoryConsolidationToolRuntime;
+import cn.lypi.tool.shell.SandboxPolicyResolver;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -160,6 +172,86 @@ class LyPiRuntimeAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasSingleBean(EventBus.class);
                 assertThat(context.getBean(EventBus.class)).isInstanceOf(InMemoryEventBus.class);
+            });
+    }
+
+    @Test
+    void sessionManagerUsesCodexStylePermissionsConfigAsDefaultRuntimeState() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.permissions.default-permissions=:read-only",
+                "lypi.permissions.approval-policy.mode=granular",
+                "lypi.permissions.approval-policy.granular.sandbox-approval=on_request",
+                "lypi.permissions.approval-policy.granular.rules=never",
+                "lypi.permissions.approval-policy.granular.skill-approval=on_request",
+                "lypi.permissions.approval-policy.granular.request-permissions=on_request",
+                "lypi.permissions.approval-policy.granular.mcp-elicitations=never"
+            )
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_permissions_config");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo(":read-only");
+                assertThat(sessionContext.permissionRuntimeState().approvalPolicy().mode())
+                    .isEqualTo(ApprovalMode.GRANULAR);
+                assertThat(sessionContext.permissionRuntimeState().approvalPolicy().granularApprovalPolicy().orElseThrow().rules())
+                    .isEqualTo(ApprovalMode.NEVER);
+                assertThat(sessionContext.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+            });
+    }
+
+    @Test
+    void sessionManagerStoresCompiledCustomPermissionProfileInRuntimeState() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.permissions.default-permissions=dev",
+                "lypi.permissions.profiles.dev.extends-profile=:workspace",
+                "lypi.permissions.profiles.dev.file-system.kind=restricted",
+                "lypi.permissions.profiles.dev.file-system.entries[0].path.kind=special",
+                "lypi.permissions.profiles.dev.file-system.entries[0].path.value=:root",
+                "lypi.permissions.profiles.dev.file-system.entries[0].access=read",
+                "lypi.permissions.profiles.dev.file-system.entries[1].path.kind=exact_path",
+                "lypi.permissions.profiles.dev.file-system.entries[1].path.value=/tmp/lypi-cache",
+                "lypi.permissions.profiles.dev.file-system.entries[1].access=write"
+            )
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_custom_profile");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo("dev");
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().fileSystem().kind())
+                    .isEqualTo(FileSystemPolicyKind.RESTRICTED);
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().fileSystem().entries())
+                    .anySatisfy(entry -> {
+                        assertThat(entry.path().kind()).isEqualTo(FileSystemPath.Kind.EXACT_PATH);
+                        assertThat(entry.path().value()).contains("/tmp/lypi-cache");
+                        assertThat(entry.access()).isEqualTo(FileSystemAccessMode.WRITE);
+                    });
+            });
+    }
+
+    @Test
+    void sessionRuntimeStateAndSandboxUseSameLegacyHostNetworkProfileSelection() {
+        runtimeAutoConfigurations()
+            .withPropertyValues("lypi.tool.sandbox.network-mode=host")
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_legacy_host_network");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo("legacy-workspace-network");
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().network().mode())
+                    .isEqualTo(NetworkPolicyMode.ENABLED);
+                assertThat(resolver.resolve(tempDir, tempDir).networkMode()).isEqualTo(NetworkMode.HOST);
             });
     }
 
@@ -266,7 +358,7 @@ class LyPiRuntimeAutoConfigurationTest {
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(SecurityRuntimePort.class);
-                assertThat(context.getBean(SecurityRuntimePort.class)).isInstanceOf(DefaultPolicyEngine.class);
+                assertThat(context.getBean(SecurityRuntimePort.class)).isInstanceOf(AmendmentAwareSecurityRuntime.class);
                 assertThat(context).hasSingleBean(SessionManagerPort.class);
                 assertThat(context).hasSingleBean(ResourceRuntimePort.class);
                 assertThat(context).hasSingleBean(AiProviderRuntimePort.class);
@@ -304,6 +396,41 @@ class LyPiRuntimeAutoConfigurationTest {
                 );
 
                 assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+            });
+    }
+
+    @Test
+    void defaultSecurityRuntimeLoadsPermissionAmendmentsFromRuntimeCwd() {
+        FilePermissionAmendmentStore store = new FilePermissionAmendmentStore(tempDir);
+        store.appendPermissionUpdate(
+            new PermissionUpdate(
+                PermissionRuleSource.USER,
+                new PermissionRule(
+                    PermissionRuleSource.USER,
+                    PermissionBehavior.ALLOW,
+                    new PermissionRuleValue("bash", "prefix:cargo build"),
+                    "允许 Bash prefix: cargo build"
+                )
+            ),
+            PermissionGrantScope.SESSION,
+            "ses_1"
+        );
+
+        runtimeConfiguration()
+            .run(context -> {
+                SecurityRuntimePort security = context.getBean(SecurityRuntimePort.class);
+
+                PermissionDecision decision = security.decide(
+                    new ToolUseRequest("toolu_1", "bash", Map.of("command", "cargo build --workspace"), "msg_1"),
+                    new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.DEFAULT_EXECUTE))
+                );
+
+                assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+                PermissionDecision otherSessionDecision = security.decide(
+                    new ToolUseRequest("toolu_2", "bash", Map.of("command", "cargo build --workspace"), "msg_1"),
+                    new ToolUseContext("ses_2", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.DEFAULT_EXECUTE))
+                );
+                assertThat(otherSessionDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
             });
     }
 
@@ -418,6 +545,13 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(bootstrap.toolRegistry().tools()).isNotEmpty();
                 assertThat(bootstrap.modelSelection()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
                 assertThat(bootstrap.systemPrompt()).isNotNull();
+                assertThat(bootstrap.systemPrompt().content())
+                    .contains("## Permissions")
+                    .contains("approval policy: ON_REQUEST")
+                    .contains("active sandbox profile: :workspace")
+                    .contains("request_permissions")
+                    .contains("sandboxPermissions=requireEscalated")
+                    .contains("sandboxPermissions=withAdditionalPermissions");
             });
     }
 

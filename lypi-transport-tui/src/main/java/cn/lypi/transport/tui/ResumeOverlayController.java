@@ -240,7 +240,7 @@ final class ResumeOverlayController {
             state.model(),
             state.thinkingLevel(),
             state.agentMode(),
-            state.permissionMode(),
+            state.permissionRuntimeState(),
             state.budget(),
             visibleTranscript,
             state.hasInterruptibleTool(),

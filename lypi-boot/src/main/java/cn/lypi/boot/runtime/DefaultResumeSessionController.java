@@ -110,7 +110,7 @@ final class DefaultResumeSessionController implements ResumeSessionController {
                 currentContext.model(),
                 currentContext.thinkingLevel(),
                 currentContext.mode(),
-                currentContext.permissionMode(),
+                currentContext.permissionRuntimeState(),
                 new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO)
             ),
             plan,
@@ -127,7 +127,7 @@ final class DefaultResumeSessionController implements ResumeSessionController {
             context.model(),
             context.thinkingLevel(),
             context.mode(),
-            context.permissionMode(),
+            context.permissionRuntimeState(),
             Instant.now()
         );
         events.publish(event);
@@ -138,7 +138,7 @@ final class DefaultResumeSessionController implements ResumeSessionController {
             context.model(),
             context.thinkingLevel(),
             context.mode(),
-            context.permissionMode(),
+            context.permissionRuntimeState(),
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
             sessionManager.transcript(handle.leafId()),
             false,

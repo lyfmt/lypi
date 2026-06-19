@@ -25,7 +25,7 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
-import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
@@ -80,10 +80,14 @@ class SlashCommandRouterTest {
         router.route("/model anthropic/claude-sonnet-4");
 
         ModeChangeEntry mode = assertInstanceOf(ModeChangeEntry.class, session.entries.get(0));
-        PermissionModeChangeEntry permission = assertInstanceOf(PermissionModeChangeEntry.class, session.entries.get(1));
+        PermissionRuntimeStateChangeEntry permission = assertInstanceOf(
+            PermissionRuntimeStateChangeEntry.class,
+            session.entries.get(1)
+        );
         ModelChangeEntry model = assertInstanceOf(ModelChangeEntry.class, session.entries.get(2));
         assertEquals(AgentMode.PLAN, mode.agentMode());
         assertEquals(PermissionMode.ACCEPT_EDITS, permission.permissionMode());
+        assertEquals(PermissionMode.ACCEPT_EDITS, permission.permissionRuntimeState().legacyPermissionMode());
         assertEquals(new ModelSelection("anthropic", "claude-sonnet-4", ThinkingLevel.LOW), model.model());
     }
 

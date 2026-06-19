@@ -4,6 +4,7 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -51,7 +52,7 @@ public final class WriteTool extends AbstractFileTool {
     @Override
     public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
         try {
-            Path path = resolvePath(input, context, "path");
+            Path path = resolvePath(input, context, "path", FileSystemAccessMode.WRITE);
             if (Files.exists(path)) {
                 return ask("覆盖已有文件需要确认。", input);
             }
@@ -65,7 +66,7 @@ public final class WriteTool extends AbstractFileTool {
     public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
         String toolUseId = toolUseId(context);
         try {
-            Path path = resolvePath(input, context, "path");
+            Path path = resolvePath(input, context, "path", FileSystemAccessMode.WRITE);
             boolean createParents = Boolean.TRUE.equals(input.get("createParents"));
             Path parent = path.getParent();
             if (parent != null && !Files.exists(parent)) {

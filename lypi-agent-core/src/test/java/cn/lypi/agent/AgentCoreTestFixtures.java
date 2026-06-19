@@ -662,6 +662,7 @@ final class AgentCoreTestFixtures {
     static final class StubToolRuntime implements ToolRuntimePort {
         final List<List<ToolUseRequest>> requests = new ArrayList<>();
         final List<ToolRuntimeInvocation> invocations = new ArrayList<>();
+        final List<ToolRuntimeInvocation> clearedInvocations = new ArrayList<>();
         private final List<List<ToolResult<?>>> results = new ArrayList<>();
         private final List<RuntimeException> failures = new ArrayList<>();
         private final Map<String, Tool<?, ?>> toolsByNameOrAlias = new LinkedHashMap<>();
@@ -720,6 +721,11 @@ final class AgentCoreTestFixtures {
         ) {
             invocations.add(invocation);
             return executeQueued(requests);
+        }
+
+        @Override
+        public void clearTurnState(ToolRuntimeInvocation invocation) {
+            clearedInvocations.add(invocation);
         }
 
         private List<ToolResult<?>> executeQueued(List<ToolUseRequest> requests) {

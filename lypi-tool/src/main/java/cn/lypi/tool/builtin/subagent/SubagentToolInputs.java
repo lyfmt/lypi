@@ -5,8 +5,11 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.tool.ToolUseContext;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -18,6 +21,9 @@ import java.util.Optional;
 
 final class SubagentToolInputs {
     private static final List<String> BASE_READ_TOOLS = List.of("read", "grep", "glob");
+    private static final ObjectMapper JSON_MAPPER = new ObjectMapper()
+        .registerModule(new Jdk8Module())
+        .findAndRegisterModules();
 
     private SubagentToolInputs() {
     }
@@ -106,6 +112,21 @@ final class SubagentToolInputs {
                     .formatted(value, String.join(", ", SubagentToolSchemas.PERMISSION_MODE_VALUES))
             );
         }
+    }
+
+    static PermissionRuntimeState permissionRuntimeState(Map<String, Object> input) {
+        Object value = value(input, "permissionRuntimeState", "permission_runtime_state");
+        if (value instanceof PermissionRuntimeState runtimeState) {
+            return runtimeState;
+        }
+        if (value != null) {
+            return JSON_MAPPER.convertValue(value, PermissionRuntimeState.class);
+        }
+        return PermissionRuntimeState.fromLegacy(permissionMode(input));
+    }
+
+    static boolean permissionRuntimeStateSpecified(Map<String, Object> input) {
+        return value(input, "permissionRuntimeState", "permission_runtime_state", "permissionMode", "permission_mode") != null;
     }
 
     static Optional<ModelSelection> model(Map<String, Object> input) {

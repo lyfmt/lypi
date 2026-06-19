@@ -158,6 +158,7 @@ class CommonContractTest {
             () -> assertMethod(SecurityRuntimePort.class, "decide", 2),
             () -> assertMethod(ResourceRuntimePort.class, "load", 1),
             () -> assertMethod(ResourceRuntimePort.class, "buildSystemPrompt", 1),
+            () -> assertMethod(ResourceRuntimePort.class, "buildSystemPrompt", 2),
             () -> assertMethod(AgentCorePort.class, "execute", 1),
             () -> assertMethod(AgentCenterPort.class, "spawn", 1),
             () -> assertMethod(AgentCenterPort.class, "interrupt", 1),

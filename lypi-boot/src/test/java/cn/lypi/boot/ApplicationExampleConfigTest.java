@@ -6,8 +6,14 @@ import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.boot.ai.LyPiAiProperties;
 import cn.lypi.boot.runtime.LyPiRuntimeProperties;
+import cn.lypi.boot.tool.LyPiPermissionsProperties;
 import cn.lypi.boot.tool.LyPiToolProperties;
 import cn.lypi.contracts.runtime.NetworkMode;
+import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPolicyKind;
+import cn.lypi.contracts.security.NetworkPolicyMode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -57,6 +63,17 @@ class ApplicationExampleConfigTest {
     }
 
     @Test
+    void applicationExampleDocumentsPermissionsAtLypiTopLevel() throws IOException {
+        String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(example).contains("#   runtime:");
+        assertThat(example).contains("#   permissions:");
+        assertThat(example).contains("#   subagent:");
+        assertThat(example.indexOf("#   runtime:")).isLessThan(example.indexOf("#   permissions:"));
+        assertThat(example.indexOf("#   permissions:")).isLessThan(example.indexOf("#   subagent:"));
+    }
+
+    @Test
     void overrideExtensionAndToolFragmentsBindToSupportedProperties() {
         Binder binder = new Binder(new MapConfigurationPropertySource(Map.ofEntries(
             Map.entry("lypi.runtime.default-provider", "fixture"),
@@ -96,12 +113,24 @@ class ApplicationExampleConfigTest {
             Map.entry("lypi.tool.sandbox.enabled", "true"),
             Map.entry("lypi.tool.sandbox.network-mode", "disabled"),
             Map.entry("lypi.tool.sandbox.fail-if-unavailable", "false"),
-            Map.entry("lypi.tool.sandbox.auto-allow-bash-if-sandboxed", "false")
+            Map.entry("lypi.tool.sandbox.auto-allow-bash-if-sandboxed", "false"),
+            Map.entry("lypi.permissions.default-permissions", ":workspace"),
+            Map.entry("lypi.permissions.approval-policy.mode", "granular"),
+            Map.entry("lypi.permissions.approval-policy.granular.rules", "never"),
+            Map.entry("lypi.permissions.profiles.dev.description", "Developer workspace"),
+            Map.entry("lypi.permissions.profiles.dev.extends-profile", ":workspace"),
+            Map.entry("lypi.permissions.profiles.dev.workspace-roots[0]", "/absolute/path/to/extra-workspace"),
+            Map.entry("lypi.permissions.profiles.dev.file-system.kind", "restricted"),
+            Map.entry("lypi.permissions.profiles.dev.file-system.entries[0].path.kind", "special"),
+            Map.entry("lypi.permissions.profiles.dev.file-system.entries[0].path.value", ":root"),
+            Map.entry("lypi.permissions.profiles.dev.file-system.entries[0].access", "read"),
+            Map.entry("lypi.permissions.profiles.dev.network.mode", "enabled")
         )));
 
         LyPiRuntimeProperties runtime = binder.bind("lypi.runtime", LyPiRuntimeProperties.class).get();
         LyPiAiProperties ai = binder.bind("lypi.ai", LyPiAiProperties.class).get();
         LyPiToolProperties tool = binder.bind("lypi.tool", LyPiToolProperties.class).get();
+        LyPiPermissionsProperties permissions = binder.bind("lypi.permissions", LyPiPermissionsProperties.class).get();
 
         assertThat(runtime.getDefaultProvider()).isEqualTo("fixture");
         assertThat(runtime.getDefaultModel()).isEqualTo("fixture-model");
@@ -141,6 +170,19 @@ class ApplicationExampleConfigTest {
         assertThat(tool.getSandbox().getNetworkMode()).isEqualTo(NetworkMode.DISABLED);
         assertThat(tool.getSandbox().isFailIfUnavailable()).isFalse();
         assertThat(tool.getSandbox().isAutoAllowBashIfSandboxed()).isFalse();
+        assertThat(permissions.getDefaultPermissions()).isEqualTo(":workspace");
+        assertThat(permissions.getApprovalPolicy().toApprovalPolicy().mode()).isEqualTo(ApprovalMode.GRANULAR);
+        assertThat(permissions.getApprovalPolicy().toApprovalPolicy().granularApprovalPolicy().orElseThrow().rules())
+            .isEqualTo(ApprovalMode.NEVER);
+        assertThat(permissions.getProfiles()).containsKey("dev");
+        assertThat(permissions.getProfiles().get("dev").toConfig().fileSystem().orElseThrow().kind())
+            .isEqualTo(FileSystemPolicyKind.RESTRICTED);
+        assertThat(permissions.getProfiles().get("dev").toConfig().fileSystem().orElseThrow().entries().getFirst().path().kind())
+            .isEqualTo(FileSystemPath.Kind.SPECIAL);
+        assertThat(permissions.getProfiles().get("dev").toConfig().fileSystem().orElseThrow().entries().getFirst().access())
+            .isEqualTo(FileSystemAccessMode.READ);
+        assertThat(permissions.getProfiles().get("dev").toConfig().network().orElseThrow().mode())
+            .isEqualTo(NetworkPolicyMode.ENABLED);
     }
 
     private Binder binderForExample() throws IOException {

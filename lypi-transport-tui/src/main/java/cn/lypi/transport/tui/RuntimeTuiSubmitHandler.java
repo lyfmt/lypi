@@ -230,7 +230,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             context.model(),
             context.thinkingLevel(),
             context.mode(),
-            context.permissionMode(),
+            context.permissionRuntimeState(),
             Instant.now()
         )));
     }

@@ -16,6 +16,7 @@ import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.DefaultCompactionCoordinator;
 import cn.lypi.agent.compact.DefaultCompactionPlanner;
 import cn.lypi.boot.BootstrapService;
+import cn.lypi.boot.tool.LyPiPermissionsProperties;
 import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.EventBus;
@@ -37,6 +38,9 @@ import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PermissionProfileSelection;
+import cn.lypi.contracts.security.PermissionRuntimeState;
+import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.transport.TransportAdapter;
@@ -65,8 +69,8 @@ import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
 import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
-import cn.lypi.security.DefaultPolicyEngine;
 import cn.lypi.security.ExecPolicyRuleFileReader;
+import cn.lypi.security.PermissionProfileConfigCompiler;
 import cn.lypi.session.ChildSessionService;
 import cn.lypi.session.ChildSessionView;
 import cn.lypi.session.DefaultSessionManagerFactory;
@@ -77,6 +81,7 @@ import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransport;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
 import cn.lypi.transport.tui.MailboxSlashCommandHandler;
+import cn.lypi.tool.FilePermissionAmendmentStore;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -101,16 +106,40 @@ final class RuntimeBeanFactories {
 
     static SecurityRuntimePort securityRuntime(LyPiRuntimeProperties properties) {
         Path rulesFile = properties.getCwd().resolve("rules").resolve("default.rules");
-        return new DefaultPolicyEngine(new ExecPolicyRuleFileReader().read(rulesFile));
+        List<PermissionRule> legacyRules = new ExecPolicyRuleFileReader().read(rulesFile);
+        return new AmendmentAwareSecurityRuntime(legacyRules, new FilePermissionAmendmentStore(properties.getCwd()));
     }
 
     static SessionManagerPort sessionManager(LyPiRuntimeProperties properties) {
+        return sessionManager(properties, PermissionRuntimeState.fromLegacy(properties.getPermissionMode()));
+    }
+
+    static SessionManagerPort sessionManager(
+        LyPiRuntimeProperties properties,
+        LyPiPermissionsProperties permissionsProperties,
+        PermissionProfileSelection selection
+    ) {
+        PermissionRuntimeState legacyState = PermissionRuntimeState.fromLegacy(properties.getPermissionMode());
+        PermissionRuntimeState runtimeState = new PermissionRuntimeState(
+            permissionsProperties.getApprovalPolicy().toApprovalPolicy(),
+            selection.activePermissionProfile(),
+            selection.permissionProfile(),
+            legacyState.legacyBehavior(),
+            properties.getPermissionMode()
+        );
+        return sessionManager(properties, runtimeState);
+    }
+
+    private static SessionManagerPort sessionManager(
+        LyPiRuntimeProperties properties,
+        PermissionRuntimeState permissionRuntimeState
+    ) {
         return new SessionManagerImpl(
             properties.getCwd(),
             new ModelSelection(properties.getDefaultProvider(), properties.getDefaultModel(), properties.getThinkingLevel()),
             properties.getThinkingLevel(),
             properties.getAgentMode(),
-            properties.getPermissionMode()
+            permissionRuntimeState
         );
     }
 
