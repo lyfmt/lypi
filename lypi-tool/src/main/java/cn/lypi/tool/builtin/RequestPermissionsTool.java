@@ -77,7 +77,15 @@ public final class RequestPermissionsTool implements Tool<Map<String, Object>, R
                     "description", "When true, the following command should still be reviewed after these permissions are approved."
                 ),
                 INPUT_PERMISSIONS, Map.of(
-                    "description", "Requested additional filesystem or network permissions. Supports filesystem and network deltas."
+                    "description", "Requested additional filesystem or network permissions. "
+                        + "Use permissions.fileSystem.kind=RESTRICTED with entries[].path and entries[].access, "
+                        + "or the shorthand permissions.fileSystem.paths=[\"/absolute/path\"] with optional access. "
+                        + "Example: {\"permissions\":{\"fileSystem\":{\"kind\":\"RESTRICTED\",\"entries\":[{\"path\":\"/tmp/out.txt\",\"access\":\"WRITE\"}]},\"network\":{\"mode\":\"ENABLED\"}}}.",
+                    "properties", Map.of(
+                        "fileSystem", fileSystemSchema(),
+                        "filesystem", fileSystemSchema(),
+                        "network", networkSchema()
+                    )
                 )
             )
         ));
@@ -197,11 +205,46 @@ public final class RequestPermissionsTool implements Tool<Map<String, Object>, R
         if (!(value instanceof Map<?, ?> map)) {
             throw new IllegalArgumentException("permissions.fileSystem 必须为对象。");
         }
+        if (map.containsKey("paths")) {
+            rejectMixedShorthandAndCanonicalFileSystemPolicy(map);
+            return pathsShorthandPolicy(map);
+        }
         FileSystemPolicyKind kind = enumValue(FileSystemPolicyKind.class, map.get("kind"), "permissions.fileSystem.kind");
         List<FileSystemPermissionEntry> entries = fileSystemEntries(map.get("entries"));
         FileSystemPermissionPolicy policy = new FileSystemPermissionPolicy(kind, entries);
         validateSupportedFileSystemPolicy(policy);
         return Optional.of(policy);
+    }
+
+    private Optional<FileSystemPermissionPolicy> pathsShorthandPolicy(Map<?, ?> map) {
+        Object value = map.get("paths");
+        if (!(value instanceof Iterable<?> iterable)) {
+            throw new IllegalArgumentException("permissions.fileSystem.paths 必须为数组。");
+        }
+        FileSystemAccessMode access = fileSystemShorthandAccess(map.get("access"));
+        List<FileSystemPermissionEntry> entries = new ArrayList<>();
+        for (Object path : iterable) {
+            FileSystemPermissionEntry entry = new FileSystemPermissionEntry(fileSystemPath(path), access);
+            validateSupportedFileSystemEntry(entry);
+            entries.add(entry);
+        }
+        if (entries.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(FileSystemPermissionPolicy.restricted(entries));
+    }
+
+    private void rejectMixedShorthandAndCanonicalFileSystemPolicy(Map<?, ?> map) {
+        if (map.containsKey("kind") || map.containsKey("entries")) {
+            throw new IllegalArgumentException("permissions.fileSystem.paths 简写不能与 kind 或 entries 混用。");
+        }
+    }
+
+    private FileSystemAccessMode fileSystemShorthandAccess(Object value) {
+        if (value == null) {
+            return FileSystemAccessMode.WRITE;
+        }
+        return enumValue(FileSystemAccessMode.class, value, "permissions.fileSystem.access");
     }
 
     private List<FileSystemPermissionEntry> fileSystemEntries(Object value) {
@@ -354,6 +397,63 @@ public final class RequestPermissionsTool implements Tool<Map<String, Object>, R
 
     private String toolUseId(ToolUseContext context) {
         return ToolMessages.toolUseId(context);
+    }
+
+    private Map<String, Object> fileSystemSchema() {
+        return Map.of(
+            "type", "object",
+            "description", "Filesystem permission delta. Canonical form supports kind=RESTRICTED and entries[]. "
+                + "Shorthand form supports paths[] plus optional access; omitted shorthand access defaults to WRITE.",
+            "properties", Map.of(
+                "kind", Map.of(
+                    "type", "string",
+                    "enum", List.of("RESTRICTED"),
+                    "description", "Only RESTRICTED is supported for request_permissions."
+                ),
+                "entries", Map.of(
+                    "type", "array",
+                    "description", "Canonical filesystem permission entries.",
+                    "items", Map.of(
+                        "type", "object",
+                        "required", List.of("path", "access"),
+                        "properties", Map.of(
+                            "path", Map.of(
+                                "description", "Absolute path string, or {kind:\"EXACT_PATH\", value:\"/absolute/path\"}. Special paths and glob patterns are not supported."
+                            ),
+                            "access", Map.of(
+                                "type", "string",
+                                "enum", List.of("READ", "WRITE"),
+                                "description", "Requested filesystem access. DENY is not supported."
+                            )
+                        )
+                    )
+                ),
+                "paths", Map.of(
+                    "type", "array",
+                    "description", "Shorthand for entries: absolute path strings or {kind:\"EXACT_PATH\", value:\"/absolute/path\"}.",
+                    "items", Map.of("description", "Absolute path string or EXACT_PATH object.")
+                ),
+                "access", Map.of(
+                    "type", "string",
+                    "enum", List.of("READ", "WRITE"),
+                    "description", "Access applied to paths[] shorthand. Defaults to WRITE when omitted."
+                )
+            )
+        );
+    }
+
+    private Map<String, Object> networkSchema() {
+        return Map.of(
+            "type", "object",
+            "description", "Network permission delta.",
+            "properties", Map.of(
+                "mode", Map.of(
+                    "type", "string",
+                    "enum", List.of("ENABLED", "RESTRICTED"),
+                    "description", "Requested network mode."
+                )
+            )
+        );
     }
 
     private ValidationResult valid() {

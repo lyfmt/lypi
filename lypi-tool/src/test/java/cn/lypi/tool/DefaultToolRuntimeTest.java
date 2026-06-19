@@ -2019,6 +2019,72 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void approvedRequestPermissionsPathsShorthandAllowsLaterWriteOutsideWorkspace() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Path approved = tempDir.resolve("approved");
+        Files.createDirectories(workspace);
+        Files.createDirectories(approved);
+        PermissionGate gate = (request, tool, context, decision) -> PermissionGateResult.allow();
+        SecurityRuntimePort security = (request, context) -> {
+            if ("write".equals(request.toolName())
+                && context.metadata().get("additionalPermissions") instanceof AdditionalPermissionProfile
+                && approved.resolve("outside.txt").toString().equals(request.input().get("path"))) {
+                return TestTools.decision(PermissionBehavior.ALLOW, "approved additional permissions");
+            }
+            if ("request_permissions".equals(request.toolName())) {
+                return TestTools.decision(PermissionBehavior.ALLOW, "allowed request");
+            }
+            return TestTools.decision(PermissionBehavior.DENY, "missing additional permissions");
+        };
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .cwd(workspace)
+                .build()),
+            ToolExecutionInterceptors.noop(),
+            security,
+            gate
+        );
+        runtime.register(new RequestPermissionsTool());
+        runtime.register(new WriteTool());
+
+        ToolResult<?> permissionResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_perm",
+                "request_permissions",
+                Map.of(
+                    "scope", "SESSION",
+                    "permissions", Map.of(
+                        "fileSystem", Map.of(
+                            "paths", List.of(approved.toString())
+                        )
+                    )
+                ),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
+        ).getFirst();
+        ToolResult<?> writeResult = runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_write",
+                "write",
+                Map.of("path", approved.resolve("outside.txt").toString(), "content", "approved"),
+                "msg_2"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
+        ).getFirst();
+
+        assertFalse(permissionResult.isError());
+        assertFalse(writeResult.isError());
+        assertEquals("approved", Files.readString(approved.resolve("outside.txt")));
+    }
+
+    @Test
     void inlineAdditionalPermissionsApprovalAppliesOnlyCurrentBashExecution() throws Exception {
         Path workspace = tempDir.resolve("workspace");
         Path approved = tempDir.resolve("approved");
