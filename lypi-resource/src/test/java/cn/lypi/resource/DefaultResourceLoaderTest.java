@@ -139,21 +139,24 @@ class DefaultResourceLoaderTest {
     }
 
     @Test
-    void loadDiscoversGlobalMemoryIndexButDoesNotScanL1Memories() throws Exception {
+    void loadDiscoversUserMemoryDirectoryButDoesNotScanLegacyMemoriesDirectory() throws Exception {
         Path user = Files.createDirectories(tempDir.resolve("user/.ly-pi"));
         Path project = Files.createDirectories(tempDir.resolve("repo"));
         Files.writeString(project.resolve(".git"), "gitdir: /tmp/repo.git");
 
+        Files.createDirectories(user.resolve("memory"));
         Files.createDirectories(user.resolve("memories"));
         Files.writeString(user.resolve("memory.md"), "L0 index");
-        Files.writeString(user.resolve("memories/guidance.md"), "L1 guidance");
+        Files.writeString(user.resolve("memory/guidance.md"), "L1 guidance");
+        Files.writeString(user.resolve("memories/legacy.md"), "legacy L1 guidance");
 
         ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(user), List.of()).load(project);
 
         assertThat(snapshot.memorySources())
             .extracting(source -> source.path())
             .anySatisfy(path -> assertThat(path).endsWith(Path.of("memory.md")))
-            .noneSatisfy(path -> assertThat(path).endsWith(Path.of("memories", "guidance.md")));
+            .anySatisfy(path -> assertThat(path).endsWith(Path.of("memory", "guidance.md")))
+            .noneSatisfy(path -> assertThat(path).endsWith(Path.of("memories", "legacy.md")));
     }
 
     @Test

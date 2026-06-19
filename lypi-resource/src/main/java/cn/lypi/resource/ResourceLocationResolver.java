@@ -23,7 +23,7 @@ class ResourceLocationResolver {
 
         ## L1 Memories
 
-        - `~/.ly-pi/memories/`: 用户跨项目长期指导、偏好和重要纠错。
+        - `~/.ly-pi/memory/`: 用户跨项目长期指导、偏好和重要纠错。
 
         ## Memory Discipline
 
@@ -66,7 +66,7 @@ class ResourceLocationResolver {
 
         1. Re-read the relevant current memory before editing:
            - L0: `~/.ly-pi/memory.md`
-           - L1: the file pointed to by L0 when the memory is user-level.
+           - L1: the `~/.ly-pi/memory/*` file pointed to by L0 when the memory is user-level.
            - L2: `<cwd>/.ly-pi/memory.md` when updating project direction, boundaries, project-level corrections, principle-level facts, or L3 skill indexes.
            - L3: the relevant `<cwd>/.ly-pi/skills/*/SKILL.md` when updating concrete project knowledge, handling flows, troubleshooting techniques, implementation tradeoffs, or verification methods.
         2. Classify the memory:
@@ -170,7 +170,7 @@ class ResourceLocationResolver {
         try {
             Path normalized = root.toAbsolutePath().normalize();
             Files.createDirectories(normalized);
-            Files.createDirectories(normalized.resolve("memories"));
+            Files.createDirectories(normalized.resolve("memory"));
             Files.createDirectories(normalized.resolve("skills"));
             Files.createDirectories(normalized.resolve("prompts"));
             createFileIfMissing(normalized.resolve("application.yml"), DEFAULT_APPLICATION_YML);

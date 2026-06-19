@@ -66,7 +66,7 @@ session entry 覆盖消息、压缩摘要、分支摘要、模型切换、thinki
 
 ### Agent 内核
 
-`lypi-agent-core` 负责单轮生命周期：构建上下文、调用模型、累积流式输出、识别工具调用、执行工具批次、写回消息，并在成功完成后触发记忆提取挂点。`DefaultTurnExecutor` 只依赖端口，不直接知道终端、具体 Provider 或工具实现。
+`lypi-agent-core` 负责单轮生命周期：构建上下文、调用模型、累积流式输出、识别工具调用、执行工具批次、写回消息，并在成功完成后发布 turn end 事件。`DefaultTurnExecutor` 只依赖端口，不直接知道终端、具体 Provider 或工具实现；当前自动记忆写入由 runtime 的后台 memory consolidation 监听 turn end 后承接。
 
 上下文由 `DefaultContextAssembler` 从会话和资源两侧组装：一边读取当前 session leaf 的回放结果，另一边加载项目资源并生成系统提示词；随后用 `ContextBudgetEstimator` 估算上下文占用，决定是否需要进入摘要规划。
 
@@ -153,7 +153,7 @@ Bash 命令会先做静态风险分析，区分低风险、写入、网络、远
 
 资源加载阶段会扫描用户层和项目层的 memory 文件，去重后生成带来源路径和内容哈希的 `MemorySource`。系统提示词构建阶段会注入 memory 读写纪律：只有经过工具执行、文件读取、测试结果或用户明确确认的信息，才允许沉淀；临时进度、未验证猜测、密钥、日志流水和一次性命令输出不得写入。
 
-agent 单轮正常完成后只发布 `TurnEndEvent`，不在用户可见主链路内直接写 memory。运行时监听 turn end 后在后台 executor 中做 transcript replay、阈值判断、主 agent 直接写 memory 检测和沉淀 runner 调用；即使后台沉淀失败，也不会改变本轮对话结果。
+agent 单轮正常完成后只发布 `TurnEndEvent`，不在用户可见主链路内直接写 memory。运行时监听 turn end 后在后台 executor 中做 transcript replay、阈值判断、主 agent 直接写 memory 检测和沉淀 runner 调用；即使后台沉淀失败，也不会改变本轮对话结果。`MemoryExtractionWorker` 仍作为遗留同步挂点保留，默认 Boot 装配为 `NoopMemoryExtractionWorker`，当前自动写入不经过同步 extraction 或追加 `memory_write` entry。
 
 长期记忆的写入遵循「No Verification, No Memory」原则：没有证据来源的推断不能进入 memory；一次性进度和临时任务状态不进入 memory；与现有 memory 冲突时优先保留可追溯来源并暴露待人工处理的诊断。`MemoryWriteRequest` 会声明 scope、kind、目标路径和写入条目，写入策略可以限制只能改 memory 文件，避免沉淀流程误写项目代码。
 
