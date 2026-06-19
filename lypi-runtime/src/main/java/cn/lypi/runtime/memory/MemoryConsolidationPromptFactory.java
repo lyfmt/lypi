@@ -17,7 +17,9 @@ public final class MemoryConsolidationPromptFactory {
 
             只沉淀未来跨会话有长期价值的信息。不要保存临时状态、当前进度、一次性计划、命令流水、日志、diff、大段聊天记录或模型推理过程。不要保存敏感信息。
 
-            写入前必须先读取相关 memory，确认没有重复或冲突；优先小幅增量修改。若无可沉淀内容，请简短说明无可沉淀的原因，不要为了沉淀而沉淀。
+            写入前必须先读取已有 memory manifest 或索引，确认没有重复或冲突；优先更新旧 topic，不要创建重复 topic。`MEMORY.md` 或 `.ly-pi/memory.md` 只作为索引和治理入口，topic 文件必须带 frontmatter，并正确标注层级。
+
+            优先小幅增量修改。若无可沉淀内容，请简短说明无可沉淀的原因，不要为了沉淀而沉淀。
             """;
     }
 }

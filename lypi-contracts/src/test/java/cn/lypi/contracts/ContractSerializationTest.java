@@ -871,7 +871,8 @@ class ContractSerializationTest {
             endedAt,
             3000L,
             31,
-            endedAt
+            endedAt,
+            "entry-final"
         );
 
         String json = mapper.writeValueAsString(event);
@@ -885,6 +886,7 @@ class ContractSerializationTest {
         assertEquals(3000L, end.durationMillis());
         assertEquals(31, end.toolRounds());
         assertEquals(end.endedAt(), end.timestamp());
+        assertEquals("entry-final", end.leafEntryId());
     }
 
     @Test

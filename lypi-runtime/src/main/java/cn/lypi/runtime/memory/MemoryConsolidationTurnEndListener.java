@@ -21,7 +21,10 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
     private final MemoryConsolidationRunner runner;
     private final Executor executor;
     private final MemoryConsolidationAuditSink auditSink;
+    private final MemoryWriteDetector memoryWriteDetector;
     private EventSubscription subscription;
+    private boolean running;
+    private MemoryConsolidationRequest pending;
 
     public MemoryConsolidationTurnEndListener(
         EventBus eventBus,
@@ -47,6 +50,7 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
         this.runner = Objects.requireNonNull(runner, "runner must not be null");
         this.executor = Objects.requireNonNull(executor, "executor must not be null");
         this.auditSink = Objects.requireNonNull(auditSink, "auditSink must not be null");
+        this.memoryWriteDetector = new MemoryWriteDetector();
     }
 
     /**
@@ -73,18 +77,74 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
             audit(MemoryConsolidationAuditStage.SKIPPED_SESSION_MISMATCH, event, null, null, "current session mismatch", null);
             return;
         }
-        String forkPointEntryId = view.leafId();
+        String forkPointEntryId = event.leafEntryId();
         if (forkPointEntryId == null || forkPointEntryId.isBlank()) {
             audit(MemoryConsolidationAuditStage.SKIPPED_NO_FORK_POINT, event, null, null, "missing fork point", null);
             return;
         }
+        if (mainTurnAlreadyWroteMemory(event, forkPointEntryId)) {
+            audit(MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE, event, forkPointEntryId, null, "main turn wrote memory", null);
+            return;
+        }
         MemoryConsolidationRequest request = new MemoryConsolidationRequest(event.sessionId(), forkPointEntryId);
+        if (coalesceOrMarkRunning(request, event)) {
+            return;
+        }
         try {
-            executor.execute(() -> runQuietly(request));
+            executor.execute(() -> drainQuietly(request));
             audit(MemoryConsolidationAuditStage.SUBMITTED, event, forkPointEntryId, null, "submitted", null);
         } catch (RejectedExecutionException exception) {
+            clearRunning(request);
             audit(MemoryConsolidationAuditStage.SUBMIT_REJECTED, event, forkPointEntryId, null, "executor rejected", exception);
             // NOTE: 应用关闭或有界队列拒绝时，后台沉淀必须静默放弃。
+        }
+    }
+
+    private boolean mainTurnAlreadyWroteMemory(TurnEndEvent event, String forkPointEntryId) {
+        try {
+            return memoryWriteDetector.hasMemoryWrite(sessionManager.transcript(forkPointEntryId));
+        } catch (RuntimeException exception) {
+            audit(
+                MemoryConsolidationAuditStage.RUNNER_FAILED,
+                event,
+                forkPointEntryId,
+                null,
+                "direct memory write detection failed",
+                exception
+            );
+            return false;
+        }
+    }
+
+    private synchronized boolean coalesceOrMarkRunning(MemoryConsolidationRequest request, TurnEndEvent event) {
+        if (running) {
+            pending = request;
+            auditSink.record(new MemoryConsolidationAuditRecord(
+                MemoryConsolidationAuditStage.COALESCED,
+                event.sessionId(),
+                event.turnId(),
+                request.forkPointEntryId(),
+                null,
+                event.durationMillis(),
+                event.toolRounds(),
+                "coalesced",
+                null,
+                event.timestamp(),
+                java.util.List.of(),
+                java.util.List.of(),
+                true
+            ));
+            return true;
+        }
+        running = true;
+        return false;
+    }
+
+    private void drainQuietly(MemoryConsolidationRequest firstRequest) {
+        MemoryConsolidationRequest current = firstRequest;
+        while (current != null) {
+            runQuietly(current);
+            current = takePendingOrStop();
         }
     }
 
@@ -95,6 +155,22 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
             audit(MemoryConsolidationAuditStage.RUNNER_FAILED, request, "runner failed", exception);
             // NOTE: 后台沉淀失败不能影响主 turn 结束发布链路。
         }
+    }
+
+    private synchronized MemoryConsolidationRequest takePendingOrStop() {
+        MemoryConsolidationRequest next = pending;
+        pending = null;
+        if (next == null) {
+            running = false;
+        }
+        return next;
+    }
+
+    private synchronized void clearRunning(MemoryConsolidationRequest request) {
+        if (pending == request) {
+            pending = null;
+        }
+        running = false;
     }
 
     private void audit(

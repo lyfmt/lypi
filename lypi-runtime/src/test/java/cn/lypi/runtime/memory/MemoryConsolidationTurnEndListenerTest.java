@@ -3,6 +3,10 @@ package cn.lypi.runtime.memory;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.MessageKind;
+import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -16,6 +20,7 @@ import cn.lypi.runtime.event.InMemoryEventBus;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.Test;
@@ -49,6 +54,25 @@ class MemoryConsolidationTurnEndListenerTest {
         assertThat(auditSink.stages())
             .containsExactly(MemoryConsolidationAuditStage.ELIGIBLE, MemoryConsolidationAuditStage.SUBMITTED);
         assertThat(auditSink.record(MemoryConsolidationAuditStage.SUBMITTED).forkPointEntryId()).isEqualTo("leaf-1");
+    }
+
+    @Test
+    void usesTurnEndLeafEvenWhenCurrentViewMovedBeforeListenerRuns() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        MutableSessionManager sessionManager = new MutableSessionManager("ses_main", "leaf-2");
+        RecordingRunner runner = new RecordingRunner();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            sessionManager,
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            runner,
+            Runnable::run
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 31, "leaf-1"));
+
+        assertThat(runner.requests)
+            .containsExactly(new MemoryConsolidationRequest("ses_main", "leaf-1"));
     }
 
     @Test
@@ -162,7 +186,7 @@ class MemoryConsolidationTurnEndListenerTest {
             auditSink
         ).start();
 
-        eventBus.publish(completedEvent(1_000L, 31));
+        eventBus.publish(completedEvent(1_000L, 31, ""));
 
         assertThat(auditSink.stages())
             .containsExactly(MemoryConsolidationAuditStage.ELIGIBLE, MemoryConsolidationAuditStage.SKIPPED_NO_FORK_POINT);
@@ -220,6 +244,122 @@ class MemoryConsolidationTurnEndListenerTest {
     }
 
     @Test
+    void skipsBackgroundRunWhenMainTurnAlreadyWroteMemory() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingRunner runner = new RecordingRunner();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new MutableSessionManager(
+                "ses_main",
+                "leaf-1",
+                List.of(
+                    assistantToolCall("edit", Map.of("path", ".ly-pi/memory/project/facts.md"), true),
+                    toolResult(false)
+                )
+            ),
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            runner,
+            Runnable::run,
+            auditSink
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 31));
+
+        assertThat(runner.requests).isEmpty();
+        assertThat(auditSink.stages()).containsExactly(
+            MemoryConsolidationAuditStage.ELIGIBLE,
+            MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE
+        );
+    }
+
+    @Test
+    void submitsBackgroundRunWhenMainTurnMemoryWriteFailed() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingRunner runner = new RecordingRunner();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new MutableSessionManager(
+                "ses_main",
+                "leaf-1",
+                List.of(
+                    assistantToolCall("write", Map.of("path", ".ly-pi/memory/project/facts.md"), true),
+                    toolResult(true)
+                )
+            ),
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            runner,
+            Runnable::run,
+            auditSink
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 31));
+
+        assertThat(runner.requests).containsExactly(new MemoryConsolidationRequest("ses_main", "leaf-1"));
+        assertThat(auditSink.stages()).doesNotContain(MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE);
+    }
+
+    @Test
+    void coalescesRequestsWhileProjectRunIsActive() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingRunner runner = new RecordingRunner();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
+        List<Runnable> queued = new ArrayList<>();
+        Executor queuedExecutor = queued::add;
+        MutableSessionManager sessionManager = new MutableSessionManager("ses_main", "leaf-1");
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            sessionManager,
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            runner,
+            queuedExecutor,
+            auditSink
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 31));
+        sessionManager.leafId = "leaf-2";
+        eventBus.publish(completedEvent(1_000L, 31, "leaf-2"));
+
+        assertThat(queued).hasSize(1);
+        assertThat(runner.requests).isEmpty();
+        assertThat(auditSink.stages()).contains(MemoryConsolidationAuditStage.COALESCED);
+
+        queued.getFirst().run();
+
+        assertThat(runner.requests)
+            .containsExactly(
+                new MemoryConsolidationRequest("ses_main", "leaf-1"),
+                new MemoryConsolidationRequest("ses_main", "leaf-2")
+            );
+    }
+
+    @Test
+    void submitsBackgroundRunWhenDirectWriteDetectionFails() {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        RecordingRunner runner = new RecordingRunner();
+        RecordingAuditSink auditSink = new RecordingAuditSink();
+        new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new FailingTranscriptSessionManager("ses_main", "leaf-1"),
+            new MemoryConsolidationTrigger(1_200_000L, 30),
+            runner,
+            Runnable::run,
+            auditSink
+        ).start();
+
+        eventBus.publish(completedEvent(1_000L, 31));
+
+        assertThat(runner.requests).containsExactly(new MemoryConsolidationRequest("ses_main", "leaf-1"));
+        assertThat(auditSink.stages()).contains(
+            MemoryConsolidationAuditStage.RUNNER_FAILED,
+            MemoryConsolidationAuditStage.SUBMITTED
+        );
+        assertThat(auditSink.record(MemoryConsolidationAuditStage.RUNNER_FAILED).reason())
+            .contains("direct memory write detection failed");
+    }
+
+    @Test
     void quietEventBusDropsPublishedEventsAndSubscriptions() {
         QuietEventBus quiet = new QuietEventBus();
         List<Object> delivered = new ArrayList<>();
@@ -231,6 +371,10 @@ class MemoryConsolidationTurnEndListenerTest {
     }
 
     private TurnEndEvent completedEvent(long durationMillis, int toolRounds) {
+        return completedEvent(durationMillis, toolRounds, "leaf-1");
+    }
+
+    private TurnEndEvent completedEvent(long durationMillis, int toolRounds, String leafEntryId) {
         return new TurnEndEvent(
             "ses_main",
             "turn_1",
@@ -239,7 +383,8 @@ class MemoryConsolidationTurnEndListenerTest {
             NOW.plusMillis(durationMillis),
             durationMillis,
             toolRounds,
-            NOW.plusMillis(durationMillis)
+            NOW.plusMillis(durationMillis),
+            leafEntryId
         );
     }
 
@@ -274,13 +419,43 @@ class MemoryConsolidationTurnEndListenerTest {
         }
     }
 
-    private static final class MutableSessionManager implements SessionManagerPort {
+    private static AgentMessage assistantToolCall(String toolName, Map<String, Object> input, boolean complete) {
+        return new AgentMessage(
+            "msg-tool-call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            List.of(new ToolCallContentBlock("toolu-1", toolName, "", Map.of("input", input, "complete", complete))),
+            NOW,
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private static AgentMessage toolResult(boolean error) {
+        return new AgentMessage(
+            "msg-tool-result",
+            MessageRole.TOOL_RESULT,
+            MessageKind.TOOL_RESULT,
+            List.of(new ToolResultContentBlock("toolu-1", error ? "failed" : "ok", error)),
+            NOW,
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private static class MutableSessionManager implements SessionManagerPort {
         private final String sessionId;
         private String leafId;
+        private final List<AgentMessage> transcript;
 
         private MutableSessionManager(String sessionId, String leafId) {
+            this(sessionId, leafId, List.of());
+        }
+
+        private MutableSessionManager(String sessionId, String leafId, List<AgentMessage> transcript) {
             this.sessionId = sessionId;
             this.leafId = leafId;
+            this.transcript = transcript;
         }
 
         @Override
@@ -316,7 +491,7 @@ class MemoryConsolidationTurnEndListenerTest {
 
         @Override
         public List<AgentMessage> transcript(String leafId) {
-            throw new UnsupportedOperationException();
+            return transcript;
         }
 
         @Override
@@ -337,6 +512,17 @@ class MemoryConsolidationTurnEndListenerTest {
         @Override
         public SessionHandle fork(ForkRequest request) {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    private static final class FailingTranscriptSessionManager extends MutableSessionManager {
+        private FailingTranscriptSessionManager(String sessionId, String leafId) {
+            super(sessionId, leafId);
+        }
+
+        @Override
+        public List<AgentMessage> transcript(String leafId) {
+            throw new IllegalStateException("transcript failed");
         }
     }
 }

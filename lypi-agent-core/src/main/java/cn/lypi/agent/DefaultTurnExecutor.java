@@ -81,7 +81,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 "当前分支停在 assistant 工具调用消息上，不能直接追加用户消息。请选择上一条用户消息或工具结果之后继续。",
                 clock.instant()
             ));
-            return failedState(turnId, request.sessionId(), null, List.of(), 0, startedAt);
+            return failedState(turnId, request.sessionId(), null, List.of(), 0, startedAt, currentLeafId());
         }
 
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
@@ -96,7 +96,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             contextLeafId = appendStartedMessage(request.sessionId(), assistant);
             newMessages.add(assistant);
             if (isAssistantError(assistant, request)) {
-                return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt);
+                return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, contextLeafId);
             }
 
             while (!request.abortSignal().aborted()) {
@@ -108,7 +108,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     );
                     appendNewMessage(request.sessionId(), error);
                     newMessages.add(error);
-                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt);
+                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, contextLeafId);
                 }
                 List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
                 if (toolRequests.isEmpty()) {
@@ -134,7 +134,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 contextLeafId = appendStartedMessage(request.sessionId(), assistant);
                 newMessages.add(assistant);
                 if (isAssistantError(assistant, request)) {
-                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt);
+                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, contextLeafId);
                 }
             }
         } catch (RuntimeException failure) {
@@ -145,24 +145,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             );
             appendNewMessage(request.sessionId(), handled.message());
             newMessages.add(handled.message());
-            return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt);
+            return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, currentLeafId());
         }
 
         TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
         TurnState state = new TurnState(turnId, request.sessionId(), context, List.copyOf(newMessages), toolRound, status);
-        if (status == TurnStatus.COMPLETED) {
-            extractMemorySafely(state);
-        }
-        eventPublisher.publishTurnEnd(request.sessionId(), turnId, status, startedAt, toolRound);
+        eventPublisher.publishTurnEnd(request.sessionId(), turnId, status, startedAt, toolRound, contextLeafId);
         return state;
-    }
-
-    private void extractMemorySafely(TurnState state) {
-        try {
-            ports.memoryExtractionWorker().extractAfterTurn(state);
-        } catch (RuntimeException ignored) {
-            // NOTE: 记忆提取是 turn 后置任务，失败不得改变 turn 结果。
-        }
     }
 
     private boolean isAssistantError(AgentMessage assistant, TurnRequest request) {
@@ -187,7 +176,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ContextSnapshot context,
         List<AgentMessage> newMessages,
         int toolRound,
-        Instant startedAt
+        Instant startedAt,
+        String leafEntryId
     ) {
         TurnState state = new TurnState(
             turnId,
@@ -197,7 +187,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             toolRound,
             TurnStatus.FAILED
         );
-        eventPublisher.publishTurnEnd(sessionId, turnId, TurnStatus.FAILED, startedAt, toolRound);
+        eventPublisher.publishTurnEnd(sessionId, turnId, TurnStatus.FAILED, startedAt, toolRound, leafEntryId);
         return state;
     }
 

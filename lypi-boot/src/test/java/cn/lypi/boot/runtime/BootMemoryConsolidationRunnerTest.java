@@ -74,10 +74,12 @@ class BootMemoryConsolidationRunnerTest {
             MemoryConsolidationAuditStage.RUN_STARTED,
             MemoryConsolidationAuditStage.FORK_CREATED,
             MemoryConsolidationAuditStage.TURN_COMPLETED,
+            MemoryConsolidationAuditStage.LINT_COMPLETED,
             MemoryConsolidationAuditStage.CLEANED
         );
         assertThat(auditSink.record(MemoryConsolidationAuditStage.FORK_CREATED).forkSessionId())
             .isEqualTo(core.request.get().sessionId());
+        assertThat(auditSink.record(MemoryConsolidationAuditStage.LINT_COMPLETED).lintDiagnostics()).isEmpty();
     }
 
     @Test
