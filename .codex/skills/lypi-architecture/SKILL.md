@@ -52,7 +52,7 @@ The root `pom.xml` defines these Maven modules:
 - Memory consolidation is driven by `TurnEndEvent` after the main turn completes; `DefaultTurnExecutor` must not synchronously call legacy `MemoryExtractionWorker` on the user-facing path.
 - `TurnEndEvent.leafEntryId` is the stable fork point for background consolidation. Runtime listeners must use this event field instead of the mutable `SessionManagerPort.currentView().leafId()`.
 - Background memory consolidation skips only when the main turn has a completed memory write tool call with a successful matching tool result; failed or rejected write attempts must still allow background consolidation.
-- Background memory consolidation is best-effort and auditable: runtime records threshold/session/direct-write/coalesced states, and boot runner records post-turn lint diagnostics without blocking the main turn.
+- Background memory consolidation is best-effort and auditable: runtime records threshold/session/direct-write/coalesced states, boot runner adds preflight memory scan context to the hidden turn, then records post-turn lint diagnostics without blocking the main turn.
 - Product runtime Skill discovery is under `skills/` and `.ly-pi/skills/`; repository Codex knowledge under `.codex/skills/` is not a product resource root.
 
 ## Key Anchors
@@ -67,6 +67,7 @@ The root `pom.xml` defines these Maven modules:
 - `lypi-runtime/src/main/java/cn/lypi/runtime/memory/MemoryConsolidationTurnEndListener.java`
 - `lypi-runtime/src/main/java/cn/lypi/runtime/memory/MemoryWriteDetector.java`
 - `lypi-runtime/src/main/java/cn/lypi/runtime/memory/MemoryLintScanner.java`
+- `lypi-runtime/src/main/java/cn/lypi/runtime/memory/MemoryPreflightScan.java`
 - `lypi-boot/src/main/java/cn/lypi/boot/runtime/BootMemoryConsolidationRunner.java`
 - `lypi-contracts/src/main/java/cn/lypi/contracts/security/PermissionRuntimeState.java`
 - `lypi-contracts/src/main/java/cn/lypi/contracts/security/PermissionProfiles.java`

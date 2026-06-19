@@ -83,6 +83,44 @@ class BootMemoryConsolidationRunnerTest {
     }
 
     @Test
+    void includesPreflightMemoryScanInBackgroundPrompt() throws Exception {
+        Files.writeString(tempDir.resolve("MEMORY.md"), "- [用户偏好](.ly-pi/memory/user-preferences.md)\n");
+        Path memoryDir = Files.createDirectories(tempDir.resolve(".ly-pi/memory"));
+        Files.writeString(memoryDir.resolve("user-preferences.md"), """
+            ---
+            level: L2
+            ---
+            # 用户偏好
+            - 偏好中文说明。
+            """);
+        Files.writeString(memoryDir.resolve("unindexed.md"), """
+            # 未索引主题
+            - 这条缺少 frontmatter，也没有进入索引。
+            """);
+        SessionManagerImpl mainSession = new SessionManagerImpl(tempDir);
+        mainSession.openOrCreate("ses_main");
+        mainSession.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        RecordingAgentCore core = new RecordingAgentCore(TurnStatus.COMPLETED);
+        BootMemoryConsolidationRunner runner = new BootMemoryConsolidationRunner(
+            tempDir,
+            mainSession,
+            new RecordingAgentCoreFactory(core),
+            new MemoryConsolidationPromptFactory(),
+            new RecordingAuditSink()
+        );
+
+        runner.run(new MemoryConsolidationRequest("ses_main", "root"));
+
+        assertThat(core.request.get().userInput())
+            .contains("沉淀前 memory 扫描")
+            .contains("MEMORY.md")
+            .contains(".ly-pi/memory/user-preferences.md")
+            .contains(".ly-pi/memory/unindexed.md")
+            .contains("missing-frontmatter")
+            .contains("missing-index-entry");
+    }
+
+    @Test
     void cleansTemporarySessionWhenBackgroundTurnFails() {
         SessionManagerImpl mainSession = new SessionManagerImpl(tempDir);
         mainSession.openOrCreate("ses_main");

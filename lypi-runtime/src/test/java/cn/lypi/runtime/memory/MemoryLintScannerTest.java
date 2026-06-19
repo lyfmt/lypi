@@ -28,6 +28,41 @@ class MemoryLintScannerTest {
     }
 
     @Test
+    void acceptsRootMemoryManifestAsTopicIndex() throws Exception {
+        Files.createDirectories(tempDir.resolve(".ly-pi/memory/project"));
+        Path topic = tempDir.resolve(".ly-pi/memory/project/facts.md");
+        Files.writeString(tempDir.resolve("MEMORY.md"), "- [facts](.ly-pi/memory/project/facts.md)\n");
+        Files.writeString(topic, """
+            ---
+            layer: L2
+            topic: facts
+            ---
+            - remember this
+            """);
+
+        List<MemoryLintDiagnostic> diagnostics = new MemoryLintScanner(tempDir)
+            .scan(List.of(topic));
+
+        assertThat(diagnostics).extracting(MemoryLintDiagnostic::code)
+            .doesNotContain("missing-index-entry");
+    }
+
+    @Test
+    void scanAllReturnsManifestsMemoryFilesAndDiagnostics() throws Exception {
+        Files.createDirectories(tempDir.resolve(".ly-pi/memory/project"));
+        Path topic = tempDir.resolve(".ly-pi/memory/project/facts.md");
+        Files.writeString(tempDir.resolve("MEMORY.md"), "# Project Memory\n");
+        Files.writeString(topic, "# Facts\n\n- remember this\n");
+
+        MemoryPreflightScan scan = new MemoryLintScanner(tempDir).scanAll();
+
+        assertThat(scan.manifestPaths()).contains(tempDir.resolve("MEMORY.md").normalize());
+        assertThat(scan.memoryPaths()).contains(topic.toAbsolutePath().normalize());
+        assertThat(scan.diagnostics()).extracting(MemoryLintDiagnostic::code)
+            .contains("missing-frontmatter", "missing-index-entry");
+    }
+
+    @Test
     void reportsDuplicateItemsAndWrongLayerField() throws Exception {
         Files.createDirectories(tempDir.resolve(".ly-pi/memory/project"));
         Path topic = tempDir.resolve(".ly-pi/memory/project/facts.md");

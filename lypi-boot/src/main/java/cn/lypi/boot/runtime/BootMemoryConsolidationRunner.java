@@ -10,6 +10,7 @@ import cn.lypi.runtime.memory.MemoryConsolidationAuditSink;
 import cn.lypi.runtime.memory.MemoryConsolidationAuditStage;
 import cn.lypi.runtime.memory.MemoryLintDiagnostic;
 import cn.lypi.runtime.memory.MemoryLintScanner;
+import cn.lypi.runtime.memory.MemoryPreflightScan;
 import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
 import cn.lypi.runtime.memory.MemoryConsolidationRequest;
 import cn.lypi.runtime.memory.MemoryConsolidationRunner;
@@ -85,6 +86,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
         SessionHandle forked = null;
         SessionManagerPort forkSessionManager = null;
         Instant lintBaseline = Instant.now();
+        MemoryPreflightScan preflightScan = preflightScan(request);
         try {
             forked = mainSessionManager.fork(new ForkRequest(
                 request.sessionId(),
@@ -98,7 +100,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
             var turnState = agentCoreFactory.create(cwd, forkSessionManager)
                 .execute(new TurnRequest(
                     forked.sessionId(),
-                    promptFactory.prompt(),
+                    promptFactory.prompt(preflightScan),
                     Optional.of(request.forkPointEntryId()),
                     () -> false,
                     TurnRequest.DEFAULT_MAX_TOOL_ROUNDS
@@ -133,6 +135,26 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
         }
     }
 
+    private MemoryPreflightScan preflightScan(MemoryConsolidationRequest request) {
+        try {
+            MemoryPreflightScan scan = new MemoryLintScanner(cwd).scanAll();
+            return new MemoryPreflightScan(
+                relativizeAll(scan.manifestPaths()),
+                relativizeAll(scan.memoryPaths()),
+                scan.diagnostics().stream()
+                    .map(diagnostic -> new MemoryLintDiagnostic(
+                        diagnostic.code(),
+                        cwd.relativize(diagnostic.path()).normalize(),
+                        diagnostic.message()
+                    ))
+                    .toList()
+            );
+        } catch (IOException | RuntimeException exception) {
+            audit(MemoryConsolidationAuditStage.LINT_FAILED, request, null, "preflight lint failed", exception);
+            return null;
+        }
+    }
+
     private void runLint(MemoryConsolidationRequest request, String forkSessionId, Instant baseline) {
         try {
             List<Path> changedPaths = changedMemoryPathsSince(baseline);
@@ -155,6 +177,12 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
         } catch (IOException | RuntimeException exception) {
             audit(MemoryConsolidationAuditStage.LINT_FAILED, request, forkSessionId, "lint failed", exception);
         }
+    }
+
+    private List<Path> relativizeAll(List<Path> paths) {
+        return paths.stream()
+            .map(path -> cwd.relativize(path).normalize())
+            .toList();
     }
 
     private List<Path> changedMemoryPathsSince(Instant baseline) throws IOException {
