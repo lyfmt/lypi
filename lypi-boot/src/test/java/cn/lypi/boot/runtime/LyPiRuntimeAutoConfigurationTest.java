@@ -1305,7 +1305,7 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
-    void toolFactoryCreatesRestrictedMemoryConsolidationRuntime() {
+    void toolFactoryCreatesCacheStableMemoryConsolidationRuntime() {
         new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                 LyPiToolAutoConfiguration.class,
@@ -1327,7 +1327,7 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(runtime.snapshot().tools())
                     .extracting(ToolDescriptor::name)
                     .contains("read", "grep", "glob", "edit", "write")
-                    .doesNotContain("bash");
+                    .contains("bash");
             });
     }
 
