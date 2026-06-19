@@ -68,9 +68,47 @@ class RequestPermissionsToolTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> permissions = (Map<String, Object>) properties.get("permissions");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> permissionProperties = (Map<String, Object>) permissions.get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fileSystem = (Map<String, Object>) permissionProperties.get("fileSystem");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> filesystemAlias = (Map<String, Object>) permissionProperties.get("filesystem");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fileSystemProperties = (Map<String, Object>) fileSystem.get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> entries = (Map<String, Object>) fileSystemProperties.get("entries");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> entryItems = (Map<String, Object>) entries.get("items");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> entryProperties = (Map<String, Object>) entryItems.get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> network = (Map<String, Object>) permissionProperties.get("network");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> networkProperties = (Map<String, Object>) network.get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> kind = (Map<String, Object>) fileSystemProperties.get("kind");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> entryAccess = (Map<String, Object>) entryProperties.get("access");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> shorthandAccess = (Map<String, Object>) fileSystemProperties.get("access");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> networkMode = (Map<String, Object>) networkProperties.get("mode");
 
         assertTrue(tool.description().contains("approval policy"));
         assertTrue(properties.get("permissions").toString().contains("additional filesystem or network permissions"));
+        assertTrue(permissionProperties.containsKey("fileSystem"));
+        assertTrue(permissionProperties.containsKey("filesystem"));
+        assertEquals(fileSystem, filesystemAlias);
+        assertEquals(List.of("RESTRICTED"), kind.get("enum"));
+        assertTrue(entryProperties.containsKey("path"));
+        assertEquals(List.of("READ", "WRITE"), entryAccess.get("enum"));
+        assertTrue(fileSystemProperties.containsKey("paths"));
+        assertEquals(List.of("READ", "WRITE"), shorthandAccess.get("enum"));
+        assertTrue(permissionProperties.containsKey("network"));
+        assertEquals(List.of("ENABLED", "RESTRICTED"), networkMode.get("enum"));
         assertTrue(properties.get("scope").toString().contains("turn"));
         assertTrue(properties.get("scope").toString().contains("session"));
         assertTrue(properties.get("strictAutoReview").toString().contains("following command should still be reviewed"));
@@ -245,6 +283,122 @@ class RequestPermissionsToolTest {
     }
 
     @Test
+    void acceptsPathsShorthandWithDefaultWriteAccess() {
+        DefaultToolRuntime runtime = runtime(context -> allow(), this::approve);
+        runtime.register(new RequestPermissionsTool());
+        Path requested = tempDir.resolve("shorthand.txt");
+
+        ToolResult<?> result = executeOne(runtime, input(Map.of(
+            "permissions", Map.of(
+                "fileSystem", Map.of(
+                    "paths", List.of(requested.toString())
+                )
+            )
+        )));
+
+        assertFalse(result.isError());
+        FileSystemPermissionEntry entry = responseEntry(result);
+        assertEquals(FileSystemPath.exactPath(requested.toString()), entry.path());
+        assertEquals(FileSystemAccessMode.WRITE, entry.access());
+    }
+
+    @Test
+    void acceptsPathsShorthandWithExplicitReadAccess() {
+        DefaultToolRuntime runtime = runtime(context -> allow(), this::approve);
+        runtime.register(new RequestPermissionsTool());
+        Path requested = tempDir.resolve("readme.txt");
+
+        ToolResult<?> result = executeOne(runtime, input(Map.of(
+            "permissions", Map.of(
+                "fileSystem", Map.of(
+                    "paths", List.of(requested.toString()),
+                    "access", "READ"
+                )
+            )
+        )));
+
+        assertFalse(result.isError());
+        FileSystemPermissionEntry entry = responseEntry(result);
+        assertEquals(FileSystemPath.exactPath(requested.toString()), entry.path());
+        assertEquals(FileSystemAccessMode.READ, entry.access());
+    }
+
+    @Test
+    void rejectsEmptyPathsShorthandAsEmptyPermissions() {
+        DefaultToolRuntime runtime = runtime(context -> allow(), this::approve);
+        runtime.register(new RequestPermissionsTool());
+
+        ToolResult<?> result = executeOne(runtime, input(Map.of(
+            "permissions", Map.of(
+                "fileSystem", Map.of(
+                    "paths", List.of()
+                )
+            )
+        )));
+
+        assertTrue(result.isError());
+        assertTextContains(result, "permissions 不能为空");
+    }
+
+    @Test
+    void rejectsPathsShorthandWithDenyAccess() {
+        DefaultToolRuntime runtime = runtime(context -> allow(), this::approve);
+        runtime.register(new RequestPermissionsTool());
+
+        ToolResult<?> result = executeOne(runtime, input(Map.of(
+            "permissions", Map.of(
+                "fileSystem", Map.of(
+                    "paths", List.of(tempDir.resolve("blocked.txt").toString()),
+                    "access", "DENY"
+                )
+            )
+        )));
+
+        assertTrue(result.isError());
+        assertTextContains(result, "不支持 DENY");
+    }
+
+    @Test
+    void rejectsPathsShorthandWithBlankAccess() {
+        DefaultToolRuntime runtime = runtime(context -> allow(), this::approve);
+        runtime.register(new RequestPermissionsTool());
+
+        ToolResult<?> result = executeOne(runtime, input(Map.of(
+            "permissions", Map.of(
+                "fileSystem", Map.of(
+                    "paths", List.of(tempDir.resolve("blank.txt").toString()),
+                    "access", "   "
+                )
+            )
+        )));
+
+        assertTrue(result.isError());
+        assertTextContains(result, "permissions.fileSystem.access 不能为空");
+    }
+
+    @Test
+    void rejectsMixedPathsShorthandAndCanonicalFilesystemPolicy() {
+        DefaultToolRuntime runtime = runtime(context -> allow(), this::approve);
+        runtime.register(new RequestPermissionsTool());
+
+        ToolResult<?> result = executeOne(runtime, input(Map.of(
+            "permissions", Map.of(
+                "fileSystem", Map.of(
+                    "paths", List.of(tempDir.resolve("mixed.txt").toString()),
+                    "kind", "UNRESTRICTED",
+                    "entries", List.of(Map.of(
+                        "path", ":root",
+                        "access", "WRITE"
+                    ))
+                )
+            )
+        )));
+
+        assertTrue(result.isError());
+        assertTextContains(result, "不能与 kind 或 entries 混用");
+    }
+
+    @Test
     void rejectsUnsupportedFilesystemPolicyShapesForRequestPermissions() {
         DefaultToolRuntime runtime = runtime(context -> allow(), this::approve);
         runtime.register(new RequestPermissionsTool());
@@ -371,6 +525,16 @@ class RequestPermissionsToolTest {
                 Optional.empty()
             ))
         );
+    }
+
+    private FileSystemPermissionEntry responseEntry(ToolResult<?> result) {
+        RequestPermissionsResponse response = assertInstanceOf(RequestPermissionsResponse.class, result.output());
+        return response.permissions()
+            .additionalPermissions()
+            .fileSystem()
+            .orElseThrow()
+            .entries()
+            .getFirst();
     }
 
     private ToolResult<?> executeOne(DefaultToolRuntime runtime, Map<String, Object> input) {
