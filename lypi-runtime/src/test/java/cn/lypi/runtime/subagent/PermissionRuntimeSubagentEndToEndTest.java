@@ -190,6 +190,7 @@ class PermissionRuntimeSubagentEndToEndTest {
         return new PermissionRuntimeState(
             new ApprovalPolicy(ApprovalMode.UNLESS_TRUSTED),
             new ActivePermissionProfile(":workspace-write"),
+            cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, true),
             PermissionMode.DEFAULT_EXECUTE
         );

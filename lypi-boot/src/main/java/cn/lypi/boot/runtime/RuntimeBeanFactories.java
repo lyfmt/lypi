@@ -117,16 +117,13 @@ final class RuntimeBeanFactories {
     static SessionManagerPort sessionManager(
         LyPiRuntimeProperties properties,
         LyPiPermissionsProperties permissionsProperties,
-        PermissionProfileConfigCompiler profileConfigCompiler
+        PermissionProfileSelection selection
     ) {
-        PermissionProfileSelection selection = profileConfigCompiler.compile(
-            permissionsProperties.profileConfigs(),
-            permissionsProperties.getDefaultPermissions()
-        );
         PermissionRuntimeState legacyState = PermissionRuntimeState.fromLegacy(properties.getPermissionMode());
         PermissionRuntimeState runtimeState = new PermissionRuntimeState(
             permissionsProperties.getApprovalPolicy().toApprovalPolicy(),
             selection.activePermissionProfile(),
+            selection.permissionProfile(),
             legacyState.legacyBehavior(),
             properties.getPermissionMode()
         );

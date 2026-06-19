@@ -85,6 +85,7 @@ class SessionManagerReplayTest {
         PermissionRuntimeState runtimeState = new PermissionRuntimeState(
             new ApprovalPolicy(ApprovalMode.NEVER),
             new ActivePermissionProfile(":read-only"),
+            cn.lypi.contracts.security.PermissionProfiles.readOnly(),
             new LegacyPermissionBehavior(false, false, true),
             PermissionMode.DEFAULT_EXECUTE
         );

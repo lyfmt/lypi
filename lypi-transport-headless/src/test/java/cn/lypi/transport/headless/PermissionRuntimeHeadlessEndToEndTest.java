@@ -131,6 +131,7 @@ class PermissionRuntimeHeadlessEndToEndTest {
         return new PermissionRuntimeState(
             new ApprovalPolicy(ApprovalMode.UNLESS_TRUSTED),
             new ActivePermissionProfile(":workspace-write"),
+            cn.lypi.contracts.security.PermissionProfiles.readOnly(),
             new LegacyPermissionBehavior(false, false, true),
             PermissionMode.DEFAULT_EXECUTE
         );

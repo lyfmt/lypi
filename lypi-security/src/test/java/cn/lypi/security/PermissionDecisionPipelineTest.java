@@ -9,10 +9,15 @@ import cn.lypi.contracts.security.FileSystemPath;
 import cn.lypi.contracts.security.FileSystemPermissionEntry;
 import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.FileSystemSpecialPath;
+import cn.lypi.contracts.security.ActivePermissionProfile;
+import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.LegacyPermissionBehavior;
+import cn.lypi.contracts.security.ManagedPermissionProfile;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionProfiles;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
@@ -243,6 +248,38 @@ class PermissionDecisionPipelineTest {
     }
 
     @Test
+    void customRuntimeProfileAllowsWriteOutsideWorkspaceWhenProfileAllowsPath() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("write", Map.of("path", "/tmp/cache/a.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+                "permissionRuntimeState",
+                runtimeStateWithProfile("dev", managedProfile("/tmp/cache", FileSystemAccessMode.WRITE))
+            ))
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
+    void customRuntimeProfileDeniesWriteOutsideWorkspaceWhenProfileDoesNotAllowPath() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("write", Map.of("path", "/tmp/cache/a.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+                "permissionRuntimeState",
+                runtimeStateWithProfile("dev", PermissionProfiles.readOnly())
+            ))
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
+    }
+
+    @Test
     void unapprovedAdditionalFilesystemPermissionsDoNotAllowWriteOutsideWorkspace() {
         PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
 
@@ -395,8 +432,29 @@ class PermissionDecisionPipelineTest {
         return new PermissionRuntimeState(
             source.approvalPolicy(),
             source.activePermissionProfile(),
+            source.permissionProfile(),
             source.legacyBehavior(),
             legacyMode
+        );
+    }
+
+    private PermissionRuntimeState runtimeStateWithProfile(String id, ManagedPermissionProfile profile) {
+        return new PermissionRuntimeState(
+            ApprovalPolicy.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            new ActivePermissionProfile(id),
+            profile,
+            new LegacyPermissionBehavior(false, false, true),
+            PermissionMode.DEFAULT_EXECUTE
+        );
+    }
+
+    private ManagedPermissionProfile managedProfile(String path, FileSystemAccessMode accessMode) {
+        return new ManagedPermissionProfile(
+            FileSystemPermissionPolicy.restricted(List.of(
+                new FileSystemPermissionEntry(FileSystemPath.special(FileSystemSpecialPath.ROOT), FileSystemAccessMode.READ),
+                new FileSystemPermissionEntry(FileSystemPath.exactPath(path), accessMode)
+            )),
+            cn.lypi.contracts.security.NetworkPermissionPolicy.restricted()
         );
     }
 }

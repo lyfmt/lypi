@@ -77,6 +77,7 @@ class ToolRuntimeContextFactoryTest {
         PermissionRuntimeState runtimeState = new PermissionRuntimeState(
             new ApprovalPolicy(ApprovalMode.NEVER),
             new ActivePermissionProfile("locked-down"),
+            cn.lypi.contracts.security.PermissionProfiles.readOnly(),
             new LegacyPermissionBehavior(false, false, false),
             PermissionMode.DEFAULT_EXECUTE
         );

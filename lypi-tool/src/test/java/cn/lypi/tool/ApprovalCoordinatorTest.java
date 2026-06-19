@@ -229,6 +229,7 @@ class ApprovalCoordinatorTest {
         return new PermissionRuntimeState(
             new ApprovalPolicy(approvalMode),
             new ActivePermissionProfile(":workspace"),
+            cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, true),
             PermissionMode.DEFAULT_EXECUTE
         );

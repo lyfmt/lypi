@@ -23,6 +23,7 @@ class PermissionRuntimeStateTest {
         PermissionRuntimeState state = PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
 
         assertEquals(":workspace", state.activePermissionProfile().id());
+        assertEquals(PermissionProfiles.workspace(), state.permissionProfile());
         assertEquals(ApprovalMode.ON_REQUEST, state.approvalPolicy().mode());
         assertFalse(state.legacyBehavior().defaultBashRequiresEscalation());
         assertFalse(state.legacyBehavior().allowExplicitEscalationWithoutPrompt());
@@ -35,6 +36,7 @@ class PermissionRuntimeStateTest {
         PermissionRuntimeState state = PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS);
 
         assertEquals(":workspace", state.activePermissionProfile().id());
+        assertEquals(PermissionProfiles.workspace(), state.permissionProfile());
         assertEquals(ApprovalMode.ON_REQUEST, state.approvalPolicy().mode());
         assertTrue(state.legacyBehavior().defaultBashRequiresEscalation());
         assertFalse(state.legacyBehavior().allowExplicitEscalationWithoutPrompt());
@@ -47,6 +49,7 @@ class PermissionRuntimeStateTest {
         PermissionRuntimeState state = PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS);
 
         assertEquals(":danger-full-access", state.activePermissionProfile().id());
+        assertEquals(PermissionProfiles.dangerFullAccess(), state.permissionProfile());
         assertEquals(ApprovalMode.NEVER, state.approvalPolicy().mode());
         assertFalse(state.legacyBehavior().defaultBashRequiresEscalation());
         assertTrue(state.legacyBehavior().allowExplicitEscalationWithoutPrompt());
@@ -87,10 +90,54 @@ class PermissionRuntimeStateTest {
 
         assertTrue(json.contains("\"approvalPolicy\""));
         assertTrue(json.contains("\"activePermissionProfile\""));
+        assertTrue(json.contains("\"permissionProfile\""));
         assertTrue(json.contains("\"legacyBehavior\""));
         assertEquals(ApprovalMode.NEVER, restored.approvalPolicy().mode());
         assertEquals(":danger-full-access", restored.activePermissionProfile().id());
+        assertEquals(PermissionProfiles.dangerFullAccess(), restored.permissionProfile());
         assertTrue(restored.legacyBehavior().allowExplicitEscalationWithoutPrompt());
         assertEquals(PermissionMode.BYPASS, restored.legacyPermissionMode());
+    }
+
+    @Test
+    void oldRuntimeStateJsonRestoresBuiltinProfileFromActiveId() throws Exception {
+        String json = """
+            {
+              "approvalPolicy": {"mode": "ON_REQUEST"},
+              "activePermissionProfile": {"id": ":workspace"},
+              "legacyBehavior": {
+                "defaultBashRequiresEscalation": false,
+                "allowExplicitEscalationWithoutPrompt": false,
+                "hardSafetyEnabled": true
+              },
+              "legacyPermissionMode": "DEFAULT_EXECUTE"
+            }
+            """;
+
+        PermissionRuntimeState restored = mapper.readValue(json, PermissionRuntimeState.class);
+
+        assertEquals(":workspace", restored.activePermissionProfile().id());
+        assertEquals(PermissionProfiles.workspace(), restored.permissionProfile());
+    }
+
+    @Test
+    void oldRuntimeStateJsonFallsBackToReadOnlyForUnknownProfileId() throws Exception {
+        String json = """
+            {
+              "approvalPolicy": {"mode": "ON_REQUEST"},
+              "activePermissionProfile": {"id": "dev"},
+              "legacyBehavior": {
+                "defaultBashRequiresEscalation": false,
+                "allowExplicitEscalationWithoutPrompt": false,
+                "hardSafetyEnabled": true
+              },
+              "legacyPermissionMode": "DEFAULT_EXECUTE"
+            }
+            """;
+
+        PermissionRuntimeState restored = mapper.readValue(json, PermissionRuntimeState.class);
+
+        assertEquals("dev", restored.activePermissionProfile().id());
+        assertEquals(PermissionProfiles.readOnly(), restored.permissionProfile());
     }
 }

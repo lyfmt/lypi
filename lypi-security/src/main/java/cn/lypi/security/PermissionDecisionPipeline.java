@@ -13,7 +13,6 @@ import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionProfile;
-import cn.lypi.contracts.security.PermissionProfiles;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionUpdate;
@@ -260,14 +259,7 @@ public final class PermissionDecisionPipeline {
     }
 
     private PermissionProfile activePermissionProfile(ToolUseContext context) {
-        PermissionRuntimeState state = runtimeState(context);
-        return switch (state.activePermissionProfile().id()) {
-            case ":read-only" -> PermissionProfiles.readOnly();
-            case ":workspace" -> PermissionProfiles.workspace();
-            case ":danger-full-access" -> PermissionProfiles.dangerFullAccess();
-            case ":external" -> PermissionProfiles.external(cn.lypi.contracts.security.NetworkPermissionPolicy.restricted());
-            default -> PermissionProfiles.readOnly();
-        };
+        return runtimeState(context).permissionProfile();
     }
 
     private boolean additionalFilesystemAllows(

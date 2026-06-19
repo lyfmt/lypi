@@ -493,6 +493,7 @@ class TuiEventReducerTest {
             new PermissionRuntimeState(
                 new ApprovalPolicy(ApprovalMode.ON_FAILURE),
                 new ActivePermissionProfile("project-dev", Optional.of(":workspace")),
+                cn.lypi.contracts.security.PermissionProfiles.workspace(),
                 PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS).legacyBehavior(),
                 PermissionMode.ACCEPT_EDITS
             ),
@@ -643,6 +644,7 @@ class TuiEventReducerTest {
             new PermissionRuntimeState(
                 new ApprovalPolicy(ApprovalMode.NEVER),
                 new ActivePermissionProfile(":danger-full-access"),
+                cn.lypi.contracts.security.PermissionProfiles.dangerFullAccess(),
                 PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS).legacyBehavior(),
                 PermissionMode.BYPASS
             ),

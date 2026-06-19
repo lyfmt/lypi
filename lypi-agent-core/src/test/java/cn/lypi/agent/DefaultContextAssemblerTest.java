@@ -372,6 +372,7 @@ class DefaultContextAssemblerTest {
         return new PermissionRuntimeState(
             new ApprovalPolicy(ApprovalMode.UNLESS_TRUSTED),
             new ActivePermissionProfile(":workspace-write"),
+            cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, false),
             PermissionMode.DEFAULT_EXECUTE
         );
