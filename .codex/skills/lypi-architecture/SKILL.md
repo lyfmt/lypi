@@ -49,6 +49,14 @@ The root `pom.xml` defines these Maven modules:
 - Permission runtime changes are represented by session entries and replayed into `SessionContext`; do not mutate historical entries to change permission state.
 - Tool calls, permission decisions, retry, compaction and UI updates flow through contract events where possible.
 - Permission request/decision events expose approval kind, available decisions and additional permission metadata for TUI/headless rendering.
+- Memory consolidation is driven by `TurnEndEvent` after the main turn completes; `DefaultTurnExecutor` must not synchronously call legacy `MemoryExtractionWorker` on the user-facing path.
+- `TurnEndEvent.leafEntryId` is the stable fork point for background consolidation. Runtime listeners must use this event field instead of the mutable `SessionManagerPort.currentView().leafId()`.
+- Memory consolidation trigger gates follow Claude Code session memory style: initialize after about 10,000 estimated context tokens, require about 5,000 token growth between updates, and trigger on either enough tool calls or a natural assistant turn without tool calls. Do not use wall-clock duration as the durable trigger.
+- Background memory consolidation skips only when the main turn has a completed memory write tool call, including conservative Bash command detection, with a successful matching tool result; failed or rejected write attempts must still allow background consolidation.
+- Runtime turn-end listeners must not replay transcripts or run direct-write detection on the synchronous event dispatch path; transcript inspection belongs inside the background executor so the main turn response is not blocked.
+- Background memory consolidation is best-effort and auditable: runtime records threshold/session/direct-write/coalesced states, boot runner runs preflight memory scan and injects the scan summary into the hidden settlement turn, then records post-turn lint diagnostics without blocking the main turn.
+- Background memory consolidation must preserve the parent tool schema for prompt-cache prefix stability; restrict actual execution with a can-use-tool style runtime gate and memory write policy instead of filtering the visible tool snapshot.
+- Memory lint is an automatic background diagnostic only; do not expose product slash commands or default user resources for manual `/memory-lint`.
 - Product runtime Skill discovery is under `skills/` and `.ly-pi/skills/`; repository Codex knowledge under `.codex/skills/` is not a product resource root.
 
 ## Key Anchors
@@ -59,6 +67,12 @@ The root `pom.xml` defines these Maven modules:
 - `docs/permission-system-codex-alignment-plan.md`
 - `lypi-contracts/src/main/java/cn/lypi/contracts/runtime/`
 - `lypi-contracts/src/main/java/cn/lypi/contracts/event/`
+- `lypi-contracts/src/main/java/cn/lypi/contracts/event/TurnEndEvent.java`
+- `lypi-runtime/src/main/java/cn/lypi/runtime/memory/MemoryConsolidationTurnEndListener.java`
+- `lypi-runtime/src/main/java/cn/lypi/runtime/memory/MemoryWriteDetector.java`
+- `lypi-runtime/src/main/java/cn/lypi/runtime/memory/MemoryLintScanner.java`
+- `lypi-runtime/src/main/java/cn/lypi/runtime/memory/MemoryPreflightScan.java`
+- `lypi-boot/src/main/java/cn/lypi/boot/runtime/BootMemoryConsolidationRunner.java`
 - `lypi-contracts/src/main/java/cn/lypi/contracts/security/PermissionRuntimeState.java`
 - `lypi-contracts/src/main/java/cn/lypi/contracts/security/PermissionProfiles.java`
 - `lypi-contracts/src/main/java/cn/lypi/contracts/session/PermissionRuntimeStateChangeEntry.java`

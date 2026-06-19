@@ -137,6 +137,7 @@ class DefaultTurnExecutorTest {
         assertThat(turnEnd.endedAt()).isEqualTo(NOW);
         assertThat(turnEnd.durationMillis()).isZero();
         assertThat(turnEnd.timestamp()).isEqualTo(turnEnd.endedAt());
+        assertThat(turnEnd.leafEntryId()).isEqualTo("entry-msg-assistant");
     }
 
     @Test
@@ -186,6 +187,7 @@ class DefaultTurnExecutorTest {
         assertThat(turnEnd.endedAt()).isEqualTo(NOW.plusSeconds(6));
         assertThat(turnEnd.durationMillis()).isEqualTo(6_000L);
         assertThat(turnEnd.timestamp()).isEqualTo(turnEnd.endedAt());
+        assertThat(turnEnd.leafEntryId()).isEqualTo("entry-msg-assistant");
     }
 
     @Test
@@ -782,7 +784,7 @@ class DefaultTurnExecutorTest {
                 "MessageStartEvent:msg-final",
                 "MessageEndEvent:msg-final"
             );
-        assertThat(memory.calls).isOne();
+        assertThat(memory.calls).isZero();
     }
 
     @Test
@@ -1674,7 +1676,7 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
-    void runsMemoryExtractionAfterCompletedTurn() {
+    void doesNotRunMemoryExtractionInlineAfterCompletedTurn() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
@@ -1711,7 +1713,7 @@ class DefaultTurnExecutorTest {
         TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
 
         assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
-        assertThat(memory.calls).isEqualTo(1);
+        assertThat(memory.calls).isZero();
     }
 
     @Test
@@ -1768,6 +1770,7 @@ class DefaultTurnExecutorTest {
         assertThat(turnEnd.startedAt()).isEqualTo(turnStart.startedAt());
         assertThat(turnEnd.endedAt()).isEqualTo(turnEnd.timestamp());
         assertThat(turnEnd.durationMillis()).isGreaterThanOrEqualTo(0L);
+        assertThat(turnEnd.leafEntryId()).isEqualTo("entry-msg-error");
         assertThat(memory.calls).isZero();
     }
 
@@ -2388,7 +2391,7 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
-    void memoryExtractionFailureDoesNotChangeCompletedTurnStatus() {
+    void ignoresLegacyMemoryExtractionWorkerAfterCompletedTurn() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
@@ -2426,7 +2429,7 @@ class DefaultTurnExecutorTest {
         TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
 
         assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
-        assertThat(memory.calls).isEqualTo(1);
+        assertThat(memory.calls).isZero();
         assertThat(((TurnEndEvent) eventBus.events.getLast()).status()).isEqualTo("COMPLETED");
     }
 

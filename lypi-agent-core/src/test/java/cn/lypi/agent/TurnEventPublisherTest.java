@@ -23,7 +23,7 @@ class TurnEventPublisherTest {
         AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
         TurnEventPublisher publisher = new TurnEventPublisher(eventBus, Clock.fixed(NOW.plusSeconds(2), ZoneOffset.UTC));
 
-        publisher.publishTurnEnd("session-1", "turn-1", TurnStatus.COMPLETED, NOW, 3);
+        publisher.publishTurnEnd("session-1", "turn-1", TurnStatus.COMPLETED, NOW, 3, "entry-final");
 
         TurnEndEvent event = (TurnEndEvent) eventBus.events.getFirst();
         assertThat(event.sessionId()).isEqualTo("session-1");
@@ -32,6 +32,7 @@ class TurnEventPublisherTest {
         assertThat(event.durationMillis()).isEqualTo(2_000L);
         assertThat(event.toolRounds()).isEqualTo(3);
         assertThat(event.timestamp()).isEqualTo(NOW.plusSeconds(2));
+        assertThat(event.leafEntryId()).isEqualTo("entry-final");
     }
 
     @Test

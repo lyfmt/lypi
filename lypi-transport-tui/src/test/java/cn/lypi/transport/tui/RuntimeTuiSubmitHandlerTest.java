@@ -245,7 +245,7 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
-    void memoryLintSlashCommandSubmitsPromptAndActivatesSkillMention() {
+    void memoryLintTextSubmitsAsNormalUserInput() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
         RecordingSessionManager session = new RecordingSessionManager();
@@ -254,16 +254,16 @@ class RuntimeTuiSubmitHandlerTest {
             core,
             events,
             Runnable::run,
-            new SlashCommandRouter("ses_1", Path.of("."), session, resources(List.of(memoryLintTemplate()))),
+            new SlashCommandRouter("ses_1", Path.of("."), session, resources(List.of())),
             null,
-            skills("memory-lint")
+            skills()
         );
 
         handler.submitUserInput("/memory-lint");
 
         TurnRequest request = core.requests.getFirst();
-        assertEquals("Lint L2,L3 with $memory-lint.", request.userInput());
-        assertEquals(List.of(new SkillMention("memory-lint", Path.of("/tmp/memory-lint/SKILL.md"))), request.skillMentions());
+        assertEquals("/memory-lint", request.userInput());
+        assertEquals(List.of(), request.skillMentions());
         assertEquals(List.of(), session.entries);
     }
 

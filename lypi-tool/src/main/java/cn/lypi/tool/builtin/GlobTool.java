@@ -55,21 +55,20 @@ public final class GlobTool extends AbstractFileTool {
             }
             progress.progress(ToolProgress.phase("scanning", "扫描文件"));
             List<PathMatcher> matchers = matchers(pattern);
-            List<Path> files;
-            try (var walk = Files.walk(root)) {
-                files = walk.filter(Files::isRegularFile)
-                    .filter(path -> realPathInsideWorkspace(path, context, FileSystemAccessMode.READ))
-                    .filter(path -> !ignored(path))
-                    .toList();
-            }
-            progress.progress(ToolProgress.counter("files", files.size(), files.size()));
             List<String> matches;
-            matches = files.stream()
+            try (var walk = Files.walk(root)) {
+                List<Path> files = walk.filter(Files::isRegularFile)
+                    .filter(path -> !ignored(path))
+                    .filter(path -> realPathInsideWorkspace(path, context, FileSystemAccessMode.READ))
+                    .toList();
+                progress.progress(ToolProgress.counter("files", files.size(), files.size()));
+                matches = files.stream()
                     .filter(path -> matchesAny(matchers, root.relativize(path)))
                     .map(path -> relativePath(path, context))
                     .sorted()
                     .limit(maxResults)
                     .toList();
+            }
             progress.progress(new ToolProgress(
                 cn.lypi.contracts.common.ToolProgressKind.STATUS,
                 "matched",
@@ -114,7 +113,10 @@ public final class GlobTool extends AbstractFileTool {
         boolean insideLypi = false;
         for (Path part : path) {
             String value = part.toString();
-            if ("target".equals(value)) {
+            if ("target".equals(value)
+                || ".git".equals(value)
+                || ".agents".equals(value)
+                || ".codex".equals(value)) {
                 return true;
             }
             if (".lypi".equals(value)) {

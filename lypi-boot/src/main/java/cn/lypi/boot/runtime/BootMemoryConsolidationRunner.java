@@ -9,12 +9,20 @@ import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.runtime.memory.MemoryConsolidationAuditRecord;
 import cn.lypi.runtime.memory.MemoryConsolidationAuditSink;
 import cn.lypi.runtime.memory.MemoryConsolidationAuditStage;
+import cn.lypi.runtime.memory.MemoryLintDiagnostic;
+import cn.lypi.runtime.memory.MemoryLintScanner;
+import cn.lypi.runtime.memory.MemoryPreflightScan;
 import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
 import cn.lypi.runtime.memory.MemoryConsolidationRequest;
 import cn.lypi.runtime.memory.MemoryConsolidationRunner;
 import cn.lypi.session.SessionManagerImpl;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -77,6 +85,8 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
         audit(MemoryConsolidationAuditStage.RUN_STARTED, request, null, "started", null);
         SessionHandle forked = null;
         SessionManagerPort forkSessionManager = null;
+        Instant lintBaseline = Instant.now();
+        MemoryPreflightScan preflightScan = preflightScan(request);
         try {
             SessionContext forkPointContext = mainSessionManager.context(request.forkPointEntryId());
             forked = mainSessionManager.fork(new ForkRequest(
@@ -91,7 +101,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
             var turnState = agentCoreFactory.create(cwd, forkSessionManager)
                 .execute(new TurnRequest(
                     forked.sessionId(),
-                    promptFactory.prompt(),
+                    promptFactory.prompt(preflightScan),
                     Optional.of(request.forkPointEntryId()),
                     () -> false,
                     TurnRequest.DEFAULT_MAX_TOOL_ROUNDS
@@ -103,6 +113,7 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
                 "background turn " + turnState.status(),
                 null
             );
+            runLint(request, forked.sessionId(), lintBaseline);
         } catch (RuntimeException exception) {
             audit(
                 MemoryConsolidationAuditStage.RUN_FAILED,
@@ -122,6 +133,91 @@ public final class BootMemoryConsolidationRunner implements MemoryConsolidationR
                     throw exception;
                 }
             }
+        }
+    }
+
+    private MemoryPreflightScan preflightScan(MemoryConsolidationRequest request) {
+        try {
+            MemoryPreflightScan scan = new MemoryLintScanner(cwd).scanAll();
+            return new MemoryPreflightScan(
+                relativizeAll(scan.manifestPaths()),
+                relativizeAll(scan.memoryPaths()),
+                scan.diagnostics().stream()
+                    .map(diagnostic -> new MemoryLintDiagnostic(
+                        diagnostic.code(),
+                        cwd.relativize(diagnostic.path()).normalize(),
+                        diagnostic.message()
+                    ))
+                    .toList()
+            );
+        } catch (IOException | RuntimeException exception) {
+            audit(MemoryConsolidationAuditStage.LINT_FAILED, request, null, "preflight lint failed", exception);
+            return null;
+        }
+    }
+
+    private void runLint(MemoryConsolidationRequest request, String forkSessionId, Instant baseline) {
+        try {
+            List<Path> changedPaths = changedMemoryPathsSince(baseline);
+            List<MemoryLintDiagnostic> diagnostics = new MemoryLintScanner(cwd).scan(changedPaths);
+            auditSink.record(new MemoryConsolidationAuditRecord(
+                MemoryConsolidationAuditStage.LINT_COMPLETED,
+                request.sessionId(),
+                null,
+                request.forkPointEntryId(),
+                forkSessionId,
+                0L,
+                0,
+                "lint diagnostics: " + diagnostics.size(),
+                null,
+                Instant.now(),
+                changedPaths.stream().map(path -> cwd.relativize(path).toString()).toList(),
+                diagnostics.stream().map(MemoryLintDiagnostic::code).toList(),
+                false
+            ));
+        } catch (IOException | RuntimeException exception) {
+            audit(MemoryConsolidationAuditStage.LINT_FAILED, request, forkSessionId, "lint failed", exception);
+        }
+    }
+
+    private List<Path> relativizeAll(List<Path> paths) {
+        return paths.stream()
+            .map(path -> cwd.relativize(path).normalize())
+            .toList();
+    }
+
+    private List<Path> changedMemoryPathsSince(Instant baseline) throws IOException {
+        List<Path> roots = List.of(
+            cwd.resolve("MEMORY.md"),
+            cwd.resolve(".ly-pi/memory.md"),
+            cwd.resolve(".ly-pi/memory"),
+            cwd.resolve(".ly-pi/skills")
+        );
+        List<Path> paths = new ArrayList<>();
+        for (Path root : roots) {
+            if (!Files.exists(root)) {
+                continue;
+            }
+            if (Files.isRegularFile(root)) {
+                addIfChanged(root, baseline, paths);
+                continue;
+            }
+            try (var stream = Files.walk(root)) {
+                for (Path path : stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName() != null && path.getFileName().toString().endsWith(".md"))
+                    .sorted(Comparator.comparing(Path::toString))
+                    .toList()) {
+                    addIfChanged(path, baseline, paths);
+                }
+            }
+        }
+        return paths;
+    }
+
+    private void addIfChanged(Path path, Instant baseline, List<Path> paths) throws IOException {
+        if (!Files.getLastModifiedTime(path).toInstant().isBefore(baseline)) {
+            paths.add(path.toAbsolutePath().normalize());
         }
     }
 

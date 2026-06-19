@@ -35,7 +35,7 @@ final class TurnEventPublisher {
         this.clock = clock;
     }
 
-    void publishTurnEnd(String sessionId, String turnId, TurnStatus status, Instant startedAt, int toolRound) {
+    void publishTurnEnd(String sessionId, String turnId, TurnStatus status, Instant startedAt, int toolRound, String leafEntryId) {
         Instant endedAt = clock.instant();
         long durationMillis = Math.max(0L, Duration.between(startedAt, endedAt).toMillis());
         eventBus.publish(new TurnEndEvent(
@@ -46,7 +46,8 @@ final class TurnEventPublisher {
             endedAt,
             durationMillis,
             toolRound,
-            endedAt
+            endedAt,
+            leafEntryId
         ));
     }
 
