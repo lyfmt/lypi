@@ -56,8 +56,13 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPolicyKind;
+import cn.lypi.contracts.security.NetworkPolicyMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -118,6 +123,7 @@ import cn.lypi.tool.FilePermissionAmendmentStore;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.MemoryConsolidationToolRuntime;
+import cn.lypi.tool.shell.SandboxPolicyResolver;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -194,6 +200,58 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(sessionContext.permissionRuntimeState().approvalPolicy().granularApprovalPolicy().orElseThrow().rules())
                     .isEqualTo(ApprovalMode.NEVER);
                 assertThat(sessionContext.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+            });
+    }
+
+    @Test
+    void sessionManagerStoresCompiledCustomPermissionProfileInRuntimeState() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.permissions.default-permissions=dev",
+                "lypi.permissions.profiles.dev.extends-profile=:workspace",
+                "lypi.permissions.profiles.dev.file-system.kind=restricted",
+                "lypi.permissions.profiles.dev.file-system.entries[0].path.kind=special",
+                "lypi.permissions.profiles.dev.file-system.entries[0].path.value=:root",
+                "lypi.permissions.profiles.dev.file-system.entries[0].access=read",
+                "lypi.permissions.profiles.dev.file-system.entries[1].path.kind=exact_path",
+                "lypi.permissions.profiles.dev.file-system.entries[1].path.value=/tmp/lypi-cache",
+                "lypi.permissions.profiles.dev.file-system.entries[1].access=write"
+            )
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_custom_profile");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo("dev");
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().fileSystem().kind())
+                    .isEqualTo(FileSystemPolicyKind.RESTRICTED);
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().fileSystem().entries())
+                    .anySatisfy(entry -> {
+                        assertThat(entry.path().kind()).isEqualTo(FileSystemPath.Kind.EXACT_PATH);
+                        assertThat(entry.path().value()).contains("/tmp/lypi-cache");
+                        assertThat(entry.access()).isEqualTo(FileSystemAccessMode.WRITE);
+                    });
+            });
+    }
+
+    @Test
+    void sessionRuntimeStateAndSandboxUseSameLegacyHostNetworkProfileSelection() {
+        runtimeAutoConfigurations()
+            .withPropertyValues("lypi.tool.sandbox.network-mode=host")
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_legacy_host_network");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo("legacy-workspace-network");
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().network().mode())
+                    .isEqualTo(NetworkPolicyMode.ENABLED);
+                assertThat(resolver.resolve(tempDir, tempDir).networkMode()).isEqualTo(NetworkMode.HOST);
             });
     }
 

@@ -23,6 +23,7 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PermissionProfileSelection;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.NewSessionController;
@@ -94,6 +95,23 @@ public class LyPiRuntimeAutoConfiguration {
     }
 
     /**
+     * 创建默认权限 profile 编译结果。
+     *
+     * NOTE: 加载工具自动配置时，工具侧会提供包含沙盒 legacy 兼容逻辑的共享结果。
+     */
+    @Bean
+    @ConditionalOnMissingBean(PermissionProfileSelection.class)
+    public PermissionProfileSelection permissionProfileSelection(
+        LyPiPermissionsProperties permissionsProperties,
+        PermissionProfileConfigCompiler profileConfigCompiler
+    ) {
+        return profileConfigCompiler.compile(
+            permissionsProperties.profileConfigs(),
+            permissionsProperties.getDefaultPermissions()
+        );
+    }
+
+    /**
      * 创建默认 session 管理器。
      */
     @Bean
@@ -101,9 +119,9 @@ public class LyPiRuntimeAutoConfiguration {
     public SessionManagerPort sessionManager(
         LyPiRuntimeProperties properties,
         LyPiPermissionsProperties permissionsProperties,
-        PermissionProfileConfigCompiler profileConfigCompiler
+        PermissionProfileSelection profileSelection
     ) {
-        return RuntimeBeanFactories.sessionManager(properties, permissionsProperties, profileConfigCompiler);
+        return RuntimeBeanFactories.sessionManager(properties, permissionsProperties, profileSelection);
     }
 
     /**

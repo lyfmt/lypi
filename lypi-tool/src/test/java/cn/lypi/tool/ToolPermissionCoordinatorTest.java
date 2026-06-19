@@ -386,6 +386,7 @@ class ToolPermissionCoordinatorTest {
         return new PermissionRuntimeState(
             new ApprovalPolicy(ApprovalMode.ON_REQUEST),
             source.activePermissionProfile(),
+            source.permissionProfile(),
             source.legacyBehavior(),
             legacyMode
         );

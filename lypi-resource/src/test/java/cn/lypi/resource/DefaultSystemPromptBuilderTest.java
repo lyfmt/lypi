@@ -137,6 +137,7 @@ class DefaultSystemPromptBuilderTest {
         PermissionRuntimeState runtimeState = new PermissionRuntimeState(
             new ApprovalPolicy(ApprovalMode.ON_FAILURE),
             new ActivePermissionProfile("project-dev", Optional.of(":workspace")),
+            cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, false),
             PermissionMode.ACCEPT_EDITS
         );

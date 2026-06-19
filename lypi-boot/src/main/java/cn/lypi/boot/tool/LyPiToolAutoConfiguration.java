@@ -85,11 +85,9 @@ public class LyPiToolAutoConfiguration {
     @ConditionalOnMissingBean(SandboxPolicyResolver.class)
     public SandboxPolicyResolver sandboxPolicyResolver(
         LyPiToolProperties toolProperties,
-        LyPiPermissionsProperties permissionsProperties,
-        PermissionProfileConfigCompiler profileConfigCompiler
+        PermissionProfileSelection profileSelection
     ) {
         LyPiToolProperties.SandboxProperties sandbox = toolProperties.getSandbox();
-        PermissionProfileSelection profileSelection = profileSelection(permissionsProperties, sandbox, profileConfigCompiler);
         return new PermissionProfileSandboxPolicyResolver(profileSelection.permissionProfile(), new SandboxPolicyOptions(
             NetworkMode.DISABLED,
             sandbox.isFailIfUnavailable(),
@@ -106,11 +104,19 @@ public class LyPiToolAutoConfiguration {
         return new PermissionProfileConfigCompiler();
     }
 
-    private PermissionProfileSelection profileSelection(
+    /**
+     * 创建启动期共享的权限 profile 编译结果。
+     *
+     * NOTE: session runtime state 和 Bash sandbox 投影必须消费同一份编译结果。
+     */
+    @Bean
+    @ConditionalOnMissingBean(PermissionProfileSelection.class)
+    public PermissionProfileSelection permissionProfileSelection(
+        LyPiToolProperties toolProperties,
         LyPiPermissionsProperties permissionsProperties,
-        LyPiToolProperties.SandboxProperties sandbox,
         PermissionProfileConfigCompiler profileConfigCompiler
     ) {
+        LyPiToolProperties.SandboxProperties sandbox = toolProperties.getSandbox();
         if (permissionsProperties.hasCustomProfileConfig() || sandbox.getNetworkMode() != NetworkMode.HOST) {
             return profileConfigCompiler.compile(
                 permissionsProperties.profileConfigs(),
