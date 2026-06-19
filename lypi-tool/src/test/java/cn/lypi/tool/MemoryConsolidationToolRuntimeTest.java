@@ -30,17 +30,17 @@ class MemoryConsolidationToolRuntimeTest {
     Path tempDir;
 
     @Test
-    void snapshotOnlyContainsAllowedTools() {
+    void snapshotPreservesDelegateToolsForPromptCachePrefix() {
         RecordingRuntime delegate = runtime(tempDir);
         MemoryConsolidationToolRuntime runtime = new MemoryConsolidationToolRuntime(
             delegate,
             new MemoryConsolidationWritePolicy(tempDir, tempDir.resolve("home/.ly-pi"))
         );
 
-        assertEquals(List.of("read", "grep", "glob", "edit", "write"),
+        assertEquals(List.of("read", "grep", "glob", "edit", "write", "bash"),
             runtime.snapshot().tools().stream().map(tool -> tool.name()).toList());
         assertTrue(runtime.resolve("read").isPresent());
-        assertFalse(runtime.resolve("bash").isPresent());
+        assertTrue(runtime.resolve("bash").isPresent());
     }
 
     @Test

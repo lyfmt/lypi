@@ -23,7 +23,8 @@ import java.util.Set;
 /**
  * 后台记忆沉淀专用工具运行时。
  *
- * NOTE: 只限制工具可见性和写路径；权限 ASK 由后台装配使用 deny gate 处理。
+ * NOTE: 工具 schema 对模型保持父 runtime 原样可见，避免后台 fork 改变 prompt cache 前缀；
+ * 实际执行仍只允许沉淀白名单工具和受控 memory 写路径。
  */
 public final class MemoryConsolidationToolRuntime implements ToolRuntimePort {
     private static final Set<String> ALLOWED_TOOLS = Set.of("read", "grep", "glob", "edit", "write");
@@ -43,18 +44,12 @@ public final class MemoryConsolidationToolRuntime implements ToolRuntimePort {
 
     @Override
     public Optional<Tool<?, ?>> resolve(String nameOrAlias) {
-        Optional<Tool<?, ?>> resolved = delegate.resolve(nameOrAlias);
-        if (resolved.isEmpty()) {
-            return Optional.empty();
-        }
-        return isAllowedTool(resolved.get().name()) ? resolved : Optional.empty();
+        return delegate.resolve(nameOrAlias);
     }
 
     @Override
     public ToolRegistrySnapshot snapshot() {
-        return new ToolRegistrySnapshot(delegate.snapshot().tools().stream()
-            .filter(tool -> isAllowedTool(tool.name()))
-            .toList());
+        return delegate.snapshot();
     }
 
     @Override

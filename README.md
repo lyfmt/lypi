@@ -153,13 +153,13 @@ Bash 命令会先做静态风险分析，区分低风险、写入、网络、远
 
 资源加载阶段会扫描用户层和项目层的 memory 文件，去重后生成带来源路径和内容哈希的 `MemorySource`。系统提示词构建阶段会注入 memory 读写纪律：只有经过工具执行、文件读取、测试结果或用户明确确认的信息，才允许沉淀；临时进度、未验证猜测、密钥、日志流水和一次性命令输出不得写入。
 
-agent 单轮正常完成后会进入记忆提取挂点。提取结果使用结构化契约表达候选内容、写入请求、跳过原因和失败原因，并按 `PREFERENCE`、`PROJECT_FACT`、`CORRECTION`、`CONVENTION` 等类型分类。这套契约让后续自动沉淀可以独立演进，即使提取失败也不会改变本轮对话结果。
+agent 单轮正常完成后只发布 `TurnEndEvent`，不在用户可见主链路内直接写 memory。运行时监听 turn end 后在后台 executor 中做 transcript replay、阈值判断、主 agent 直接写 memory 检测和沉淀 runner 调用；即使后台沉淀失败，也不会改变本轮对话结果。
 
 长期记忆的写入遵循「No Verification, No Memory」原则：没有证据来源的推断不能进入 memory；一次性进度和临时任务状态不进入 memory；与现有 memory 冲突时优先保留可追溯来源并暴露待人工处理的诊断。`MemoryWriteRequest` 会声明 scope、kind、目标路径和写入条目，写入策略可以限制只能改 memory 文件，避免沉淀流程误写项目代码。
 
-长任务结束后还可以触发 memory consolidation。`MemoryConsolidationTurnEndListener` 在 turn end 后提交后台 gate，按 Claude Code session memory 风格检查上下文 token 增长、工具调用数量和自然对话断点；提交、跳过、session 不匹配、缺少 fork point、runner 失败等阶段都会写入审计记录。沉淀任务使用独立提示词要求先读取相关 memory、检查重复和冲突，再小幅增量更新。
+长任务结束后还可以触发 memory consolidation。`MemoryConsolidationTurnEndListener` 在 turn end 后提交后台 gate，按 Claude Code session memory 风格检查上下文 token 增长、工具调用数量和自然对话断点；提交、跳过、session 不匹配、缺少 fork point、runner 失败等阶段都会写入审计记录。后台沉淀的工具 schema 对模型保持父 runtime 原样可见，以维持 prompt cache 前缀稳定；执行层仍只允许 `read`、`grep`、`glob`、`edit`、`write`，并用 memory 写路径策略拒绝越权写入。
 
-资源侧也提供 memory lint 入口，用于检查 memory 与 Skill、Prompt Template 等资源的可发现性和冲突诊断。它不是聊天历史压缩，而是长期知识库治理工具。
+memory lint 只作为后台自动诊断运行。沉淀前扫描现有 manifest、topic 和 skill memory 并把摘要注入隐藏沉淀 turn；沉淀后再 best-effort 写入 audit/diagnostics。产品侧不提供主动 `/memory-lint` 命令，也不默认扫描注入 L2 全量内容。
 
 ### 资源系统
 
