@@ -24,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class MemoryConsolidationTurnEndListenerTest {
@@ -435,6 +437,51 @@ class MemoryConsolidationTurnEndListenerTest {
         );
         assertThat(auditSink.record(MemoryConsolidationAuditStage.DIRECT_WRITE_DETECTION_FAILED).reason())
             .contains("background memory gate transcript read failed");
+    }
+
+    @Test
+    void closeWaitsForActiveBackgroundRunToFinish() throws Exception {
+        InMemoryEventBus eventBus = new InMemoryEventBus();
+        CountDownLatch runnerStarted = new CountDownLatch(1);
+        CountDownLatch allowRunnerToFinish = new CountDownLatch(1);
+        CountDownLatch runnerFinished = new CountDownLatch(1);
+        Executor threadExecutor = command -> {
+            Thread thread = new Thread(command, "memory-listener-test");
+            thread.start();
+        };
+        MemoryConsolidationRunner runner = request -> {
+            runnerStarted.countDown();
+            try {
+                assertThat(allowRunnerToFinish.await(1, TimeUnit.SECONDS)).isTrue();
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(exception);
+            } finally {
+                runnerFinished.countDown();
+            }
+        };
+        MemoryConsolidationTurnEndListener listener = new MemoryConsolidationTurnEndListener(
+            eventBus,
+            new MutableSessionManager("ses_main", "leaf-1"),
+            new MemoryConsolidationTrigger(10, 5, 2),
+            runner,
+            threadExecutor
+        );
+        listener.start();
+
+        eventBus.publish(completedEvent(1_000L, 31));
+        assertThat(runnerStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+        Thread closeThread = new Thread(listener::close, "memory-listener-close-test");
+        closeThread.start();
+        assertThat(runnerFinished.await(100, TimeUnit.MILLISECONDS)).isFalse();
+        assertThat(closeThread.isAlive()).isTrue();
+
+        allowRunnerToFinish.countDown();
+
+        closeThread.join(1_000L);
+        assertThat(closeThread.isAlive()).isFalse();
+        assertThat(runnerFinished.await(1, TimeUnit.SECONDS)).isTrue();
     }
 
     @Test

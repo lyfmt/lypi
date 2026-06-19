@@ -27,6 +27,7 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
     private final MemoryConsolidationTrigger.ExtractionState extractionState = new MemoryConsolidationTrigger.ExtractionState();
     private EventSubscription subscription;
     private boolean running;
+    private boolean closing;
     private MemoryConsolidationRequest pending;
 
     public MemoryConsolidationTurnEndListener(
@@ -70,6 +71,9 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
     }
 
     private void onTurnEnd(TurnEndEvent event) {
+        if (isClosing()) {
+            return;
+        }
         if (!trigger.isEligible(event, false)) {
             audit(MemoryConsolidationAuditStage.SKIPPED_THRESHOLD, event, null, null, "threshold not met", null);
             return;
@@ -118,6 +122,10 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
     }
 
     private synchronized boolean coalesceOrMarkRunning(MemoryConsolidationRequest request, TurnEndEvent event) {
+        if (closing) {
+            audit(MemoryConsolidationAuditStage.SUBMIT_REJECTED, event, request.forkPointEntryId(), null, "listener closing", null);
+            return true;
+        }
         if (running) {
             pending = request;
             auditSink.record(new MemoryConsolidationAuditRecord(
@@ -184,6 +192,7 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
         pending = null;
         if (next == null) {
             running = false;
+            notifyAll();
         }
         return next;
     }
@@ -193,6 +202,11 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
             pending = null;
         }
         running = false;
+        notifyAll();
+    }
+
+    private synchronized boolean isClosing() {
+        return closing;
     }
 
     private void audit(
@@ -247,10 +261,26 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
     }
 
     @Override
-    public synchronized void close() {
-        if (subscription != null) {
-            subscription.close();
+    public void close() {
+        EventSubscription toClose;
+        synchronized (this) {
+            closing = true;
+            pending = null;
+            toClose = subscription;
             subscription = null;
+        }
+        if (toClose != null) {
+            toClose.close();
+        }
+        synchronized (this) {
+            while (running) {
+                try {
+                    wait();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
         }
     }
 }
