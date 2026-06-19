@@ -14,6 +14,7 @@ import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
@@ -530,6 +531,32 @@ class JLineTuiTransportRenderPipelineTest {
         transport.renderRuntimeTickForTest();
 
         assertTrue(frames.getLast().contains("· working (2s)"));
+    }
+
+    @Test
+    void permissionRequestEventRendersPromptImmediatelyWithoutInputKey() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            40,
+            6,
+            new QueueInputSource(),
+            new RecordingSubmitHandler()
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new TurnStartEvent("ses_1", "turn_1", Instant.parse("2026-06-09T00:00:00Z")));
+        events.emit(new PermissionRequestEvent(
+            "ses_1",
+            "toolu_1",
+            "Need approval",
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+
+        List<String> latest = frames.getLast();
+        assertTrue(latest.stream().anyMatch(line -> line.contains("permission toolu_1: Need approval")));
+        assertTrue(latest.stream().anyMatch(line -> line.contains("> 允许一次")));
     }
 
     @Test

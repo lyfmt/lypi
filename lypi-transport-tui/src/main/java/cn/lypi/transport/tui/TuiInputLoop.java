@@ -382,6 +382,10 @@ final class TuiInputLoop {
         render();
     }
 
+    void renderCurrentFrame() {
+        render();
+    }
+
     private void render() {
         frameSink.render(renderer.renderFrame(
             currentView(),
