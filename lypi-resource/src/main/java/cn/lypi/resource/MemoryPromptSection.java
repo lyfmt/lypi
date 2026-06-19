@@ -32,7 +32,7 @@ final class MemoryPromptSection implements SystemPromptSection {
         content.append("当任务经历长任务、多步骤实现、重要纠错、反复失败、项目接手、项目交接、上下文接续，或产生可复用经验时，在结束前使用 `memory-settlement` skill 尝试记忆沉淀；若无可沉淀内容，简要说明跳过原因。\n\n");
         content.append("### Read Discipline\n");
         content.append("- L0: `~/.ly-pi/memory.md` 始终注入。它是 L1 索引和 memory 治理入口，只应包含下层记忆指针、触发场景和少量红线规则。\n");
-        content.append("- L1: `~/.ly-pi/memories/*` 不自动注入。涉及用户长期偏好、跨项目指导、重要纠错、协作习惯时，先读 L0，再根据 L0 索引按需读取 L1。\n");
+        content.append("- L1: `~/.ly-pi/memory/*` 不自动注入。涉及用户长期偏好、跨项目指导、重要纠错、协作习惯时，先读 L0，再根据 L0 索引按需读取 L1。\n");
         content.append("- L2: `<cwd>/.ly-pi/memory.md` 或项目根 `MEMORY.md` 不自动注入。它是项目方向层；接手项目或涉及当前项目目标、边界、设计方向、用户纠错、准则级事实、L3 skill 索引或长期上下文时，必须优先读取它；与项目方向无关时不要读取。\n");
         content.append("- L3: `<cwd>/.ly-pi/skills/*` 由 Skills 区块索引。它是项目具体知识和处理技巧层；涉及模块知识、处理流程、排障技巧、实现取舍、验证方式或已沉淀操作经验时，按 skill 规则读取对应 `SKILL.md`。\n\n");
         content.append("### Extraction Focus\n");
@@ -72,7 +72,7 @@ final class MemoryPromptSection implements SystemPromptSection {
         content.append("  - L0 不写详细内容、不写项目事实、不写具体 SOP。\n");
         content.append("  - 新增、删除、重命名 L1 文件时，必须同步更新 L0 指针。\n");
         content.append("  - L0 条目必须保持短小；如果一句话写不清，说明它应该下沉到 L1。\n");
-        content.append("- L1 `~/.ly-pi/memories/*`\n");
+        content.append("- L1 `~/.ly-pi/memory/*`\n");
         content.append("  - 记录用户跨项目长期偏好、重要指导、重要纠错和协作习惯。\n");
         content.append("  - 只有当信息不绑定具体项目、且未来多个项目都会复用时，才写入 L1。\n");
         content.append("  - L1 文件新增或主题明显变化时，必须同步 L0 索引。\n");

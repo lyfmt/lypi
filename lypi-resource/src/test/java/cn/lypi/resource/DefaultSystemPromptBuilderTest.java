@@ -89,6 +89,9 @@ class DefaultSystemPromptBuilderTest {
         assertThat(prompt.content()).contains("长任务");
         assertThat(prompt.content()).contains("重要纠错");
         assertThat(prompt.content()).contains("L0: `~/.ly-pi/memory.md` 始终注入");
+        assertThat(prompt.content()).contains("L1: `~/.ly-pi/memory/*` 不自动注入");
+        assertThat(prompt.content()).contains("L1 `~/.ly-pi/memory/*`");
+        assertThat(prompt.content()).doesNotContain("~/.ly-pi/memories");
         assertThat(prompt.content()).contains("根据 L0 索引按需读取 L1");
         assertThat(prompt.content()).contains("L2: `<cwd>/.ly-pi/memory.md` 或项目根 `MEMORY.md` 不自动注入");
         assertThat(prompt.content()).contains("L3: `<cwd>/.ly-pi/skills/*`");

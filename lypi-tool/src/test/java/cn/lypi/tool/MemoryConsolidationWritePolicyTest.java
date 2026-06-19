@@ -17,12 +17,14 @@ class MemoryConsolidationWritePolicyTest {
     void allowsUserMemoryTargets() throws IOException {
         Path cwd = tempDir.resolve("repo");
         Path userRoot = tempDir.resolve("home/.ly-pi");
-        Files.createDirectories(userRoot.resolve("memories/nested"));
+        Files.createDirectories(userRoot.resolve("memory/nested"));
+        Files.createDirectories(userRoot.resolve("memories"));
         MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
 
         assertTrue(policy.isAllowedWritePath(userRoot.resolve("memory.md").toString()));
-        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memories/guidance.md").toString()));
-        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memories/nested/guidance.md").toString()));
+        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memory/guidance.md").toString()));
+        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memory/nested/guidance.md").toString()));
+        assertFalse(policy.isAllowedWritePath(userRoot.resolve("memories/guidance.md").toString()));
     }
 
     @Test
@@ -58,11 +60,11 @@ class MemoryConsolidationWritePolicyTest {
         Path cwd = tempDir.resolve("repo");
         Path userRoot = tempDir.resolve("home/.ly-pi");
         Files.createDirectories(cwd.resolve(".ly-pi/memory"));
-        Files.createDirectories(userRoot.resolve("memories"));
+        Files.createDirectories(userRoot.resolve("memory"));
         MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
 
         assertFalse(policy.isAllowedWritePath(".ly-pi/memory/../../../src/Main.java"));
-        assertFalse(policy.isAllowedWritePath(userRoot.resolve("memories/../../../secret.md").toString()));
+        assertFalse(policy.isAllowedWritePath(userRoot.resolve("memory/../../../secret.md").toString()));
     }
 
     @Test
