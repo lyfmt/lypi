@@ -1,6 +1,6 @@
 # ly-pi
 
-`ly-pi` 是一个基于 Java 的本地 coding agent，面向代码库理解、文件修改、命令执行、长任务推进和会话沉淀。
+`ly-pi` 是一个基于 Java 的本地 coding agent，面向代码库理解、文件修改、命令执行、长任务推进和会话沉淀。参考学习了`pi`,`codex`,`claude-code` 的代码实现
 
 它关注的是 coding agent 工程化中最容易变复杂的部分：会话如何恢复，历史如何审计，工具如何受控，模型差异如何收敛，记忆如何沉淀，子任务如何隔离。它采用 Maven 多模块结构，使用 Spring Boot 进行装配，核心边界通过接口定义，便于替换模型适配、工具实现、资源发现和交互入口。
 
@@ -241,20 +241,3 @@ java -jar lypi-boot/target/lypi-boot-0.0.1-SNAPSHOT.jar
 ```text
 lypi-boot/src/main/resources/application.yml.example
 ```
-
-常见配置关注点包括：默认模型、OpenAI 兼容 Provider、请求风格与降级、摘要模型、工具工作目录、隔离策略、子代理命令和终端入口。
-
-## 开发约定
-
-- 日常开发基于 `origin/dev` 创建功能分支。
-- 所有功能开发放在独立 Git worktree 中，推荐目录为 `.worktrees/worktree-xxxxx`。
-- 普通功能 PR 目标分支为 `dev`，发布或稳定化 PR 再由 `dev` 合并到 `master`。
-- 提交前至少执行 `mvn verify`。
-- 完整 CI 规则见 `CONTRIBUTING.md`。
-- `docs/`、`.worktrees/`、`worktree-*/` 与各模块构建产物不得提交。
-
-## 设计取向
-
-`ly-pi` 更关注 agent 工程化中的长期问题：上下文如何沉淀、历史如何追溯、工具如何受控、权限如何表达、子任务如何隔离、不同入口如何共享同一套内核。
-
-因此项目的实现倾向于清晰边界和稳定契约：接口优先、事件统一、历史追加、资源分层、工具受控。这样的结构让能力扩展保持克制，也让问题定位和行为审计更直接。
