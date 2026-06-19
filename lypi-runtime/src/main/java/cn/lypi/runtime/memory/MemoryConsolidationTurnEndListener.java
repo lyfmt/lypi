@@ -6,6 +6,8 @@ import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.context.AgentMessage;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Executor;
@@ -22,6 +24,7 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
     private final Executor executor;
     private final MemoryConsolidationAuditSink auditSink;
     private final MemoryWriteDetector memoryWriteDetector;
+    private final MemoryConsolidationTrigger.ExtractionState extractionState = new MemoryConsolidationTrigger.ExtractionState();
     private EventSubscription subscription;
     private boolean running;
     private MemoryConsolidationRequest pending;
@@ -67,11 +70,11 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
     }
 
     private void onTurnEnd(TurnEndEvent event) {
-        if (!trigger.shouldTrigger(event, false)) {
+        if (!trigger.isEligible(event, false)) {
             audit(MemoryConsolidationAuditStage.SKIPPED_THRESHOLD, event, null, null, "threshold not met", null);
             return;
         }
-        audit(MemoryConsolidationAuditStage.ELIGIBLE, event, null, null, "threshold met", null);
+        audit(MemoryConsolidationAuditStage.ELIGIBLE, event, null, null, "completed turn eligible for background gate", null);
         SessionView view = sessionManager.currentView();
         if (!event.sessionId().equals(view.sessionId())) {
             audit(MemoryConsolidationAuditStage.SKIPPED_SESSION_MISMATCH, event, null, null, "current session mismatch", null);
@@ -96,9 +99,13 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
         }
     }
 
-    private boolean mainTurnAlreadyWroteMemory(MemoryConsolidationRequest request) {
+    private List<AgentMessage> transcript(MemoryConsolidationRequest request) {
+        return sessionManager.transcript(request.forkPointEntryId());
+    }
+
+    private boolean mainTurnAlreadyWroteMemory(List<AgentMessage> transcript, MemoryConsolidationRequest request) {
         try {
-            return memoryWriteDetector.hasMemoryWrite(sessionManager.transcript(request.forkPointEntryId()));
+            return memoryWriteDetector.hasMemoryWrite(transcript);
         } catch (RuntimeException exception) {
             audit(
                 MemoryConsolidationAuditStage.DIRECT_WRITE_DETECTION_FAILED,
@@ -143,11 +150,28 @@ public final class MemoryConsolidationTurnEndListener implements AutoCloseable {
     }
 
     private void runQuietly(MemoryConsolidationRequest request) {
-        if (mainTurnAlreadyWroteMemory(request)) {
-            audit(MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE, request, "main turn wrote memory", null);
-            return;
-        }
         try {
+            List<AgentMessage> messages;
+            try {
+                messages = transcript(request);
+            } catch (RuntimeException exception) {
+                audit(
+                    MemoryConsolidationAuditStage.DIRECT_WRITE_DETECTION_FAILED,
+                    request,
+                    "background memory gate transcript read failed",
+                    exception
+                );
+                runner.run(request);
+                return;
+            }
+            if (!trigger.shouldExtract(messages, extractionState)) {
+                audit(MemoryConsolidationAuditStage.SKIPPED_THRESHOLD, request, "token/tool threshold not met", null);
+                return;
+            }
+            if (mainTurnAlreadyWroteMemory(messages, request)) {
+                audit(MemoryConsolidationAuditStage.SKIPPED_DIRECT_WRITE, request, "main turn wrote memory", null);
+                return;
+            }
             runner.run(request);
         } catch (RuntimeException exception) {
             audit(MemoryConsolidationAuditStage.RUNNER_FAILED, request, "runner failed", exception);

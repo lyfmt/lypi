@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.EventFilter;
@@ -41,7 +42,7 @@ class MemoryConsolidationTurnEndListenerTest {
         new MemoryConsolidationTurnEndListener(
             eventBus,
             sessionManager,
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             inlineExecutor,
             auditSink
@@ -64,7 +65,7 @@ class MemoryConsolidationTurnEndListenerTest {
         new MemoryConsolidationTurnEndListener(
             eventBus,
             sessionManager,
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             Runnable::run
         ).start();
@@ -81,8 +82,8 @@ class MemoryConsolidationTurnEndListenerTest {
         RecordingRunner runner = new RecordingRunner();
         new MemoryConsolidationTurnEndListener(
             eventBus,
-            new MutableSessionManager("ses_main", "leaf-1"),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MutableSessionManager("ses_main", "leaf-1", List.of(textMessage("short", "short"))),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             Runnable::run
         ).start();
@@ -107,8 +108,8 @@ class MemoryConsolidationTurnEndListenerTest {
         RecordingAuditSink auditSink = new RecordingAuditSink();
         new MemoryConsolidationTurnEndListener(
             eventBus,
-            new MutableSessionManager("ses_main", "leaf-1"),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MutableSessionManager("ses_main", "leaf-1", List.of(textMessage("short", "short"))),
+            new MemoryConsolidationTrigger(10, 5, 2),
             new RecordingRunner(),
             Runnable::run,
             auditSink
@@ -116,7 +117,11 @@ class MemoryConsolidationTurnEndListenerTest {
 
         eventBus.publish(completedEvent(1_000L, 30));
 
-        assertThat(auditSink.stages()).containsExactly(MemoryConsolidationAuditStage.SKIPPED_THRESHOLD);
+        assertThat(auditSink.stages()).containsExactly(
+            MemoryConsolidationAuditStage.ELIGIBLE,
+            MemoryConsolidationAuditStage.SKIPPED_THRESHOLD,
+            MemoryConsolidationAuditStage.SUBMITTED
+        );
     }
 
     @Test
@@ -126,7 +131,7 @@ class MemoryConsolidationTurnEndListenerTest {
         new MemoryConsolidationTurnEndListener(
             eventBus,
             new MutableSessionManager("ses_main", "leaf-1"),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             Runnable::run
         ).start();
@@ -152,7 +157,7 @@ class MemoryConsolidationTurnEndListenerTest {
         new MemoryConsolidationTurnEndListener(
             eventBus,
             new MutableSessionManager("ses_main", "leaf-1"),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             new RecordingRunner(),
             Runnable::run,
             auditSink
@@ -180,7 +185,7 @@ class MemoryConsolidationTurnEndListenerTest {
         new MemoryConsolidationTurnEndListener(
             eventBus,
             new MutableSessionManager("ses_main", ""),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             new RecordingRunner(),
             Runnable::run,
             auditSink
@@ -202,7 +207,7 @@ class MemoryConsolidationTurnEndListenerTest {
         new MemoryConsolidationTurnEndListener(
             eventBus,
             new MutableSessionManager("ses_main", "leaf-1"),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             Runnable::run,
             auditSink
@@ -226,7 +231,7 @@ class MemoryConsolidationTurnEndListenerTest {
         new MemoryConsolidationTurnEndListener(
             eventBus,
             new MutableSessionManager("ses_main", "leaf-1"),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             command -> {
                 throw new java.util.concurrent.RejectedExecutionException("closed");
@@ -254,11 +259,14 @@ class MemoryConsolidationTurnEndListenerTest {
                 "ses_main",
                 "leaf-1",
                 List.of(
+                    textMessage("context", "0123456789012345678901234567890123456789"),
+                    assistantToolCall("read", Map.of("path", "README.md"), true, "toolu-0"),
+                    toolResult(false, "toolu-0"),
                     assistantToolCall("edit", Map.of("path", ".ly-pi/memory/project/facts.md"), true),
                     toolResult(false)
                 )
             ),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             Runnable::run,
             auditSink
@@ -283,7 +291,7 @@ class MemoryConsolidationTurnEndListenerTest {
         new MemoryConsolidationTurnEndListener(
             eventBus,
             sessionManager,
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             new RecordingRunner(),
             queued::add,
             auditSink
@@ -309,11 +317,14 @@ class MemoryConsolidationTurnEndListenerTest {
                 "ses_main",
                 "leaf-1",
                 List.of(
+                    textMessage("context", "0123456789012345678901234567890123456789"),
+                    assistantToolCall("read", Map.of("path", "README.md"), true, "toolu-0"),
+                    toolResult(false, "toolu-0"),
                     assistantToolCall("write", Map.of("path", ".ly-pi/memory/project/facts.md"), true),
                     toolResult(true)
                 )
             ),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             Runnable::run,
             auditSink
@@ -336,11 +347,14 @@ class MemoryConsolidationTurnEndListenerTest {
                 "ses_main",
                 "leaf-1",
                 List.of(
+                    textMessage("context", "0123456789012345678901234567890123456789"),
+                    assistantToolCall("read", Map.of("path", "README.md"), true, "toolu-0"),
+                    toolResult(false, "toolu-0"),
                     assistantToolCall("bash", Map.of("command", "printf fact >> .ly-pi/memory/project/facts.md"), true),
                     toolResult(false)
                 )
             ),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             Runnable::run,
             auditSink
@@ -359,11 +373,23 @@ class MemoryConsolidationTurnEndListenerTest {
         RecordingAuditSink auditSink = new RecordingAuditSink();
         List<Runnable> queued = new ArrayList<>();
         Executor queuedExecutor = queued::add;
-        MutableSessionManager sessionManager = new MutableSessionManager("ses_main", "leaf-1");
+        MutableSessionManager sessionManager = new LeafTranscriptSessionManager(
+            "ses_main",
+            "leaf-1",
+            Map.of(
+                "leaf-1",
+                List.of(textMessage("context-1", "0123456789012345678901234567890123456789")),
+                "leaf-2",
+                List.of(
+                    textMessage("context-1", "0123456789012345678901234567890123456789"),
+                    textMessage("context-2", "012345678901234567890123456789")
+                )
+            )
+        );
         new MemoryConsolidationTurnEndListener(
             eventBus,
             sessionManager,
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             queuedExecutor,
             auditSink
@@ -394,7 +420,7 @@ class MemoryConsolidationTurnEndListenerTest {
         new MemoryConsolidationTurnEndListener(
             eventBus,
             new FailingTranscriptSessionManager("ses_main", "leaf-1"),
-            new MemoryConsolidationTrigger(1_200_000L, 30),
+            new MemoryConsolidationTrigger(10, 5, 2),
             runner,
             Runnable::run,
             auditSink
@@ -408,7 +434,7 @@ class MemoryConsolidationTurnEndListenerTest {
             MemoryConsolidationAuditStage.SUBMITTED
         );
         assertThat(auditSink.record(MemoryConsolidationAuditStage.DIRECT_WRITE_DETECTION_FAILED).reason())
-            .contains("direct memory write detection failed");
+            .contains("background memory gate transcript read failed");
     }
 
     @Test
@@ -472,11 +498,15 @@ class MemoryConsolidationTurnEndListenerTest {
     }
 
     private static AgentMessage assistantToolCall(String toolName, Map<String, Object> input, boolean complete) {
+        return assistantToolCall(toolName, input, complete, "toolu-1");
+    }
+
+    private static AgentMessage assistantToolCall(String toolName, Map<String, Object> input, boolean complete, String toolUseId) {
         return new AgentMessage(
             "msg-tool-call",
             MessageRole.ASSISTANT,
             MessageKind.TOOL_CALL,
-            List.of(new ToolCallContentBlock("toolu-1", toolName, "", Map.of("input", input, "complete", complete))),
+            List.of(new ToolCallContentBlock(toolUseId, toolName, "", Map.of("input", input, "complete", complete))),
             NOW,
             Optional.empty(),
             Optional.empty()
@@ -484,11 +514,27 @@ class MemoryConsolidationTurnEndListenerTest {
     }
 
     private static AgentMessage toolResult(boolean error) {
+        return toolResult(error, "toolu-1");
+    }
+
+    private static AgentMessage toolResult(boolean error, String toolUseId) {
         return new AgentMessage(
             "msg-tool-result",
             MessageRole.TOOL_RESULT,
             MessageKind.TOOL_RESULT,
-            List.of(new ToolResultContentBlock("toolu-1", error ? "failed" : "ok", error)),
+            List.of(new ToolResultContentBlock(toolUseId, error ? "failed" : "ok", error)),
+            NOW,
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private static AgentMessage textMessage(String id, String text) {
+        return new AgentMessage(
+            id,
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(new TextContentBlock(text)),
             NOW,
             Optional.empty(),
             Optional.empty()
@@ -501,7 +547,7 @@ class MemoryConsolidationTurnEndListenerTest {
         private final List<AgentMessage> transcript;
 
         private MutableSessionManager(String sessionId, String leafId) {
-            this(sessionId, leafId, List.of());
+            this(sessionId, leafId, List.of(textMessage("context", "0123456789012345678901234567890123456789")));
         }
 
         private MutableSessionManager(String sessionId, String leafId, List<AgentMessage> transcript) {
@@ -575,6 +621,20 @@ class MemoryConsolidationTurnEndListenerTest {
         @Override
         public List<AgentMessage> transcript(String leafId) {
             throw new IllegalStateException("transcript failed");
+        }
+    }
+
+    private static final class LeafTranscriptSessionManager extends MutableSessionManager {
+        private final Map<String, List<AgentMessage>> transcripts;
+
+        private LeafTranscriptSessionManager(String sessionId, String leafId, Map<String, List<AgentMessage>> transcripts) {
+            super(sessionId, leafId);
+            this.transcripts = transcripts;
+        }
+
+        @Override
+        public List<AgentMessage> transcript(String leafId) {
+            return transcripts.getOrDefault(leafId, List.of());
         }
     }
 }
