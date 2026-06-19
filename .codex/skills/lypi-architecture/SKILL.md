@@ -53,7 +53,7 @@ The root `pom.xml` defines these Maven modules:
 - `TurnEndEvent.leafEntryId` is the stable fork point for background consolidation. Runtime listeners must use this event field instead of the mutable `SessionManagerPort.currentView().leafId()`.
 - Background memory consolidation skips only when the main turn has a completed memory write tool call, including conservative Bash command detection, with a successful matching tool result; failed or rejected write attempts must still allow background consolidation.
 - Runtime turn-end listeners must not replay transcripts or run direct-write detection on the synchronous event dispatch path; transcript inspection belongs inside the background executor so the main turn response is not blocked.
-- Background memory consolidation is best-effort and auditable: runtime records threshold/session/direct-write/coalesced states, boot runner adds preflight memory scan context to the hidden turn, then records post-turn lint diagnostics without blocking the main turn.
+- Background memory consolidation is best-effort and auditable: runtime records threshold/session/direct-write/coalesced states, boot runner runs preflight memory scan and injects the scan summary into the hidden settlement turn, then records post-turn lint diagnostics without blocking the main turn.
 - Memory lint is an automatic background diagnostic only; do not expose product slash commands or default user resources for manual `/memory-lint`.
 - Product runtime Skill discovery is under `skills/` and `.ly-pi/skills/`; repository Codex knowledge under `.codex/skills/` is not a product resource root.
 
