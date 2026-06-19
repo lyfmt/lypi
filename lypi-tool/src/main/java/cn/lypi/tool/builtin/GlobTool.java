@@ -4,6 +4,7 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.io.IOException;
@@ -48,27 +49,26 @@ public final class GlobTool extends AbstractFileTool {
         String pattern = input.get("pattern").toString();
         int maxResults = intInput(input, "maxResults", 100, 1, 1_000);
         try {
-            Path root = resolvePath(input, context, "path");
+            Path root = resolvePath(input, context, "path", FileSystemAccessMode.READ);
             if (!Files.exists(root)) {
                 return error(toolUseId, "匹配路径不存在: " + relativePath(root, context));
             }
             progress.progress(ToolProgress.phase("scanning", "扫描文件"));
             List<PathMatcher> matchers = matchers(pattern);
-            List<Path> files;
-            try (var walk = Files.walk(root)) {
-                files = walk.filter(Files::isRegularFile)
-                    .filter(path -> realPathInsideWorkspace(path, context))
-                    .filter(path -> !ignored(path))
-                    .toList();
-            }
-            progress.progress(ToolProgress.counter("files", files.size(), files.size()));
             List<String> matches;
-            matches = files.stream()
+            try (var walk = Files.walk(root)) {
+                List<Path> files = walk.filter(Files::isRegularFile)
+                    .filter(path -> !ignored(path))
+                    .filter(path -> realPathInsideWorkspace(path, context, FileSystemAccessMode.READ))
+                    .toList();
+                progress.progress(ToolProgress.counter("files", files.size(), files.size()));
+                matches = files.stream()
                     .filter(path -> matchesAny(matchers, root.relativize(path)))
                     .map(path -> relativePath(path, context))
                     .sorted()
                     .limit(maxResults)
                     .toList();
+            }
             progress.progress(new ToolProgress(
                 cn.lypi.contracts.common.ToolProgressKind.STATUS,
                 "matched",
@@ -113,7 +113,10 @@ public final class GlobTool extends AbstractFileTool {
         boolean insideLypi = false;
         for (Path part : path) {
             String value = part.toString();
-            if ("target".equals(value)) {
+            if ("target".equals(value)
+                || ".git".equals(value)
+                || ".agents".equals(value)
+                || ".codex".equals(value)) {
                 return true;
             }
             if (".lypi".equals(value)) {

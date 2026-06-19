@@ -10,6 +10,7 @@ import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.DefaultCompactionCoordinator;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.runtime.CompactionResult;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionPlan;
@@ -26,7 +27,7 @@ class DefaultCompactionRuntimeTest {
     void compactBuildsContextAndDelegatesToCoordinator() {
         RecordingAssembler assembler = new RecordingAssembler();
         RecordingCoordinator coordinator = new RecordingCoordinator(new CompactionDecision(
-            new ContextSnapshot(null, java.util.List.of(), null, null, null, null, null),
+            new ContextSnapshot(null, java.util.List.of(), null, null, null, PermissionMode.DEFAULT_EXECUTE, null),
             Optional.of(new CompactionPlan("entry-compact-1", "leaf_3", java.util.List.of("leaf_1"), CompactionKind.MANUAL)),
             true,
             "compacted",
@@ -89,7 +90,7 @@ class DefaultCompactionRuntimeTest {
                 null,
                 null,
                 null,
-                null,
+                PermissionMode.DEFAULT_EXECUTE,
                 new cn.lypi.contracts.context.ContextBudget(10, 128_000, 100_000, 8_192, 16_384, 0, 0, java.math.BigDecimal.ZERO)
             ),
             AgentCoreTestFixtures.emptyResources(),

@@ -105,7 +105,11 @@ class ContextSnapshotRequestFactoryTest {
             MessageKind.TOOL_RESULT,
             List.of(
                 new ToolResultContentBlock("call-1", "file contents", false, Map.of("bytes", 12)),
-                new AttachmentContentBlock("att-1", "image description", "image/png", Map.of("source", "clipboard"))
+                new AttachmentContentBlock("att-1", "image description", "image/png", Map.of(
+                    "source", "clipboard",
+                    "imageUrl", "data:image/png;base64,AAA",
+                    "toolUseId", "toolu_1"
+                ))
             )
         )));
 
@@ -115,7 +119,11 @@ class ContextSnapshotRequestFactoryTest {
             LypiRole.TOOL_RESULT,
             List.of(
                 new LypiToolResultBlock("call-1", "file contents", false, Map.of("bytes", 12)),
-                new LypiAttachmentBlock("att-1", "image description", "image/png", Map.of("source", "clipboard"))
+                new LypiAttachmentBlock("att-1", "image description", "image/png", Map.of(
+                    "source", "clipboard",
+                    "imageUrl", "data:image/png;base64,AAA",
+                    "toolUseId", "toolu_1"
+                ))
             ),
             Map.of("messageId", "msg-tool", "messageKind", "TOOL_RESULT")
         ));

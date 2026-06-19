@@ -11,6 +11,7 @@ import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -64,6 +65,48 @@ class ExecutorRegistryTest {
         assertEquals("host", result.metadata().executorName());
     }
 
+    @Test
+    void routesDisabledProfileRequestsToHostExecutor() {
+        RecordingExecutor host = new RecordingExecutor("host");
+        RecordingExecutor sandbox = new RecordingExecutor("bubblewrap");
+        ExecutorRegistry registry = new ExecutorRegistry(host, sandbox, true);
+
+        ExecutionResult result = registry.execute(request(disabledPolicy()), progress -> {
+        }, () -> false);
+
+        assertEquals(1, host.calls);
+        assertEquals(0, sandbox.calls);
+        assertEquals("host", result.metadata().executorName());
+    }
+
+    @Test
+    void routesExternalProfileRequestsToHostExecutor() {
+        RecordingExecutor host = new RecordingExecutor("host");
+        RecordingExecutor sandbox = new RecordingExecutor("bubblewrap");
+        ExecutorRegistry registry = new ExecutorRegistry(host, sandbox, true);
+
+        ExecutionResult result = registry.execute(request(externalPolicy()), progress -> {
+        }, () -> false);
+
+        assertEquals(1, host.calls);
+        assertEquals(0, sandbox.calls);
+        assertEquals("host", result.metadata().executorName());
+    }
+
+    @Test
+    void keepsAdditionalPermissionRequestsInSandboxExecutor() {
+        RecordingExecutor host = new RecordingExecutor("host");
+        RecordingExecutor sandbox = new RecordingExecutor("bubblewrap");
+        ExecutorRegistry registry = new ExecutorRegistry(host, sandbox, true);
+
+        ExecutionResult result = registry.execute(additionalPermissionsRequest(policy()), progress -> {
+        }, () -> false);
+
+        assertEquals(0, host.calls);
+        assertEquals(1, sandbox.calls);
+        assertEquals("bubblewrap", result.metadata().executorName());
+    }
+
     private ExecutionRequest request(SandboxRuntimePolicy policy) {
         return new ExecutionRequest(
             List.of("bash", "-lc", "true"),
@@ -86,8 +129,46 @@ class ExecutorRegistryTest {
         );
     }
 
+    private ExecutionRequest additionalPermissionsRequest(SandboxRuntimePolicy policy) {
+        return new ExecutionRequest(
+            List.of("bash", "-lc", "true"),
+            Path.of("."),
+            Map.of(),
+            Duration.ofSeconds(1),
+            policy,
+            SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+            Optional.empty()
+        );
+    }
+
     private SandboxRuntimePolicy policy() {
         return new SandboxRuntimePolicy(List.of(), List.of(), List.of(Path.of(".")), List.of(), NetworkMode.DISABLED, false, false);
+    }
+
+    private SandboxRuntimePolicy disabledPolicy() {
+        return new SandboxRuntimePolicy(
+            SandboxRuntimePolicyKind.DISABLED,
+            List.of(Path.of("/")),
+            List.of(),
+            List.of(Path.of("/")),
+            List.of(),
+            NetworkMode.HOST,
+            false,
+            true
+        );
+    }
+
+    private SandboxRuntimePolicy externalPolicy() {
+        return new SandboxRuntimePolicy(
+            SandboxRuntimePolicyKind.EXTERNAL,
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            NetworkMode.HOST,
+            false,
+            true
+        );
     }
 
     private static final class RecordingExecutor implements Executor {

@@ -21,7 +21,7 @@ public final class IdGenerator {
     }
 
     public String entryId() {
-        return id("ent_");
+        return id("entry_");
     }
 
     public String turnId() {

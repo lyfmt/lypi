@@ -18,6 +18,7 @@ import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.BranchSummaryPlan;
 import cn.lypi.contracts.session.ForkRequest;
@@ -74,10 +75,50 @@ class BootMemoryConsolidationRunnerTest {
             MemoryConsolidationAuditStage.RUN_STARTED,
             MemoryConsolidationAuditStage.FORK_CREATED,
             MemoryConsolidationAuditStage.TURN_COMPLETED,
+            MemoryConsolidationAuditStage.LINT_COMPLETED,
             MemoryConsolidationAuditStage.CLEANED
         );
         assertThat(auditSink.record(MemoryConsolidationAuditStage.FORK_CREATED).forkSessionId())
             .isEqualTo(core.request.get().sessionId());
+        assertThat(auditSink.record(MemoryConsolidationAuditStage.LINT_COMPLETED).lintDiagnostics()).isEmpty();
+    }
+
+    @Test
+    void includesPreflightMemoryScanInBackgroundPrompt() throws Exception {
+        Files.writeString(tempDir.resolve("MEMORY.md"), "- [用户偏好](.ly-pi/memory/user-preferences.md)\n");
+        Path memoryDir = Files.createDirectories(tempDir.resolve(".ly-pi/memory"));
+        Files.writeString(memoryDir.resolve("user-preferences.md"), """
+            ---
+            level: L2
+            ---
+            # 用户偏好
+            - 偏好中文说明。
+            """);
+        Files.writeString(memoryDir.resolve("unindexed.md"), """
+            # 未索引主题
+            - 这条缺少 frontmatter，也没有进入索引。
+            """);
+        SessionManagerImpl mainSession = new SessionManagerImpl(tempDir);
+        mainSession.openOrCreate("ses_main");
+        mainSession.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        RecordingAgentCore core = new RecordingAgentCore(TurnStatus.COMPLETED);
+        BootMemoryConsolidationRunner runner = new BootMemoryConsolidationRunner(
+            tempDir,
+            mainSession,
+            new RecordingAgentCoreFactory(core),
+            new MemoryConsolidationPromptFactory(),
+            new RecordingAuditSink()
+        );
+
+        runner.run(new MemoryConsolidationRequest("ses_main", "root"));
+
+        assertThat(core.request.get().userInput())
+            .contains("沉淀前 memory 扫描")
+            .contains("MEMORY.md")
+            .contains(".ly-pi/memory/user-preferences.md")
+            .contains(".ly-pi/memory/unindexed.md")
+            .contains("missing-frontmatter")
+            .contains("missing-index-entry");
     }
 
     @Test
@@ -105,6 +146,38 @@ class BootMemoryConsolidationRunnerTest {
     }
 
     @Test
+    void forkSessionManagerInheritsForkPointRuntimeContext() {
+        PermissionRuntimeState permissionRuntimeState = PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS);
+        ModelSelection model = new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH);
+        SessionManagerImpl mainSession = new SessionManagerImpl(
+            tempDir,
+            model,
+            ThinkingLevel.HIGH,
+            AgentMode.PLAN,
+            permissionRuntimeState
+        );
+        mainSession.openOrCreate("ses_main");
+        mainSession.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
+        RecordingAgentCore core = new RecordingAgentCore(TurnStatus.COMPLETED);
+        RecordingAgentCoreFactory factory = new RecordingAgentCoreFactory(core);
+        BootMemoryConsolidationRunner runner = new BootMemoryConsolidationRunner(
+            tempDir,
+            mainSession,
+            factory,
+            new MemoryConsolidationPromptFactory(),
+            new RecordingAuditSink()
+        );
+
+        runner.run(new MemoryConsolidationRequest("ses_main", "root"));
+
+        SessionContext forkContext = factory.forkContext.get();
+        assertThat(forkContext.model()).isEqualTo(model);
+        assertThat(forkContext.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
+        assertThat(forkContext.mode()).isEqualTo(AgentMode.PLAN);
+        assertThat(forkContext.permissionRuntimeState()).isEqualTo(permissionRuntimeState);
+    }
+
+    @Test
     void cleansTemporarySessionWhenOpeningForkSessionFails() {
         SessionManagerImpl mainSession = new SessionManagerImpl(tempDir);
         mainSession.openOrCreate("ses_main");
@@ -117,7 +190,7 @@ class BootMemoryConsolidationRunnerTest {
             new RecordingAgentCoreFactory(new RecordingAgentCore(TurnStatus.COMPLETED)),
             new MemoryConsolidationPromptFactory(),
             auditSink,
-            cwd -> forkSessionManager
+            (cwd, context) -> forkSessionManager
         );
 
         assertThatThrownBy(() -> runner.run(new MemoryConsolidationRequest("ses_main", "root")))
@@ -161,6 +234,7 @@ class BootMemoryConsolidationRunnerTest {
         private Path cwd;
         private SessionManagerPort sessionManager;
         private final AtomicReference<Path> forkSessionFile = new AtomicReference<>();
+        private final AtomicReference<SessionContext> forkContext = new AtomicReference<>();
 
         private RecordingAgentCoreFactory(RecordingAgentCore core) {
             this.core = core;
@@ -170,6 +244,7 @@ class BootMemoryConsolidationRunnerTest {
         public AgentCorePort create(Path cwd, SessionManagerPort sessionManager) {
             this.cwd = cwd;
             this.sessionManager = sessionManager;
+            forkContext.set(sessionManager.context(sessionManager.currentView().leafId()));
             forkSessionFile.set(sessionManager.currentView().sessionId() == null
                 ? null
                 : cwd.resolve(".ly-pi").resolve("sessions").resolve(sessionManager.currentView().sessionId() + ".jsonl"));

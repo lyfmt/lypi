@@ -1,9 +1,14 @@
 package cn.lypi.tool;
 
 import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
@@ -25,17 +30,17 @@ class MemoryConsolidationToolRuntimeTest {
     Path tempDir;
 
     @Test
-    void snapshotOnlyContainsAllowedTools() {
+    void snapshotPreservesDelegateToolsForPromptCachePrefix() {
         RecordingRuntime delegate = runtime(tempDir);
         MemoryConsolidationToolRuntime runtime = new MemoryConsolidationToolRuntime(
             delegate,
             new MemoryConsolidationWritePolicy(tempDir, tempDir.resolve("home/.ly-pi"))
         );
 
-        assertEquals(List.of("read", "grep", "glob", "edit", "write"),
+        assertEquals(List.of("read", "grep", "glob", "edit", "write", "bash"),
             runtime.snapshot().tools().stream().map(tool -> tool.name()).toList());
         assertTrue(runtime.resolve("read").isPresent());
-        assertFalse(runtime.resolve("bash").isPresent());
+        assertTrue(runtime.resolve("bash").isPresent());
     }
 
     @Test
@@ -95,20 +100,33 @@ class MemoryConsolidationToolRuntimeTest {
     }
 
     @Test
-    void forcesDefaultPermissionModeBeforeDelegating() throws Exception {
+    void preservesCanonicalPermissionRuntimeStateBeforeDelegating() throws Exception {
         java.nio.file.Files.createDirectories(tempDir.resolve(".ly-pi/memory/project"));
         RecordingRuntime delegate = runtime(tempDir);
         MemoryConsolidationToolRuntime runtime = new MemoryConsolidationToolRuntime(
             delegate,
             new MemoryConsolidationWritePolicy(tempDir, tempDir.resolve("home/.ly-pi"))
         );
+        PermissionRuntimeState runtimeState = PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS);
 
         runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of("path", ".ly-pi/memory/project/facts.md"), "msg_1")),
-            TestTools.context(PermissionMode.BYPASS)
+            context(runtimeState)
         );
 
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, delegate.contexts.getFirst().permissionMode());
+        assertEquals(runtimeState, delegate.contexts.getFirst().permissionRuntimeState());
+    }
+
+    private static ContextSnapshot context(PermissionRuntimeState runtimeState) {
+        return new ContextSnapshot(
+            new SystemPrompt("system", List.of(), "hash"),
+            List.of(),
+            new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            runtimeState,
+            null
+        );
     }
 
     private static RecordingRuntime runtime(Path cwd) {

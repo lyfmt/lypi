@@ -32,7 +32,7 @@ public final class CompactSummaryContextBuilder {
             current.model(),
             current.thinkingLevel(),
             current.mode(),
-            current.permissionMode(),
+            current.permissionRuntimeState(),
             estimateBudget(current, messages)
         );
     }

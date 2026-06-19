@@ -66,7 +66,7 @@ session entry 覆盖消息、压缩摘要、分支摘要、模型切换、thinki
 
 ### Agent 内核
 
-`lypi-agent-core` 负责单轮生命周期：构建上下文、调用模型、累积流式输出、识别工具调用、执行工具批次、写回消息，并在成功完成后触发记忆提取挂点。`DefaultTurnExecutor` 只依赖端口，不直接知道终端、具体 Provider 或工具实现。
+`lypi-agent-core` 负责单轮生命周期：构建上下文、调用模型、累积流式输出、识别工具调用、执行工具批次、写回消息，并在成功完成后发布 turn end 事件。`DefaultTurnExecutor` 只依赖端口，不直接知道终端、具体 Provider 或工具实现；当前自动记忆写入由 runtime 的后台 memory consolidation 监听 turn end 后承接。
 
 上下文由 `DefaultContextAssembler` 从会话和资源两侧组装：一边读取当前 session leaf 的回放结果，另一边加载项目资源并生成系统提示词；随后用 `ContextBudgetEstimator` 估算上下文占用，决定是否需要进入摘要规划。
 
@@ -105,12 +105,14 @@ session entry 覆盖消息、压缩摘要、分支摘要、模型切换、thinki
 
 | 类型 | 工具 | 说明 |
 | --- | --- | --- |
-| 文件工具 | `read`、`write`、`edit` | 受路径安全和权限系统约束，输出按上下文预算折叠。 |
+| 文件工具 | `read`、`write`、`edit` | 受路径安全和权限系统约束；`read` 支持带行号文本和小图片附件，输出按上下文预算折叠。 |
 | 搜索工具 | `glob`、`grep` | 优先使用 ripgrep 能力，返回命中统计、分页和结构化结果。 |
 | 执行工具 | `bash` | 先经过 Bash 风险分析和 sandbox 策略，再进入 host 或 Bubblewrap executor。 |
 | 子代理工具 | `spawn_agent`、`list_agents`、`wait_agent`、`read_agent_result`、`read_mailbox`、`accept`、`stash`、`discard`、`continue`、`interrupt` | 把异步任务和 mailbox 操作显式建模为工具调用。 |
 
 MCP 工具接入时会把外部 server、tool schema 和 tool result 映射到内部契约。名称映射由 `McpToolName` 负责，避免外部工具名和内建工具名直接冲突；结果映射会把 MCP 文本、结构化内容和错误统一成 `ToolResult`，供事件、TUI 和上下文预算继续处理。
+
+`read` 工具读取文本文件时返回带行号内容；读取 PNG、JPEG、GIF 或 WEBP 图片时只返回短摘要，并把图片作为模型可见附件传给支持多模态输入的 Provider。第一版会对 PNG/JPEG 尝试尺寸缩放和压缩，GIF/WEBP 只执行大小限制；未知二进制文件会被拒绝，避免把二进制内容当 UTF-8 文本塞进上下文。
 
 工具中断也有契约边界。每个工具可以声明 `InterruptBehavior`；运行时在收到中断后通过 abort signal 通知执行链，并把最终状态归一为 success、error、denied、cancelled 或 interrupted，避免 TUI、session 和模型上下文对同一次工具调用产生不同理解。
 
@@ -128,7 +130,9 @@ Bash 命令会先做静态风险分析，区分低风险、写入、网络、远
 
 命令隔离由 Bubblewrap 执行链承接。构建器会处理只读路径、可写路径、网络隔离、`/tmp`、`/proc`、缺失路径遮蔽、符号链接、受保护元数据目录等边界。大量测试覆盖 `.git`、`.codex`、`.agents`、deny-read、allow-read、allow-write 和 symlink 组合，目标是让策略无法满足时显式失败，而不是静默放行。
 
-权限模型由 `PermissionMode`、`PermissionRule`、`PermissionDecision` 和 `PermissionUpdate` 组成。`DEFAULT_EXECUTE` 对低风险命令更顺滑，对写入、网络和远端变更保持询问；`ACCEPT_EDITS` 和 `BYPASS` 可以放宽默认行为，但仍不能越过硬安全线。显式 `DENY` 总是优先，显式 `ALLOW` 对 Bash 也只在风险静态可知且不是破坏性命令时生效。
+权限模型以 canonical `PermissionRuntimeState` 为中心，包含 approval policy、active permission profile、legacy behavior 和兼容用的 `legacyPermissionMode`。`PermissionMode` 只作为旧配置、旧 JSON 和 UI 展示的兼容入口；运行时判定优先读取 `permissionRuntimeState`。profile 决定文件系统和网络边界，approval policy 决定是否允许进入人工确认；显式 `DENY` 总是优先，显式 `ALLOW` 对 Bash 也只在风险静态可知且不是破坏性命令时生效。
+
+模型可以通过 `request_permissions` 请求临时或会话级 additional permissions，再用 `sandboxPermissions=withAdditionalPermissions` 让本次 Bash 在 managed sandbox 内扩大权限。是否弹出确认由 approval policy 决定；additional permissions 的批准动作仍是标准 review decision（例如 `APPROVED` / `ABORT`），不会引入专用批准枚举。
 
 路径安全检查覆盖文件工具入参、Bash cwd 和 Bash 重定向目标。工具不能通过 `../`、符号链接、重定向或隐藏元数据目录绕过 workspace 边界；当 sandbox 策略无法满足时，执行结果会携带 `retryWith=sandboxPermissions=requireEscalated`，由上层决定是否向用户请求升级，而不是自动提权。
 
@@ -149,13 +153,13 @@ Bash 命令会先做静态风险分析，区分低风险、写入、网络、远
 
 资源加载阶段会扫描用户层和项目层的 memory 文件，去重后生成带来源路径和内容哈希的 `MemorySource`。系统提示词构建阶段会注入 memory 读写纪律：只有经过工具执行、文件读取、测试结果或用户明确确认的信息，才允许沉淀；临时进度、未验证猜测、密钥、日志流水和一次性命令输出不得写入。
 
-agent 单轮正常完成后会进入记忆提取挂点。提取结果使用结构化契约表达候选内容、写入请求、跳过原因和失败原因，并按 `PREFERENCE`、`PROJECT_FACT`、`CORRECTION`、`CONVENTION` 等类型分类。这套契约让后续自动沉淀可以独立演进，即使提取失败也不会改变本轮对话结果。
+agent 单轮正常完成后只发布 `TurnEndEvent`，不在用户可见主链路内直接写 memory。运行时监听 turn end 后在后台 executor 中做 transcript replay、阈值判断、主 agent 直接写 memory 检测和沉淀 runner 调用；即使后台沉淀失败，也不会改变本轮对话结果。`MemoryExtractionWorker` 仍作为遗留同步挂点保留，默认 Boot 装配为 `NoopMemoryExtractionWorker`，当前自动写入不经过同步 extraction 或追加 `memory_write` entry。
 
 长期记忆的写入遵循「No Verification, No Memory」原则：没有证据来源的推断不能进入 memory；一次性进度和临时任务状态不进入 memory；与现有 memory 冲突时优先保留可追溯来源并暴露待人工处理的诊断。`MemoryWriteRequest` 会声明 scope、kind、目标路径和写入条目，写入策略可以限制只能改 memory 文件，避免沉淀流程误写项目代码。
 
-长任务结束后还可以触发 memory consolidation。`MemoryConsolidationTurnEndListener` 根据 turn 时长、工具轮次和 fork point 判断是否提交沉淀任务；提交、跳过、session 不匹配、缺少 fork point、runner 失败等阶段都会写入审计记录。沉淀任务使用独立提示词要求先读取相关 memory、检查重复和冲突，再小幅增量更新。
+长任务结束后还可以触发 memory consolidation。`MemoryConsolidationTurnEndListener` 在 turn end 后提交后台 gate，按 Claude Code session memory 风格检查上下文 token 增长、工具调用数量和自然对话断点；提交、跳过、session 不匹配、缺少 fork point、runner 失败等阶段都会写入审计记录。后台沉淀的工具 schema 对模型保持父 runtime 原样可见，以维持 prompt cache 前缀稳定；执行层仍只允许 `read`、`grep`、`glob`、`edit`、`write`，并用 memory 写路径策略拒绝越权写入。
 
-资源侧也提供 memory lint 入口，用于检查 memory 与 Skill、Prompt Template 等资源的可发现性和冲突诊断。它不是聊天历史压缩，而是长期知识库治理工具。
+memory lint 只作为后台自动诊断运行。沉淀前扫描现有 manifest、topic 和 skill memory 并把摘要注入隐藏沉淀 turn；沉淀后再 best-effort 写入 audit/diagnostics。产品侧不提供主动 `/memory-lint` 命令，也不默认扫描注入 L2 全量内容。
 
 ### 资源系统
 
@@ -218,6 +222,12 @@ mvn -DskipTests package
 
 ```bash
 mvn test
+```
+
+提交前完整验证：
+
+```bash
+mvn verify
 ```
 
 打包后启动：

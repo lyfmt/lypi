@@ -9,7 +9,9 @@ import cn.lypi.contracts.session.LabelEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
+import cn.lypi.contracts.session.PermissionAmendmentEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
@@ -40,6 +42,8 @@ final class SessionLeafSelector {
             && !(entry instanceof ThinkingChangeEntry)
             && !(entry instanceof ModeChangeEntry)
             && !(entry instanceof PermissionModeChangeEntry)
+            && !(entry instanceof PermissionRuntimeStateChangeEntry)
+            && !(entry instanceof PermissionAmendmentEntry)
             && !(entry instanceof SessionInfoEntry)
             && !(entry instanceof LabelEntry)
             && !(entry instanceof CustomEntry);

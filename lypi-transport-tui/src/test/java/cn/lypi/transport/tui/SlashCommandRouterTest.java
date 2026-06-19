@@ -25,7 +25,7 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
-import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
@@ -80,10 +80,14 @@ class SlashCommandRouterTest {
         router.route("/model anthropic/claude-sonnet-4");
 
         ModeChangeEntry mode = assertInstanceOf(ModeChangeEntry.class, session.entries.get(0));
-        PermissionModeChangeEntry permission = assertInstanceOf(PermissionModeChangeEntry.class, session.entries.get(1));
+        PermissionRuntimeStateChangeEntry permission = assertInstanceOf(
+            PermissionRuntimeStateChangeEntry.class,
+            session.entries.get(1)
+        );
         ModelChangeEntry model = assertInstanceOf(ModelChangeEntry.class, session.entries.get(2));
         assertEquals(AgentMode.PLAN, mode.agentMode());
         assertEquals(PermissionMode.ACCEPT_EDITS, permission.permissionMode());
+        assertEquals(PermissionMode.ACCEPT_EDITS, permission.permissionRuntimeState().legacyPermissionMode());
         assertEquals(new ModelSelection("anthropic", "claude-sonnet-4", ThinkingLevel.LOW), model.model());
     }
 
@@ -484,100 +488,7 @@ class SlashCommandRouterTest {
     }
 
     @Test
-    void memoryLintDefaultsToProjectLayers() {
-        RecordingSessionManager session = new RecordingSessionManager(context(
-            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
-            ThinkingLevel.MEDIUM,
-            AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
-        ));
-        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
-
-        SlashCommandResult result = router.route("/memory-lint");
-
-        assertTrue(result.matched());
-        assertFalse(result.consumed());
-        assertEquals("Lint L2,L3 with $memory-lint.", result.prompt().orElseThrow());
-    }
-
-    @Test
-    void memoryLintAcceptsExplicitLayers() {
-        RecordingSessionManager session = new RecordingSessionManager(context(
-            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
-            ThinkingLevel.MEDIUM,
-            AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
-        ));
-        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
-
-        assertEquals("Lint L0,L3 with $memory-lint.", router.route("/memory-lint L0,L3").prompt().orElseThrow());
-        assertEquals("Lint L1,L2 with $memory-lint.", router.route("/memory-lint l1,l2").prompt().orElseThrow());
-    }
-
-    @Test
-    void memoryLintRejectsInvalidLayers() {
-        RecordingSessionManager session = new RecordingSessionManager(context(
-            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
-            ThinkingLevel.MEDIUM,
-            AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
-        ));
-        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
-
-        SlashCommandResult result = router.route("/memory-lint L5");
-
-        assertTrue(result.matched());
-        assertTrue(result.consumed());
-        assertEquals("usage: /memory-lint [L0,L1,L2,L3]", result.message().orElseThrow());
-        assertEquals(List.of(), session.entries);
-    }
-
-    @Test
-    void memoryLintRejectsNamedArgumentsEmptyLayersAndSpaceSeparatedLayers() {
-        RecordingSessionManager session = new RecordingSessionManager(context(
-            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
-            ThinkingLevel.MEDIUM,
-            AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
-        ));
-        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith(memoryLintTemplate()));
-
-        SlashCommandResult unknownNamed = router.route("/memory-lint layers=L1,L2");
-        SlashCommandResult emptyLayers = router.route("/memory-lint ,");
-        SlashCommandResult spaceSeparated = router.route("/memory-lint L1 L2");
-
-        assertTrue(unknownNamed.matched());
-        assertTrue(unknownNamed.consumed());
-        assertEquals("usage: /memory-lint [L0,L1,L2,L3]", unknownNamed.message().orElseThrow());
-        assertTrue(emptyLayers.matched());
-        assertTrue(emptyLayers.consumed());
-        assertEquals("usage: /memory-lint [L0,L1,L2,L3]", emptyLayers.message().orElseThrow());
-        assertTrue(spaceSeparated.matched());
-        assertTrue(spaceSeparated.consumed());
-        assertEquals("usage: /memory-lint [L0,L1,L2,L3]", spaceSeparated.message().orElseThrow());
-        assertEquals(List.of(), session.entries);
-    }
-
-    @Test
-    void memoryLintRequiresPromptTemplate() {
-        RecordingSessionManager session = new RecordingSessionManager(context(
-            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
-            ThinkingLevel.MEDIUM,
-            AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
-        ));
-        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, resourcesWith());
-
-        SlashCommandResult result = router.route("/memory-lint");
-
-        assertTrue(result.matched());
-        assertTrue(result.consumed());
-        assertTrue(result.message().orElseThrow().contains("memory-lint: prompt template memory-lint is unavailable"));
-        assertEquals(List.of(), session.entries);
-    }
-
-    @Test
-    void memoryLintIsTheOnlyMemoryLintSlashCommand() {
+    void memoryLintIsNotASlashCommand() {
         SlashCommandRouter router = new SlashCommandRouter(
             "ses_1",
             Path.of("."),
@@ -587,13 +498,15 @@ class SlashCommandRouterTest {
                 AgentMode.EXECUTE,
                 PermissionMode.DEFAULT_EXECUTE
             )),
-            resourcesWith(memoryLintTemplate())
+            emptyResources()
         );
 
         List<String> commands = router.commandNames();
+        SlashCommandResult result = router.route("/memory-lint");
 
-        assertTrue(commands.contains("/memory-lint"));
+        assertFalse(commands.contains("/memory-lint"));
         assertFalse(commands.contains("/memory"));
+        assertFalse(result.matched());
     }
 
     private static SessionContext context(

@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.security.PermissionOption;
+import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiErrorBlock;
@@ -71,9 +72,13 @@ final class TuiRenderer {
         InputBlock inputBlock = compactRunning(view)
             ? readonlyRuntimeInputBlock("compact 正在进行...", layout)
             : layoutInput(input, cursor, layout);
-        List<String> overlay = overlayLines == null ? List.of() : overlayLines.stream()
+        List<String> permissionOverlay = permissionOverlayLines(view, layout.width());
+        List<String> externalOverlay = overlayLines == null ? List.of() : overlayLines.stream()
             .map(line -> AnsiWidth.truncate(line, layout.width()))
             .toList();
+        List<String> overlay = new ArrayList<>(permissionOverlay.size() + externalOverlay.size());
+        overlay.addAll(permissionOverlay);
+        overlay.addAll(externalOverlay);
         int chromeLineCount = inputBlock.lines().size() + overlay.size() + 1;
         int transcriptLineBudget = Math.max(0, layout.height() - chromeLineCount);
         int effectiveTranscriptBudget = toolOutputExpanded ? transcriptLineBudget : Integer.MAX_VALUE;
@@ -155,16 +160,6 @@ final class TuiRenderer {
 
     private List<String> transcriptLines(TuiViewModel view, int width, boolean toolOutputExpanded, int lineBudget) {
         List<String> lines = transcriptLines(view.blocks(), width, toolOutputExpanded, lineBudget);
-        view.permissionPrompt().ifPresent(prompt -> {
-            appendWithinBudget(lines, wrap("permission " + prompt.toolUseId() + ": " + prompt.reason(), width), lineBudget);
-            if (!prompt.rule().isBlank()) {
-                appendWithinBudget(lines, wrap("rule: " + prompt.rule(), width), lineBudget);
-            }
-            for (PermissionOption option : prompt.options()) {
-                String prefix = option.optionId().equals(prompt.selectedOptionId()) ? "> " : "  ";
-                appendWithinBudget(lines, wrap(prefix + optionLabel(option), width), lineBudget);
-            }
-        });
         view.diffView().ifPresent(diff -> new DiffOverlay(diff)
             .lines()
             .forEach(line -> appendWithinBudget(lines, wrap(line, width), lineBudget)));
@@ -172,6 +167,43 @@ final class TuiRenderer {
             appendWithinBudget(lines, wrap("· " + view.runtimeLine(), width), lineBudget);
         }
         return lines;
+    }
+
+    private List<String> permissionOverlayLines(TuiViewModel view, int width) {
+        if (view.permissionPrompt().isEmpty()) {
+            return List.of();
+        }
+        List<String> lines = new ArrayList<>();
+        PermissionPromptView prompt = view.permissionPrompt().orElseThrow();
+        appendPrefixedMultiline(lines, "permission " + prompt.toolUseId() + ": ", prompt.reason(), width, Integer.MAX_VALUE);
+        if (!prompt.rule().isBlank()) {
+            appendPrefixedMultiline(lines, "rule: ", prompt.rule(), width, Integer.MAX_VALUE);
+        }
+        for (PermissionOption option : prompt.options()) {
+            String prefix = option.optionId().equals(prompt.selectedOptionId()) ? "> " : "  ";
+            appendWithinBudget(lines, wrap(prefix + optionLabel(option), width), Integer.MAX_VALUE);
+        }
+        return lines;
+    }
+
+    private void appendPrefixedMultiline(
+        List<String> lines,
+        String prefix,
+        String text,
+        int width,
+        int lineBudget
+    ) {
+        String safe = text == null ? "" : text;
+        String[] logicalLines = safe.split("\\R", -1);
+        if (logicalLines.length == 0) {
+            appendWithinBudget(lines, wrap(prefix, width), lineBudget);
+            return;
+        }
+        for (int index = 0; index < logicalLines.length; index++) {
+            String logicalLine = logicalLines[index];
+            String rendered = index == 0 ? prefix + logicalLine : logicalLine;
+            appendWithinBudget(lines, wrap(rendered, width), lineBudget);
+        }
     }
 
     private String optionLabel(PermissionOption option) {
@@ -266,7 +298,14 @@ final class TuiRenderer {
     private String statusLine(StatusBarState status, TuiScreen screen, int width) {
         String full = String.join(
             " ",
-            List.of(nullToEmpty(status.sessionId()), nullToEmpty(status.model()), nullToEmpty(status.mode()), nullToEmpty(status.permissionMode()))
+            List.of(
+                nullToEmpty(status.sessionId()),
+                nullToEmpty(status.model()),
+                nullToEmpty(status.mode()),
+                nullToEmpty(status.permissionMode()),
+                nullToEmpty(status.approvalMode()),
+                nullToEmpty(status.activePermissionProfileId())
+            )
         ).trim();
         if (AnsiWidth.displayWidth(full) <= width) {
             return full;

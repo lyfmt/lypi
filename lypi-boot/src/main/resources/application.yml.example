@@ -48,6 +48,48 @@
 #     # 建议：常驻服务保持为空；一次性命令或冒烟测试可通过环境变量传入。
 #     initial-prompt: "${LYPI_INITIAL_PROMPT:}"
 #
+#   permissions:
+#     # 重要性：可选覆盖。Codex 风格权限 profile 入口；新配置优先于 runtime.permission-mode。
+#     # 内置值：:read-only、:workspace、:danger-full-access、:external。
+#     # 建议：日常开发保持 :workspace；只读审查使用 :read-only；全权限自动化需明确评估 hard safety 边界。
+#     default-permissions: :workspace
+#
+#     # 重要性：可选覆盖。审批策略决定运行时是否可以询问用户。
+#     # 可选值：on_request、granular、never；unless_trusted/on_failure 为兼容预留，当前等价于 on_request。
+#     approval-policy:
+#       mode: on_request
+#
+#       # mode=granular 时生效，用于分别控制沙盒提权、规则修订、request_permissions 和 MCP elicitation。
+#       # NOTE: skill-approval 为协议预留字段，当前没有独立生产审批种类。
+#       granular:
+#         sandbox-approval: on_request
+#         rules: on_request
+#         skill-approval: on_request
+#         request-permissions: on_request
+#         mcp-elicitations: on_request
+#
+#     # 重要性：可选扩展。自定义 profile 会由 PermissionProfileConfigCompiler 编译。
+#     # 说明：自定义 id 不得以冒号开头；extends-profile 可继承 :read-only、:workspace 或其他自定义 profile。
+#     profiles:
+#       dev:
+#         description: Developer workspace with cache write and network access
+#         extends-profile: :workspace
+#         workspace-roots:
+#           - /absolute/path/to/extra-workspace
+#         file-system:
+#           kind: restricted
+#           entries:
+#             - path:
+#                 kind: special
+#                 value: :root
+#               access: read
+#             - path:
+#                 kind: exact_path
+#                 value: /tmp/lypi-cache
+#               access: write
+#         network:
+#           mode: enabled
+#
 #   subagent:
 #     # 重要性：可选覆盖。父 Agent 会按该命令启动独立 headless 子进程。
 #     # 默认：从打包运行的当前 lypi-boot jar 自动推导为 java -jar <current-jar> headless-subagent。

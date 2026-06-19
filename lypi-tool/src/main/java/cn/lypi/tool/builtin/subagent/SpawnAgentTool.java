@@ -31,7 +31,8 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
     @Override
     public String description() {
         return "启动一个 headless subagent，并仅返回启动状态。只读调查默认已有 read/grep/glob，"
-            + "不要默认加入 bash；只有用户明确需要 shell 命令，且 permissionMode 允许 headless 非交互执行时才加入 bash。"
+            + "不要默认加入 bash；只有用户明确需要 shell 命令时才加入 bash。"
+            + "permissionRuntimeState 是新协议优先字段，会传递给 child runtime 决定审批和沙盒行为；permissionMode 仅兼容旧入口。"
             + "启动后必须用 wait_agent 等待，再用 read_agent_result 读取结果。";
     }
 
@@ -53,6 +54,8 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
         properties.put("thinking", thinkingLevelSchema());
         properties.put("mode", agentModeSchema());
         properties.put("agentMode", agentModeSchema());
+        properties.put("permissionRuntimeState", permissionRuntimeStateSchema());
+        properties.put("permission_runtime_state", permissionRuntimeStateSchema());
         properties.put("permissionMode", permissionModeSchema());
         properties.put("permission_mode", permissionModeSchema());
         return new JsonSchema(Map.of(
@@ -79,14 +82,14 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
                 cwd(input, context),
                 toolPolicy.effectiveTools(),
                 toolPolicy,
-                permissionMode(input, context),
+                permissionRuntimeState(input),
                 timeoutSeconds(input),
                 optionalStringInput(input, "agentName", "agent_name"),
                 optionalStringInput(input, "role", "agentRole", "agent_role"),
                 model(input),
                 thinkingLevel(input),
                 agentMode(input),
-                value(input, "permissionMode", "permission_mode") != null
+                permissionRuntimeStateSpecified(input)
             ));
             if (result.status() == SubagentRunStatus.FAILED) {
                 return error(context, result.message().orElse("subagent 启动失败。"));

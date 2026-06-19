@@ -4,13 +4,13 @@ import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
-import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
-import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
@@ -18,8 +18,6 @@ import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxMessage;
-import cn.lypi.contracts.subagent.MailboxStatus;
-import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentContinueRequest;
 import cn.lypi.contracts.subagent.SubagentContinueResult;
@@ -49,6 +47,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
     private final DefaultMailboxService mailbox;
     private final MailboxDeliveryService deliveryService;
     private final Clock clock;
+    private final SubagentRunResultProjector resultProjector;
     private final Map<String, RunningAgent> runningByAgentId = new ConcurrentHashMap<>();
     private final Map<String, RunningAgent> agentsByChildSessionId = new ConcurrentHashMap<>();
     private final Map<String, String> agentIdByChildSessionId = new ConcurrentHashMap<>();
@@ -75,6 +74,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         this.mailbox = mailbox;
         this.deliveryService = deliveryService;
         this.clock = clock == null ? Clock.systemUTC() : clock;
+        this.resultProjector = new SubagentRunResultProjector(this.clock, this::randomId);
     }
 
     @Override
@@ -88,9 +88,9 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         Instant now = Instant.now(clock);
         SubagentToolPolicy toolPolicy = request.toolPolicy();
         SessionContext parentContext = parentSession.context(request.parentEntryId());
-        PermissionMode effectivePermissionMode = request.permissionModeSpecified()
-            ? request.permissionMode()
-            : parentContext.permissionMode();
+        PermissionRuntimeState effectivePermissionRuntimeState = request.permissionModeSpecified()
+            ? request.permissionRuntimeState()
+            : parentContext.permissionRuntimeState();
         childSessions.create(new ChildSessionRequest(
             childSessionId,
             request.parentSessionId(),
@@ -103,7 +103,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             Optional.ofNullable(request.model().orElse(parentContext.model())),
             Optional.ofNullable(request.thinkingLevel().orElse(parentContext.thinkingLevel())),
             Optional.ofNullable(request.agentMode().orElse(parentContext.mode())),
-            Optional.ofNullable(effectivePermissionMode),
+            effectivePermissionRuntimeState,
             toolPolicy
         ));
         parentSession.append(new AgentLifecycleEntry(
@@ -128,9 +128,10 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             request.cwd(),
             request.allowedTools(),
             toolPolicy,
-            effectivePermissionMode,
+            effectivePermissionRuntimeState,
             request.timeoutSeconds(),
-            null
+            null,
+            List.of()
         );
         SubagentProcessHandle handle;
         try {
@@ -201,7 +202,9 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         }
         String parentContinueEntryId = "entry_continue_" + randomId();
         RunningAgent running = existing.withParentSpawnEntryId(parentContinueEntryId).withHandle(null);
-        applyContinueContextChanges(existing, request);
+        SessionManagerPort childSession = sessionManagerFactory.open(existing.parentCwd(), existing.childSessionId());
+        PermissionRuntimeState effectivePermissionRuntimeState = effectiveContinuePermissionRuntimeState(childSession, request);
+        applyContinueContextChanges(childSession, request);
         parentSession.append(new AgentLifecycleEntry(
             parentContinueEntryId,
             request.parentEntryId(),
@@ -221,9 +224,10 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             request.cwd() == null ? parentCwd : request.cwd(),
             request.allowedTools(),
             request.toolPolicy(),
-            request.permissionMode(),
+            effectivePermissionRuntimeState,
             request.timeoutSeconds(),
-            HeadlessSubagentRunMode.CONTINUE
+            HeadlessSubagentRunMode.CONTINUE,
+            List.of()
         );
         try {
             SubagentProcessHandle handle = processRunner.start(input);
@@ -246,14 +250,23 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         }
     }
 
-    private void applyContinueContextChanges(RunningAgent existing, SubagentContinueRequest request) {
+    private PermissionRuntimeState effectiveContinuePermissionRuntimeState(
+        SessionManagerPort childSession,
+        SubagentContinueRequest request
+    ) {
+        if (request.permissionRuntimeStateSpecified()) {
+            return request.permissionRuntimeState();
+        }
+        return childSession.context(childSession.currentView().leafId()).permissionRuntimeState();
+    }
+
+    private void applyContinueContextChanges(SessionManagerPort childSession, SubagentContinueRequest request) {
         if (request.model().isEmpty()
             && request.thinkingLevel().isEmpty()
             && request.agentMode().isEmpty()
-            && request.permissionMode() == PermissionMode.DEFAULT_EXECUTE) {
+            && !request.permissionRuntimeStateSpecified()) {
             return;
         }
-        SessionManagerPort childSession = sessionManagerFactory.open(existing.parentCwd(), existing.childSessionId());
         String parentId = childSession.currentView().leafId();
         Instant now = Instant.now(clock);
         if (request.model().isPresent()) {
@@ -271,9 +284,9 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             childSession.append(new ModeChangeEntry(entryId, parentId, request.agentMode().orElseThrow(), "subagent continue mode", now));
             parentId = entryId;
         }
-        if (request.permissionMode() != PermissionMode.DEFAULT_EXECUTE) {
+        if (request.permissionRuntimeStateSpecified()) {
             String entryId = "entry_permission_" + randomId();
-            childSession.append(new PermissionModeChangeEntry(entryId, parentId, request.permissionMode(), "subagent continue permission", now));
+            childSession.append(new PermissionRuntimeStateChangeEntry(entryId, parentId, request.permissionRuntimeState(), now));
         }
     }
 
@@ -287,38 +300,15 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             HeadlessSubagentOutput output = running.handle()
                 .completion()
                 .get(Math.max(0, request.timeoutSeconds()), TimeUnit.SECONDS);
+            complete(running.agentId(), output, null);
             return waitResult(running.agentId(), running.parentSpawnEntryId(), output);
         } catch (TimeoutException exception) {
-            return new SubagentWaitResult(
-                running.agentId(),
-                running.childSessionId(),
-                running.parentSpawnEntryId(),
-                SubagentRunStatus.TIMED_OUT,
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty()
-            );
+            return SubagentWaitResultFactory.timedOut(running);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            return new SubagentWaitResult(
-                running.agentId(),
-                running.childSessionId(),
-                running.parentSpawnEntryId(),
-                SubagentRunStatus.INTERRUPTED,
-                Optional.empty(),
-                Optional.empty(),
-                Optional.of("Interrupted while waiting for subagent")
-            );
+            return SubagentWaitResultFactory.interrupted(running);
         } catch (Exception exception) {
-            return new SubagentWaitResult(
-                running.agentId(),
-                running.childSessionId(),
-                running.parentSpawnEntryId(),
-                SubagentRunStatus.FAILED,
-                Optional.empty(),
-                Optional.empty(),
-                Optional.ofNullable(exception.getMessage())
-            );
+            return SubagentWaitResultFactory.failed(running, exception);
         }
     }
 
@@ -370,7 +360,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             return;
         }
         HeadlessSubagentOutput safeOutput = output == null
-            ? failedOutput(running.childSessionId(), failure)
+            ? SubagentRunResultProjector.failedOutput(running.childSessionId(), failure)
             : output;
         completeStartedAgent(running, safeOutput);
     }
@@ -381,20 +371,8 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         agentIdByChildSessionId.put(running.childSessionId(), running.agentId());
         latestRunIdByChildSessionId.put(running.childSessionId(), running.parentSpawnEntryId());
         SessionManagerPort lifecycleSession = sessionManagerFactory.open(running.parentCwd(), running.parentSessionId());
-        lifecycleSession.append(new AgentLifecycleEntry(
-            "entry_agent_" + randomId(),
-            running.parentSpawnEntryId(),
-            running.agentId(),
-            running.childSessionId(),
-            running.parentSessionId(),
-            lifecycle(safeOutput.status()),
-            Map.of(
-                "status", safeOutput.status().name(),
-                "errorMessage", safeOutput.errorMessage().orElse("")
-            ),
-            Instant.now(clock)
-        ));
-        MailboxMessage message = mailboxMessage(running, safeOutput);
+        lifecycleSession.append(resultProjector.lifecycleEntry(running, safeOutput));
+        MailboxMessage message = resultProjector.mailboxMessage(running, safeOutput);
         mailbox.publish(message);
         deliveryService.tryDeliver(message);
     }
@@ -421,56 +399,22 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
                 .findFirst();
         }
         if (resolvedChildSessionId.isEmpty()) {
-            return failedWaitResult(request, "Subagent is not running and no completed result was found");
+            return SubagentWaitResultFactory.failed(request, "Subagent is not running and no completed result was found");
         }
         String childSessionId = resolvedChildSessionId.get();
         Optional<HeadlessSubagentOutput> output = readResult(childSessionId);
         if (output.isEmpty()) {
-            return failedWaitResult(request, "Subagent is not running and no completed result was found");
+            return SubagentWaitResultFactory.failed(request, "Subagent is not running and no completed result was found");
         }
-        return waitResult(
+        return SubagentWaitResultFactory.fromOutput(
             request.agentId().orElseGet(() -> agentIdByChildSessionId.getOrDefault(childSessionId, "")),
             request.runId().orElseGet(() -> latestRunIdByChildSessionId.getOrDefault(childSessionId, "")),
             output.get()
         );
     }
 
-    private SubagentWaitResult failedWaitResult(SubagentWaitRequest request, String message) {
-        return new SubagentWaitResult(
-            request.agentId().orElse(""),
-            request.childSessionId().orElse(""),
-            request.runId().orElse(""),
-            SubagentRunStatus.FAILED,
-            Optional.empty(),
-            Optional.empty(),
-            Optional.of(message)
-        );
-    }
-
     private SubagentWaitResult waitResult(String agentId, String runId, HeadlessSubagentOutput output) {
-        return new SubagentWaitResult(
-            agentId,
-            output.childSessionId(),
-            runId,
-            output.status(),
-            optionalNonBlank(output.summary()),
-            output.finalEntryId(),
-            output.errorMessage()
-        );
-    }
-
-    private Optional<String> optionalNonBlank(String value) {
-        return value == null || value.isBlank() ? Optional.empty() : Optional.of(value);
-    }
-
-    private HeadlessSubagentOutput failedOutput(String childSessionId, Throwable failure) {
-        return new HeadlessSubagentOutput(
-            childSessionId,
-            SubagentRunStatus.FAILED,
-            "",
-            Optional.empty(),
-            Optional.ofNullable(failure == null ? "Subagent failed" : failure.getMessage())
-        );
+        return SubagentWaitResultFactory.fromOutput(agentId, runId, output);
     }
 
     private void appendInterruptFact(RunningAgent running) {
@@ -487,36 +431,6 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             ),
             Instant.now(clock)
         ));
-    }
-
-    private MailboxMessage mailboxMessage(RunningAgent running, HeadlessSubagentOutput output) {
-        Instant now = Instant.now(clock);
-        return new MailboxMessage(
-            "mail_" + randomId(),
-            running.agentId(),
-            running.childSessionId(),
-            running.parentSessionId(),
-            running.parentSpawnEntryId(),
-            mailboxSummary(output),
-            new SubagentResultRef(
-                running.childSessionId(),
-                output.finalEntryId().orElse(""),
-                Optional.empty(),
-                Optional.of(output.status())
-            ),
-            MailboxStatus.PENDING,
-            now,
-            now
-        );
-    }
-
-    private String mailboxSummary(HeadlessSubagentOutput output) {
-        if (output.summary() != null && !output.summary().isBlank()) {
-            return output.summary();
-        }
-        return output.errorMessage()
-            .filter(message -> !message.isBlank())
-            .orElse(output.status().name());
     }
 
     private SubagentSpawnResult failedSpawn(SubagentSpawnRequest request, String message) {
@@ -542,15 +456,6 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         );
     }
 
-    private String lifecycle(SubagentRunStatus status) {
-        return switch (status) {
-            case SUCCEEDED -> "finished";
-            case INTERRUPTED -> "interrupted";
-            case TIMED_OUT -> "timed_out";
-            case STARTED, RUNNING, FAILED -> "failed";
-        };
-    }
-
     private String randomId() {
         return UUID.randomUUID().toString().replace("-", "");
     }
@@ -560,7 +465,7 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
             + "so the default command can be inferred as: java -jar <current-jar> headless-subagent";
     }
 
-    private record RunningAgent(
+    record RunningAgent(
         String agentId,
         String childSessionId,
         String parentSessionId,

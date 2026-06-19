@@ -31,6 +31,10 @@ final class EntryTreeIndex {
         return byId.isEmpty();
     }
 
+    boolean contains(String entryId) {
+        return byId.containsKey(entryId);
+    }
+
     List<SessionEntry> entries() {
         return List.copyOf(byId.values());
     }
@@ -46,6 +50,14 @@ final class EntryTreeIndex {
         validateAppend(entry);
         byId.put(entry.id(), entry);
         leafId = entry.id();
+    }
+
+    /**
+     * 导入已存在于持久化文件中的 entry，不改变当前进程的 leaf。
+     */
+    void importEntry(SessionEntry entry) {
+        validateAppend(entry);
+        byId.put(entry.id(), entry);
     }
 
     /**

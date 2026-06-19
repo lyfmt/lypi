@@ -50,18 +50,18 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
-    void decideRejectsPathsThatEscapeWorkingDirectory() {
+    void decideRejectsWritesThatEscapeWorkingDirectory() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(
-            rule(PermissionBehavior.ALLOW, "read_file", "*", "allow reads")
+            rule(PermissionBehavior.ALLOW, "write", "*", "allow writes")
         ));
 
         PermissionDecision decision = engine.decide(
-            request("read_file", Map.of("path", "../secret.txt")),
-            context(PermissionMode.BYPASS)
+            request("write", Map.of("path", "../secret.txt")),
+            context(PermissionMode.DEFAULT_EXECUTE)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
     }
 
     @Test
@@ -141,8 +141,8 @@ class DefaultPolicyEngineTest {
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
-        assertThat(decision.message()).contains("越过当前工作目录");
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
+        assertThat(decision.message()).contains("profile");
     }
 
     @Test
@@ -222,8 +222,8 @@ class DefaultPolicyEngineTest {
         assertThat(stdoutRedirect.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
         assertThat(stderrAppendRedirect.behavior()).isEqualTo(PermissionBehavior.ALLOW);
         assertThat(stderrAppendRedirect.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
-        assertThat(compactRedirect.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(compactRedirect.reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+        assertThat(compactRedirect.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(compactRedirect.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
     }
 
     @Test

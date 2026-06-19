@@ -139,21 +139,24 @@ class DefaultResourceLoaderTest {
     }
 
     @Test
-    void loadDiscoversGlobalMemoryIndexButDoesNotScanL1Memories() throws Exception {
+    void loadDiscoversUserMemoryDirectoryButDoesNotScanLegacyMemoriesDirectory() throws Exception {
         Path user = Files.createDirectories(tempDir.resolve("user/.ly-pi"));
         Path project = Files.createDirectories(tempDir.resolve("repo"));
         Files.writeString(project.resolve(".git"), "gitdir: /tmp/repo.git");
 
+        Files.createDirectories(user.resolve("memory"));
         Files.createDirectories(user.resolve("memories"));
         Files.writeString(user.resolve("memory.md"), "L0 index");
-        Files.writeString(user.resolve("memories/guidance.md"), "L1 guidance");
+        Files.writeString(user.resolve("memory/guidance.md"), "L1 guidance");
+        Files.writeString(user.resolve("memories/legacy.md"), "legacy L1 guidance");
 
         ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(user), List.of()).load(project);
 
         assertThat(snapshot.memorySources())
             .extracting(source -> source.path())
             .anySatisfy(path -> assertThat(path).endsWith(Path.of("memory.md")))
-            .noneSatisfy(path -> assertThat(path).endsWith(Path.of("memories", "guidance.md")));
+            .anySatisfy(path -> assertThat(path).endsWith(Path.of("memory", "guidance.md")))
+            .noneSatisfy(path -> assertThat(path).endsWith(Path.of("memories", "legacy.md")));
     }
 
     @Test
@@ -196,17 +199,8 @@ class DefaultResourceLoaderTest {
                     assertThat(skill.source()).isEqualTo(SkillSource.USER);
                     assertThat(skill.skillFile()).isEqualTo(home.resolve(".ly-pi/skills/memory-settlement/SKILL.md").toAbsolutePath().normalize());
                 });
-            assertThat(snapshot.skillIndex().skills())
-                .anySatisfy(skill -> {
-                    assertThat(skill.name()).isEqualTo("memory-lint");
-                    assertThat(skill.source()).isEqualTo(SkillSource.USER);
-                    assertThat(skill.skillFile()).isEqualTo(home.resolve(".ly-pi/skills/memory-lint/SKILL.md").toAbsolutePath().normalize());
-                });
-            assertThat(snapshot.promptTemplates())
-                .anySatisfy(template -> {
-                    assertThat(template.name()).isEqualTo("memory-lint");
-                    assertThat(template.templateBody()).contains("$memory-lint").contains("{{layers}}");
-                });
+            assertThat(snapshot.skillIndex().skills()).noneMatch(skill -> skill.name().equals("memory-lint"));
+            assertThat(snapshot.promptTemplates()).noneMatch(template -> template.name().equals("memory-lint"));
         } finally {
             if (previousHome == null) {
                 properties.remove("user.home");

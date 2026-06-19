@@ -9,8 +9,14 @@ import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
+import cn.lypi.contracts.security.ActivePermissionProfile;
+import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.LegacyPermissionBehavior;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.BranchSummaryEntry;
+import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CustomEntry;
@@ -75,6 +81,29 @@ class SessionManagerReplayTest {
     }
 
     @Test
+    void newSessionHeaderPersistsConfiguredPermissionRuntimeState() {
+        PermissionRuntimeState runtimeState = new PermissionRuntimeState(
+            new ApprovalPolicy(ApprovalMode.NEVER),
+            new ActivePermissionProfile(":read-only"),
+            cn.lypi.contracts.security.PermissionProfiles.readOnly(),
+            new LegacyPermissionBehavior(false, false, true),
+            PermissionMode.DEFAULT_EXECUTE
+        );
+        SessionManager manager = new SessionManagerImpl(
+            tempDir,
+            new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            runtimeState
+        );
+
+        SessionHandle handle = manager.openOrCreate("ses_runtime_header");
+        SessionHeader header = new JsonlSessionStore(tempDir).read(handle.sessionId()).header();
+
+        assertThat(header.initialPermissionRuntimeState()).isEqualTo(runtimeState);
+    }
+
+    @Test
     void reopenedSessionUsesInitialStateFromHeader() {
         ChildSessionService childSessions = new ChildSessionService();
         childSessions.create(new cn.lypi.contracts.session.ChildSessionRequest(
@@ -101,6 +130,38 @@ class SessionManagerReplayTest {
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
         assertThat(context.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
+    }
+
+    @Test
+    void reopenedChildSessionPreservesCanonicalPermissionRuntimeStateFromHeader() {
+        PermissionRuntimeState runtimeState = PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS);
+        ChildSessionService childSessions = new ChildSessionService();
+        childSessions.create(new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            tempDir,
+            tempDir,
+            1,
+            Optional.empty(),
+            Optional.empty(),
+            Optional.of(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.PLAN),
+            runtimeState,
+            cn.lypi.contracts.subagent.SubagentToolPolicy.empty()
+        ));
+        SessionHeader header = new JsonlSessionStore(tempDir).read("ses_child").header();
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_child");
+
+        SessionContext context = manager.context(null);
+
+        assertThat(header.initialPermissionRuntimeState()).isEqualTo(runtimeState);
+        assertThat(header.initialPermissionMode()).contains(PermissionMode.BYPASS);
+        assertThat(context.permissionRuntimeState()).isEqualTo(runtimeState);
+        assertThat(context.permissionRuntimeState().approvalPolicy().mode()).isEqualTo(ApprovalMode.NEVER);
+        assertThat(context.permissionRuntimeState().activePermissionProfile().id()).isEqualTo(":danger-full-access");
     }
 
     @Test

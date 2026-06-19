@@ -72,6 +72,35 @@ class TuiRendererTest {
     }
 
     @Test
+    void statusBarWithApprovalProjectionTruncatesOnNarrowWidth() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState(
+                "ses_1",
+                "gpt-5.4",
+                "EXECUTE",
+                "DEFAULT_EXECUTE",
+                "ON_REQUEST",
+                ":workspace",
+                "",
+                "",
+                "",
+                false
+            ),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(20, 3), "");
+
+        assertTrue(AnsiWidth.displayWidth(lines.getLast()) <= 20);
+        assertFalse(lines.getLast().contains("\n"));
+    }
+
+    @Test
     void statusBarDoesNotRenderApplicationScrollbackCounter() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
@@ -399,7 +428,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void permissionPromptIsRenderedInTranscriptArea() {
+    void permissionPromptRendersAsBottomOverlay() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(5);
         PermissionUpdate rememberUpdate = new PermissionUpdate(
@@ -441,10 +470,83 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(40, 9), "");
 
-        assertEquals("permission toolu_1: Need approval", lines.get(0));
-        assertEquals("rule: bash:npm test", lines.get(1));
-        assertEquals("> 允许一次", lines.get(2));
-        assertEquals("  允许并记住", lines.get(3));
+        assertInputBorder(lines.get(0), 40);
+        assertInputContent(lines.get(1), "> ");
+        assertInputBorder(lines.get(2), 40);
+        assertEquals("permission toolu_1: Need approval", lines.get(3));
+        assertEquals("rule: bash:npm test", lines.get(4));
+        assertEquals("> 允许一次", lines.get(5));
+        assertEquals("  允许并记住", lines.get(6));
+        assertTrue(lines.getLast().contains("ses_1"));
+    }
+
+    @Test
+    void permissionPromptStaysVisibleWhenWorkingLineIsActiveInShortViewport() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(2);
+        PermissionPromptView prompt = new PermissionPromptView(
+            "perm_toolu_1",
+            "toolu_1",
+            "Need approval",
+            "bash:npm test",
+            "allow_once",
+            "escape_cancel",
+            List.of(
+                new PermissionOption("allow_once", PermissionOptionKind.ALLOW_ONCE, "允许一次", "", Optional.empty(), Map.of()),
+                new PermissionOption("escape_cancel", PermissionOptionKind.CANCEL, "取消", "", Optional.empty(), Map.of())
+            ),
+            "allow_once"
+        );
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiMessageBlock("b1", "m1", "assistant", "previous", false)),
+            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            "working (12s)",
+            List.of(),
+            Optional.of(prompt),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 6), "");
+
+        assertTrue(lines.stream().anyMatch(line -> line.contains("permission toolu_1")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("> 允许一次")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("working (12s)")));
+    }
+
+    @Test
+    void multilinePermissionPromptIsSplitIntoFrameLines() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(8);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.of(new PermissionPromptView(
+                "perm_toolu_1",
+                "toolu_1",
+                "REQUEST_PERMISSIONS\nNeed network\ndecisions: APPROVED, DENIED",
+                "filesystem=UNRESTRICTED\nnetwork=ENABLED",
+                "approved",
+                "abort",
+                List.of(
+                    new PermissionOption("approved", PermissionOptionKind.ALLOW_ONCE, "Approve", "", Optional.empty(), Map.of()),
+                    new PermissionOption("abort", PermissionOptionKind.CANCEL, "Abort", "", Optional.empty(), Map.of())
+                ),
+                "approved"
+            )),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(80, 12), "");
+
+        assertTrue(lines.stream().noneMatch(line -> line.contains("\n")));
+        int promptStart = lines.indexOf("permission toolu_1: REQUEST_PERMISSIONS");
+        assertTrue(promptStart >= 0, "permission prompt should render in the bottom overlay");
+        assertEquals("Need network", lines.get(promptStart + 1));
+        assertEquals("decisions: APPROVED, DENIED", lines.get(promptStart + 2));
+        assertEquals("rule: filesystem=UNRESTRICTED", lines.get(promptStart + 3));
+        assertEquals("network=ENABLED", lines.get(promptStart + 4));
+        assertEquals("> Approve", lines.get(promptStart + 5));
     }
 
     @Test

@@ -6,6 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.FileSystemAccessMode;
+import cn.lypi.contracts.security.FileSystemPath;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -14,6 +19,7 @@ import java.util.List;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -89,7 +95,62 @@ class WriteToolTest {
         );
     }
 
+    @Test
+    void writesOutsideCwdWhenAdditionalPermissionAllowsWrite(@TempDir Path outsideDir) throws Exception {
+        WriteTool tool = new WriteTool();
+        Path outsideFile = outsideDir.resolve("a.txt");
+
+        ToolResult<String> result = tool.execute(
+            Map.of("path", outsideFile.toString(), "content", "approved"),
+            context(additionalFileSystem(outsideDir, FileSystemAccessMode.WRITE)),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals("approved", Files.readString(outsideFile));
+        assertTrue(result.output().contains(outsideFile.toString()));
+    }
+
+    @Test
+    void readOnlyAdditionalPermissionDoesNotAllowOutsideWrite(@TempDir Path outsideDir) {
+        WriteTool tool = new WriteTool();
+        Path outsideFile = outsideDir.resolve("a.txt");
+
+        ToolResult<String> result = tool.execute(
+            Map.of("path", outsideFile.toString(), "content", "blocked"),
+            context(additionalFileSystem(outsideDir, FileSystemAccessMode.READ)),
+            message -> {
+            }
+        );
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("越过当前工作目录"));
+    }
+
     private ToolUseContext context() {
         return new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("toolUseId", "toolu_1"));
+    }
+
+    private ToolUseContext context(AdditionalPermissionProfile additionalPermissions) {
+        return new ToolUseContext(
+            "ses_1",
+            "msg_1",
+            tempDir,
+            Map.of(
+                "toolUseId", "toolu_1",
+                "additionalPermissions", additionalPermissions,
+                "approvedAdditionalPermissions", true
+            )
+        );
+    }
+
+    private AdditionalPermissionProfile additionalFileSystem(Path path, FileSystemAccessMode accessMode) {
+        return new AdditionalPermissionProfile(
+            Optional.of(FileSystemPermissionPolicy.restricted(List.of(
+                new FileSystemPermissionEntry(FileSystemPath.exactPath(path.toString()), accessMode)
+            ))),
+            Optional.empty()
+        );
     }
 }

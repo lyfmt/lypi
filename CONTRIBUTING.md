@@ -40,8 +40,16 @@ cd .worktrees/worktree-xxxxx
 4. 提交前运行：
 
 ```bash
-mvn test
+mvn verify
 ```
+
+局部开发时可以先运行模块级测试，例如：
+
+```bash
+mvn -pl lypi-tool -am test
+```
+
+但提交前以完整 `mvn verify` 为准。
 
 5. 推送开发分支：
 
@@ -54,9 +62,10 @@ git push -u origin feature/xxxxx
 
 ## CI/CD 规则
 
-- PR 到 `dev` 或 `master` 时必须运行 Maven CI。
-- 推送到 `dev` 或 `master` 时必须运行 Maven CI。
-- `master` 推送或手动触发时会构建 Maven 包并上传构建产物。
+- PR 到 `dev` 或 `master` 时必须运行 Maven verify、脚本 lint、workflow lint 和依赖审查。
+- 推送到 `dev` 或 `master` 时必须运行 Maven verify、脚本 lint 和 workflow lint。
+- `master` 推送或手动触发时会构建 Maven 包，执行 boot jar headless 空启动冒烟，并上传构建产物。
+- Dependabot 每周检查 GitHub Actions 和 Maven 依赖更新，目标分支为 `dev`。
 
 ## 忽略规则
 
@@ -67,4 +76,3 @@ git push -u origin feature/xxxxx
 - `worktree-*/`
 - `target/`
 - `**/target/`
-

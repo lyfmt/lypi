@@ -23,6 +23,10 @@ import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.FileSystemPermissionEntry;
+import cn.lypi.contracts.security.FileSystemPermissionPolicy;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -500,20 +504,68 @@ public final class TuiEventReducer {
     }
 
     private void reducePermissionRequest(PermissionRequestEvent event) {
-        String rule = PermissionOverlay.formatRule(event.policyDecision());
+        String rule = permissionRuleLine(event);
         if (rule.isBlank()) {
             rule = event.defaultOptionId();
         }
         state.permissionPrompt(new PermissionPromptView(
             event.requestId(),
             event.toolUseId(),
-            event.message(),
+            permissionReasonLine(event),
             rule,
             event.defaultOptionId(),
             event.cancelOptionId(),
             event.options(),
             event.defaultOptionId()
         ));
+    }
+
+    private String permissionReasonLine(PermissionRequestEvent event) {
+        StringBuilder reason = new StringBuilder();
+        if (event.approvalKind() == cn.lypi.contracts.security.ApprovalKind.REQUEST_PERMISSIONS) {
+            appendLine(reason, event.approvalKind().name());
+        }
+        appendLine(reason, event.message());
+        if (event.approvalKind() == cn.lypi.contracts.security.ApprovalKind.REQUEST_PERMISSIONS) {
+            String decisions = PermissionOverlay.formatReviewDecisions(event.availableDecisions());
+            if (!decisions.isBlank()) {
+                appendLine(reason, "decisions: " + decisions);
+            }
+        }
+        return reason.toString();
+    }
+
+    private String permissionRuleLine(PermissionRequestEvent event) {
+        StringBuilder rule = new StringBuilder();
+        appendLine(rule, PermissionOverlay.formatRule(event.policyDecision()));
+        if (event.approvalKind() == cn.lypi.contracts.security.ApprovalKind.REQUEST_PERMISSIONS) {
+            event.additionalPermissions()
+                .map(this::formatAdditionalPermissions)
+                .filter(text -> !text.isBlank())
+                .ifPresent(text -> appendLine(rule, text));
+        }
+        return rule.toString();
+    }
+
+    private String formatAdditionalPermissions(AdditionalPermissionProfile profile) {
+        StringBuilder builder = new StringBuilder();
+        profile.fileSystem()
+            .ifPresent(policy -> appendLine(builder, formatFileSystemPermissionPolicy(policy)));
+        profile.network()
+            .map(NetworkPermissionPolicy::mode)
+            .ifPresent(mode -> appendLine(builder, "network=" + mode.name()));
+        return builder.toString();
+    }
+
+    private String formatFileSystemPermissionPolicy(FileSystemPermissionPolicy policy) {
+        StringBuilder builder = new StringBuilder("filesystem=" + policy.kind().name());
+        for (FileSystemPermissionEntry entry : policy.entries()) {
+            builder.append('\n')
+                .append(entry.access().name())
+                .append(' ')
+                .append(entry.path().value());
+        }
+        return builder.toString();
     }
 
     private void reducePermissionDecision(PermissionDecisionEvent event) {

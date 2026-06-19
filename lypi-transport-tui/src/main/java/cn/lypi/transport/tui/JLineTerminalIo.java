@@ -1,10 +1,14 @@
 package cn.lypi.transport.tui;
 
 import java.io.IOException;
+import java.io.IOError;
 import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
 
 final class JLineTerminalIo implements TerminalIo {
+    private static final int FALLBACK_WIDTH = 80;
+    private static final int FALLBACK_HEIGHT = 24;
+
     private final Terminal terminal;
 
     JLineTerminalIo(Terminal terminal) {
@@ -29,12 +33,20 @@ final class JLineTerminalIo implements TerminalIo {
 
     @Override
     public int width() {
-        return terminal.getWidth();
+        try {
+            return Math.max(1, terminal.getWidth());
+        } catch (IOError | RuntimeException error) {
+            return FALLBACK_WIDTH;
+        }
     }
 
     @Override
     public int height() {
-        return terminal.getHeight();
+        try {
+            return Math.max(1, terminal.getHeight());
+        } catch (IOError | RuntimeException error) {
+            return FALLBACK_HEIGHT;
+        }
     }
 
     @Override

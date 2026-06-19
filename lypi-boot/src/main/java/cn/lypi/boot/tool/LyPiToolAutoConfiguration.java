@@ -6,15 +6,21 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.MailboxPort;
+import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
+import cn.lypi.contracts.security.PermissionProfileConfig;
+import cn.lypi.contracts.security.PermissionProfileSelection;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
+import cn.lypi.security.PermissionProfileConfigCompiler;
 import cn.lypi.tool.BlockingPermissionGate;
 import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.EventPublishingPermissionGate;
-import cn.lypi.tool.FilePermissionUpdateStore;
+import cn.lypi.tool.FilePermissionAmendmentStore;
+import cn.lypi.tool.PermissionUpdateStore;
 import cn.lypi.tool.FilteredToolRuntime;
 import cn.lypi.tool.MemoryConsolidationToolRuntime;
 import cn.lypi.tool.MemoryConsolidationWritePolicy;
@@ -29,15 +35,18 @@ import cn.lypi.tool.mcp.McpToolAdapter;
 import cn.lypi.tool.mcp.McpToolResultMapper;
 import cn.lypi.tool.mcp.stdio.StdioMcpClient;
 import cn.lypi.tool.shell.BubblewrapExecutor;
-import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.ExecutorRegistry;
 import cn.lypi.tool.shell.HostExecutor;
+import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import cn.lypi.transport.headless.HeadlessTransport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -48,7 +57,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 
 @AutoConfiguration
-@EnableConfigurationProperties(LyPiToolProperties.class)
+@EnableConfigurationProperties({LyPiToolProperties.class, LyPiPermissionsProperties.class})
 public class LyPiToolAutoConfiguration {
     /**
      * 创建默认宿主机命令执行器。
@@ -74,13 +83,54 @@ public class LyPiToolAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(SandboxPolicyResolver.class)
-    public SandboxPolicyResolver sandboxPolicyResolver(LyPiToolProperties properties) {
-        LyPiToolProperties.SandboxProperties sandbox = properties.getSandbox();
-        return new DefaultSandboxPolicyResolver(new SandboxPolicyOptions(
-            sandbox.getNetworkMode(),
+    public SandboxPolicyResolver sandboxPolicyResolver(
+        LyPiToolProperties toolProperties,
+        PermissionProfileSelection profileSelection
+    ) {
+        LyPiToolProperties.SandboxProperties sandbox = toolProperties.getSandbox();
+        return new PermissionProfileSandboxPolicyResolver(profileSelection.permissionProfile(), new SandboxPolicyOptions(
+            NetworkMode.DISABLED,
             sandbox.isFailIfUnavailable(),
             sandbox.isEnabled() && sandbox.isAutoAllowBashIfSandboxed()
         ));
+    }
+
+    /**
+     * 创建权限 profile 配置编译器。
+     */
+    @Bean
+    @ConditionalOnMissingBean(PermissionProfileConfigCompiler.class)
+    public PermissionProfileConfigCompiler permissionProfileConfigCompiler() {
+        return new PermissionProfileConfigCompiler();
+    }
+
+    /**
+     * 创建启动期共享的权限 profile 编译结果。
+     *
+     * NOTE: session runtime state 和 Bash sandbox 投影必须消费同一份编译结果。
+     */
+    @Bean
+    @ConditionalOnMissingBean(PermissionProfileSelection.class)
+    public PermissionProfileSelection permissionProfileSelection(
+        LyPiToolProperties toolProperties,
+        LyPiPermissionsProperties permissionsProperties,
+        PermissionProfileConfigCompiler profileConfigCompiler
+    ) {
+        LyPiToolProperties.SandboxProperties sandbox = toolProperties.getSandbox();
+        if (permissionsProperties.hasCustomProfileConfig() || sandbox.getNetworkMode() != NetworkMode.HOST) {
+            return profileConfigCompiler.compile(
+                permissionsProperties.profileConfigs(),
+                permissionsProperties.getDefaultPermissions()
+            );
+        }
+        PermissionProfileConfig legacyWorkspaceNetwork = new PermissionProfileConfig(
+            "Legacy lypi.tool.sandbox.network-mode=host compatibility profile",
+            Optional.of(":workspace"),
+            List.of(),
+            Optional.empty(),
+            Optional.of(NetworkPermissionPolicy.enabled())
+        );
+        return profileConfigCompiler.compile(Map.of("legacy-workspace-network", legacyWorkspaceNetwork), "legacy-workspace-network");
     }
 
     /**
@@ -172,7 +222,7 @@ public class LyPiToolAutoConfiguration {
                     securityRuntime,
                     runtimeResponseGate,
                     runtimePromptPort,
-                    new FilePermissionUpdateStore(runtimeCwd)
+                    new FilePermissionAmendmentStore(runtimeCwd)
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
                 AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
@@ -283,7 +333,7 @@ public class LyPiToolAutoConfiguration {
         SecurityRuntimePort securityRuntime,
         PermissionResponseGate responseGate,
         PermissionPromptPort promptPort,
-        FilePermissionUpdateStore permissionUpdateStore
+        PermissionUpdateStore permissionUpdateStore
     ) {
         if (eventBus != null && responseGate != null) {
             return new DefaultToolRuntime(

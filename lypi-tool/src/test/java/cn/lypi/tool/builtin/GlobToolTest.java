@@ -1,12 +1,14 @@
 package cn.lypi.tool.builtin;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.nio.file.Files;
@@ -79,6 +81,63 @@ class GlobToolTest {
         assertFalse(result.isError());
         assertTrue(result.output().contains("source.txt"));
         assertFalse(result.output().contains(".lypi/sessions/session_1.jsonl"));
+    }
+
+    @Test
+    void ignoresGitMetadataByDefault() throws Exception {
+        Files.createDirectories(tempDir.resolve(".git/hooks"));
+        Files.writeString(tempDir.resolve(".git/config"), "config");
+        Files.writeString(tempDir.resolve(".git/hooks/pre-commit.sample"), "hook");
+        Files.writeString(tempDir.resolve("source.txt"), "source");
+        GlobTool tool = new GlobTool();
+
+        ToolResult<String> result = tool.execute(Map.of("pattern", "**/*"), context(), message -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("source.txt"));
+        assertFalse(result.output().contains(".git/config"));
+        assertFalse(result.output().contains(".git/hooks/pre-commit.sample"));
+    }
+
+    @Test
+    void returnsQuicklyWhenScanningSmallWorktreeWithGitMetadata() throws Exception {
+        Files.createDirectories(tempDir.resolve(".worktrees/weather-card/.git/hooks"));
+        Files.writeString(tempDir.resolve(".worktrees/weather-card/.git/config"), "config");
+        Files.writeString(tempDir.resolve(".worktrees/weather-card/.git/hooks/pre-commit.sample"), "hook");
+        Files.writeString(tempDir.resolve(".worktrees/weather-card/index.html"), "<html></html>");
+        Files.writeString(tempDir.resolve(".worktrees/weather-card/main.js"), "console.log('weather');");
+        Files.writeString(tempDir.resolve(".gitignore"), ".worktrees/");
+        GlobTool tool = new GlobTool();
+
+        assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
+            ToolResult<String> first = tool.execute(Map.of(
+                "pattern", "*",
+                "path", tempDir.resolve(".worktrees/weather-card").toString(),
+                "maxResults", 200
+            ), context(), message -> {
+            });
+            ToolResult<String> second = tool.execute(Map.of(
+                "pattern", "**/*",
+                "path", tempDir.resolve(".worktrees/weather-card").toString(),
+                "maxResults", 200
+            ), context(), message -> {
+            });
+            ToolResult<String> third = tool.execute(Map.of(
+                "pattern", ".gitignore",
+                "path", tempDir.toString(),
+                "maxResults", 50
+            ), context(), message -> {
+            });
+
+            assertFalse(first.isError());
+            assertFalse(second.isError());
+            assertFalse(third.isError());
+            assertTrue(first.output().contains(".worktrees/weather-card/index.html"));
+            assertTrue(second.output().contains(".worktrees/weather-card/main.js"));
+            assertTrue(third.output().contains(".gitignore"));
+            assertFalse(second.output().contains(".git/config"));
+        });
     }
 
     @Test

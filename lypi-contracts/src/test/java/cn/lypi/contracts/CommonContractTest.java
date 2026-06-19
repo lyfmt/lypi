@@ -46,7 +46,7 @@ class CommonContractTest {
 
         assertAll(
             () -> assertTrue(generator.sessionId().startsWith("ses_")),
-            () -> assertTrue(generator.entryId().startsWith("ent_")),
+            () -> assertTrue(generator.entryId().startsWith("entry_")),
             () -> assertTrue(generator.turnId().startsWith("turn_")),
             () -> assertTrue(generator.messageId().startsWith("msg_")),
             () -> assertTrue(generator.toolUseId().startsWith("toolu_")),
@@ -158,6 +158,7 @@ class CommonContractTest {
             () -> assertMethod(SecurityRuntimePort.class, "decide", 2),
             () -> assertMethod(ResourceRuntimePort.class, "load", 1),
             () -> assertMethod(ResourceRuntimePort.class, "buildSystemPrompt", 1),
+            () -> assertMethod(ResourceRuntimePort.class, "buildSystemPrompt", 2),
             () -> assertMethod(AgentCorePort.class, "execute", 1),
             () -> assertMethod(AgentCenterPort.class, "spawn", 1),
             () -> assertMethod(AgentCenterPort.class, "interrupt", 1),

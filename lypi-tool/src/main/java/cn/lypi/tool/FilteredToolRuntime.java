@@ -87,6 +87,11 @@ public final class FilteredToolRuntime implements ToolRuntimePort {
         return List.copyOf(results);
     }
 
+    @Override
+    public void clearTurnState(ToolRuntimeInvocation invocation) {
+        delegate.clearTurnState(invocation);
+    }
+
     private boolean isAllowed(String canonicalName) {
         return canonicalName != null && effectiveTools.contains(canonicalName);
     }

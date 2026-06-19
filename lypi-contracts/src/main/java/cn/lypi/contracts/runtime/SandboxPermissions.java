@@ -4,7 +4,8 @@ import java.util.Locale;
 
 public enum SandboxPermissions {
     USE_DEFAULT("useDefault"),
-    REQUIRE_ESCALATED("requireEscalated");
+    REQUIRE_ESCALATED("requireEscalated"),
+    WITH_ADDITIONAL_PERMISSIONS("withAdditionalPermissions");
 
     private final String toolValue;
 

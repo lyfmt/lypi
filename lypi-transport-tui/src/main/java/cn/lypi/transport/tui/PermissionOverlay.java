@@ -3,8 +3,10 @@ package cn.lypi.transport.tui;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.ReviewDecision;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 final class PermissionOverlay {
     private final List<PermissionOption> options;
@@ -61,6 +63,15 @@ final class PermissionOverlay {
         return decision.suggestedUpdate()
             .map(update -> formatPermissionRule(update.rule()))
             .orElse("");
+    }
+
+    static String formatReviewDecisions(List<ReviewDecision> decisions) {
+        if (decisions == null || decisions.isEmpty()) {
+            return "";
+        }
+        return decisions.stream()
+            .map(ReviewDecision::name)
+            .collect(Collectors.joining(", "));
     }
 
     private void ensureSelectedVisible() {

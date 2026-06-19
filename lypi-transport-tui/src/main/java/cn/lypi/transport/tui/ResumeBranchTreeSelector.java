@@ -167,6 +167,7 @@ final class ResumeBranchTreeSelector {
             && !(entry instanceof ThinkingChangeEntry)
             && !(entry instanceof cn.lypi.contracts.session.ModeChangeEntry)
             && !(entry instanceof cn.lypi.contracts.session.PermissionModeChangeEntry)
+            && !(entry instanceof cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry)
             && !(entry instanceof cn.lypi.contracts.session.SessionInfoEntry)
             && !(entry instanceof cn.lypi.contracts.session.LabelEntry)
             && !(entry instanceof cn.lypi.contracts.session.CustomEntry);

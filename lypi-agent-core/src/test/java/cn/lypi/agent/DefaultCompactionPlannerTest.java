@@ -5,6 +5,7 @@ import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.prompt.SystemPrompt;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CompactionPlan;
@@ -176,7 +177,7 @@ class DefaultCompactionPlannerTest {
             null,
             null,
             null,
-            null,
+            PermissionMode.DEFAULT_EXECUTE,
             new ContextBudget(101, 128_000, 100, 8_192, 16_384, 0, 0, BigDecimal.ZERO)
         );
     }

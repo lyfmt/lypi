@@ -10,6 +10,12 @@ import cn.lypi.contracts.memory.MemoryScope;
 import cn.lypi.contracts.resource.ContextFile;
 import cn.lypi.contracts.resource.MemorySource;
 import cn.lypi.contracts.resource.ResourceSnapshot;
+import cn.lypi.contracts.security.ActivePermissionProfile;
+import cn.lypi.contracts.security.ApprovalMode;
+import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.LegacyPermissionBehavior;
+import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.skill.SkillDescriptor;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.skill.SkillSource;
@@ -83,6 +89,9 @@ class DefaultSystemPromptBuilderTest {
         assertThat(prompt.content()).contains("长任务");
         assertThat(prompt.content()).contains("重要纠错");
         assertThat(prompt.content()).contains("L0: `~/.ly-pi/memory.md` 始终注入");
+        assertThat(prompt.content()).contains("L1: `~/.ly-pi/memory/*` 不自动注入");
+        assertThat(prompt.content()).contains("L1 `~/.ly-pi/memory/*`");
+        assertThat(prompt.content()).doesNotContain("~/.ly-pi/memories");
         assertThat(prompt.content()).contains("根据 L0 索引按需读取 L1");
         assertThat(prompt.content()).contains("L2: `<cwd>/.ly-pi/memory.md` 或项目根 `MEMORY.md` 不自动注入");
         assertThat(prompt.content()).contains("L3: `<cwd>/.ly-pi/skills/*`");
@@ -127,6 +136,30 @@ class DefaultSystemPromptBuilderTest {
     }
 
     @Test
+    void buildIncludesCodexStylePermissionInstructionsFromRuntimeState() {
+        PermissionRuntimeState runtimeState = new PermissionRuntimeState(
+            new ApprovalPolicy(ApprovalMode.ON_FAILURE),
+            new ActivePermissionProfile("project-dev", Optional.of(":workspace")),
+            cn.lypi.contracts.security.PermissionProfiles.workspace(),
+            new LegacyPermissionBehavior(false, false, false),
+            PermissionMode.ACCEPT_EDITS
+        );
+
+        SystemPrompt prompt = new DefaultSystemPromptBuilder().build(emptySnapshot(), runtimeState);
+
+        assertThat(prompt.content()).contains("## Permissions");
+        assertThat(prompt.content()).contains("approval policy: ON_FAILURE");
+        assertThat(prompt.content()).contains("active sandbox profile: project-dev");
+        assertThat(prompt.content()).contains("request_permissions");
+        assertThat(prompt.content()).contains("strictAutoReview");
+        assertThat(prompt.content()).contains("sandboxPermissions=requireEscalated");
+        assertThat(prompt.content()).contains("sandboxPermissions=withAdditionalPermissions");
+        assertThat(prompt.content()).contains("approval policy decides whether a prompt is shown");
+        assertThat(prompt.content()).doesNotContain("ACCEPT_EDITS");
+        assertThat(prompt.sourceNames()).contains("permission-runtime-state");
+    }
+
+    @Test
     void buildDoesNotExposeOtherMemorySourcesInPrompt() {
         ResourceSnapshot snapshot = new ResourceSnapshot(
             List.of(),
@@ -148,5 +181,16 @@ class DefaultSystemPromptBuilderTest {
         assertThat(prompt.content()).doesNotContain(".ly-pi/memory/project/facts.md");
         assertThat(prompt.content()).doesNotContain("sha256:project");
         assertThat(prompt.content()).doesNotContain("project facts");
+    }
+
+    private ResourceSnapshot emptySnapshot() {
+        return new ResourceSnapshot(
+            List.of(),
+            List.of(),
+            new SkillIndex(List.of(), List.of()),
+            List.of(),
+            List.of(),
+            List.of()
+        );
     }
 }

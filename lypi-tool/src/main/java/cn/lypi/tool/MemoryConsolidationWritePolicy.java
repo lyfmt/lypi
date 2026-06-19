@@ -12,7 +12,7 @@ public final class MemoryConsolidationWritePolicy {
     private final Path cwd;
     private final Path userRoot;
     private final Path userMemoryIndex;
-    private final Path userMemories;
+    private final Path userMemoryDirectory;
     private final Path projectMemoryFile;
     private final Path projectRootMemory;
     private final Path projectMemoryDirectory;
@@ -26,7 +26,7 @@ public final class MemoryConsolidationWritePolicy {
         this.cwd = normalize(Objects.requireNonNull(cwd, "cwd must not be null"));
         this.userRoot = normalize(Objects.requireNonNull(userRoot, "userRoot must not be null"));
         this.userMemoryIndex = this.userRoot.resolve("memory.md").normalize();
-        this.userMemories = this.userRoot.resolve("memories").normalize();
+        this.userMemoryDirectory = this.userRoot.resolve("memory").normalize();
         this.projectMemoryFile = this.cwd.resolve("MEMORY.md").normalize();
         this.projectRootMemory = this.cwd.resolve(".ly-pi").resolve("memory.md").normalize();
         this.projectMemoryDirectory = this.cwd.resolve(".ly-pi").resolve("memory").normalize();
@@ -55,8 +55,8 @@ public final class MemoryConsolidationWritePolicy {
         if (path.equals(userMemoryIndex)) {
             return userMemoryIndex.getParent();
         }
-        if (startsBelow(path, userMemories)) {
-            return userMemories;
+        if (startsBelow(path, userMemoryDirectory)) {
+            return userMemoryDirectory;
         }
         if (path.equals(projectMemoryFile)) {
             return projectMemoryFile.getParent();

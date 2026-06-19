@@ -141,6 +141,8 @@ final class TuiRenderState {
             modelLabel(runtimeState),
             currentMode(),
             enumLabel(runtimeState.permissionMode()),
+            approvalModeLabel(runtimeState),
+            activePermissionProfileId(runtimeState),
             pathLabel(runtimeState.cwd()),
             valueOrEmpty(runtimeState.currentBranchLeafId()),
             budgetLabel(runtimeState),
@@ -230,6 +232,8 @@ final class TuiRenderState {
             statusBar.model(),
             statusBar.mode(),
             statusBar.permissionMode(),
+            statusBar.approvalMode(),
+            statusBar.activePermissionProfileId(),
             statusBar.cwd(),
             statusBar.branchLeafId(),
             statusBar.budget(),
@@ -244,6 +248,8 @@ final class TuiRenderState {
             event.model() == null ? "" : valueOrEmpty(event.model().modelId()),
             currentMode(),
             enumLabel(event.permissionMode()),
+            enumLabel(event.approvalMode()),
+            event.activePermissionProfile().id(),
             statusBar.cwd(),
             valueOrEmpty(event.leafId()),
             statusBar.budget(),
@@ -334,6 +340,8 @@ final class TuiRenderState {
             statusBar.model(),
             mode,
             statusBar.permissionMode(),
+            statusBar.approvalMode(),
+            statusBar.activePermissionProfileId(),
             statusBar.cwd(),
             statusBar.branchLeafId(),
             statusBar.budget(),
@@ -397,6 +405,21 @@ final class TuiRenderState {
             return "";
         }
         return valueOrEmpty(runtimeState.model().modelId());
+    }
+
+    private String approvalModeLabel(SessionRuntimeState runtimeState) {
+        if (runtimeState.permissionRuntimeState() == null || runtimeState.permissionRuntimeState().approvalPolicy() == null) {
+            return "";
+        }
+        return enumLabel(runtimeState.permissionRuntimeState().approvalPolicy().mode());
+    }
+
+    private String activePermissionProfileId(SessionRuntimeState runtimeState) {
+        if (runtimeState.permissionRuntimeState() == null
+            || runtimeState.permissionRuntimeState().activePermissionProfile() == null) {
+            return "";
+        }
+        return valueOrEmpty(runtimeState.permissionRuntimeState().activePermissionProfile().id());
     }
 
     private String enumLabel(Enum<?> value) {

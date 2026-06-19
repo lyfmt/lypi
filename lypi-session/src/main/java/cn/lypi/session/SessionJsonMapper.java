@@ -9,7 +9,9 @@ import cn.lypi.contracts.session.LabelEntry;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModeChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
+import cn.lypi.contracts.session.PermissionAmendmentEntry;
 import cn.lypi.contracts.session.PermissionModeChangeEntry;
+import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
@@ -37,6 +39,8 @@ final class SessionJsonMapper {
         Map.entry("thinking_change", ThinkingChangeEntry.class),
         Map.entry("mode_change", ModeChangeEntry.class),
         Map.entry("permission_mode_change", PermissionModeChangeEntry.class),
+        Map.entry("permission_runtime_state_change", PermissionRuntimeStateChangeEntry.class),
+        Map.entry("permission_amendment", PermissionAmendmentEntry.class),
         Map.entry("compaction", CompactionEntry.class),
         Map.entry("branch_summary", BranchSummaryEntry.class),
         Map.entry("custom", CustomEntry.class),
@@ -51,6 +55,8 @@ final class SessionJsonMapper {
         Map.entry(ThinkingChangeEntry.class, "thinking_change"),
         Map.entry(ModeChangeEntry.class, "mode_change"),
         Map.entry(PermissionModeChangeEntry.class, "permission_mode_change"),
+        Map.entry(PermissionRuntimeStateChangeEntry.class, "permission_runtime_state_change"),
+        Map.entry(PermissionAmendmentEntry.class, "permission_amendment"),
         Map.entry(CompactionEntry.class, "compaction"),
         Map.entry(BranchSummaryEntry.class, "branch_summary"),
         Map.entry(CustomEntry.class, "custom"),

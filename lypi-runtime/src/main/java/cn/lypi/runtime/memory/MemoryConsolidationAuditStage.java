@@ -7,6 +7,9 @@ public enum MemoryConsolidationAuditStage {
     SKIPPED_THRESHOLD,
     SKIPPED_SESSION_MISMATCH,
     SKIPPED_NO_FORK_POINT,
+    SKIPPED_DIRECT_WRITE,
+    DIRECT_WRITE_DETECTION_FAILED,
+    COALESCED,
     ELIGIBLE,
     SUBMITTED,
     SUBMIT_REJECTED,
@@ -14,6 +17,8 @@ public enum MemoryConsolidationAuditStage {
     RUN_STARTED,
     FORK_CREATED,
     TURN_COMPLETED,
+    LINT_COMPLETED,
+    LINT_FAILED,
     RUN_FAILED,
     CLEANED
 }
