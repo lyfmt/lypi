@@ -932,6 +932,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         reducer.observeRuntimeAt(clock.instant());
         TuiViewModel view = reducer.view();
         syncInputLoopToolState(view);
+        if (inputLoop != null) {
+            inputLoop.renderCurrentFrame();
+            return;
+        }
         frameSink.render(tuiRenderer.renderFrame(view, screen, layout, currentDraft(), currentCursor()));
     }
 
