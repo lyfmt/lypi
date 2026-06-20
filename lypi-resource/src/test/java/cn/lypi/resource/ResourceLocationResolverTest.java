@@ -56,13 +56,18 @@ class ResourceLocationResolverTest {
                 .contains(userRoot.toAbsolutePath().normalize());
             assertThat(userRoot.resolve("application.yml")).exists();
             assertThat(userRoot.resolve("memory.md")).exists();
-            assertThat(userRoot.resolve("memories")).isDirectory();
+            assertThat(userRoot.resolve("memory")).isDirectory();
+            assertThat(userRoot.resolve("memories")).doesNotExist();
             assertThat(userRoot.resolve("skills")).isDirectory();
             assertThat(userRoot.resolve("prompts")).isDirectory();
             assertThat(userRoot.resolve("skills/memory-settlement/SKILL.md")).exists();
+            assertThat(Files.readString(userRoot.resolve("memory.md")))
+                .contains("~/.ly-pi/memory/")
+                .doesNotContain("~/.ly-pi/memories/");
             assertThat(Files.readString(userRoot.resolve("skills/memory-settlement/SKILL.md")))
                 .contains("name: memory-settlement")
-                .contains("No Verification, No Memory");
+                .contains("No Verification, No Memory")
+                .contains("~/.ly-pi/memory/");
             assertThat(userRoot.resolve("skills/memory-lint/SKILL.md")).doesNotExist();
             assertThat(userRoot.resolve("prompts/memory-lint.md")).doesNotExist();
         } finally {

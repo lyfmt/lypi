@@ -1,6 +1,6 @@
 # ly-pi
 
-`ly-pi` 是一个基于 Java 的本地 coding agent，面向代码库理解、文件修改、命令执行、长任务推进和会话沉淀。
+`ly-pi` 是一个基于 Java 的本地 coding agent，面向代码库理解、文件修改、命令执行、长任务推进和会话沉淀。参考学习了`pi`,`codex`,`claude-code` 的代码实现
 
 项目关注 coding agent 工程化中容易变复杂的部分：会话如何恢复，历史如何审计，工具如何受控，模型差异如何收敛，资源如何渐进披露，记忆如何沉淀，子任务如何隔离。代码采用 Maven 多模块结构，使用 Spring Boot 做装配，核心边界通过接口和契约类型定义，便于替换模型适配、工具实现、资源发现和交互入口。
 
@@ -140,27 +140,3 @@ java -jar lypi-boot/target/lypi-boot-0.0.1-SNAPSHOT.jar --lypi.runtime.cwd=/tmp/
 ```text
 lypi-boot/src/main/resources/application.yml.example
 ```
-
-常见配置关注点包括：
-
-- `lypi.runtime.default-provider`、`lypi.runtime.default-model`、`lypi.runtime.thinking-level`；
-- `lypi.runtime.transport`、`lypi.runtime.initial-prompt`、`lypi.runtime.cwd`；
-- `lypi.permissions.default-permissions`、`lypi.permissions.approval-policy`、自定义 permission profile；
-- `lypi.ai.providers`、Provider request style、fallback request style、模型描述和远端模型发现；
-- `lypi.tool.sandbox`、沙盒网络模式；
-- `lypi.subagent.command`。
-
-## 开发约定
-
-- 日常开发基于 `origin/dev` 创建功能分支。
-- 所有功能开发放在独立 Git worktree 中，推荐目录为 `.worktrees/worktree-xxxxx`。
-- 普通功能 PR 目标分支为 `dev`；发布或稳定化 PR 再由 `dev` 合并到 `master`。
-- 局部开发可以先运行模块级测试，例如 `mvn -pl lypi-tool -am test`；提交前以完整 `mvn verify` 为准。
-- 完整 CI 规则见 `CONTRIBUTING.md`。
-- `docs/`、`.worktrees/`、`worktree-*/`、`.ly-pi/` 和各模块 `target/` 构建产物不得提交。
-
-## 设计取向
-
-`ly-pi` 更关注 agent 工程化中的长期问题：上下文如何沉淀、历史如何追溯、工具如何受控、权限如何表达、子任务如何隔离、不同入口如何共享同一套内核。
-
-因此项目实现倾向于清晰边界和稳定契约：接口优先、事件统一、历史追加、资源分层、工具受控、运行态隔离。这样的结构让能力扩展保持克制，也让问题定位和行为审计更直接。
