@@ -19,6 +19,7 @@ import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.hook.AfterToolHookContext;
 import cn.lypi.contracts.hook.AfterToolHookResult;
 import cn.lypi.contracts.hook.ToolHook;
 import cn.lypi.contracts.model.ModelSelection;
@@ -83,9 +84,12 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.core.Ordered;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -491,6 +495,76 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
+    void toolRuntimeFactoryKeepsOriginalResultWhenNoToolHooksAreRegistered() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimeFactoryPort factory = context.getBean(ToolRuntimeFactoryPort.class);
+                ToolRuntimePort runtime = factory.create(Path.of("."));
+                runtime.register(new ProgressTool());
+
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "progress-test", Map.of("text", "done"), "msg_1")),
+                    context()
+                ).getFirst();
+
+                assertThat(result.output()).isEqualTo("done");
+            });
+    }
+
+    @Test
+    void toolRuntimeFactoryAppliesToolHooksInSpringOrder() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean("lateHook", ToolHook.class, () -> new OrderedAppendHook(20, "-late"))
+            .withBean("earlyHook", ToolHook.class, () -> new OrderedAppendHook(10, "-early"))
+            .run(context -> {
+                ToolRuntimeFactoryPort factory = context.getBean(ToolRuntimeFactoryPort.class);
+                ToolRuntimePort runtime = factory.create(Path.of("."));
+                runtime.register(new ProgressTool());
+
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "progress-test", Map.of("text", "done"), "msg_1")),
+                    context()
+                ).getFirst();
+
+                assertThat(result.output()).isEqualTo("done-early-late");
+            });
+    }
+
+    @Test
+    void toolRuntimeFactoryResolvesPrototypeToolHooksForEachRuntimeCreation() {
+        AtomicInteger hookCreations = new AtomicInteger();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(
+                "prototypeHook",
+                ToolHook.class,
+                () -> {
+                    hookCreations.incrementAndGet();
+                    return ToolHook.after(context -> AfterToolHookResult.keep());
+                },
+                beanDefinition -> beanDefinition.setScope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
+            )
+            .run(context -> {
+                ToolRuntimeFactoryPort factory = context.getBean(ToolRuntimeFactoryPort.class);
+                int baselineCreations = hookCreations.get();
+
+                factory.create(Path.of("build/runtime-a"));
+                int afterFirstRuntime = hookCreations.get();
+                factory.create(Path.of("build/runtime-b"));
+                int afterSecondRuntime = hookCreations.get();
+
+                assertThat(afterFirstRuntime).isGreaterThan(baselineCreations);
+                assertThat(afterSecondRuntime).isGreaterThan(afterFirstRuntime);
+            });
+    }
+
+    @Test
     void registersSubagentToolsWhenRuntimePortsAreAvailable() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
@@ -827,6 +901,29 @@ class LyPiToolAutoConfigurationTest {
                     closed = true;
                 }
             });
+        }
+    }
+
+    private static final class OrderedAppendHook implements ToolHook, Ordered {
+        private final int order;
+        private final String suffix;
+
+        private OrderedAppendHook(int order, String suffix) {
+            this.order = order;
+            this.suffix = suffix;
+        }
+
+        @Override
+        public AfterToolHookResult afterToolCall(AfterToolHookContext context) {
+            String output = String.valueOf(context.result().output()) + suffix;
+            return AfterToolHookResult.replace(
+                new ToolResult<>(output, false, context.result().newMessages(), context.result().replacement())
+            );
+        }
+
+        @Override
+        public int getOrder() {
+            return order;
         }
     }
 

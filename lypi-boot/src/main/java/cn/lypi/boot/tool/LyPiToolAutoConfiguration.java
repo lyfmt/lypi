@@ -179,9 +179,6 @@ public class LyPiToolAutoConfiguration {
         ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getIfAvailable();
         McpClientManagerFactory resolvedMcpClientManagerFactory = mcpClientManagerFactory.getIfAvailable();
         String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
-        cn.lypi.tool.ToolExecutionInterceptor hookInterceptor = new ToolHookExecutionInterceptor(
-            new DefaultToolHookRuntime(toolHooks.orderedStream().toList())
-        );
         return new ToolRuntimeFactoryPort() {
             @Override
             public ToolRuntimePort create(Path cwd) {
@@ -225,7 +222,7 @@ public class LyPiToolAutoConfiguration {
                     new cn.lypi.tool.ToolExecutionPlanner(),
                     new cn.lypi.tool.ToolResultBudgeter(),
                     new cn.lypi.tool.ToolRuntimeContextFactory(options),
-                    hookInterceptor,
+                    new ToolHookExecutionInterceptor(new DefaultToolHookRuntime(toolHooks.orderedStream().toList())),
                     securityRuntime,
                     runtimeResponseGate,
                     runtimePromptPort,
