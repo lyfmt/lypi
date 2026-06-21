@@ -22,10 +22,13 @@ import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class DefaultToolHookRuntimeTest {
@@ -175,6 +178,26 @@ class DefaultToolHookRuntimeTest {
     }
 
     @Test
+    void beforeContextPreservesTopLevelNullValues() {
+        Map<String, Object> mutableInput = new LinkedHashMap<>();
+        mutableInput.put("nullable", null);
+
+        BeforeToolHookContext context = new BeforeToolHookContext(
+            new ToolUseRequest("toolu_test", "demo-tool", mutableInput, "msg_parent"),
+            tool(),
+            mutableInput,
+            toolContext()
+        );
+
+        assertTrue(context.input().containsKey("nullable"));
+        assertNull(context.input().get("nullable"));
+        assertTrue(context.request().input().containsKey("nullable"));
+        assertNull(context.request().input().get("nullable"));
+        assertThrows(UnsupportedOperationException.class, () -> context.input().put("extra", "x"));
+        assertThrows(UnsupportedOperationException.class, () -> context.request().input().put("extra", "x"));
+    }
+
+    @Test
     void afterContextNormalizesInputForContextAndRequest() {
         Map<String, Object> mutableInput = new LinkedHashMap<>();
         mutableInput.put("value", "demo");
@@ -234,6 +257,69 @@ class DefaultToolHookRuntimeTest {
         assertThrows(UnsupportedOperationException.class, () -> addItem(requestNestedList, "x"));
     }
 
+    @Test
+    void afterContextPreservesNullsInsideNestedMapAndList() {
+        List<Object> nestedList = new ArrayList<>();
+        nestedList.add(null);
+        nestedList.add("second");
+        Map<String, Object> nestedMap = new LinkedHashMap<>();
+        nestedMap.put("nullable", null);
+        nestedMap.put("items", nestedList);
+        Map<String, Object> mutableInput = new LinkedHashMap<>();
+        mutableInput.put("nested", nestedMap);
+
+        AfterToolHookContext context = new AfterToolHookContext(
+            new ToolUseRequest("toolu_test", "demo-tool", mutableInput, "msg_parent"),
+            tool(),
+            mutableInput,
+            toolContext(),
+            result("original")
+        );
+
+        Map<?, ?> contextNestedMap = (Map<?, ?>) context.input().get("nested");
+        List<?> contextNestedList = (List<?>) contextNestedMap.get("items");
+        Map<?, ?> requestNestedMap = (Map<?, ?>) context.request().input().get("nested");
+        List<?> requestNestedList = (List<?>) requestNestedMap.get("items");
+
+        assertTrue(contextNestedMap.containsKey("nullable"));
+        assertNull(contextNestedMap.get("nullable"));
+        assertEquals(Arrays.asList(null, "second"), contextNestedList);
+        assertTrue(requestNestedMap.containsKey("nullable"));
+        assertNull(requestNestedMap.get("nullable"));
+        assertEquals(Arrays.asList(null, "second"), requestNestedList);
+        assertThrows(UnsupportedOperationException.class, () -> putEntry(contextNestedMap, "extra", "x"));
+        assertThrows(UnsupportedOperationException.class, () -> addItem(contextNestedList, "x"));
+        assertThrows(UnsupportedOperationException.class, () -> putEntry(requestNestedMap, "extra", "x"));
+        assertThrows(UnsupportedOperationException.class, () -> addItem(requestNestedList, "x"));
+    }
+
+    @Test
+    void afterContextPreservesNullsInsideNestedSet() {
+        Set<Object> nestedSet = new LinkedHashSet<>();
+        nestedSet.add(null);
+        nestedSet.add("value");
+        Map<String, Object> mutableInput = new LinkedHashMap<>();
+        mutableInput.put("set", nestedSet);
+
+        AfterToolHookContext context = new AfterToolHookContext(
+            new ToolUseRequest("toolu_test", "demo-tool", mutableInput, "msg_parent"),
+            tool(),
+            mutableInput,
+            toolContext(),
+            result("original")
+        );
+
+        Set<?> contextSet = (Set<?>) context.input().get("set");
+        Set<?> requestSet = (Set<?>) context.request().input().get("set");
+
+        assertTrue(contextSet.contains(null));
+        assertTrue(contextSet.contains("value"));
+        assertTrue(requestSet.contains(null));
+        assertTrue(requestSet.contains("value"));
+        assertThrows(UnsupportedOperationException.class, () -> addSetItem(contextSet, "x"));
+        assertThrows(UnsupportedOperationException.class, () -> addSetItem(requestSet, "x"));
+    }
+
     private BeforeToolHookContext beforeContext() {
         return new BeforeToolHookContext(
             request(),
@@ -269,6 +355,11 @@ class DefaultToolHookRuntimeTest {
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private void addItem(List<?> list, Object value) {
         ((List) list).add(value);
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void addSetItem(Set<?> set, Object value) {
+        ((Set) set).add(value);
     }
 
     private Tool<String, String> tool() {
