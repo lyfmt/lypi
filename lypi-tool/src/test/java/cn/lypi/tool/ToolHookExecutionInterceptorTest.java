@@ -130,6 +130,59 @@ class ToolHookExecutionInterceptorTest {
         assertFalse(afterNested.containsKey("late"));
     }
 
+    @Test
+    void beforeHookSeesEmptyMapWhenRequestInputIsNull() {
+        AtomicReference<Map<String, Object>> beforeInput = new AtomicReference<>();
+        AtomicReference<Map<String, Object>> beforeRequestInput = new AtomicReference<>();
+        ToolHookRuntime runtime = new ToolHookRuntime() {
+            @Override
+            public BeforeToolHookResult beforeToolCall(cn.lypi.contracts.hook.BeforeToolHookContext context) {
+                beforeInput.set(context.input());
+                beforeRequestInput.set(context.request().input());
+                return BeforeToolHookResult.allow();
+            }
+
+            @Override
+            public java.util.Optional<ToolResult<?>> afterToolCall(cn.lypi.contracts.hook.AfterToolHookContext context) {
+                return java.util.Optional.empty();
+            }
+        };
+        ToolHookExecutionInterceptor interceptor = new ToolHookExecutionInterceptor(runtime);
+
+        ToolExecutionInterceptor.BeforeResult result = interceptor.beforeExecute(request(null), tool(), context());
+
+        assertFalse(result.blocked());
+        assertEquals(Map.of(), beforeInput.get());
+        assertEquals(Map.of(), beforeRequestInput.get());
+    }
+
+    @Test
+    void afterHookSeesEmptyMapWhenRequestInputIsNull() {
+        AtomicReference<Map<String, Object>> afterInput = new AtomicReference<>();
+        AtomicReference<Map<String, Object>> afterRequestInput = new AtomicReference<>();
+        ToolHookRuntime runtime = new ToolHookRuntime() {
+            @Override
+            public BeforeToolHookResult beforeToolCall(cn.lypi.contracts.hook.BeforeToolHookContext context) {
+                return BeforeToolHookResult.allow();
+            }
+
+            @Override
+            public java.util.Optional<ToolResult<?>> afterToolCall(cn.lypi.contracts.hook.AfterToolHookContext context) {
+                afterInput.set(context.input());
+                afterRequestInput.set(context.request().input());
+                return java.util.Optional.empty();
+            }
+        };
+        ToolHookExecutionInterceptor interceptor = new ToolHookExecutionInterceptor(runtime);
+        ToolResult<?> original = TestTools.result("toolu_1", "original", false);
+
+        ToolResult<?> result = interceptor.afterExecute(request(null), tool(), context(), original);
+
+        assertSameResult(original, result);
+        assertEquals(Map.of(), afterInput.get());
+        assertEquals(Map.of(), afterRequestInput.get());
+    }
+
     private ToolUseRequest request(Map<String, Object> input) {
         return new ToolUseRequest("toolu_1", "echo", input, "msg_1");
     }

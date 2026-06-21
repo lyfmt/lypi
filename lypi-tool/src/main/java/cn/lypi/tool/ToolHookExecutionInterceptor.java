@@ -28,10 +28,12 @@ public final class ToolHookExecutionInterceptor implements ToolExecutionIntercep
 
     @Override
     public BeforeResult beforeExecute(ToolUseRequest request, Tool<Map<String, Object>, ?> tool, ToolUseContext context) {
+        ToolUseRequest nonNullRequest = Objects.requireNonNull(request, "request");
+        Map<String, Object> canonicalInput = canonicalInput(nonNullRequest);
         BeforeToolHookResult result = runtime.beforeToolCall(new BeforeToolHookContext(
-            Objects.requireNonNull(request, "request"),
+            nonNullRequest,
             Objects.requireNonNull(tool, "tool"),
-            request.input(),
+            canonicalInput,
             Objects.requireNonNull(context, "context")
         ));
         if (result != null && result.blocked()) {
@@ -47,12 +49,18 @@ public final class ToolHookExecutionInterceptor implements ToolExecutionIntercep
         ToolUseContext context,
         ToolResult<?> result
     ) {
+        ToolUseRequest nonNullRequest = Objects.requireNonNull(request, "request");
+        Map<String, Object> canonicalInput = canonicalInput(nonNullRequest);
         return runtime.afterToolCall(new AfterToolHookContext(
-            Objects.requireNonNull(request, "request"),
+            nonNullRequest,
             Objects.requireNonNull(tool, "tool"),
-            request.input(),
+            canonicalInput,
             Objects.requireNonNull(context, "context"),
             Objects.requireNonNull(result, "result")
         )).orElse(result);
+    }
+
+    private Map<String, Object> canonicalInput(ToolUseRequest request) {
+        return request.input() == null ? Map.of() : request.input();
     }
 }
