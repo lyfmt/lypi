@@ -19,6 +19,12 @@ public record BeforeToolHookContext(
         request = Objects.requireNonNull(request, "request");
         tool = Objects.requireNonNull(tool, "tool");
         input = Map.copyOf(Objects.requireNonNull(input, "input"));
+        request = new ToolUseRequest(
+            request.toolUseId(),
+            request.toolName(),
+            input,
+            request.parentMessageId()
+        );
         toolContext = Objects.requireNonNull(toolContext, "toolContext");
     }
 }

@@ -2,7 +2,10 @@ package cn.lypi.contracts.hook;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -20,13 +23,38 @@ import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class DefaultToolHookRuntimeTest {
+    @Test
+    void toolHookDefaultsToNoOpBeforeAndAfter() {
+        ToolHook hook = new ToolHook() {
+        };
+
+        BeforeToolHookResult beforeResult = hook.beforeToolCall(beforeContext());
+        AfterToolHookResult afterResult = hook.afterToolCall(afterContext(result("original")));
+
+        assertFalse(beforeResult.blocked());
+        assertNull(beforeResult.message());
+        assertTrue(afterResult.replacement().isEmpty());
+    }
+
+    @Test
+    void noopRuntimeAllowsBeforeAndKeepsAfter() {
+        ToolHookRuntime runtime = ToolHookRuntime.noop();
+
+        BeforeToolHookResult beforeResult = runtime.beforeToolCall(beforeContext());
+        Optional<ToolResult<?>> afterResult = runtime.afterToolCall(afterContext(result("original")));
+
+        assertFalse(beforeResult.blocked());
+        assertNull(beforeResult.message());
+        assertTrue(afterResult.isEmpty());
+    }
+
     @Test
     void beforeStopsAtFirstBlockingHook() {
         ToolHook first = ToolHook.before(context -> BeforeToolHookResult.block("blocked"));
@@ -92,6 +120,48 @@ class DefaultToolHookRuntimeTest {
         BeforeToolHookResult result = runtime.beforeToolCall(beforeContext());
 
         assertFalse(result.blocked());
+    }
+
+    @Test
+    void beforeContextNormalizesInputForContextAndRequest() {
+        Map<String, Object> mutableInput = new LinkedHashMap<>();
+        mutableInput.put("value", "demo");
+        ToolUseRequest request = new ToolUseRequest("toolu_test", "demo-tool", mutableInput, "msg_parent");
+
+        BeforeToolHookContext context = new BeforeToolHookContext(request, tool(), mutableInput, toolContext());
+
+        mutableInput.put("late", "mutation");
+
+        assertEquals(Map.of("value", "demo"), context.input());
+        assertEquals(context.input(), context.request().input());
+        assertSame(context.input(), context.request().input());
+        assertNotSame(mutableInput, context.input());
+        assertThrows(UnsupportedOperationException.class, () -> context.input().put("extra", "x"));
+        assertThrows(UnsupportedOperationException.class, () -> context.request().input().put("extra", "x"));
+    }
+
+    @Test
+    void afterContextNormalizesInputForContextAndRequest() {
+        Map<String, Object> mutableInput = new LinkedHashMap<>();
+        mutableInput.put("value", "demo");
+        ToolUseRequest request = new ToolUseRequest("toolu_test", "demo-tool", mutableInput, "msg_parent");
+
+        AfterToolHookContext context = new AfterToolHookContext(
+            request,
+            tool(),
+            mutableInput,
+            toolContext(),
+            result("original")
+        );
+
+        mutableInput.put("late", "mutation");
+
+        assertEquals(Map.of("value", "demo"), context.input());
+        assertEquals(context.input(), context.request().input());
+        assertSame(context.input(), context.request().input());
+        assertNotSame(mutableInput, context.input());
+        assertThrows(UnsupportedOperationException.class, () -> context.input().put("extra", "x"));
+        assertThrows(UnsupportedOperationException.class, () -> context.request().input().put("extra", "x"));
     }
 
     private BeforeToolHookContext beforeContext() {
