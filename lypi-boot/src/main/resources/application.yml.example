@@ -116,7 +116,7 @@
 #       # NOTE: 确定性摘要器已删除，fallback_deterministic 仅保留旧配置兼容；当前行为与 skip_compaction 一样回到原上下文。
 #       fallback-policy: fallback_deterministic
 #
-#     # 重要性：可选覆盖或扩展。providers 用于覆盖内置 Provider 或新增 OpenAI 兼容 Provider。
+#     # 重要性：可选覆盖或扩展。providers 用于覆盖内置 Provider 或新增 OpenAI 兼容或 Anthropic Provider。
 #     # 说明：内置 openai 可省略；配置 openai 会覆盖同名内置 adapter，配置新名称会追加 provider。
 #     # 关闭内置 openai 时，只需要取消注释：
 #     # providers:
@@ -246,6 +246,26 @@
 #             currency: USD
 #             compat:
 #               vendor: fixture
+#
+#       anthropic:
+#         # 重要性：扩展示例。Anthropic Messages API Provider 使用独立协议风格。
+#         enabled: true
+#         api-style: anthropic
+#         base-url: https://api.anthropic.com/v1
+#         api-key: "${ANTHROPIC_API_KEY:}"
+#         anthropic-version: 2023-06-01
+#         timeout: 60s
+#         max-retries: 2
+#         models:
+#           - # 重要性：必须关注。模型 ID 必须与 Anthropic Messages API 接受的 model 字段一致。
+#             model-id: claude-sonnet-4-5
+#             context-window: 200000
+#             max-output-tokens: 64000
+#             supports-thinking: true
+#             supports-image-input: true
+#             input-token-cost: 0
+#             output-token-cost: 0
+#             currency: USD
 #
 #   tool:
 #     # 重要性：可选覆盖。tool 板块控制内置工具执行策略，尤其是 shell 沙盒。
