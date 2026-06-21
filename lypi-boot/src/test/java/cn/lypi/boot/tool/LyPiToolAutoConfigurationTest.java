@@ -19,6 +19,8 @@ import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.hook.AfterToolHookResult;
+import cn.lypi.contracts.hook.ToolHook;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.mcp.McpServerConfig;
@@ -463,6 +465,28 @@ class LyPiToolAutoConfigurationTest {
                 assertThat(end.toolUseId()).isEqualTo("toolu_1");
                 assertThat(end.error()).isFalse();
                 assertThat(end.durationMillis()).isGreaterThanOrEqualTo(0L);
+            });
+    }
+
+    @Test
+    void toolRuntimeFactoryAppliesRegisteredToolHooks() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(ToolHook.class, () -> ToolHook.after(context -> AfterToolHookResult.replace(
+                new ToolResult<>("hooked", false, context.result().newMessages(), context.result().replacement())
+            )))
+            .run(context -> {
+                ToolRuntimeFactoryPort factory = context.getBean(ToolRuntimeFactoryPort.class);
+                ToolRuntimePort runtime = factory.create(Path.of("."));
+                runtime.register(new ProgressTool());
+
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "progress-test", Map.of("text", "done"), "msg_1")),
+                    context()
+                ).getFirst();
+
+                assertThat(result.output()).isEqualTo("hooked");
             });
     }
 

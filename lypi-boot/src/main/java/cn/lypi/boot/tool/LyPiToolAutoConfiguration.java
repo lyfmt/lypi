@@ -3,6 +3,8 @@ package cn.lypi.boot.tool;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.hook.DefaultToolHookRuntime;
+import cn.lypi.contracts.hook.ToolHook;
 import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.MailboxPort;
@@ -27,6 +29,7 @@ import cn.lypi.tool.MemoryConsolidationWritePolicy;
 import cn.lypi.tool.PermissionGate;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.PermissionResponseGate;
+import cn.lypi.tool.ToolHookExecutionInterceptor;
 import cn.lypi.tool.ToolRuntimeOptions;
 import cn.lypi.tool.builtin.BuiltInTools;
 import cn.lypi.tool.mcp.McpClientManager;
@@ -162,6 +165,7 @@ public class LyPiToolAutoConfiguration {
         ObjectProvider<AgentCenterPort> agentCenter,
         ObjectProvider<MailboxPort> mailbox,
         ObjectProvider<AgentRegistryPort> agentRegistry,
+        ObjectProvider<ToolHook> toolHooks,
         SandboxPolicyResolver sandboxPolicyResolver,
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionResponseGate> responseGate,
@@ -175,6 +179,9 @@ public class LyPiToolAutoConfiguration {
         ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getIfAvailable();
         McpClientManagerFactory resolvedMcpClientManagerFactory = mcpClientManagerFactory.getIfAvailable();
         String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
+        cn.lypi.tool.ToolExecutionInterceptor hookInterceptor = new ToolHookExecutionInterceptor(
+            new DefaultToolHookRuntime(toolHooks.orderedStream().toList())
+        );
         return new ToolRuntimeFactoryPort() {
             @Override
             public ToolRuntimePort create(Path cwd) {
@@ -218,7 +225,7 @@ public class LyPiToolAutoConfiguration {
                     new cn.lypi.tool.ToolExecutionPlanner(),
                     new cn.lypi.tool.ToolResultBudgeter(),
                     new cn.lypi.tool.ToolRuntimeContextFactory(options),
-                    cn.lypi.tool.ToolExecutionInterceptors.noop(),
+                    hookInterceptor,
                     securityRuntime,
                     runtimeResponseGate,
                     runtimePromptPort,
