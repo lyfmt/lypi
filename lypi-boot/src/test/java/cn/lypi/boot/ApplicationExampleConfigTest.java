@@ -73,6 +73,8 @@ class ApplicationExampleConfigTest {
         assertThat(example).contains("#         api-key: \"${ANTHROPIC_API_KEY:}\"");
         assertThat(example).contains("#         anthropic-version: 2023-06-01");
         assertThat(example).contains("#             model-id: claude-sonnet-4-5");
+        assertThat(example).contains("Anthropic extended thinking 需要保留并回放 signature");
+        assertThat(example).contains("#             supports-thinking: false");
     }
 
     @Test

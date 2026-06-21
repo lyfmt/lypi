@@ -205,7 +205,7 @@ public class LyPiAiAutoConfiguration {
             valueOrDefault(provider.getApiStyle(), ApiStyle.OPENAI_COMPATIBLE),
             model.getContextWindow(),
             model.getMaxOutputTokens(),
-            model.isSupportsThinking(),
+            supportsThinking(provider, model),
             model.isSupportsImageInput(),
             new CostProfile(
                 valueOrDefault(model.getInputTokenCost(), BigDecimal.ZERO),
@@ -214,6 +214,10 @@ public class LyPiAiAutoConfiguration {
             ),
             sanitizedCompat(provider.getCompat(), model.getCompat())
         );
+    }
+
+    private boolean supportsThinking(ProviderProperties provider, ModelProperties model) {
+        return provider.getApiStyle() != ApiStyle.ANTHROPIC && model.isSupportsThinking();
     }
 
     private List<OpenAiCompatibleProviderAdapter> buildOpenAiProviderAdapters(LyPiAiProperties properties) {

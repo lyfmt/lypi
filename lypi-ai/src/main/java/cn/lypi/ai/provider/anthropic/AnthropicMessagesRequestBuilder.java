@@ -12,7 +12,6 @@ import cn.lypi.ai.spec.LypiThinkingBlock;
 import cn.lypi.ai.spec.LypiToolCallBlock;
 import cn.lypi.ai.spec.LypiToolResultBlock;
 import cn.lypi.ai.spec.LypiToolSpec;
-import cn.lypi.contracts.model.ThinkingLevel;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -55,7 +54,6 @@ public final class AnthropicMessagesRequestBuilder {
         if (!request.tools().isEmpty()) {
             body.set("tools", tools(request));
         }
-        thinking(request.thinkingLevel(), maxTokens(request.options())).ifPresent(thinking -> body.set("thinking", thinking));
         return body;
     }
 
@@ -105,6 +103,10 @@ public final class AnthropicMessagesRequestBuilder {
             if (message.role() == LypiRole.SYSTEM_LOCAL) {
                 continue;
             }
+            if (message.role() == LypiRole.TOOL_RESULT) {
+                toolResultMessage(message).ifPresent(messages::add);
+                continue;
+            }
             ObjectNode node = objectMapper.createObjectNode();
             node.put("role", role(message.role()));
             ArrayNode content = objectMapper.createArrayNode();
@@ -124,12 +126,27 @@ public final class AnthropicMessagesRequestBuilder {
         return role == LypiRole.ASSISTANT ? "assistant" : "user";
     }
 
+    private Optional<ObjectNode> toolResultMessage(LypiMessage message) {
+        ArrayNode content = objectMapper.createArrayNode();
+        List<LypiAttachmentBlock> attachments = imageAttachments(message);
+        for (LypiToolResultBlock toolResult : toolResults(message)) {
+            content.add(toolResultBlock(toolResult, attachments));
+        }
+        if (content.isEmpty()) {
+            return Optional.empty();
+        }
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("role", "user");
+        node.set("content", content);
+        return Optional.of(node);
+    }
+
     private Optional<JsonNode> contentBlock(LypiContentBlock block) {
         return switch (block) {
             case LypiTextBlock text -> Optional.of(textBlock(text.text()));
             case LypiThinkingBlock ignored -> Optional.empty();
             case LypiToolCallBlock toolCall -> Optional.of(toolUseBlock(toolCall));
-            case LypiToolResultBlock toolResult -> Optional.of(toolResultBlock(toolResult));
+            case LypiToolResultBlock toolResult -> Optional.of(toolResultBlock(toolResult, List.of()));
             case LypiAttachmentBlock attachment -> Optional.of(textBlock(attachment.text()));
             case LypiErrorBlock error -> Optional.of(textBlock(error.text()));
         };
@@ -168,17 +185,77 @@ public final class AnthropicMessagesRequestBuilder {
         }
     }
 
-    private ObjectNode toolResultBlock(LypiToolResultBlock toolResult) {
+    private ObjectNode toolResultBlock(LypiToolResultBlock toolResult, List<LypiAttachmentBlock> attachments) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("type", "tool_result");
         node.put("tool_use_id", toolResult.toolUseId());
-        node.put("content", toolResult.text());
+        if (attachments.isEmpty()) {
+            node.put("content", toolResult.text());
+        } else {
+            ArrayNode content = objectMapper.createArrayNode();
+            content.add(textBlock(toolResult.text()));
+            for (LypiAttachmentBlock attachment : attachments) {
+                imageBlock(attachment).ifPresent(content::add);
+            }
+            node.set("content", content);
+        }
         if (toolResult.error()) {
             node.put("is_error", true);
         } else {
             node.put("is_error", false);
         }
         return node;
+    }
+
+    private Optional<ObjectNode> imageBlock(LypiAttachmentBlock attachment) {
+        Object imageUrl = attachment.metadata().get("imageUrl");
+        if (imageUrl == null) {
+            return Optional.empty();
+        }
+        Optional<DataUrl> dataUrl = parseDataUrl(String.valueOf(imageUrl));
+        if (dataUrl.isEmpty()) {
+            return Optional.empty();
+        }
+        ObjectNode source = objectMapper.createObjectNode();
+        source.put("type", "base64");
+        source.put("media_type", dataUrl.get().mediaType());
+        source.put("data", dataUrl.get().data());
+
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "image");
+        node.set("source", source);
+        return Optional.of(node);
+    }
+
+    private Optional<DataUrl> parseDataUrl(String imageUrl) {
+        if (!imageUrl.startsWith("data:")) {
+            return Optional.empty();
+        }
+        int marker = imageUrl.indexOf(";base64,");
+        if (marker <= "data:".length()) {
+            return Optional.empty();
+        }
+        String mediaType = imageUrl.substring("data:".length(), marker);
+        String data = imageUrl.substring(marker + ";base64,".length());
+        if (mediaType.isBlank() || data.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(new DataUrl(mediaType, data));
+    }
+
+    private List<LypiToolResultBlock> toolResults(LypiMessage message) {
+        return message.content().stream()
+            .filter(LypiToolResultBlock.class::isInstance)
+            .map(LypiToolResultBlock.class::cast)
+            .toList();
+    }
+
+    private List<LypiAttachmentBlock> imageAttachments(LypiMessage message) {
+        return message.content().stream()
+            .filter(LypiAttachmentBlock.class::isInstance)
+            .map(LypiAttachmentBlock.class::cast)
+            .filter(attachment -> attachment.metadata().get("imageUrl") != null)
+            .toList();
     }
 
     private ArrayNode tools(LypiModelRequest request) {
@@ -193,24 +270,7 @@ public final class AnthropicMessagesRequestBuilder {
         return tools;
     }
 
-    private Optional<ObjectNode> thinking(ThinkingLevel level, int maxTokens) {
-        if (level == ThinkingLevel.OFF) {
-            return Optional.empty();
-        }
-        ObjectNode node = objectMapper.createObjectNode();
-        node.put("type", "enabled");
-        node.put("budget_tokens", Math.max(1, Math.min(thinkingBudgetTokens(level), maxTokens - 1)));
-        return Optional.of(node);
+    private record DataUrl(String mediaType, String data) {
     }
 
-    private int thinkingBudgetTokens(ThinkingLevel level) {
-        return switch (level) {
-            case OFF -> 0;
-            case MINIMAL -> 1024;
-            case LOW -> 2048;
-            case MEDIUM -> 4096;
-            case HIGH -> 8192;
-            case XHIGH, MAX -> 16_384;
-        };
-    }
 }

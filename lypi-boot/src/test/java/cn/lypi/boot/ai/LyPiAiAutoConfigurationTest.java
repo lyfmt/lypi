@@ -330,7 +330,7 @@ class LyPiAiAutoConfigurationTest {
                         assertThat(descriptor.modelId()).isEqualTo("claude-sonnet-4-5");
                         assertThat(descriptor.apiStyle()).isEqualTo(cn.lypi.contracts.model.ApiStyle.ANTHROPIC);
                         assertThat(descriptor.contextWindow()).isEqualTo(200000);
-                        assertThat(descriptor.supportsThinking()).isTrue();
+                        assertThat(descriptor.supportsThinking()).isFalse();
                     });
             });
     }

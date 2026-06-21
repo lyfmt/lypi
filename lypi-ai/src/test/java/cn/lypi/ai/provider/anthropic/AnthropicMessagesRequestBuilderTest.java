@@ -2,6 +2,7 @@ package cn.lypi.ai.provider.anthropic;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import cn.lypi.ai.spec.LypiAttachmentBlock;
 import cn.lypi.ai.spec.LypiGenerationOptions;
 import cn.lypi.ai.spec.LypiMessage;
 import cn.lypi.ai.spec.LypiModelRequest;
@@ -23,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 class AnthropicMessagesRequestBuilderTest {
     @Test
-    void buildsMessagesRequestWithSystemToolsToolUseToolResultAndRequestThinkingBudget() {
+    void buildsMessagesRequestWithSystemToolsToolUseAndToolResult() {
         LypiToolSpec tool = new LypiToolSpec(
             "read_file",
             "Read a local file.",
@@ -92,9 +93,7 @@ class AnthropicMessagesRequestBuilderTest {
         assertThat(body.at("/tools/0/name").asText()).isEqualTo("read_file");
         assertThat(body.at("/tools/0/description").asText()).isEqualTo("Read a local file.");
         assertThat(body.at("/tools/0/input_schema/properties/path/type").asText()).isEqualTo("string");
-        assertThat(body.at("/thinking/type").asText()).isEqualTo("enabled");
-        assertThat(body.at("/thinking/budget_tokens").asInt()).isGreaterThan(0);
-        assertThat(body.at("/thinking/budget_tokens").asInt()).isLessThan(body.get("max_tokens").asInt());
+        assertThat(body.get("thinking")).isNull();
         assertThat(body.get("api_key")).isNull();
         assertThat(body.toString()).doesNotContain("test-key");
         assertThat(body.toString()).doesNotContain("Need to inspect the file.");
@@ -102,11 +101,11 @@ class AnthropicMessagesRequestBuilderTest {
     }
 
     @Test
-    void omitsThinkingWhenThinkingIsOff() {
+    void omitsExtendedThinkingRequestParameterUntilSignedThinkingReplayIsSupported() {
         LypiModelRequest request = new LypiModelRequest(
             "req-2",
-            new ModelSelection("anthropic", "claude-haiku", ThinkingLevel.OFF),
-            ThinkingLevel.OFF,
+            new ModelSelection("anthropic", "claude-haiku", ThinkingLevel.MAX),
+            ThinkingLevel.MAX,
             "",
             List.of(new LypiMessage(
                 LypiRole.USER,
@@ -186,6 +185,44 @@ class AnthropicMessagesRequestBuilderTest {
         assertThat(body.at("/messages/0/role").asText()).isEqualTo("user");
         assertThat(body.at("/messages/0/content/0/text").asText()).isEqualTo("continue");
         assertThat(body.toString()).doesNotContain("Hidden reasoning without Anthropic signature.");
+    }
+
+    @Test
+    void mapsToolResultImageAttachmentsIntoAnthropicToolResultContentBlocks() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-5",
+            new ModelSelection("anthropic", "claude-haiku", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(new LypiMessage(
+                LypiRole.TOOL_RESULT,
+                List.of(
+                    new LypiToolResultBlock("toolu_1", "Read image file [image/png]", false, Map.of()),
+                    new LypiAttachmentBlock(
+                        "att-1",
+                        "Image: image/png",
+                        "image/png",
+                        Map.of("imageUrl", "data:image/png;base64,AAA", "detail", "high")
+                    )
+                ),
+                Map.of()
+            )),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of()
+        );
+
+        JsonNode body = new AnthropicMessagesRequestBuilder().build(request, config());
+
+        assertThat(body.at("/messages/0/content/0/type").asText()).isEqualTo("tool_result");
+        assertThat(body.at("/messages/0/content/0/content/0/type").asText()).isEqualTo("text");
+        assertThat(body.at("/messages/0/content/0/content/0/text").asText()).isEqualTo("Read image file [image/png]");
+        assertThat(body.at("/messages/0/content/0/content/1/type").asText()).isEqualTo("image");
+        assertThat(body.at("/messages/0/content/0/content/1/source/type").asText()).isEqualTo("base64");
+        assertThat(body.at("/messages/0/content/0/content/1/source/media_type").asText()).isEqualTo("image/png");
+        assertThat(body.at("/messages/0/content/0/content/1/source/data").asText()).isEqualTo("AAA");
+        assertThat(body.at("/messages/0/content")).hasSize(1);
+        assertThat(body.toString()).doesNotContain("Image: image/png");
     }
 
     private static AnthropicProviderConfig config() {
