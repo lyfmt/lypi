@@ -66,15 +66,21 @@ class ApplicationExampleConfigTest {
     @Test
     void applicationExampleDocumentsAnthropicProviderConfiguration() throws IOException {
         String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
+        String anthropicBlock = example.substring(
+            example.indexOf("#       anthropic:"),
+            example.indexOf("#   tool:")
+        );
 
-        assertThat(example).contains("#       anthropic:");
-        assertThat(example).contains("#         api-style: anthropic");
-        assertThat(example).contains("#         base-url: https://api.anthropic.com/v1");
-        assertThat(example).contains("#         api-key: \"${ANTHROPIC_API_KEY:}\"");
-        assertThat(example).contains("#         anthropic-version: 2023-06-01");
-        assertThat(example).contains("#             model-id: claude-sonnet-4-5");
-        assertThat(example).contains("Anthropic extended thinking 需要保留并回放 signature");
-        assertThat(example).contains("#             supports-thinking: false");
+        assertThat(anthropicBlock).contains("#       anthropic:");
+        assertThat(anthropicBlock).contains("#         api-style: anthropic");
+        assertThat(anthropicBlock).contains("#         base-url: https://api.anthropic.com/v1");
+        assertThat(anthropicBlock).contains("#         api-key: \"${ANTHROPIC_API_KEY:}\"");
+        assertThat(anthropicBlock).contains("#         anthropic-version: 2023-06-01");
+        assertThat(anthropicBlock).contains("#             model-id: claude-sonnet-4-5");
+        assertThat(anthropicBlock).contains("Anthropic extended thinking 需要保留并回放 signature");
+        assertThat(anthropicBlock).contains("runtime.thinking-level: off");
+        assertThat(anthropicBlock).contains("#             supports-thinking: false");
+        assertThat(anthropicBlock).doesNotContain("#             supports-thinking: true");
     }
 
     @Test
@@ -135,7 +141,7 @@ class ApplicationExampleConfigTest {
             Map.entry("lypi.ai.providers.anthropic.models[0].model-id", "claude-sonnet-4-5"),
             Map.entry("lypi.ai.providers.anthropic.models[0].context-window", "200000"),
             Map.entry("lypi.ai.providers.anthropic.models[0].max-output-tokens", "64000"),
-            Map.entry("lypi.ai.providers.anthropic.models[0].supports-thinking", "true"),
+            Map.entry("lypi.ai.providers.anthropic.models[0].supports-thinking", "false"),
             Map.entry("lypi.tool.sandbox.enabled", "true"),
             Map.entry("lypi.tool.sandbox.network-mode", "disabled"),
             Map.entry("lypi.tool.sandbox.fail-if-unavailable", "false"),
@@ -203,7 +209,7 @@ class ApplicationExampleConfigTest {
             assertThat(model.getModelId()).isEqualTo("claude-sonnet-4-5");
             assertThat(model.getContextWindow()).isEqualTo(200000);
             assertThat(model.getMaxOutputTokens()).isEqualTo(64000);
-            assertThat(model.isSupportsThinking()).isTrue();
+            assertThat(model.isSupportsThinking()).isFalse();
         });
         assertThat(tool.getSandbox().isEnabled()).isTrue();
         assertThat(tool.getSandbox().getNetworkMode()).isEqualTo(NetworkMode.DISABLED);

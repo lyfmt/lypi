@@ -28,6 +28,8 @@
 #     # 重要性：可选覆盖。默认思考强度，影响模型选择和请求构建。
 #     # 可选值：off、minimal、low、medium、high、xhigh、max。
 #     thinking-level: medium
+#     # NOTE: 如果默认模型切换到当前 Anthropic 适配器，必须设置为 off；
+#     # Anthropic extended thinking 需要保留并回放 signature，当前首版适配器暂不启用。
 #
 #     # 重要性：可选覆盖。Agent 执行模式。
 #     # 可选值：plan、execute。
@@ -262,7 +264,9 @@
 #             model-id: claude-sonnet-4-5
 #             context-window: 200000
 #             max-output-tokens: 64000
-#             supports-thinking: true
+#             # NOTE: Anthropic extended thinking 需要保留并回放 signature；当前首版适配器暂不启用。
+#             # 若将 Anthropic 作为默认模型，请同步配置 lypi.runtime.thinking-level: off。
+#             supports-thinking: false
 #             supports-image-input: true
 #             input-token-cost: 0
 #             output-token-cost: 0
