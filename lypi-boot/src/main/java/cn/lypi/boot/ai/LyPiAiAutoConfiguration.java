@@ -17,6 +17,8 @@ import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.model.StaticModelDescriptorSource;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
+import cn.lypi.ai.provider.anthropic.AnthropicCompatibleProviderAdapter;
+import cn.lypi.ai.provider.anthropic.AnthropicProviderConfig;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
 import cn.lypi.ai.provider.openai.OpenAiProviderConfig;
 import cn.lypi.agent.compact.AiCompactionSummarizer;
@@ -69,17 +71,33 @@ public class LyPiAiAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ApiProviderRegistry apiProviderRegistry(@Qualifier("openAiCompatibleProviderAdapters") List<ProviderAdapter> adapters) {
-        if (adapters.isEmpty()) {
+    public ApiProviderRegistry apiProviderRegistry(
+        @Qualifier("openAiCompatibleProviderAdapters") List<ProviderAdapter> openAiAdapters,
+        @Qualifier("anthropicProviderAdapters") List<ProviderAdapter> anthropicAdapters
+    ) {
+        List<ProviderAdapterApiProvider> providers = new ArrayList<>();
+        if (!openAiAdapters.isEmpty()) {
+            providers.add(new ProviderAdapterApiProvider(ApiStyle.OPENAI_COMPATIBLE, openAiAdapters));
+        }
+        if (!anthropicAdapters.isEmpty()) {
+            providers.add(new ProviderAdapterApiProvider(ApiStyle.ANTHROPIC, anthropicAdapters));
+        }
+        if (providers.isEmpty()) {
             return new DefaultApiProviderRegistry(List.of());
         }
-        return new DefaultApiProviderRegistry(List.of(new ProviderAdapterApiProvider(ApiStyle.OPENAI_COMPATIBLE, adapters)));
+        return new DefaultApiProviderRegistry(providers);
     }
 
     @Bean
     @ConditionalOnMissingBean(name = "openAiCompatibleProviderAdapters")
     public List<ProviderAdapter> openAiCompatibleProviderAdapters(LyPiAiProperties properties) {
         return List.copyOf(buildOpenAiProviderAdapters(properties));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(name = "anthropicProviderAdapters")
+    public List<ProviderAdapter> anthropicProviderAdapters(LyPiAiProperties properties) {
+        return List.copyOf(buildAnthropicProviderAdapters(properties));
     }
 
     @Bean
@@ -272,6 +290,9 @@ public class LyPiAiAutoConfiguration {
         if (source.isApiKeyConfigured()) {
             target.setApiKey(source.getApiKey());
         }
+        if (source.isAnthropicVersionConfigured()) {
+            target.setAnthropicVersion(source.getAnthropicVersion());
+        }
         if (source.isTimeoutConfigured()) {
             target.setTimeout(source.getTimeout());
         }
@@ -296,8 +317,30 @@ public class LyPiAiAutoConfiguration {
         );
     }
 
+    private List<AnthropicCompatibleProviderAdapter> buildAnthropicProviderAdapters(LyPiAiProperties properties) {
+        Map<String, AnthropicCompatibleProviderAdapter> adapters = new LinkedHashMap<>();
+        effectiveProviders(properties).forEach((providerName, provider) -> {
+            if (!supportsAnthropicAdapter(provider)) {
+                return;
+            }
+            adapters.put(providerName, anthropicProviderAdapter(anthropicConfig(providerName, provider)));
+        });
+        return new ArrayList<>(adapters.values());
+    }
+
+    private AnthropicCompatibleProviderAdapter anthropicProviderAdapter(AnthropicProviderConfig config) {
+        return new AnthropicCompatibleProviderAdapter(
+            config,
+            new HttpSseProviderTransport()
+        );
+    }
+
     private boolean supportsOpenAiAdapter(ProviderProperties provider) {
         return provider.isEnabled() && provider.getApiStyle() == ApiStyle.OPENAI_COMPATIBLE && provider.getBaseUrl() != null;
+    }
+
+    private boolean supportsAnthropicAdapter(ProviderProperties provider) {
+        return provider.isEnabled() && provider.getApiStyle() == ApiStyle.ANTHROPIC && provider.getBaseUrl() != null;
     }
 
     private OpenAiProviderConfig openAiConfig(String providerName, ProviderProperties provider) {
@@ -310,6 +353,18 @@ public class LyPiAiAutoConfiguration {
             provider.getRequestStyle(),
             provider.getFallbackRequestStyle(),
             provider.getTransport(),
+            valueOrDefault(provider.getTimeout(), Duration.ofSeconds(30)),
+            provider.getMaxRetries(),
+            sanitizedCompat(provider.getCompat(), Map.of())
+        );
+    }
+
+    private AnthropicProviderConfig anthropicConfig(String providerName, ProviderProperties provider) {
+        return new AnthropicProviderConfig(
+            providerName,
+            provider.getBaseUrl(),
+            valueOrDefault(provider.getApiKey(), ""),
+            valueOrDefault(provider.getAnthropicVersion(), "2023-06-01"),
             valueOrDefault(provider.getTimeout(), Duration.ofSeconds(30)),
             provider.getMaxRetries(),
             sanitizedCompat(provider.getCompat(), Map.of())

@@ -7,6 +7,8 @@ import cn.lypi.ai.ModelPort;
 import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.provider.RequestStyle;
+import cn.lypi.ai.provider.anthropic.AnthropicCompatibleProviderAdapter;
+import cn.lypi.ai.provider.anthropic.AnthropicProviderConfig;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
 import cn.lypi.ai.provider.openai.OpenAiProviderConfig;
 import cn.lypi.agent.compact.AiCompactionSummarizer;
@@ -286,6 +288,54 @@ class LyPiAiAutoConfigurationTest {
     }
 
     @Test
+    void supportsAnthropicProviderWithSeparateApiProvider() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.ai.providers.openai.enabled=true",
+                "lypi.ai.providers.openai.api-style=openai_compatible",
+                "lypi.ai.providers.openai.base-url=https://api.openai.test/v1",
+                "lypi.ai.providers.openai.api-key=${LYPI_TEST_TOKEN}",
+                "lypi.ai.providers.openai.models[0].model-id=gpt-5-mini",
+                "lypi.ai.providers.openai.models[0].context-window=128000",
+                "lypi.ai.providers.openai.models[0].max-output-tokens=16384",
+                "lypi.ai.providers.anthropic.enabled=true",
+                "lypi.ai.providers.anthropic.api-style=anthropic",
+                "lypi.ai.providers.anthropic.base-url=https://api.anthropic.test/v1",
+                "lypi.ai.providers.anthropic.api-key=${LYPI_ANTHROPIC_TOKEN}",
+                "lypi.ai.providers.anthropic.anthropic-version=2023-06-01",
+                "lypi.ai.providers.anthropic.models[0].model-id=claude-sonnet-4-5",
+                "lypi.ai.providers.anthropic.models[0].context-window=200000",
+                "lypi.ai.providers.anthropic.models[0].max-output-tokens=64000",
+                "lypi.ai.providers.anthropic.models[0].supports-thinking=true"
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(ApiProviderRegistry.class);
+                assertThat(context.getBean("openAiCompatibleProviderAdapters", List.class)).hasSize(1);
+                List<?> anthropicAdapters = context.getBean("anthropicProviderAdapters", List.class);
+                assertThat(anthropicAdapters).hasSize(1);
+                assertThat(anthropicAdapters.getFirst()).isInstanceOf(AnthropicCompatibleProviderAdapter.class);
+                AnthropicProviderConfig config = anthropicConfig((AnthropicCompatibleProviderAdapter) anthropicAdapters.getFirst());
+                assertThat(config.baseUrl()).hasToString("https://api.anthropic.test/v1");
+                assertThat(config.apiKey()).isEqualTo("${LYPI_ANTHROPIC_TOKEN}");
+                assertThat(config.anthropicVersion()).isEqualTo("2023-06-01");
+                assertThat(context.getBean(ApiProviderRegistry.class).find(cn.lypi.contracts.model.ApiStyle.OPENAI_COMPATIBLE))
+                    .isPresent();
+                assertThat(context.getBean(ApiProviderRegistry.class).find(cn.lypi.contracts.model.ApiStyle.ANTHROPIC))
+                    .isPresent();
+                assertThat(context.getBean(ModelRegistry.class).list())
+                    .filteredOn(descriptor -> descriptor.provider().equals("anthropic"))
+                    .singleElement()
+                    .satisfies(descriptor -> {
+                        assertThat(descriptor.modelId()).isEqualTo("claude-sonnet-4-5");
+                        assertThat(descriptor.apiStyle()).isEqualTo(cn.lypi.contracts.model.ApiStyle.ANTHROPIC);
+                        assertThat(descriptor.contextWindow()).isEqualTo(200000);
+                        assertThat(descriptor.supportsThinking()).isTrue();
+                    });
+            });
+    }
+
+    @Test
     void bindsProviderPropertiesFromYamlResources() {
         new ApplicationContextRunner()
             .withInitializer(new ConfigDataApplicationContextInitializer())
@@ -331,6 +381,16 @@ class LyPiAiAutoConfigurationTest {
             return (OpenAiProviderConfig) field.get(adapter);
         } catch (ReflectiveOperationException e) {
             throw new AssertionError("Unable to read OpenAI adapter config", e);
+        }
+    }
+
+    private static AnthropicProviderConfig anthropicConfig(AnthropicCompatibleProviderAdapter adapter) {
+        try {
+            Field field = AnthropicCompatibleProviderAdapter.class.getDeclaredField("config");
+            field.setAccessible(true);
+            return (AnthropicProviderConfig) field.get(adapter);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("Unable to read Anthropic adapter config", e);
         }
     }
 
