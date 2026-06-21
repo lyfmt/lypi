@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 
 class AnthropicMessagesRequestBuilderTest {
     @Test
-    void buildsMessagesRequestWithSystemToolsToolUseToolResultThinkingAndBudget() {
+    void buildsMessagesRequestWithSystemToolsToolUseToolResultAndRequestThinkingBudget() {
         LypiToolSpec tool = new LypiToolSpec(
             "read_file",
             "Read a local file.",
@@ -80,12 +80,10 @@ class AnthropicMessagesRequestBuilderTest {
         assertThat(body.at("/messages/0/content/0/type").asText()).isEqualTo("text");
         assertThat(body.at("/messages/0/content/0/text").asText()).isEqualTo("Inspect pom.xml");
         assertThat(body.at("/messages/1/role").asText()).isEqualTo("assistant");
-        assertThat(body.at("/messages/1/content/0/type").asText()).isEqualTo("thinking");
-        assertThat(body.at("/messages/1/content/0/thinking").asText()).isEqualTo("Need to inspect the file.");
-        assertThat(body.at("/messages/1/content/1/type").asText()).isEqualTo("tool_use");
-        assertThat(body.at("/messages/1/content/1/id").asText()).isEqualTo("toolu_1");
-        assertThat(body.at("/messages/1/content/1/name").asText()).isEqualTo("read_file");
-        assertThat(body.at("/messages/1/content/1/input/path").asText()).isEqualTo("pom.xml");
+        assertThat(body.at("/messages/1/content/0/type").asText()).isEqualTo("tool_use");
+        assertThat(body.at("/messages/1/content/0/id").asText()).isEqualTo("toolu_1");
+        assertThat(body.at("/messages/1/content/0/name").asText()).isEqualTo("read_file");
+        assertThat(body.at("/messages/1/content/0/input/path").asText()).isEqualTo("pom.xml");
         assertThat(body.at("/messages/2/role").asText()).isEqualTo("user");
         assertThat(body.at("/messages/2/content/0/type").asText()).isEqualTo("tool_result");
         assertThat(body.at("/messages/2/content/0/tool_use_id").asText()).isEqualTo("toolu_1");
@@ -99,6 +97,8 @@ class AnthropicMessagesRequestBuilderTest {
         assertThat(body.at("/thinking/budget_tokens").asInt()).isLessThan(body.get("max_tokens").asInt());
         assertThat(body.get("api_key")).isNull();
         assertThat(body.toString()).doesNotContain("test-key");
+        assertThat(body.toString()).doesNotContain("Need to inspect the file.");
+        assertThat(body.findValuesAsText("type")).doesNotContain("thinking");
     }
 
     @Test
@@ -121,6 +121,71 @@ class AnthropicMessagesRequestBuilderTest {
         JsonNode body = new AnthropicMessagesRequestBuilder().build(request, config());
 
         assertThat(body.get("thinking")).isNull();
+    }
+
+    @Test
+    void foldsSystemLocalMessagesIntoTopLevelSystemPrompt() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-3",
+            new ModelSelection("anthropic", "claude-haiku", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "Base system.",
+            List.of(
+                new LypiMessage(
+                    LypiRole.SYSTEM_LOCAL,
+                    List.of(new LypiTextBlock("Compaction instruction.", Map.of())),
+                    Map.of("messageId", "sys-1")
+                ),
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("hello", Map.of())),
+                    Map.of()
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of()
+        );
+
+        JsonNode body = new AnthropicMessagesRequestBuilder().build(request, config());
+
+        assertThat(body.get("system").asText()).isEqualTo("Base system.\n\nCompaction instruction.");
+        assertThat(body.get("messages")).hasSize(1);
+        assertThat(body.at("/messages/0/role").asText()).isEqualTo("user");
+        assertThat(body.toString()).doesNotContain("\"role\":\"system\"");
+        assertThat(body.toString()).doesNotContain("\"role\":\"SYSTEM_LOCAL\"");
+    }
+
+    @Test
+    void omitsAssistantMessagesThatOnlyContainGenericThinking() {
+        LypiModelRequest request = new LypiModelRequest(
+            "req-4",
+            new ModelSelection("anthropic", "claude-haiku", ThinkingLevel.OFF),
+            ThinkingLevel.OFF,
+            "",
+            List.of(
+                new LypiMessage(
+                    LypiRole.ASSISTANT,
+                    List.of(new LypiThinkingBlock("Hidden reasoning without Anthropic signature.", Map.of())),
+                    Map.of("messageId", "msg-thinking")
+                ),
+                new LypiMessage(
+                    LypiRole.USER,
+                    List.of(new LypiTextBlock("continue", Map.of())),
+                    Map.of()
+                )
+            ),
+            List.of(),
+            LypiGenerationOptions.defaults(),
+            Map.of()
+        );
+
+        JsonNode body = new AnthropicMessagesRequestBuilder().build(request, config());
+
+        assertThat(body.get("messages")).hasSize(1);
+        assertThat(body.at("/messages/0/role").asText()).isEqualTo("user");
+        assertThat(body.at("/messages/0/content/0/text").asText()).isEqualTo("continue");
+        assertThat(body.toString()).doesNotContain("Hidden reasoning without Anthropic signature.");
     }
 
     private static AnthropicProviderConfig config() {

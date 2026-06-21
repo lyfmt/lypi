@@ -336,6 +336,31 @@ class LyPiAiAutoConfigurationTest {
     }
 
     @Test
+    void skipsRemoteModelDiscoveryForAnthropicProviders() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(RemoteModelDiscoveryClient.class, ThrowingRemoteModelDiscoveryClient::new)
+            .withPropertyValues(
+                "lypi.ai.providers.openai.enabled=false",
+                "lypi.ai.providers.anthropic.enabled=true",
+                "lypi.ai.providers.anthropic.api-style=anthropic",
+                "lypi.ai.providers.anthropic.base-url=https://api.anthropic.test/v1",
+                "lypi.ai.providers.anthropic.api-key=${LYPI_ANTHROPIC_TOKEN}",
+                "lypi.ai.providers.anthropic.model-discovery.enabled=true",
+                "lypi.ai.providers.anthropic.model-discovery.paths[0]=/models",
+                "lypi.ai.providers.anthropic.models[0].model-id=claude-sonnet-4-5",
+                "lypi.ai.providers.anthropic.models[0].context-window=200000",
+                "lypi.ai.providers.anthropic.models[0].max-output-tokens=64000"
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(ModelRegistry.class);
+                assertThat(context.getBean(ModelRegistry.class).list())
+                    .extracting(ModelDescriptor::modelId)
+                    .containsExactly("claude-sonnet-4-5");
+            });
+    }
+
+    @Test
     void bindsProviderPropertiesFromYamlResources() {
         new ApplicationContextRunner()
             .withInitializer(new ConfigDataApplicationContextInitializer())

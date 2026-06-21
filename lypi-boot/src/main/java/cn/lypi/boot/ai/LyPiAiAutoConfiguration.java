@@ -162,6 +162,9 @@ public class LyPiAiAutoConfiguration {
             if (!provider.isEnabled() || provider.getBaseUrl() == null || !provider.getModelDiscovery().isEnabled()) {
                 return;
             }
+            if (valueOrDefault(provider.getApiStyle(), ApiStyle.OPENAI_COMPATIBLE) != ApiStyle.OPENAI_COMPATIBLE) {
+                return;
+            }
             RemoteModelDescriptorSource.DescriptorDefaults defaults = descriptorDefaults(provider);
             descriptors.addAll(new RemoteModelDescriptorSource(
                 true,

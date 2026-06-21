@@ -17,6 +17,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -45,8 +47,9 @@ public final class AnthropicMessagesRequestBuilder {
         body.put("stream", true);
         body.put("max_tokens", maxTokens(request.options()));
         request.options().temperature().ifPresent(temperature -> body.put("temperature", temperature));
-        if (!request.systemPrompt().isBlank()) {
-            body.put("system", request.systemPrompt());
+        String system = systemPrompt(request);
+        if (!system.isBlank()) {
+            body.put("system", system);
         }
         body.set("messages", messages(request));
         if (!request.tools().isEmpty()) {
@@ -56,6 +59,42 @@ public final class AnthropicMessagesRequestBuilder {
         return body;
     }
 
+    private String systemPrompt(LypiModelRequest request) {
+        List<String> parts = new ArrayList<>();
+        if (!request.systemPrompt().isBlank()) {
+            parts.add(request.systemPrompt());
+        }
+        for (LypiMessage message : request.messages()) {
+            if (message.role() != LypiRole.SYSTEM_LOCAL) {
+                continue;
+            }
+            String text = textOnly(message);
+            if (!text.isBlank()) {
+                parts.add(text);
+            }
+        }
+        return String.join("\n\n", parts);
+    }
+
+    private String textOnly(LypiMessage message) {
+        List<String> parts = new ArrayList<>();
+        for (LypiContentBlock block : message.content()) {
+            switch (block) {
+                case LypiTextBlock text when !text.text().isBlank() -> parts.add(text.text());
+                case LypiThinkingBlock thinking when !thinking.text().isBlank() -> parts.add(thinking.text());
+                case LypiAttachmentBlock attachment when !attachment.text().isBlank() -> parts.add(attachment.text());
+                case LypiErrorBlock error when !error.text().isBlank() -> parts.add(error.text());
+                case LypiToolCallBlock ignored -> {
+                }
+                case LypiToolResultBlock ignored -> {
+                }
+                default -> {
+                }
+            }
+        }
+        return String.join("\n\n", parts);
+    }
+
     private int maxTokens(LypiGenerationOptions options) {
         return options.maxOutputTokens().orElse(4096);
     }
@@ -63,11 +102,17 @@ public final class AnthropicMessagesRequestBuilder {
     private ArrayNode messages(LypiModelRequest request) {
         ArrayNode messages = objectMapper.createArrayNode();
         for (LypiMessage message : request.messages()) {
+            if (message.role() == LypiRole.SYSTEM_LOCAL) {
+                continue;
+            }
             ObjectNode node = objectMapper.createObjectNode();
             node.put("role", role(message.role()));
             ArrayNode content = objectMapper.createArrayNode();
             for (LypiContentBlock block : message.content()) {
-                content.add(contentBlock(block));
+                contentBlock(block).ifPresent(content::add);
+            }
+            if (content.isEmpty()) {
+                continue;
             }
             node.set("content", content);
             messages.add(node);
@@ -79,14 +124,14 @@ public final class AnthropicMessagesRequestBuilder {
         return role == LypiRole.ASSISTANT ? "assistant" : "user";
     }
 
-    private JsonNode contentBlock(LypiContentBlock block) {
+    private Optional<JsonNode> contentBlock(LypiContentBlock block) {
         return switch (block) {
-            case LypiTextBlock text -> textBlock(text.text());
-            case LypiThinkingBlock thinking -> thinkingBlock(thinking.text());
-            case LypiToolCallBlock toolCall -> toolUseBlock(toolCall);
-            case LypiToolResultBlock toolResult -> toolResultBlock(toolResult);
-            case LypiAttachmentBlock attachment -> textBlock(attachment.text());
-            case LypiErrorBlock error -> textBlock(error.text());
+            case LypiTextBlock text -> Optional.of(textBlock(text.text()));
+            case LypiThinkingBlock ignored -> Optional.empty();
+            case LypiToolCallBlock toolCall -> Optional.of(toolUseBlock(toolCall));
+            case LypiToolResultBlock toolResult -> Optional.of(toolResultBlock(toolResult));
+            case LypiAttachmentBlock attachment -> Optional.of(textBlock(attachment.text()));
+            case LypiErrorBlock error -> Optional.of(textBlock(error.text()));
         };
     }
 
@@ -94,13 +139,6 @@ public final class AnthropicMessagesRequestBuilder {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("type", "text");
         node.put("text", text);
-        return node;
-    }
-
-    private ObjectNode thinkingBlock(String text) {
-        ObjectNode node = objectMapper.createObjectNode();
-        node.put("type", "thinking");
-        node.put("thinking", text);
         return node;
     }
 
