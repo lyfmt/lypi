@@ -18,7 +18,7 @@ public record BeforeToolHookContext(
     public BeforeToolHookContext {
         request = Objects.requireNonNull(request, "request");
         tool = Objects.requireNonNull(tool, "tool");
-        input = Map.copyOf(Objects.requireNonNull(input, "input"));
+        input = ToolHookInputSnapshots.snapshot(Objects.requireNonNull(input, "input"));
         request = new ToolUseRequest(
             request.toolUseId(),
             request.toolName(),

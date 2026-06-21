@@ -139,6 +139,42 @@ class DefaultToolHookRuntimeTest {
     }
 
     @Test
+    void beforeContextDeepCopiesNestedInputForContextAndRequest() {
+        List<Object> nestedList = new ArrayList<>(List.of("first", "second"));
+        Map<String, Object> nestedMap = new LinkedHashMap<>();
+        nestedMap.put("flag", true);
+        nestedMap.put("items", nestedList);
+        Map<String, Object> mutableInput = new LinkedHashMap<>();
+        mutableInput.put("nested", nestedMap);
+
+        BeforeToolHookContext context = new BeforeToolHookContext(
+            new ToolUseRequest("toolu_test", "demo-tool", mutableInput, "msg_parent"),
+            tool(),
+            mutableInput,
+            toolContext()
+        );
+
+        nestedList.add("late-item");
+        nestedMap.put("late-key", "late-value");
+
+        Map<?, ?> contextNestedMap = (Map<?, ?>) context.input().get("nested");
+        List<?> contextNestedList = (List<?>) contextNestedMap.get("items");
+        Map<?, ?> requestNestedMap = (Map<?, ?>) context.request().input().get("nested");
+        List<?> requestNestedList = (List<?>) requestNestedMap.get("items");
+
+        assertEquals(List.of("first", "second"), contextNestedList);
+        assertEquals(List.of("first", "second"), requestNestedList);
+        assertFalse(contextNestedMap.containsKey("late-key"));
+        assertFalse(requestNestedMap.containsKey("late-key"));
+        assertNotSame(nestedMap, contextNestedMap);
+        assertNotSame(nestedList, contextNestedList);
+        assertThrows(UnsupportedOperationException.class, () -> putEntry(contextNestedMap, "extra", "x"));
+        assertThrows(UnsupportedOperationException.class, () -> addItem(contextNestedList, "x"));
+        assertThrows(UnsupportedOperationException.class, () -> putEntry(requestNestedMap, "extra", "x"));
+        assertThrows(UnsupportedOperationException.class, () -> addItem(requestNestedList, "x"));
+    }
+
+    @Test
     void afterContextNormalizesInputForContextAndRequest() {
         Map<String, Object> mutableInput = new LinkedHashMap<>();
         mutableInput.put("value", "demo");
@@ -159,6 +195,43 @@ class DefaultToolHookRuntimeTest {
         assertNotSame(mutableInput, context.input());
         assertThrows(UnsupportedOperationException.class, () -> context.input().put("extra", "x"));
         assertThrows(UnsupportedOperationException.class, () -> context.request().input().put("extra", "x"));
+    }
+
+    @Test
+    void afterContextDeepCopiesNestedInputForContextAndRequest() {
+        List<Object> nestedList = new ArrayList<>(List.of("first", "second"));
+        Map<String, Object> nestedMap = new LinkedHashMap<>();
+        nestedMap.put("flag", true);
+        nestedMap.put("items", nestedList);
+        Map<String, Object> mutableInput = new LinkedHashMap<>();
+        mutableInput.put("nested", nestedMap);
+
+        AfterToolHookContext context = new AfterToolHookContext(
+            new ToolUseRequest("toolu_test", "demo-tool", mutableInput, "msg_parent"),
+            tool(),
+            mutableInput,
+            toolContext(),
+            result("original")
+        );
+
+        nestedList.add("late-item");
+        nestedMap.put("late-key", "late-value");
+
+        Map<?, ?> contextNestedMap = (Map<?, ?>) context.input().get("nested");
+        List<?> contextNestedList = (List<?>) contextNestedMap.get("items");
+        Map<?, ?> requestNestedMap = (Map<?, ?>) context.request().input().get("nested");
+        List<?> requestNestedList = (List<?>) requestNestedMap.get("items");
+
+        assertEquals(List.of("first", "second"), contextNestedList);
+        assertEquals(List.of("first", "second"), requestNestedList);
+        assertFalse(contextNestedMap.containsKey("late-key"));
+        assertFalse(requestNestedMap.containsKey("late-key"));
+        assertNotSame(nestedMap, contextNestedMap);
+        assertNotSame(nestedList, contextNestedList);
+        assertThrows(UnsupportedOperationException.class, () -> putEntry(contextNestedMap, "extra", "x"));
+        assertThrows(UnsupportedOperationException.class, () -> addItem(contextNestedList, "x"));
+        assertThrows(UnsupportedOperationException.class, () -> putEntry(requestNestedMap, "extra", "x"));
+        assertThrows(UnsupportedOperationException.class, () -> addItem(requestNestedList, "x"));
     }
 
     private BeforeToolHookContext beforeContext() {
@@ -186,6 +259,16 @@ class DefaultToolHookRuntimeTest {
 
     private ToolUseContext toolContext() {
         return new ToolUseContext("ses_test", "msg_test", Path.of("."), Map.of("traceId", "trace-1"));
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void putEntry(Map<?, ?> map, Object key, Object value) {
+        ((Map) map).put(key, value);
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void addItem(List<?> list, Object value) {
+        ((List) list).add(value);
     }
 
     private Tool<String, String> tool() {
