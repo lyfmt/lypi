@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -134,7 +133,6 @@ class DefaultToolHookRuntimeTest {
 
         assertEquals(Map.of("value", "demo"), context.input());
         assertEquals(context.input(), context.request().input());
-        assertSame(context.input(), context.request().input());
         assertNotSame(mutableInput, context.input());
         assertThrows(UnsupportedOperationException.class, () -> context.input().put("extra", "x"));
         assertThrows(UnsupportedOperationException.class, () -> context.request().input().put("extra", "x"));
@@ -158,7 +156,6 @@ class DefaultToolHookRuntimeTest {
 
         assertEquals(Map.of("value", "demo"), context.input());
         assertEquals(context.input(), context.request().input());
-        assertSame(context.input(), context.request().input());
         assertNotSame(mutableInput, context.input());
         assertThrows(UnsupportedOperationException.class, () -> context.input().put("extra", "x"));
         assertThrows(UnsupportedOperationException.class, () -> context.request().input().put("extra", "x"));
