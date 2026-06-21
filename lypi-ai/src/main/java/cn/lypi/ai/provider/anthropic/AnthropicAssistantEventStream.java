@@ -255,6 +255,7 @@ public final class AnthropicAssistantEventStream implements AssistantEventStream
             }
             case AssistantError assistantError -> {
                 error = assistantError;
+                exhausted = true;
                 closeCurrentProviderStream();
             }
             default -> {

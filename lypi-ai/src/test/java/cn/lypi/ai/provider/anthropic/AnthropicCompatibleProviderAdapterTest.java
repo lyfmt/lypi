@@ -158,6 +158,25 @@ class AnthropicCompatibleProviderAdapterTest {
             .isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
     }
 
+    @Test
+    void stopsAfterProviderErrorEventWithoutReopeningTransport() {
+        RecordingTransport transport = RecordingTransport.events(
+            "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Bad request\"}}"
+        );
+        AnthropicCompatibleProviderAdapter adapter = new AnthropicCompatibleProviderAdapter(config("test-key"), transport);
+
+        try (AssistantEventStream stream = adapter.stream(context(), descriptor(), () -> false)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(iterator.next()).isInstanceOf(cn.lypi.contracts.model.AssistantError.class);
+            assertThat(iterator.hasNext()).isFalse();
+            assertThat(stream.result().error())
+                .hasValue(new cn.lypi.contracts.model.AssistantError("invalid_request_error", "Bad request"));
+        }
+        assertThat(transport.requests).hasSize(1);
+    }
+
     private static List<AssistantStreamEvent> collect(AssistantEventStream stream) {
         try (stream) {
             return StreamSupport.stream(stream.spliterator(), false).toList();
