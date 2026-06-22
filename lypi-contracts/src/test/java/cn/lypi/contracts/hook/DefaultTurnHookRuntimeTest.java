@@ -27,7 +27,7 @@ class DefaultTurnHookRuntimeTest {
 
         assertFalse(beforeResult.blocked());
         assertNull(beforeResult.message());
-        assertTrue(afterResult.replacement().isEmpty());
+        assertEquals(AfterTurnHookResult.keep(), afterResult);
     }
 
     @Test
@@ -35,11 +35,10 @@ class DefaultTurnHookRuntimeTest {
         TurnHookRuntime runtime = TurnHookRuntime.noop();
 
         BeforeTurnHookResult beforeResult = runtime.beforeTurn(beforeContext());
-        Optional<TurnState> afterResult = runtime.afterTurn(afterContext(state(TurnStatus.COMPLETED, 0)));
+        runtime.afterTurn(afterContext(state(TurnStatus.COMPLETED, 0)));
 
         assertFalse(beforeResult.blocked());
         assertNull(beforeResult.message());
-        assertTrue(afterResult.isEmpty());
     }
 
     @Test
@@ -70,18 +69,21 @@ class DefaultTurnHookRuntimeTest {
     }
 
     @Test
-    void afterAppliesStateReplacementInOrder() {
-        TurnHook first = TurnHook.after(context -> AfterTurnHookResult.replace(state(TurnStatus.FAILED, 1)));
-        TurnHook second = TurnHook.after(context ->
-            AfterTurnHookResult.replace(state(context.state().status(), context.state().currentToolRound() + 1))
-        );
+    void afterRunsAllHooksInOrder() {
+        List<TurnStatus> observed = new ArrayList<>();
+        TurnHook first = TurnHook.after(context -> {
+            observed.add(context.state().status());
+            return AfterTurnHookResult.keep();
+        });
+        TurnHook second = TurnHook.after(context -> {
+            observed.add(context.state().status());
+            return AfterTurnHookResult.keep();
+        });
 
-        TurnState result = new DefaultTurnHookRuntime(List.of(first, second))
-            .afterTurn(afterContext(state(TurnStatus.COMPLETED, 0)))
-            .orElseThrow();
+        new DefaultTurnHookRuntime(List.of(first, second))
+            .afterTurn(afterContext(state(TurnStatus.COMPLETED, 0)));
 
-        assertEquals(TurnStatus.FAILED, result.status());
-        assertEquals(2, result.currentToolRound());
+        assertEquals(List.of(TurnStatus.COMPLETED, TurnStatus.COMPLETED), observed);
     }
 
     @Test
@@ -89,10 +91,8 @@ class DefaultTurnHookRuntimeTest {
         TurnHook first = TurnHook.after(context -> AfterTurnHookResult.keep());
         TurnHook second = TurnHook.after(context -> AfterTurnHookResult.keep());
 
-        Optional<TurnState> result = new DefaultTurnHookRuntime(List.of(first, second))
+        new DefaultTurnHookRuntime(List.of(first, second))
             .afterTurn(afterContext(state(TurnStatus.COMPLETED, 0)));
-
-        assertTrue(result.isEmpty());
     }
 
     @Test

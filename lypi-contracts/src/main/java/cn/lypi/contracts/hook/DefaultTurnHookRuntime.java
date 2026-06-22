@@ -1,9 +1,7 @@
 package cn.lypi.contracts.hook;
 
-import cn.lypi.contracts.agent.TurnState;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 public final class DefaultTurnHookRuntime implements TurnHookRuntime {
     static final TurnHookRuntime NOOP = new DefaultTurnHookRuntime(List.of());
@@ -30,26 +28,13 @@ public final class DefaultTurnHookRuntime implements TurnHookRuntime {
     }
 
     @Override
-    public Optional<TurnState> afterTurn(AfterTurnHookContext context) {
-        AfterTurnHookContext currentContext = Objects.requireNonNull(context, "context");
-        TurnState currentState = currentContext.state();
-        boolean replaced = false;
+    public void afterTurn(AfterTurnHookContext context) {
+        AfterTurnHookContext nonNullContext = Objects.requireNonNull(context, "context");
         for (TurnHook hook : hooks) {
-            AfterTurnHookResult hookResult = Objects.requireNonNull(
-                hook.afterTurn(currentContext),
+            Objects.requireNonNull(
+                hook.afterTurn(nonNullContext),
                 "afterTurn result"
             );
-            Optional<TurnState> replacement = hookResult.replacement();
-            if (replacement.isPresent()) {
-                currentState = replacement.orElseThrow();
-                replaced = true;
-                currentContext = new AfterTurnHookContext(
-                    currentContext.request(),
-                    currentState,
-                    currentContext.cwd()
-                );
-            }
         }
-        return replaced ? Optional.of(currentState) : Optional.empty();
     }
 }

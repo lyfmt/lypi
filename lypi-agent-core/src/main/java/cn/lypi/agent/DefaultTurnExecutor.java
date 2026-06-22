@@ -129,7 +129,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         "incomplete-tool-call",
                         "模型返回的工具调用参数未完成，已终止本轮执行。"
                     );
-                    appendNewMessage(request.sessionId(), error);
+                    contextLeafId = appendNewMessage(request.sessionId(), error);
                     newMessages.add(error);
                     return failedState(request, turnId, context, newMessages, toolRound, startedAt, contextLeafId);
                 }
@@ -216,7 +216,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         TurnState finalState = state;
         String finalLeafEntryId = leafEntryId;
         try {
-            finalState = turnHooks.afterTurn(new AfterTurnHookContext(request, state, ports.cwd())).orElse(state);
+            turnHooks.afterTurn(new AfterTurnHookContext(request, state, ports.cwd()));
         } catch (RuntimeException failure) {
             AgentCoreExceptionHandler.Failure handled = exceptionHandler.handle(
                 request.sessionId(),
