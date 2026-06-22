@@ -19,17 +19,25 @@ import java.util.Optional;
  * Tavily Search 和 Extract provider。
  */
 public final class TavilyWebProvider implements WebSearchProvider, WebFetchProvider {
-    private static final URI SEARCH_URI = URI.create("https://api.tavily.com/search");
-    private static final URI EXTRACT_URI = URI.create("https://api.tavily.com/extract");
+    private static final String DEFAULT_ENDPOINT = "https://api.tavily.com";
 
     private final JavaHttpWebClient client;
     private final ObjectMapper objectMapper;
     private final String apiKey;
+    private final URI searchUri;
+    private final URI extractUri;
 
     public TavilyWebProvider(JavaHttpWebClient client, ObjectMapper objectMapper, String apiKey) {
+        this(client, objectMapper, apiKey, DEFAULT_ENDPOINT);
+    }
+
+    public TavilyWebProvider(JavaHttpWebClient client, ObjectMapper objectMapper, String apiKey, String endpoint) {
         this.client = client;
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
+        URI baseUri = endpoint(endpoint, DEFAULT_ENDPOINT);
+        this.searchUri = baseUri.resolve("search");
+        this.extractUri = baseUri.resolve("extract");
     }
 
     @Override
@@ -47,7 +55,7 @@ public final class TavilyWebProvider implements WebSearchProvider, WebFetchProvi
         addArray(body, "include_domains", request.allowedDomains());
         addArray(body, "exclude_domains", request.blockedDomains());
 
-        JsonNode response = client.postJson(SEARCH_URI, authHeaders(), body);
+        JsonNode response = client.postJson(searchUri, authHeaders(), body);
         return new WebSearchResponse(
             name(),
             request.query(),
@@ -65,7 +73,7 @@ public final class TavilyWebProvider implements WebSearchProvider, WebFetchProvi
         body.put("extract_depth", "basic");
         body.put("format", request.format());
 
-        JsonNode response = client.postJson(EXTRACT_URI, authHeaders(), body);
+        JsonNode response = client.postJson(extractUri, authHeaders(), body);
         JsonNode result = firstResult(response.path("results"));
         String content = WebJson.text(result, "raw_content")
             .or(() -> WebJson.text(result, "content"))
@@ -128,5 +136,13 @@ public final class TavilyWebProvider implements WebSearchProvider, WebFetchProvi
         }
         ArrayNode array = body.putArray(fieldName);
         values.forEach(array::add);
+    }
+
+    private static URI endpoint(String endpoint, String defaultEndpoint) {
+        String value = endpoint == null || endpoint.isBlank() ? defaultEndpoint : endpoint.trim();
+        if (!value.endsWith("/")) {
+            value = value + "/";
+        }
+        return URI.create(value);
     }
 }

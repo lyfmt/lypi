@@ -150,9 +150,13 @@ lypi-boot/src/main/resources/application.yml.example
 ```properties
 lypi.web.enabled=true
 lypi.web.default-provider=tavily
+lypi.web.timeout-seconds=20
+lypi.web.max-results=10
 lypi.web.providers.tavily.api-key-env=TAVILY_API_KEY
 lypi.web.providers.brave.api-key-env=BRAVE_SEARCH_API_KEY
 lypi.web.providers.perplexity.api-key-env=PERPLEXITY_API_KEY
 ```
 
-也可以用 `lypi.web.providers.<provider>.api-key` 直接配置 key；该方式只建议用于本地临时验证，避免把密钥写入仓库或会话记录。
+也可以用 `lypi.web.providers.<provider>.api-key` 直接配置 key；该方式只建议用于本地临时验证，避免把密钥写入仓库或会话记录。单个 provider 可通过 `lypi.web.providers.<provider>.enabled=false` 关闭，或通过 `lypi.web.providers.<provider>.endpoint` 指向代理网关、私有中转或兼容服务。
+
+`web_fetch` 只做静态 URL 字面量防护，会拒绝明显的本地、内网、link-local、unspecified 和 URL credential；当前不做 DNS 解析级防护。

@@ -238,7 +238,7 @@ public class LyPiToolAutoConfiguration {
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
                 webProviderRegistry(webProperties, resolvedObjectMapper, environment)
-                    .ifPresent(providers -> BuiltInTools.registerWebTools(runtime, providers));
+                    .ifPresent(providers -> BuiltInTools.registerWebTools(runtime, providers, webProperties.getMaxResults()));
                 AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
                 MailboxPort resolvedMailbox = mailbox.getIfAvailable();
                 if (resolvedAgentCenter != null && resolvedMailbox != null) {
@@ -437,15 +437,23 @@ public class LyPiToolAutoConfiguration {
         Map<String, WebSearchProvider> searchProviders = new LinkedHashMap<>();
         Map<String, WebFetchProvider> fetchProviders = new LinkedHashMap<>();
         apiKey(properties, environment, "tavily").ifPresent(apiKey -> {
-            TavilyWebProvider tavily = new TavilyWebProvider(client, objectMapper, apiKey);
+            TavilyWebProvider tavily = new TavilyWebProvider(
+                client,
+                objectMapper,
+                apiKey,
+                endpoint(properties, "tavily")
+            );
             searchProviders.put("tavily", tavily);
             fetchProviders.put("tavily", tavily);
         });
         apiKey(properties, environment, "brave").ifPresent(apiKey ->
-            searchProviders.put("brave", new BraveWebSearchProvider(client, apiKey))
+            searchProviders.put("brave", new BraveWebSearchProvider(client, apiKey, endpoint(properties, "brave")))
         );
         apiKey(properties, environment, "perplexity").ifPresent(apiKey ->
-            searchProviders.put("perplexity", new PerplexityWebSearchProvider(client, objectMapper, apiKey))
+            searchProviders.put(
+                "perplexity",
+                new PerplexityWebSearchProvider(client, objectMapper, apiKey, endpoint(properties, "perplexity"))
+            )
         );
         if (searchProviders.isEmpty() && fetchProviders.isEmpty()) {
             return Optional.empty();
@@ -458,6 +466,9 @@ public class LyPiToolAutoConfiguration {
         if (provider == null) {
             return Optional.empty();
         }
+        if (!provider.isEnabled()) {
+            return Optional.empty();
+        }
         if (provider.getApiKey() != null && !provider.getApiKey().isBlank()) {
             return Optional.of(provider.getApiKey().trim());
         }
@@ -468,5 +479,13 @@ public class LyPiToolAutoConfiguration {
             }
         }
         return Optional.empty();
+    }
+
+    private String endpoint(LyPiWebProperties properties, String providerName) {
+        LyPiWebProperties.ProviderProperties provider = properties.getProviders().get(providerName);
+        if (provider == null || provider.getEndpoint() == null || provider.getEndpoint().isBlank()) {
+            return null;
+        }
+        return provider.getEndpoint().trim();
     }
 }

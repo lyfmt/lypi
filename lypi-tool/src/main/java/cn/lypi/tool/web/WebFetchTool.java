@@ -49,7 +49,7 @@ public final class WebFetchTool extends AbstractWebTool {
     @Override
     public ValidationResult validateInput(Map<String, Object> input, ToolUseContext context) {
         try {
-            WebFetchRequest request = WebToolInputs.fetch(input);
+            WebFetchRequest request = WebToolInputs.fetch(input, providers.fetchProviderNames());
             WebUrlPolicy.check(request.url());
             return new ValidationResult(true, List.of());
         } catch (RuntimeException exception) {
@@ -60,7 +60,7 @@ public final class WebFetchTool extends AbstractWebTool {
     @Override
     public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
         try {
-            WebFetchRequest request = WebToolInputs.fetch(input);
+            WebFetchRequest request = WebToolInputs.fetch(input, providers.fetchProviderNames());
             WebUrlPolicy.CheckedUrl checkedUrl = WebUrlPolicy.check(request.url());
             return networkDecision(context, name(), Map.of("domain", checkedUrl.host()));
         } catch (RuntimeException exception) {
@@ -71,7 +71,7 @@ public final class WebFetchTool extends AbstractWebTool {
     @Override
     public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
         try {
-            WebFetchRequest request = WebToolInputs.fetch(input);
+            WebFetchRequest request = WebToolInputs.fetch(input, providers.fetchProviderNames());
             WebUrlPolicy.check(request.url());
             progress.progress(ToolProgress.phase("fetching", "抽取网页内容"));
             WebFetchResponse response = providers.fetchProvider(request.provider()).fetch(request);

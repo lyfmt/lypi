@@ -56,4 +56,29 @@ final class BraveWebSearchProviderTest {
         assertEquals(Optional.of("Web search docs"), response.results().getFirst().snippet());
         assertFalse(response.toString().contains("brave-key"));
     }
+
+    @Test
+    void usesConfiguredEndpoint() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        RecordingHttpTransport transport = new RecordingHttpTransport();
+        BraveWebSearchProvider provider = new BraveWebSearchProvider(
+            new JavaHttpWebClient(transport, objectMapper, Duration.ofSeconds(5)),
+            "brave-key",
+            "https://brave.internal/api"
+        );
+
+        provider.search(new WebSearchRequest(
+            "brave api",
+            2,
+            List.of(),
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            false
+        ));
+
+        assertEquals("https://brave.internal/api/res/v1/web/search?q=brave+api&count=2", transport.request.uri().toString());
+    }
 }

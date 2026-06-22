@@ -70,6 +70,63 @@ final class TavilyWebProviderTest {
     }
 
     @Test
+    void usesConfiguredEndpointForSearchAndExtract() {
+        RecordingHttpTransport transport = new RecordingHttpTransport();
+        TavilyWebProvider provider = new TavilyWebProvider(
+            new JavaHttpWebClient(transport, objectMapper, Duration.ofSeconds(5)),
+            objectMapper,
+            "test-key",
+            "https://tavily.internal/api"
+        );
+
+        provider.search(new WebSearchRequest(
+            "tavily api",
+            3,
+            List.of(),
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            false
+        ));
+        assertEquals("https://tavily.internal/api/search", transport.request.uri().toString());
+
+        provider.fetch(new WebFetchRequest(
+            "https://example.com/doc",
+            Optional.empty(),
+            "markdown",
+            10_000,
+            Optional.empty()
+        ));
+        assertEquals("https://tavily.internal/api/extract", transport.request.uri().toString());
+    }
+
+    @Test
+    void httpErrorsDoNotExposeApiKey() {
+        RecordingHttpTransport transport = new RecordingHttpTransport();
+        transport.responseStatus = 401;
+        TavilyWebProvider provider = provider(transport);
+
+        WebProviderException exception = org.junit.jupiter.api.Assertions.assertThrows(
+            WebProviderException.class,
+            () -> provider.search(new WebSearchRequest(
+                "tavily api",
+                3,
+                List.of(),
+                List.of(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                false
+            ))
+        );
+
+        assertFalse(exception.getMessage().contains("test-key"));
+    }
+
+    @Test
     void mapsExtractRequestAndResponse() throws Exception {
         RecordingHttpTransport transport = new RecordingHttpTransport();
         transport.responseBody = """

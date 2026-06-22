@@ -74,10 +74,17 @@ public final class BuiltInTools {
      * 注册 Web 工具集合。
      */
     public static void registerWebTools(ToolRuntimePort runtime, WebProviderRegistry providers) {
+        registerWebTools(runtime, providers, 10);
+    }
+
+    /**
+     * 注册 Web 工具集合。
+     */
+    public static void registerWebTools(ToolRuntimePort runtime, WebProviderRegistry providers, int maxResults) {
         Objects.requireNonNull(runtime, "runtime must not be null");
         Objects.requireNonNull(providers, "providers must not be null");
         if (!providers.searchProviderNames().isEmpty()) {
-            runtime.register(new WebSearchTool(providers));
+            runtime.register(new WebSearchTool(providers, maxResults));
         }
         if (!providers.fetchProviderNames().isEmpty()) {
             runtime.register(new WebFetchTool(providers));

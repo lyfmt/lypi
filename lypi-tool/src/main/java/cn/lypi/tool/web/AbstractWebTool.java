@@ -2,6 +2,7 @@ package cn.lypi.tool.web;
 
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.NetworkPolicyMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
@@ -18,6 +19,8 @@ import java.util.Optional;
 
 abstract class AbstractWebTool implements Tool<Map<String, Object>, String> {
     private static final int DEFAULT_MAX_RESULT_SIZE = 16_384;
+    private static final String METADATA_ADDITIONAL_PERMISSIONS = "additionalPermissions";
+    private static final String METADATA_APPROVED_ADDITIONAL_PERMISSIONS = "approvedAdditionalPermissions";
 
     @Override
     public List<String> aliases() {
@@ -72,8 +75,7 @@ abstract class AbstractWebTool implements Tool<Map<String, Object>, String> {
     }
 
     protected PermissionDecision networkDecision(ToolUseContext context, String toolName, Map<String, Object> metadata) {
-        PermissionRuntimeState state = permissionRuntimeState(context);
-        NetworkPolicyMode networkMode = state.permissionProfile().network().mode();
+        NetworkPolicyMode networkMode = effectiveNetworkMode(context);
         if (networkMode == NetworkPolicyMode.ENABLED) {
             return new PermissionDecision(
                 PermissionBehavior.ALLOW,
@@ -90,6 +92,34 @@ abstract class AbstractWebTool implements Tool<Map<String, Object>, String> {
             Optional.<PermissionUpdate>empty(),
             withNetworkMode(metadata, networkMode)
         );
+    }
+
+    private NetworkPolicyMode effectiveNetworkMode(ToolUseContext context) {
+        Optional<NetworkPolicyMode> approvedMode = approvedAdditionalNetworkMode(context);
+        if (approvedMode.isPresent() && approvedMode.orElseThrow() == NetworkPolicyMode.ENABLED) {
+            return NetworkPolicyMode.ENABLED;
+        }
+        PermissionRuntimeState state = permissionRuntimeState(context);
+        return state.permissionProfile().network().mode();
+    }
+
+    private Optional<NetworkPolicyMode> approvedAdditionalNetworkMode(ToolUseContext context) {
+        if (!approvedAdditionalPermissions(context)) {
+            return Optional.empty();
+        }
+        Object value = context.metadata().get(METADATA_ADDITIONAL_PERMISSIONS);
+        if (value instanceof AdditionalPermissionProfile additionalPermissions) {
+            return additionalPermissions.network().map(network -> network.mode());
+        }
+        return Optional.empty();
+    }
+
+    private boolean approvedAdditionalPermissions(ToolUseContext context) {
+        Object value = context.metadata().get(METADATA_APPROVED_ADDITIONAL_PERMISSIONS);
+        if (value instanceof Boolean approved) {
+            return approved;
+        }
+        return value instanceof String approved && Boolean.parseBoolean(approved);
     }
 
     private PermissionRuntimeState permissionRuntimeState(ToolUseContext context) {

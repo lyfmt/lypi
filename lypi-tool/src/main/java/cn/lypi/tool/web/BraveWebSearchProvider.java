@@ -15,12 +15,20 @@ import java.util.Optional;
  * Brave Web Search provider。
  */
 public final class BraveWebSearchProvider implements WebSearchProvider {
+    private static final String DEFAULT_ENDPOINT = "https://api.search.brave.com";
+
     private final JavaHttpWebClient client;
     private final String apiKey;
+    private final URI endpoint;
 
     public BraveWebSearchProvider(JavaHttpWebClient client, String apiKey) {
+        this(client, apiKey, DEFAULT_ENDPOINT);
+    }
+
+    public BraveWebSearchProvider(JavaHttpWebClient client, String apiKey, String endpoint) {
         this.client = client;
         this.apiKey = apiKey;
+        this.endpoint = endpoint(endpoint, DEFAULT_ENDPOINT);
     }
 
     @Override
@@ -50,7 +58,7 @@ public final class BraveWebSearchProvider implements WebSearchProvider {
         request.recency().map(this::freshness).ifPresent(freshness ->
             query.append("&freshness=").append(encode(freshness))
         );
-        return URI.create("https://api.search.brave.com/res/v1/web/search?" + query);
+        return endpoint.resolve("res/v1/web/search?" + query);
     }
 
     private String freshness(String recency) {
@@ -85,5 +93,13 @@ public final class BraveWebSearchProvider implements WebSearchProvider {
 
     private static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("%20", "+");
+    }
+
+    private static URI endpoint(String endpoint, String defaultEndpoint) {
+        String value = endpoint == null || endpoint.isBlank() ? defaultEndpoint : endpoint.trim();
+        if (!value.endsWith("/")) {
+            value = value + "/";
+        }
+        return URI.create(value);
     }
 }

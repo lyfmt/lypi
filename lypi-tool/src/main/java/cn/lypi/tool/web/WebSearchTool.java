@@ -16,10 +16,25 @@ import java.util.Map;
  * 执行商业 Web 搜索。
  */
 public final class WebSearchTool extends AbstractWebTool {
+    private static final int DEFAULT_MAX_RESULTS = 5;
+    private static final int DEFAULT_MAX_RESULTS_LIMIT = 10;
+
     private final WebProviderRegistry providers;
+    private final int defaultMaxResults;
+    private final int maxResultsLimit;
 
     public WebSearchTool(WebProviderRegistry providers) {
+        this(providers, DEFAULT_MAX_RESULTS, DEFAULT_MAX_RESULTS_LIMIT);
+    }
+
+    public WebSearchTool(WebProviderRegistry providers, int maxResultsLimit) {
+        this(providers, maxResultsLimit, maxResultsLimit);
+    }
+
+    public WebSearchTool(WebProviderRegistry providers, int defaultMaxResults, int maxResultsLimit) {
         this.providers = providers;
+        this.maxResultsLimit = Math.max(1, maxResultsLimit);
+        this.defaultMaxResults = Math.max(1, Math.min(this.maxResultsLimit, defaultMaxResults));
     }
 
     @Override
@@ -39,7 +54,7 @@ public final class WebSearchTool extends AbstractWebTool {
             "required", List.of("query"),
             "properties", Map.of(
                 "query", Map.of("type", "string"),
-                "maxResults", Map.of("type", "integer", "minimum", 1, "maximum", 10),
+                "maxResults", Map.of("type", "integer", "minimum", 1, "maximum", maxResultsLimit),
                 "allowedDomains", Map.of("type", "array", "items", Map.of("type", "string")),
                 "blockedDomains", Map.of("type", "array", "items", Map.of("type", "string")),
                 "recency", Map.of("type", "string", "enum", List.of("hour", "day", "week", "month", "year")),
@@ -54,7 +69,7 @@ public final class WebSearchTool extends AbstractWebTool {
     @Override
     public ValidationResult validateInput(Map<String, Object> input, ToolUseContext context) {
         try {
-            WebToolInputs.search(input);
+            WebToolInputs.search(input, providers.searchProviderNames(), defaultMaxResults, maxResultsLimit);
             return new ValidationResult(true, List.of());
         } catch (RuntimeException exception) {
             return new ValidationResult(false, List.of(exception.getMessage()));
@@ -69,7 +84,7 @@ public final class WebSearchTool extends AbstractWebTool {
     @Override
     public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
         try {
-            WebSearchRequest request = WebToolInputs.search(input);
+            WebSearchRequest request = WebToolInputs.search(input, providers.searchProviderNames(), defaultMaxResults, maxResultsLimit);
             progress.progress(ToolProgress.phase("searching", "搜索 Web"));
             WebSearchResponse response = providers.searchProvider(request.provider()).search(request);
             return success(context, render(response));

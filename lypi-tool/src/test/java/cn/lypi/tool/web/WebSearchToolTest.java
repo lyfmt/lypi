@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
@@ -16,6 +18,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 final class WebSearchToolTest {
@@ -34,6 +37,22 @@ final class WebSearchToolTest {
         assertTrue(properties.containsKey("recency"));
         assertTrue(properties.containsKey("provider"));
         assertTrue(properties.containsKey("includeAnswer"));
+    }
+
+    @Test
+    void configuredMaxResultsControlsSchemaAndDefaultInput() {
+        AtomicReference<WebSearchRequest> capturedRequest = new AtomicReference<>();
+        WebSearchTool tool = new WebSearchTool(registry(capturingProvider(capturedRequest)), 7);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> maxResults = (Map<String, Object>) properties.get("maxResults");
+        ToolResult<String> result = tool.execute(Map.of("query", "java"), context(PermissionMode.BYPASS), progress -> {
+        });
+
+        assertEquals(7, maxResults.get("maximum"));
+        assertEquals(7, capturedRequest.get().maxResults());
     }
 
     @Test
@@ -58,6 +77,20 @@ final class WebSearchToolTest {
     }
 
     @Test
+    void rejectsProviderNotAvailableForSearch() {
+        WebSearchTool tool = new WebSearchTool(registry(successProvider()));
+
+        ValidationResult validation = tool.validateInput(
+            Map.of("query", "java", "provider", "brave"),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertFalse(validation.valid());
+        assertTrue(validation.messages().getFirst().contains("provider"));
+        assertTrue(validation.messages().getFirst().contains("tavily"));
+    }
+
+    @Test
     void asksWhenNetworkProfileIsRestricted() {
         WebSearchTool tool = new WebSearchTool(registry(successProvider()));
 
@@ -72,6 +105,15 @@ final class WebSearchToolTest {
         WebSearchTool tool = new WebSearchTool(registry(successProvider()));
 
         var decision = tool.checkPermissions(Map.of("query", "java"), context(PermissionMode.BYPASS));
+
+        assertEquals(PermissionBehavior.ALLOW, decision.behavior());
+    }
+
+    @Test
+    void allowsWhenAdditionalNetworkPermissionWasApproved() {
+        WebSearchTool tool = new WebSearchTool(registry(successProvider()));
+
+        var decision = tool.checkPermissions(Map.of("query", "java"), contextWithAdditionalNetworkPermission());
 
         assertEquals(PermissionBehavior.ALLOW, decision.behavior());
     }
@@ -112,7 +154,11 @@ final class WebSearchToolTest {
         return new SuccessSearchProvider();
     }
 
-    private record SuccessSearchProvider() implements WebSearchProvider {
+    private WebSearchProvider capturingProvider(AtomicReference<WebSearchRequest> capturedRequest) {
+        return new CapturingSearchProvider(capturedRequest);
+    }
+
+    private final class SuccessSearchProvider implements WebSearchProvider {
         @Override
         public String name() {
             return "tavily";
@@ -120,23 +166,46 @@ final class WebSearchToolTest {
 
         @Override
         public WebSearchResponse search(WebSearchRequest request) {
-            return new WebSearchResponse(
-                "tavily",
-                request.query(),
-                Optional.of("answer"),
-                List.of(new WebSearchResult(
-                    "Example",
-                    "https://example.com",
-                    Optional.of("snippet"),
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.of(1.0d),
-                    Optional.empty()
-                )),
-                Optional.empty()
-            );
+            return searchResponse(request);
         }
+    }
+
+    private final class CapturingSearchProvider implements WebSearchProvider {
+        private final AtomicReference<WebSearchRequest> capturedRequest;
+
+        private CapturingSearchProvider(AtomicReference<WebSearchRequest> capturedRequest) {
+            this.capturedRequest = capturedRequest;
+        }
+
+        @Override
+        public String name() {
+            return "tavily";
+        }
+
+        @Override
+        public WebSearchResponse search(WebSearchRequest request) {
+            capturedRequest.set(request);
+            return searchResponse(request);
+        }
+    }
+
+    private WebSearchResponse searchResponse(WebSearchRequest request) {
+        return new WebSearchResponse(
+            "tavily",
+            request.query(),
+            Optional.of("answer"),
+            List.of(new WebSearchResult(
+                "Example",
+                "https://example.com",
+                Optional.of("snippet"),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(1.0d),
+                Optional.empty()
+            )),
+            Optional.empty()
+        );
     }
 
     private record FailingSearchProvider() implements WebSearchProvider {
@@ -157,6 +226,23 @@ final class WebSearchToolTest {
             "message",
             Path.of("."),
             Map.of("permissionRuntimeState", PermissionRuntimeState.fromLegacy(mode), "toolUseId", "toolu_1")
+        );
+    }
+
+    private ToolUseContext contextWithAdditionalNetworkPermission() {
+        return new ToolUseContext(
+            "session",
+            "message",
+            Path.of("."),
+            Map.of(
+                "permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+                "toolUseId", "toolu_1",
+                "approvedAdditionalPermissions", true,
+                "additionalPermissions", new AdditionalPermissionProfile(
+                    Optional.empty(),
+                    Optional.of(NetworkPermissionPolicy.enabled())
+                )
+            )
         );
     }
 }

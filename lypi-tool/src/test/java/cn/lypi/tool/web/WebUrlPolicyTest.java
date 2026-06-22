@@ -30,9 +30,13 @@ final class WebUrlPolicyTest {
         assertRejected("https://localhost/a", "local");
         assertRejected("https://127.0.0.1/a", "local");
         assertRejected("https://[::1]/a", "local");
+        assertRejected("https://0.0.0.0/a", "unspecified");
         assertRejected("https://10.0.0.1/a", "private");
         assertRejected("https://172.16.0.1/a", "private");
         assertRejected("https://192.168.0.1/a", "private");
+        assertRejected("https://[fc00::1]/a", "private");
+        assertRejected("https://[fd00::1]/a", "private");
+        assertRejected("https://[::ffff:127.0.0.1]/a", "private");
         assertRejected("https://169.254.1.1/a", "link-local");
         assertRejected("https://[fe80::1]/a", "link-local");
     }

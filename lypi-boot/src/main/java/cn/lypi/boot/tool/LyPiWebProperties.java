@@ -37,6 +37,10 @@ public class LyPiWebProperties {
         this.timeout = timeout == null ? Duration.ofSeconds(20) : timeout;
     }
 
+    public void setTimeoutSeconds(long timeoutSeconds) {
+        this.timeout = timeoutSeconds <= 0 ? Duration.ofSeconds(20) : Duration.ofSeconds(timeoutSeconds);
+    }
+
     public int getMaxResults() {
         return maxResults;
     }
@@ -74,8 +78,18 @@ public class LyPiWebProperties {
     }
 
     public static class ProviderProperties {
+        private boolean enabled = true;
         private String apiKey;
         private String apiKeyEnv;
+        private String endpoint;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
 
         public String getApiKey() {
             return apiKey;
@@ -91,6 +105,14 @@ public class LyPiWebProperties {
 
         public void setApiKeyEnv(String apiKeyEnv) {
             this.apiKeyEnv = apiKeyEnv;
+        }
+
+        public String getEndpoint() {
+            return endpoint;
+        }
+
+        public void setEndpoint(String endpoint) {
+            this.endpoint = endpoint;
         }
     }
 }

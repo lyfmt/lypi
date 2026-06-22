@@ -62,4 +62,29 @@ final class PerplexityWebSearchProviderTest {
         assertEquals(Optional.of("Search API guide"), response.results().getFirst().snippet());
         assertFalse(response.toString().contains("ppl-key"));
     }
+
+    @Test
+    void usesConfiguredEndpoint() {
+        RecordingHttpTransport transport = new RecordingHttpTransport();
+        PerplexityWebSearchProvider provider = new PerplexityWebSearchProvider(
+            new JavaHttpWebClient(transport, objectMapper, Duration.ofSeconds(5)),
+            objectMapper,
+            "ppl-key",
+            "https://perplexity.internal/api"
+        );
+
+        provider.search(new WebSearchRequest(
+            "perplexity search api",
+            4,
+            List.of(),
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            false
+        ));
+
+        assertEquals("https://perplexity.internal/api/search", transport.request.uri().toString());
+    }
 }

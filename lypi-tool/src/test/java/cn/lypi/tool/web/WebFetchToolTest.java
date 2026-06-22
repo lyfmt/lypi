@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.security.AdditionalPermissionProfile;
+import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
@@ -42,12 +44,36 @@ final class WebFetchToolTest {
     }
 
     @Test
+    void rejectsProviderNotAvailableForFetch() {
+        WebFetchTool tool = new WebFetchTool(registry(successProvider()));
+
+        var validation = tool.validateInput(
+            Map.of("url", "https://example.com/doc", "provider", "brave"),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertFalse(validation.valid());
+        assertTrue(validation.messages().getFirst().contains("provider"));
+        assertTrue(validation.messages().getFirst().contains("tavily"));
+    }
+
+    @Test
     void asksWithDomainMetadataWhenNetworkRestricted() {
         WebFetchTool tool = new WebFetchTool(registry(successProvider()));
 
         var decision = tool.checkPermissions(Map.of("url", "https://example.com/doc"), context(PermissionMode.DEFAULT_EXECUTE));
 
         assertEquals(PermissionBehavior.ASK, decision.behavior());
+        assertEquals("example.com", decision.metadata().get("domain"));
+    }
+
+    @Test
+    void allowsWhenAdditionalNetworkPermissionWasApproved() {
+        WebFetchTool tool = new WebFetchTool(registry(successProvider()));
+
+        var decision = tool.checkPermissions(Map.of("url", "https://example.com/doc"), contextWithAdditionalNetworkPermission());
+
+        assertEquals(PermissionBehavior.ALLOW, decision.behavior());
         assertEquals("example.com", decision.metadata().get("domain"));
     }
 
@@ -102,6 +128,23 @@ final class WebFetchToolTest {
             "message",
             Path.of("."),
             Map.of("permissionRuntimeState", PermissionRuntimeState.fromLegacy(mode), "toolUseId", "toolu_1")
+        );
+    }
+
+    private ToolUseContext contextWithAdditionalNetworkPermission() {
+        return new ToolUseContext(
+            "session",
+            "message",
+            Path.of("."),
+            Map.of(
+                "permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+                "toolUseId", "toolu_1",
+                "approvedAdditionalPermissions", true,
+                "additionalPermissions", new AdditionalPermissionProfile(
+                    Optional.empty(),
+                    Optional.of(NetworkPermissionPolicy.enabled())
+                )
+            )
         );
     }
 }

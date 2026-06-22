@@ -16,16 +16,22 @@ import java.util.Optional;
  * Perplexity Search API provider。
  */
 public final class PerplexityWebSearchProvider implements WebSearchProvider {
-    private static final URI SEARCH_URI = URI.create("https://api.perplexity.ai/search");
+    private static final String DEFAULT_ENDPOINT = "https://api.perplexity.ai";
 
     private final JavaHttpWebClient client;
     private final ObjectMapper objectMapper;
     private final String apiKey;
+    private final URI searchUri;
 
     public PerplexityWebSearchProvider(JavaHttpWebClient client, ObjectMapper objectMapper, String apiKey) {
+        this(client, objectMapper, apiKey, DEFAULT_ENDPOINT);
+    }
+
+    public PerplexityWebSearchProvider(JavaHttpWebClient client, ObjectMapper objectMapper, String apiKey, String endpoint) {
         this.client = client;
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
+        this.searchUri = endpoint(endpoint, DEFAULT_ENDPOINT).resolve("search");
     }
 
     @Override
@@ -41,7 +47,7 @@ public final class PerplexityWebSearchProvider implements WebSearchProvider {
         addArray(body, "search_domain_filter", request.allowedDomains());
         request.recency().ifPresent(recency -> body.put("search_recency_filter", recency));
 
-        JsonNode response = client.postJson(SEARCH_URI, Map.of("Authorization", "Bearer " + apiKey), body);
+        JsonNode response = client.postJson(searchUri, Map.of("Authorization", "Bearer " + apiKey), body);
         return new WebSearchResponse(
             name(),
             request.query(),
@@ -77,5 +83,13 @@ public final class PerplexityWebSearchProvider implements WebSearchProvider {
         }
         ArrayNode array = body.putArray(fieldName);
         values.forEach(array::add);
+    }
+
+    private static URI endpoint(String endpoint, String defaultEndpoint) {
+        String value = endpoint == null || endpoint.isBlank() ? defaultEndpoint : endpoint.trim();
+        if (!value.endsWith("/")) {
+            value = value + "/";
+        }
+        return URI.create(value);
     }
 }

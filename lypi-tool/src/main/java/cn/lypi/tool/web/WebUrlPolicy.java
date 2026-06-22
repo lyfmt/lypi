@@ -55,7 +55,13 @@ public final class WebUrlPolicy {
         if (host.equals("localhost") || host.endsWith(".localhost") || host.equals("127.0.0.1") || host.equals("::1")) {
             throw new IllegalArgumentException("url host 不能是 local 地址。");
         }
+        if (isUnspecified(host)) {
+            throw new IllegalArgumentException("url host 不能是 unspecified 地址。");
+        }
         if (isPrivateIpv4(host)) {
+            throw new IllegalArgumentException("url host 不能是 private 地址。");
+        }
+        if (isPrivateIpv6(host)) {
             throw new IllegalArgumentException("url host 不能是 private 地址。");
         }
         if (isLinkLocal(host)) {
@@ -69,8 +75,20 @@ public final class WebUrlPolicy {
             return false;
         }
         return parts[0] == 10
+            || parts[0] == 127
             || (parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31)
             || (parts[0] == 192 && parts[1] == 168);
+    }
+
+    private static boolean isPrivateIpv6(String host) {
+        String normalized = host.toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("fc") || normalized.startsWith("fd")) {
+            return true;
+        }
+        if (normalized.startsWith("::ffff:")) {
+            return isPrivateIpv4(normalized.substring("::ffff:".length()));
+        }
+        return false;
     }
 
     private static boolean isLinkLocal(String host) {
@@ -79,6 +97,10 @@ public final class WebUrlPolicy {
             return true;
         }
         return host.startsWith("fe80:");
+    }
+
+    private static boolean isUnspecified(String host) {
+        return host.equals("0.0.0.0") || host.equals("::");
     }
 
     private static int[] ipv4Parts(String host) {

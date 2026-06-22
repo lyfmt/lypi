@@ -7,6 +7,7 @@ import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.util.Map;
@@ -56,6 +57,64 @@ final class LyPiWebToolAutoConfigurationTest {
 
                 assertThat(runtime.resolve("web_search")).isPresent();
                 assertThat(runtime.resolve("web_fetch")).isPresent();
+            });
+    }
+
+    @Test
+    void skipsProviderWhenProviderIsDisabled() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.web.enabled=true",
+                "lypi.web.providers.tavily.enabled=false",
+                "lypi.web.providers.tavily.api-key=test-key"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiWebToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(runtime.resolve("web_search")).isEmpty();
+                assertThat(runtime.resolve("web_fetch")).isEmpty();
+            });
+    }
+
+    @Test
+    void readsApiKeyFromConfiguredEnvironmentProperty() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.web.enabled=true",
+                "lypi.web.providers.tavily.api-key-env=LYPI_TEST_TAVILY_KEY",
+                "LYPI_TEST_TAVILY_KEY=test-key"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiWebToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(runtime.resolve("web_search")).isPresent();
+                assertThat(runtime.resolve("web_fetch")).isPresent();
+            });
+    }
+
+    @Test
+    void configuredMaxResultsControlsSearchToolSchema() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.web.enabled=true",
+                "lypi.web.max-results=7",
+                "lypi.web.providers.tavily.api-key=test-key"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiWebToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                Tool<?, ?> tool = runtime.resolve("web_search").orElseThrow();
+                @SuppressWarnings("unchecked")
+                Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> maxResults = (Map<String, Object>) properties.get("maxResults");
+
+                assertThat(maxResults.get("maximum")).isEqualTo(7);
             });
     }
 

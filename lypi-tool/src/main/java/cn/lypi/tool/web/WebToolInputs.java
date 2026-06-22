@@ -25,16 +25,30 @@ public final class WebToolInputs {
      * 解析 `web_search` 输入。
      */
     public static WebSearchRequest search(Map<String, Object> input) {
+        return search(input, PROVIDERS, DEFAULT_SEARCH_RESULTS, MAX_SEARCH_RESULTS);
+    }
+
+    /**
+     * 解析 `web_search` 输入，并使用可用 provider 列表校验 provider 字段。
+     */
+    public static WebSearchRequest search(
+        Map<String, Object> input,
+        List<String> providers,
+        int defaultMaxResults,
+        int maxResults
+    ) {
+        int normalizedMax = Math.max(1, maxResults);
+        int normalizedDefault = Math.max(1, Math.min(normalizedMax, defaultMaxResults));
         String query = requiredString(input, "query");
         return new WebSearchRequest(
             query,
-            intInput(input, "maxResults", DEFAULT_SEARCH_RESULTS, 1, MAX_SEARCH_RESULTS),
+            intInput(input, "maxResults", normalizedDefault, 1, normalizedMax),
             domainList(input, "allowedDomains"),
             domainList(input, "blockedDomains"),
             optionalString(input, "recency"),
             optionalString(input, "country"),
             optionalString(input, "language"),
-            optionalProvider(input),
+            optionalProvider(input, providers),
             booleanInput(input, "includeAnswer", false)
         );
     }
@@ -43,6 +57,13 @@ public final class WebToolInputs {
      * 解析 `web_fetch` 输入。
      */
     public static WebFetchRequest fetch(Map<String, Object> input) {
+        return fetch(input, PROVIDERS);
+    }
+
+    /**
+     * 解析 `web_fetch` 输入，并使用可用 provider 列表校验 provider 字段。
+     */
+    public static WebFetchRequest fetch(Map<String, Object> input, List<String> providers) {
         String format = optionalString(input, "format").orElse("markdown").toLowerCase(Locale.ROOT);
         if (!FETCH_FORMATS.contains(format)) {
             throw new IllegalArgumentException("format 只支持 markdown 或 text。");
@@ -52,7 +73,7 @@ public final class WebToolInputs {
             optionalString(input, "query"),
             format,
             intInput(input, "maxChars", DEFAULT_FETCH_CHARS, 1, MAX_FETCH_CHARS),
-            optionalProvider(input)
+            optionalProvider(input, providers)
         );
     }
 
@@ -94,13 +115,23 @@ public final class WebToolInputs {
         return Boolean.parseBoolean(value.toString());
     }
 
-    private static Optional<String> optionalProvider(Map<String, Object> input) {
+    private static Optional<String> optionalProvider(Map<String, Object> input, List<String> providers) {
         Optional<String> provider = optionalString(input, "provider")
             .map(value -> value.toLowerCase(Locale.ROOT));
-        if (provider.isPresent() && !PROVIDERS.contains(provider.orElseThrow())) {
-            throw new IllegalArgumentException("provider 只支持 tavily、brave 或 perplexity。");
+        List<String> allowedProviders = normalizeProviders(providers);
+        if (provider.isPresent() && !allowedProviders.contains(provider.orElseThrow())) {
+            throw new IllegalArgumentException("provider 只支持 " + String.join("、", allowedProviders) + "。");
         }
         return provider;
+    }
+
+    private static List<String> normalizeProviders(List<String> providers) {
+        List<String> source = providers == null ? List.of() : providers;
+        return source.stream()
+            .filter(provider -> provider != null && !provider.isBlank())
+            .map(provider -> provider.trim().toLowerCase(Locale.ROOT))
+            .distinct()
+            .toList();
     }
 
     private static List<String> domainList(Map<String, Object> input, String fieldName) {
