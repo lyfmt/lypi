@@ -13,6 +13,8 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.HookEndEvent;
+import cn.lypi.contracts.event.HookStartEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
@@ -21,6 +23,7 @@ import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.hook.AfterToolHookContext;
 import cn.lypi.contracts.hook.AfterToolHookResult;
+import cn.lypi.contracts.hook.BeforeToolHookResult;
 import cn.lypi.contracts.hook.ToolHook;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
@@ -491,6 +494,31 @@ class LyPiToolAutoConfigurationTest {
                 ).getFirst();
 
                 assertThat(result.output()).isEqualTo("hooked");
+            });
+    }
+
+    @Test
+    void toolRuntimeFactoryPublishesHookLifecycleEvents() {
+        RecordingEventBus eventBus = new RecordingEventBus();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(EventBus.class, () -> eventBus)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(ToolHook.class, () -> ToolHook.before(context -> BeforeToolHookResult.allow()))
+            .run(context -> {
+                ToolRuntimeFactoryPort factory = context.getBean(ToolRuntimeFactoryPort.class);
+                ToolRuntimePort runtime = factory.create(Path.of("."));
+                runtime.register(new ProgressTool());
+
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "progress-test", Map.of("text", "done"), "msg_1")),
+                    context()
+                ).getFirst();
+
+                assertThat(result.isError()).isFalse();
+                assertThat(eventBus.events).anyMatch(HookStartEvent.class::isInstance);
+                assertThat(eventBus.events).anyMatch(HookEndEvent.class::isInstance);
             });
     }
 

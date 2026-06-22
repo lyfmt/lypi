@@ -16,6 +16,8 @@ import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
 import cn.lypi.contracts.event.ErrorEvent;
+import cn.lypi.contracts.event.HookEndEvent;
+import cn.lypi.contracts.event.HookStartEvent;
 import cn.lypi.contracts.event.InterruptEvent;
 import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
@@ -45,6 +47,8 @@ import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
+import cn.lypi.contracts.hook.HookPhase;
+import cn.lypi.contracts.hook.HookRunStatus;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -399,6 +403,43 @@ class TuiEventReducerTest {
         assertEquals("worked 0s", reducer.view().runtimeLine());
         assertEquals("EXECUTE", reducer.view().statusBar().mode());
         assertEquals(0, reducer.view().blocks().size());
+    }
+
+    @Test
+    void hookLifecycleEventsDoNotChangeTuiView() {
+        TuiEventReducer reducer = new TuiEventReducer();
+        TuiViewModel before = reducer.view();
+
+        reducer.reduce(new HookStartEvent(
+            "ses_1",
+            "toolu_1",
+            "msg_1",
+            "turn_1",
+            "Bash",
+            "hook_toolu_1_before_0",
+            "cn.lypi.TestHook",
+            HookPhase.BEFORE_TOOL_CALL,
+            NOW,
+            NOW
+        ));
+        TuiViewModel after = reducer.reduce(new HookEndEvent(
+            "ses_1",
+            "toolu_1",
+            "msg_1",
+            "turn_1",
+            "Bash",
+            "hook_toolu_1_before_0",
+            "cn.lypi.TestHook",
+            HookPhase.BEFORE_TOOL_CALL,
+            HookRunStatus.SUCCEEDED,
+            null,
+            NOW,
+            NOW.plusMillis(1),
+            1L,
+            NOW.plusMillis(1)
+        ));
+
+        assertEquals(before, after);
     }
 
     @Test

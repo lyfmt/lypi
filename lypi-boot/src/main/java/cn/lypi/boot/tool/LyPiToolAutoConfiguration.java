@@ -222,7 +222,7 @@ public class LyPiToolAutoConfiguration {
                     new cn.lypi.tool.ToolExecutionPlanner(),
                     new cn.lypi.tool.ToolResultBudgeter(),
                     new cn.lypi.tool.ToolRuntimeContextFactory(options),
-                    new ToolHookExecutionInterceptor(new DefaultToolHookRuntime(toolHooks.orderedStream().toList())),
+                    new ToolHookExecutionInterceptor(new DefaultToolHookRuntime(toolHooks.orderedStream().toList(), runtimeEventBus)),
                     securityRuntime,
                     runtimeResponseGate,
                     runtimePromptPort,
