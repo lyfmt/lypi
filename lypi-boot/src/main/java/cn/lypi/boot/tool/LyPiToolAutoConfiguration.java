@@ -40,10 +40,19 @@ import cn.lypi.tool.shell.HostExecutor;
 import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
+import cn.lypi.tool.web.BraveWebSearchProvider;
+import cn.lypi.tool.web.JavaHttpWebClient;
+import cn.lypi.tool.web.PerplexityWebSearchProvider;
+import cn.lypi.tool.web.TavilyWebProvider;
+import cn.lypi.tool.web.WebFetchProvider;
+import cn.lypi.tool.web.WebProviderRegistry;
+import cn.lypi.tool.web.WebSearchProvider;
 import cn.lypi.transport.headless.HeadlessTransport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -57,7 +66,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 
 @AutoConfiguration
-@EnableConfigurationProperties({LyPiToolProperties.class, LyPiPermissionsProperties.class})
+@EnableConfigurationProperties({LyPiToolProperties.class, LyPiPermissionsProperties.class, LyPiWebProperties.class})
 public class LyPiToolAutoConfiguration {
     /**
      * 创建默认宿主机命令执行器。
@@ -169,11 +178,14 @@ public class LyPiToolAutoConfiguration {
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         ObjectProvider<McpClientManagerFactory> mcpClientManagerFactory,
         McpClientManagerLifecycle mcpClientManagerLifecycle,
+        LyPiWebProperties webProperties,
+        ObjectProvider<ObjectMapper> objectMapper,
         Environment environment
     ) {
         EventBus resolvedEventBus = eventBus.getIfAvailable();
         ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getIfAvailable();
         McpClientManagerFactory resolvedMcpClientManagerFactory = mcpClientManagerFactory.getIfAvailable();
+        ObjectMapper resolvedObjectMapper = objectMapper.getIfAvailable(ObjectMapper::new);
         String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
         return new ToolRuntimeFactoryPort() {
             @Override
@@ -225,6 +237,8 @@ public class LyPiToolAutoConfiguration {
                     new FilePermissionAmendmentStore(runtimeCwd)
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
+                webProviderRegistry(webProperties, resolvedObjectMapper, environment)
+                    .ifPresent(providers -> BuiltInTools.registerWebTools(runtime, providers));
                 AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
                 MailboxPort resolvedMailbox = mailbox.getIfAvailable();
                 if (resolvedAgentCenter != null && resolvedMailbox != null) {
@@ -397,5 +411,62 @@ public class LyPiToolAutoConfiguration {
         } catch (RuntimeException exception) {
             // NOTE: MCP 注册失败不能阻断内置工具可用性。
         }
+    }
+
+    private Optional<WebProviderRegistry> webProviderRegistry(
+        LyPiWebProperties properties,
+        ObjectMapper objectMapper,
+        Environment environment
+    ) {
+        if (properties == null || !properties.isEnabled()) {
+            return Optional.empty();
+        }
+        JavaHttpWebClient client = new JavaHttpWebClient(
+            new JavaHttpWebClient.HttpTransport() {
+                private final java.net.http.HttpClient delegate = java.net.http.HttpClient.newHttpClient();
+
+                @Override
+                public java.net.http.HttpResponse<String> send(java.net.http.HttpRequest request)
+                    throws java.io.IOException, InterruptedException {
+                    return delegate.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+                }
+            },
+            objectMapper,
+            properties.getTimeout() == null ? Duration.ofSeconds(20) : properties.getTimeout()
+        );
+        Map<String, WebSearchProvider> searchProviders = new LinkedHashMap<>();
+        Map<String, WebFetchProvider> fetchProviders = new LinkedHashMap<>();
+        apiKey(properties, environment, "tavily").ifPresent(apiKey -> {
+            TavilyWebProvider tavily = new TavilyWebProvider(client, objectMapper, apiKey);
+            searchProviders.put("tavily", tavily);
+            fetchProviders.put("tavily", tavily);
+        });
+        apiKey(properties, environment, "brave").ifPresent(apiKey ->
+            searchProviders.put("brave", new BraveWebSearchProvider(client, apiKey))
+        );
+        apiKey(properties, environment, "perplexity").ifPresent(apiKey ->
+            searchProviders.put("perplexity", new PerplexityWebSearchProvider(client, objectMapper, apiKey))
+        );
+        if (searchProviders.isEmpty() && fetchProviders.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new WebProviderRegistry(properties.getDefaultProvider(), searchProviders, fetchProviders));
+    }
+
+    private Optional<String> apiKey(LyPiWebProperties properties, Environment environment, String providerName) {
+        LyPiWebProperties.ProviderProperties provider = properties.getProviders().get(providerName);
+        if (provider == null) {
+            return Optional.empty();
+        }
+        if (provider.getApiKey() != null && !provider.getApiKey().isBlank()) {
+            return Optional.of(provider.getApiKey().trim());
+        }
+        if (provider.getApiKeyEnv() != null && !provider.getApiKeyEnv().isBlank()) {
+            String value = environment.getProperty(provider.getApiKeyEnv());
+            if (value != null && !value.isBlank()) {
+                return Optional.of(value.trim());
+            }
+        }
+        return Optional.empty();
     }
 }
