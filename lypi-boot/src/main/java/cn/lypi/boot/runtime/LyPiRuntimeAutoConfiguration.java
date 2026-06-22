@@ -7,6 +7,7 @@ import cn.lypi.boot.BootstrapService;
 import cn.lypi.boot.tool.LyPiPermissionsProperties;
 import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.hook.TurnHook;
 import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
@@ -222,7 +223,8 @@ public class LyPiRuntimeAutoConfiguration {
         ResourceRuntimePort resourceRuntime,
         EventBus eventBus,
         ContextAssembler contextAssembler,
-        CompactionCoordinator compactionCoordinator
+        CompactionCoordinator compactionCoordinator,
+        ObjectProvider<TurnHook> turnHooks
     ) {
         return RuntimeBeanFactories.agentCore(
             properties,
@@ -234,6 +236,7 @@ public class LyPiRuntimeAutoConfiguration {
             eventBus,
             contextAssembler,
             compactionCoordinator,
+            turnHooks,
             Clock.systemUTC()
         );
     }
@@ -255,6 +258,7 @@ public class LyPiRuntimeAutoConfiguration {
         EventBus eventBus,
         ObjectProvider<CompactionSummarizer> compactionSummarizer,
         ObjectProvider<ModelCatalogPort> modelCatalog,
+        ObjectProvider<TurnHook> turnHooks,
         Clock clock
     ) {
         return RuntimeBeanFactories.agentCoreFactory(
@@ -266,6 +270,7 @@ public class LyPiRuntimeAutoConfiguration {
             eventBus,
             compactionSummarizer,
             modelCatalog,
+            turnHooks,
             clock
         );
     }

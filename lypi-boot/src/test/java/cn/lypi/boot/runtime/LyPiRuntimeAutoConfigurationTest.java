@@ -28,6 +28,8 @@ import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.SessionStateEvent;
+import cn.lypi.contracts.hook.BeforeTurnHookResult;
+import cn.lypi.contracts.hook.TurnHook;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
@@ -136,6 +138,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.ApplicationRunner;
@@ -1275,6 +1278,68 @@ class LyPiRuntimeAutoConfigurationTest {
                 new TokenUsage(0, 0, 0, 0)
             ))
             .run(context -> assertThat(context).hasSingleBean(AgentCoreFactoryPort.class));
+    }
+
+    @Test
+    void agentCoreFactoryWiresTurnHooks() {
+        AtomicBoolean hookCalled = new AtomicBoolean(false);
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(AiProviderRuntimePort.class, () -> (snapshot, signal) -> {
+                throw new AssertionError("阻断后不应调用模型");
+            })
+            .withBean(ToolRuntimePort.class, NoopToolRuntime::new)
+            .withBean(SecurityRuntimePort.class, () -> LyPiRuntimeAutoConfigurationTest::allowAllSecurity)
+            .withBean(ResourceRuntimePort.class, NoopResourceRuntime::new)
+            .withBean(CompactionSummarizer.class, () -> request -> new CompactSummaryResult(
+                "summary",
+                new TokenUsage(0, 0, 0, 0)
+            ))
+            .withBean(TurnHook.class, () -> TurnHook.before(context -> {
+                hookCalled.set(true);
+                return BeforeTurnHookResult.block("boot hook denied");
+            }))
+            .run(context -> {
+                AgentCorePort core = context.getBean(AgentCoreFactoryPort.class)
+                    .create(tempDir, context.getBean(SessionManagerPort.class));
+
+                TurnState state = core.execute(new TurnRequest("session-hook", "hello", Optional.empty(), () -> false));
+
+                assertThat(hookCalled).isTrue();
+                assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+                assertThat(state.newMessages()).isEmpty();
+            });
+    }
+
+    @Test
+    void defaultAgentCoreWiresTurnHooks() {
+        AtomicBoolean hookCalled = new AtomicBoolean(false);
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(AiProviderRuntimePort.class, () -> (snapshot, signal) -> {
+                throw new AssertionError("阻断后不应调用模型");
+            })
+            .withBean(ToolRuntimePort.class, NoopToolRuntime::new)
+            .withBean(SecurityRuntimePort.class, () -> LyPiRuntimeAutoConfigurationTest::allowAllSecurity)
+            .withBean(ResourceRuntimePort.class, NoopResourceRuntime::new)
+            .withBean(CompactionSummarizer.class, () -> request -> new CompactSummaryResult(
+                "summary",
+                new TokenUsage(0, 0, 0, 0)
+            ))
+            .withBean(TurnHook.class, () -> TurnHook.before(context -> {
+                hookCalled.set(true);
+                return BeforeTurnHookResult.block("boot hook denied");
+            }))
+            .run(context -> {
+                TurnState state = context.getBean(AgentCorePort.class)
+                    .execute(new TurnRequest("session-hook", "hello", Optional.empty(), () -> false));
+
+                assertThat(hookCalled).isTrue();
+                assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+                assertThat(state.newMessages()).isEmpty();
+            });
     }
 
     @Test
