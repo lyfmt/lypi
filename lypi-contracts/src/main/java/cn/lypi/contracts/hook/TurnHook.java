@@ -67,7 +67,7 @@ public interface TurnHook {
     @FunctionalInterface
     interface AfterCallback {
         /**
-         * 处理 turn 执行后上下文并返回状态处理决定。
+         * 观察 turn 执行后上下文并返回处理完成结果。
          */
         AfterTurnHookResult handle(AfterTurnHookContext context);
     }
