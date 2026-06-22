@@ -19,6 +19,9 @@ import cn.lypi.tool.builtin.subagent.WaitAgentTool;
 import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
+import cn.lypi.tool.web.WebFetchTool;
+import cn.lypi.tool.web.WebProviderRegistry;
+import cn.lypi.tool.web.WebSearchTool;
 import java.util.List;
 import java.util.Objects;
 
@@ -64,6 +67,20 @@ public final class BuiltInTools {
         Objects.requireNonNull(runtime, "runtime must not be null");
         for (Tool<?, ?> tool : createDefaultTools(executor, sandboxPolicyResolver)) {
             runtime.register(tool);
+        }
+    }
+
+    /**
+     * 注册 Web 工具集合。
+     */
+    public static void registerWebTools(ToolRuntimePort runtime, WebProviderRegistry providers) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        Objects.requireNonNull(providers, "providers must not be null");
+        if (!providers.searchProviderNames().isEmpty()) {
+            runtime.register(new WebSearchTool(providers));
+        }
+        if (!providers.fetchProviderNames().isEmpty()) {
+            runtime.register(new WebFetchTool(providers));
         }
     }
 
