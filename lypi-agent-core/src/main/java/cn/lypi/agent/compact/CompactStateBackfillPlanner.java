@@ -21,6 +21,7 @@ import java.nio.file.Files;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -63,7 +64,7 @@ final class CompactStateBackfillPlanner {
         entries.addAll(runtimeEntries(compactionEntryId, safeTimestamp, request));
         entries.addAll(skillEntries(compactionEntryId, safeTimestamp, request.contextBuildRequest()));
         mcpEntry(compactionEntryId, safeTimestamp, request.assembly(), request.tools()).ifPresent(entries::add);
-        return relinkParents(entries, compactionEntryId);
+        return normalizeEntries(entries, compactionEntryId);
     }
 
     private List<MessageEntry> runtimeEntries(String compactionEntryId, Instant timestamp, CompactionRequest request) {
@@ -92,11 +93,12 @@ final class CompactStateBackfillPlanner {
                 continue;
             }
             String attachmentId = safeAttachmentId(item.attachmentId(), "compact-runtime-state-" + entries.size());
+            TruncatedText text = truncate(renderRuntimeItem(item), MAX_RUNTIME_CHARS);
             entries.add(entry(
                 compactionEntryId,
                 attachmentId,
-                truncate(renderRuntimeItem(item), MAX_RUNTIME_CHARS),
-                metadata("runtime", item.metadata()),
+                text.text(),
+                metadata("runtime", item.metadata(), text.truncated()),
                 timestamp
             ));
         }
@@ -120,17 +122,22 @@ final class CompactStateBackfillPlanner {
             try {
                 body = Files.readString(mention.skillFile()).strip();
             } catch (Exception exception) {
-                continue;
+                body = "Failed to read skill file: " + safeText(exception.getMessage());
             }
             if (body.isBlank()) {
                 continue;
             }
             String text = "# Skill: " + mention.name() + "\n\nPath: " + mention.skillFile() + "\n\n" + body;
+            TruncatedText truncatedText = truncate(text, MAX_SKILL_CHARS);
             entries.add(entry(
                 compactionEntryId,
                 "compact-skill-" + slug(mention.name()),
-                truncate(text, MAX_SKILL_CHARS),
-                Map.of("backfillType", "skill", "skillName", mention.name()),
+                truncatedText.text(),
+                Map.of(
+                    "backfillType", "skill",
+                    "skillName", mention.name(),
+                    "truncated", truncatedText.truncated()
+                ),
                 timestamp
             ));
         }
@@ -161,11 +168,17 @@ final class CompactStateBackfillPlanner {
             return Optional.empty();
         }
         String sourceName = servers.isEmpty() ? "tools" : servers.getFirst().name();
+        TruncatedText truncatedText = truncate(text, MAX_MCP_CHARS);
         return Optional.of(entry(
             compactionEntryId,
             "compact-mcp-guidance-" + slug(sourceName),
-            truncate(text, MAX_MCP_CHARS),
-            Map.of("backfillType", "mcp", "serverCount", Integer.toString(servers.size()), "toolCount", Integer.toString(mcpTools.size())),
+            truncatedText.text(),
+            Map.of(
+                "backfillType", "mcp",
+                "serverCount", Integer.toString(servers.size()),
+                "toolCount", Integer.toString(mcpTools.size()),
+                "truncated", truncatedText.truncated()
+            ),
             timestamp
         ));
     }
@@ -205,18 +218,48 @@ final class CompactStateBackfillPlanner {
         return text.toString().strip();
     }
 
-    private List<MessageEntry> relinkParents(List<MessageEntry> entries, String firstParentId) {
+    private List<MessageEntry> normalizeEntries(List<MessageEntry> entries, String firstParentId) {
         if (entries.isEmpty()) {
             return List.of();
         }
         List<MessageEntry> relinked = new ArrayList<>();
         String parentId = firstParentId;
+        Map<String, Integer> attachmentIdCounts = new HashMap<>();
         for (MessageEntry entry : entries) {
-            MessageEntry next = new MessageEntry(entry.id(), parentId, entry.message(), entry.timestamp());
+            AgentMessage normalizedMessage = withUniqueAttachmentId(entry.message(), attachmentIdCounts);
+            MessageEntry next = new MessageEntry(entry.id(), parentId, normalizedMessage, entry.timestamp());
             relinked.add(next);
             parentId = next.id();
         }
         return List.copyOf(relinked);
+    }
+
+    private AgentMessage withUniqueAttachmentId(AgentMessage message, Map<String, Integer> attachmentIdCounts) {
+        if (message == null || message.content() == null || message.content().isEmpty()
+            || !(message.content().getFirst() instanceof AttachmentContentBlock attachment)) {
+            return message;
+        }
+        String attachmentId = attachment.attachmentId();
+        int count = attachmentIdCounts.getOrDefault(attachmentId, 0) + 1;
+        attachmentIdCounts.put(attachmentId, count);
+        if (count == 1) {
+            return message;
+        }
+        String uniqueAttachmentId = attachmentId + "-" + count;
+        return new AgentMessage(
+            message.id(),
+            message.role(),
+            message.kind(),
+            List.of(new AttachmentContentBlock(
+                uniqueAttachmentId,
+                attachment.text(),
+                attachment.mediaType(),
+                attachment.metadata()
+            )),
+            message.timestamp(),
+            message.usage(),
+            message.stopReason()
+        );
     }
 
     private MessageEntry entry(
@@ -248,12 +291,13 @@ final class CompactStateBackfillPlanner {
         );
     }
 
-    private Map<String, Object> metadata(String backfillType, Map<String, String> itemMetadata) {
+    private Map<String, Object> metadata(String backfillType, Map<String, String> itemMetadata, boolean truncated) {
         Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("backfillType", backfillType);
         if (itemMetadata != null) {
             metadata.putAll(itemMetadata);
         }
+        metadata.putIfAbsent("backfillType", backfillType);
+        metadata.put("truncated", truncated);
         return Map.copyOf(metadata);
     }
 
@@ -262,13 +306,13 @@ final class CompactStateBackfillPlanner {
         return safe.isBlank() ? fallback : safe;
     }
 
-    private String truncate(String text, int maxChars) {
+    private TruncatedText truncate(String text, int maxChars) {
         String safe = safeText(text);
         if (safe.length() <= maxChars) {
-            return safe;
+            return new TruncatedText(safe, false);
         }
         int prefixChars = Math.max(0, maxChars - TRUNCATION_NOTICE.length());
-        return safe.substring(0, prefixChars) + TRUNCATION_NOTICE;
+        return new TruncatedText(safe.substring(0, prefixChars) + TRUNCATION_NOTICE, true);
     }
 
     private String slug(String value) {
@@ -284,4 +328,6 @@ final class CompactStateBackfillPlanner {
     private String safeText(String value) {
         return value == null ? "" : value;
     }
+
+    private record TruncatedText(String text, boolean truncated) {}
 }

@@ -709,6 +709,85 @@ class DefaultCompactionCoordinatorTest {
     }
 
     @Test
+    void stateBackfillDeduplicatesAttachmentIdsAndMarksTruncation(@TempDir Path tempDir) throws Exception {
+        Path missingSkill = tempDir.resolve("missing-skill").resolve("SKILL.md");
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = mcpResourceAssembler(session);
+        ContextBuildRequest buildRequest = new ContextBuildRequest(
+            "session-1",
+            Optional.of(session.leafId()),
+            Path.of("."),
+            true,
+            List.of(new SkillMention("missing-skill", missingSkill))
+        );
+        ContextAssembly assembly = assembler.build(buildRequest);
+        CompactStateBackfillPort runtimeBackfill = request -> List.of(
+            new CompactStateBackfillItem(
+                "duplicate-state",
+                "Duplicate State 1",
+                "A".repeat(16_000),
+                Map.of("source", "one")
+            ),
+            new CompactStateBackfillItem(
+                "duplicate-state",
+                "Duplicate State 2",
+                "second body",
+                Map.of("source", "two")
+            )
+        );
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary after compact"),
+            runtimeBackfill,
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(
+            session,
+            buildRequest,
+            assembly,
+            manyMcpTools(400),
+            () -> false
+        ));
+
+        assertThat(decision.compacted()).isTrue();
+        List<AttachmentContentBlock> attachments = backfillAttachments(session);
+        assertThat(attachments)
+            .extracting(AttachmentContentBlock::attachmentId)
+            .contains("duplicate-state", "duplicate-state-2", "compact-skill-missing-skill")
+            .doesNotHaveDuplicates();
+        assertThat(attachments)
+            .filteredOn(attachment -> attachment.attachmentId().equals("duplicate-state"))
+            .singleElement()
+            .satisfies(attachment -> {
+                assertThat(attachment.text()).contains("内容已截断").hasSizeLessThanOrEqualTo(12_000);
+                assertThat(attachment.metadata()).containsEntry("truncated", true);
+            });
+        assertThat(attachments)
+            .filteredOn(attachment -> attachment.attachmentId().equals("compact-skill-missing-skill"))
+            .singleElement()
+            .satisfies(attachment -> {
+                assertThat(attachment.text()).contains("Failed to read skill file");
+                assertThat(attachment.metadata()).containsEntry("backfillType", "skill");
+            });
+        assertThat(attachments)
+            .filteredOn(attachment -> attachment.attachmentId().startsWith("compact-mcp-guidance-"))
+            .singleElement()
+            .satisfies(attachment -> {
+                assertThat(attachment.text())
+                    .contains("内容已截断")
+                    .contains("mcp__filesystem__tool_0")
+                    .doesNotContain("SECRET_TOKEN");
+                assertThat(attachment.text()).hasSizeLessThanOrEqualTo(8_000);
+                assertThat(attachment.metadata()).containsEntry("truncated", true);
+            });
+        assertThat(session.context(session.leafId()).messages()).containsExactlyElementsOf(decision.context().messages());
+    }
+
+    @Test
     void readStateBackfillTruncationNoticeStaysWithinAttachmentLimit() {
         AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLargeReadStateBranch();
         DefaultContextAssembler assembler = resourceAssembler(session);
@@ -1145,6 +1224,21 @@ class DefaultCompactionCoordinatorTest {
                 false
             )
         ));
+    }
+
+    private static ToolRegistrySnapshot manyMcpTools(int count) {
+        List<ToolDescriptor> tools = new java.util.ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            tools.add(new ToolDescriptor(
+                "mcp__filesystem__tool_" + index,
+                List.of(),
+                "MCP tool description " + index + " " + "x".repeat(80),
+                new JsonSchema(Map.of("type", "object")),
+                true,
+                false
+            ));
+        }
+        return new ToolRegistrySnapshot(tools);
     }
 
     private static ContextBuildRequest buildRequest(AgentCoreTestFixtures.InMemorySessionManager session) {

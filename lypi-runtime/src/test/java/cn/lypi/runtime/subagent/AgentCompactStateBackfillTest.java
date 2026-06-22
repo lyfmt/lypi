@@ -89,6 +89,32 @@ class AgentCompactStateBackfillTest {
         assertThat(backfill.backfill(request("session-1"))).isEmpty();
     }
 
+    @Test
+    void truncatesLargeAgentListAndKeepsAgentCountMetadata() {
+        AgentRegistryPort registry = (sessionId, statuses) -> List.of(new AgentView(
+            "agent-large",
+            "Large",
+            "session-1",
+            "child-session-large",
+            "entry-spawn-large",
+            AgentRunStatus.RUNNING,
+            Optional.empty(),
+            Optional.of("A".repeat(20_000)),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty()
+        ));
+        AgentCompactStateBackfill backfill = new AgentCompactStateBackfill(registry);
+
+        List<CompactStateBackfillItem> items = backfill.backfill(request("session-1"));
+
+        assertThat(items).singleElement().satisfies(item -> {
+            assertThat(item.content()).contains("内容已截断").hasSizeLessThanOrEqualTo(12_000);
+            assertThat(item.metadata()).containsEntry("agentCount", "1");
+            assertThat(item.metadata()).containsEntry("truncated", "true");
+        });
+    }
+
     private static CompactStateBackfillRequest request(String sessionId) {
         return new CompactStateBackfillRequest(sessionId, Path.of("."), null, null, List.of());
     }

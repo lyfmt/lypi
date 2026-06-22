@@ -33,16 +33,17 @@ public final class AgentCompactStateBackfill implements CompactStateBackfillPort
         if (agents == null || agents.isEmpty()) {
             return List.of();
         }
-        String content = truncate(agents.stream()
+        TruncatedText content = truncate(agents.stream()
             .map(this::render)
             .collect(Collectors.joining("\n\n")));
         return List.of(new CompactStateBackfillItem(
             "compact-agent-state",
             "Agent State",
-            content,
+            content.text(),
             Map.of(
                 "backfillType", "agent",
-                "agentCount", Integer.toString(agents.size())
+                "agentCount", Integer.toString(agents.size()),
+                "truncated", Boolean.toString(content.truncated())
             )
         ));
     }
@@ -69,16 +70,18 @@ public final class AgentCompactStateBackfill implements CompactStateBackfillPort
         return status == null || status == AgentRunStatus.RUNNING || status == AgentRunStatus.UNKNOWN;
     }
 
-    private String truncate(String value) {
+    private TruncatedText truncate(String value) {
         String safe = safe(value);
         if (safe.length() <= MAX_CONTENT_CHARS) {
-            return safe;
+            return new TruncatedText(safe, false);
         }
         int prefixChars = Math.max(0, MAX_CONTENT_CHARS - TRUNCATION_NOTICE.length());
-        return safe.substring(0, prefixChars) + TRUNCATION_NOTICE;
+        return new TruncatedText(safe.substring(0, prefixChars) + TRUNCATION_NOTICE, true);
     }
 
     private String safe(String value) {
         return value == null ? "" : value;
     }
+
+    private record TruncatedText(String text, boolean truncated) {}
 }
