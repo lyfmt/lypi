@@ -2,6 +2,7 @@ package cn.lypi.contracts.hook;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -12,6 +13,13 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.event.AgentEvent;
+import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.event.EventConsumer;
+import cn.lypi.contracts.event.EventFilter;
+import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.HookEndEvent;
+import cn.lypi.contracts.event.HookStartEvent;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -120,6 +128,82 @@ class DefaultToolHookRuntimeTest {
         hooks.add(ToolHook.before(context -> BeforeToolHookResult.block("late-block")));
 
         BeforeToolHookResult result = runtime.beforeToolCall(beforeContext());
+
+        assertFalse(result.blocked());
+    }
+
+    @Test
+    void beforePublishesStartAndBlockedEndEvent() {
+        CapturingEventBus events = new CapturingEventBus();
+        ToolHook hook = ToolHook.before(context -> BeforeToolHookResult.block("denied"));
+
+        BeforeToolHookResult result = new DefaultToolHookRuntime(List.of(hook), events)
+            .beforeToolCall(beforeContext());
+
+        assertTrue(result.blocked());
+        assertEquals(2, events.events.size());
+        HookStartEvent start = assertInstanceOf(HookStartEvent.class, events.events.get(0));
+        HookEndEvent end = assertInstanceOf(HookEndEvent.class, events.events.get(1));
+        assertEquals(HookPhase.BEFORE_TOOL_CALL, start.phase());
+        assertEquals("ses_test", start.sessionId());
+        assertEquals("toolu_test", start.toolUseId());
+        assertEquals("msg_parent", start.parentMessageId());
+        assertEquals("demo-tool", start.toolName());
+        assertEquals(HookRunStatus.BLOCKED, end.status());
+        assertEquals("denied", end.message());
+        assertEquals(start.hookRunId(), end.hookRunId());
+    }
+
+    @Test
+    void afterPublishesReplacedEndEvent() {
+        CapturingEventBus events = new CapturingEventBus();
+        ToolHook hook = ToolHook.after(context -> AfterToolHookResult.replace(result("rewritten")));
+
+        ToolResult<?> result = new DefaultToolHookRuntime(List.of(hook), events)
+            .afterToolCall(afterContext(result("original")))
+            .orElseThrow();
+
+        assertEquals("rewritten", result.output());
+        assertEquals(2, events.events.size());
+        HookEndEvent end = assertInstanceOf(HookEndEvent.class, events.events.get(1));
+        assertEquals(HookPhase.AFTER_TOOL_CALL, end.phase());
+        assertEquals(HookRunStatus.REPLACED, end.status());
+    }
+
+    @Test
+    void hookFailurePublishesFailedEndThenRethrows() {
+        CapturingEventBus events = new CapturingEventBus();
+        ToolHook hook = ToolHook.before(context -> {
+            throw new IllegalStateException("boom");
+        });
+
+        assertThrows(IllegalStateException.class, () -> new DefaultToolHookRuntime(List.of(hook), events)
+            .beforeToolCall(beforeContext()));
+
+        assertEquals(2, events.events.size());
+        HookEndEvent end = assertInstanceOf(HookEndEvent.class, events.events.get(1));
+        assertEquals(HookRunStatus.FAILED, end.status());
+        assertEquals("boom", end.message());
+    }
+
+    @Test
+    void eventPublishFailureDoesNotBlockHookExecution() {
+        EventBus failingEvents = new EventBus() {
+            @Override
+            public void publish(AgentEvent event) {
+                throw new IllegalStateException("event bus failed");
+            }
+
+            @Override
+            public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
+                return () -> {
+                };
+            }
+        };
+        ToolHook hook = ToolHook.before(context -> BeforeToolHookResult.allow());
+
+        BeforeToolHookResult result = new DefaultToolHookRuntime(List.of(hook), failingEvents)
+            .beforeToolCall(beforeContext());
 
         assertFalse(result.blocked());
     }
@@ -408,6 +492,21 @@ class DefaultToolHookRuntimeTest {
 
     private ToolResult<String> result(String output) {
         return new ToolResult<>(output, false, List.of(), Optional.empty());
+    }
+
+    private static final class CapturingEventBus implements EventBus {
+        private final List<AgentEvent> events = new ArrayList<>();
+
+        @Override
+        public void publish(AgentEvent event) {
+            events.add(event);
+        }
+
+        @Override
+        public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
+            return () -> {
+            };
+        }
     }
 
     private static final class DemoTool implements Tool<String, String> {

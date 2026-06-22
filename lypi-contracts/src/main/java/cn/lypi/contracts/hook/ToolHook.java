@@ -4,6 +4,13 @@ import java.util.Objects;
 
 public interface ToolHook {
     /**
+     * 返回 hook 展示名称。
+     */
+    default String name() {
+        return getClass().getName();
+    }
+
+    /**
      * 在工具执行前处理调用请求。
      *
      * NOTE: 默认不阻断工具执行。
