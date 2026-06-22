@@ -200,8 +200,7 @@
 #             max-output-tokens: 16384
 #
 #             # 重要性：生产建议。模型是否支持 thinking/reasoning 类参数。
-#             # NOTE: Anthropic extended thinking 需要保留并回放 signature；当前首版适配器暂不启用。
-#             supports-thinking: false
+#             supports-thinking: true
 #
 #             # 重要性：生产建议。模型是否支持图片输入。
 #             supports-image-input: true

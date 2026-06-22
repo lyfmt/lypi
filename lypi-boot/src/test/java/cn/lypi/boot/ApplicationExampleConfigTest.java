@@ -84,6 +84,18 @@ class ApplicationExampleConfigTest {
     }
 
     @Test
+    void applicationExampleKeepsOpenAiThinkingSupportSeparateFromAnthropicLimitation() throws IOException {
+        String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
+        String openAiBlock = example.substring(
+            example.indexOf("#       openai:"),
+            example.indexOf("#       fixture:")
+        );
+
+        assertThat(openAiBlock).contains("#             supports-thinking: true");
+        assertThat(openAiBlock).doesNotContain("Anthropic extended thinking");
+    }
+
+    @Test
     void applicationExampleDocumentsPermissionsAtLypiTopLevel() throws IOException {
         String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
 
