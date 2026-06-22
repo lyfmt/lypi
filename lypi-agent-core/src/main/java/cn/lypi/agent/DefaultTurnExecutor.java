@@ -214,7 +214,6 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private TurnState finishTurn(TurnRequest request, TurnState state, Instant startedAt, String leafEntryId) {
         TurnState finalState = state;
-        String finalLeafEntryId = leafEntryId;
         try {
             turnHooks.afterTurn(new AfterTurnHookContext(request, state, ports.cwd()));
         } catch (RuntimeException failure) {
@@ -223,7 +222,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 ids.newMessageId(),
                 failure
             );
-            finalLeafEntryId = appendNewMessage(request.sessionId(), handled.message());
+            appendNewMessage(request.sessionId(), handled.message());
             List<AgentMessage> messages = new ArrayList<>(state.newMessages());
             messages.add(handled.message());
             finalState = new TurnState(
@@ -241,7 +240,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             finalState.status(),
             startedAt,
             finalState.currentToolRound(),
-            finalLeafEntryId
+            leafEntryId
         );
         return finalState;
     }
