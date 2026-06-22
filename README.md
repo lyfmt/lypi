@@ -58,11 +58,15 @@
 | 执行工具 | `bash` |
 | 权限工具 | `request_permissions` |
 
+商业 Web 工具默认关闭；配置 `lypi.web.enabled=true` 且至少一个 provider API key 可用时，运行时会注册 `web_search` 和可用的 `web_fetch`。当前支持 Tavily、Brave Search 和 Perplexity Search，其中 Tavily 同时支持搜索和 URL 内容抽取，Brave/Perplexity 第一版只提供搜索。
+
 子代理工具在运行层可用时另行注册，包括 `spawn_agent`、`continue_agent`、`wait_agent`、`interrupt_agent`、`read_agent_result`、`read_mailbox`、`accept_mailbox_message`、`stash_mailbox_message`、`discard_mailbox_message` 和 `list_agents`。MCP 工具通过 adapter 映射到内部 `Tool` 契约，并使用规范化名称避免与内建工具直接冲突。
 
 权限判定以 `PermissionRuntimeState` 为中心，包含审批策略、active permission profile、完整 profile、legacy behavior 和兼容用的 `legacyPermissionMode`。`PermissionMode` 仍用于旧配置、旧 JSON 和 UI 展示兼容，新运行时判定优先读取 `PermissionRuntimeState`。
 
 `request_permissions` 用于请求本轮或本会话 additional permissions。`bash` 只有在对应请求已批准后，才应使用 `sandboxPermissions=withAdditionalPermissions` 扩大 managed sandbox 权限。路径安全、Bash 风险、网络策略、显式规则和人工审批都在统一管线中处理；当沙盒策略无法满足时，工具结果会返回可审计的 retry 提示，而不是自动提权。
+
+`web_search` 和 `web_fetch` 会把 query、URL 或域名发送给配置的商业 provider；网络 profile 未启用时，工具级权限检查会进入人工审批而不是静默放行。`web_fetch` 还会校验 URL scheme、credential、localhost、loopback、private 和 link-local 地址，避免把本地或内网地址交给外部抽取服务。
 
 ### 模型适配
 
@@ -140,3 +144,15 @@ java -jar lypi-boot/target/lypi-boot-0.0.1-SNAPSHOT.jar --lypi.runtime.cwd=/tmp/
 ```text
 lypi-boot/src/main/resources/application.yml.example
 ```
+
+启用商业 Web 工具的最小配置示例：
+
+```properties
+lypi.web.enabled=true
+lypi.web.default-provider=tavily
+lypi.web.providers.tavily.api-key-env=TAVILY_API_KEY
+lypi.web.providers.brave.api-key-env=BRAVE_SEARCH_API_KEY
+lypi.web.providers.perplexity.api-key-env=PERPLEXITY_API_KEY
+```
+
+也可以用 `lypi.web.providers.<provider>.api-key` 直接配置 key；该方式只建议用于本地临时验证，避免把密钥写入仓库或会话记录。
