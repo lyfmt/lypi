@@ -225,6 +225,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             ports.cwd(),
             contextBuildRequest,
             microCompactedAssembly,
+            ports.toolRuntime().snapshot(),
             request.abortSignal()
         ));
         if (compaction.compacted()) {

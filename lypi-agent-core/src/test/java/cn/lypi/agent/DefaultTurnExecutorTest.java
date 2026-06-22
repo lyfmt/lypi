@@ -1286,6 +1286,13 @@ class DefaultTurnExecutorTest {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
         AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        ToolRegistrySnapshot toolSnapshot = new ToolRegistrySnapshot(List.of(new ToolDescriptor(
+            "mcp__filesystem__read_file",
+            List.of(),
+            true,
+            false
+        )));
+        tools.snapshot(toolSnapshot);
         AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         provider.enqueue(List.of(
@@ -1335,6 +1342,7 @@ class DefaultTurnExecutorTest {
         assertThat(compactionRequest.get().leafEntryId()).contains("entry-msg-user");
         assertThat(compactionRequest.get().contextBuildRequest().includeSystemPrompt()).isTrue();
         assertThat(compactionRequest.get().assembly().snapshot()).isSameAs(originalContext);
+        assertThat(compactionRequest.get().tools()).isSameAs(toolSnapshot);
         assertThat(provider.contexts).containsExactly(compactedContext);
     }
 

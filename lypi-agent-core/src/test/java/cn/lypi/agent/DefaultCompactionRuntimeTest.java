@@ -51,6 +51,7 @@ class DefaultCompactionRuntimeTest {
         assertTrue(assembler.request.includeSystemPrompt());
         assertEquals(Optional.of("leaf_9"), coordinator.request.leafEntryId());
         assertEquals(assembler.assembly, coordinator.request.assembly());
+        assertTrue(coordinator.request.tools().tools().isEmpty());
     }
 
     @Test
