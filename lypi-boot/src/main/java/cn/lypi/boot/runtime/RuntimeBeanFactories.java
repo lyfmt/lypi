@@ -29,6 +29,7 @@ import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AppEntry;
 import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
 import cn.lypi.contracts.runtime.MailboxPort;
@@ -58,6 +59,7 @@ import cn.lypi.runtime.memory.MemoryConsolidationRunner;
 import cn.lypi.runtime.memory.MemoryConsolidationTrigger;
 import cn.lypi.runtime.memory.MemoryConsolidationTurnEndListener;
 import cn.lypi.runtime.memory.QuietEventBus;
+import cn.lypi.runtime.subagent.AgentCompactStateBackfill;
 import cn.lypi.runtime.subagent.ChildAgentSnapshot;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.DefaultAgentCenter;
@@ -176,12 +178,24 @@ final class RuntimeBeanFactories {
         CompactionSummarizer summarizer,
         Clock clock
     ) {
+        return compactionCoordinator(sessionManager, contextAssembler, eventBus, summarizer, CompactStateBackfillPort.none(), clock);
+    }
+
+    static CompactionCoordinator compactionCoordinator(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionSummarizer summarizer,
+        CompactStateBackfillPort compactStateBackfill,
+        Clock clock
+    ) {
         return new DefaultCompactionCoordinator(
             sessionManager,
             contextAssembler,
             eventBus,
             new DefaultCompactionPlanner(),
             summarizer,
+            compactStateBackfill,
             clock
         );
     }
@@ -193,6 +207,17 @@ final class RuntimeBeanFactories {
         CompactionSummarizer summarizer,
         Clock clock
     ) {
+        return compactionRuntime(sessionManager, contextAssembler, eventBus, summarizer, CompactStateBackfillPort.none(), clock);
+    }
+
+    static CompactionRuntimePort compactionRuntime(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionSummarizer summarizer,
+        CompactStateBackfillPort compactStateBackfill,
+        Clock clock
+    ) {
         return new DefaultCompactionRuntime(
             contextAssembler,
             new DefaultCompactionCoordinator(
@@ -201,6 +226,7 @@ final class RuntimeBeanFactories {
                 eventBus,
                 DefaultCompactionRuntime.manualPlanner(),
                 summarizer,
+                compactStateBackfill,
                 clock
             )
         );
@@ -218,6 +244,34 @@ final class RuntimeBeanFactories {
         CompactionCoordinator compactionCoordinator,
         Clock clock
     ) {
+        return agentCore(
+            properties,
+            sessionManager,
+            aiProvider,
+            toolRuntime,
+            securityRuntime,
+            resourceRuntime,
+            eventBus,
+            contextAssembler,
+            compactionCoordinator,
+            CompactStateBackfillPort.none(),
+            clock
+        );
+    }
+
+    static AgentCorePort agentCore(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        AiProviderRuntimePort aiProvider,
+        ToolRuntimePort toolRuntime,
+        SecurityRuntimePort securityRuntime,
+        ResourceRuntimePort resourceRuntime,
+        EventBus eventBus,
+        ContextAssembler contextAssembler,
+        CompactionCoordinator compactionCoordinator,
+        CompactStateBackfillPort compactStateBackfill,
+        Clock clock
+    ) {
         AgentCoreRuntimePorts ports = new AgentCoreRuntimePorts(
             properties.getCwd(),
             sessionManager,
@@ -229,6 +283,7 @@ final class RuntimeBeanFactories {
             contextAssembler,
             null,
             compactionCoordinator,
+            compactStateBackfill,
             new NoopMemoryExtractionWorker()
         );
         return new DefaultTurnExecutor(ports, TurnIds.random(), clock);
@@ -242,6 +297,7 @@ final class RuntimeBeanFactories {
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         EventBus eventBus,
         ObjectProvider<CompactionSummarizer> compactionSummarizer,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill,
         ObjectProvider<ModelCatalogPort> modelCatalog,
         Clock clock
     ) {
@@ -280,6 +336,7 @@ final class RuntimeBeanFactories {
                 SecurityRuntimePort resolvedSecurityRuntime = securityRuntime.getObject();
                 ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getObject();
                 CompactionSummarizer resolvedCompactionSummarizer = compactionSummarizer.getObject();
+                CompactStateBackfillPort resolvedCompactStateBackfill = compactStateBackfill.getIfAvailable(CompactStateBackfillPort::none);
                 DefaultContextAssembler assembler = new DefaultContextAssembler(
                     sessionManager,
                     resolvedResourceRuntime,
@@ -291,6 +348,7 @@ final class RuntimeBeanFactories {
                     resolvedEventBus,
                     new DefaultCompactionPlanner(),
                     resolvedCompactionSummarizer,
+                    resolvedCompactStateBackfill,
                     clock
                 );
                 return new DefaultTurnExecutor(
@@ -305,6 +363,7 @@ final class RuntimeBeanFactories {
                         assembler,
                         null,
                         compactionCoordinator,
+                        resolvedCompactStateBackfill,
                         new NoopMemoryExtractionWorker()
                     ),
                     TurnIds.random(),
@@ -607,6 +666,10 @@ final class RuntimeBeanFactories {
         ChildAgentSnapshotProvider childAgents
     ) {
         return new DefaultAgentRegistry(parentSession, mailbox, runningAgents, childAgents);
+    }
+
+    static CompactStateBackfillPort compactStateBackfill(AgentRegistryPort registry) {
+        return registry == null ? CompactStateBackfillPort.none() : new AgentCompactStateBackfill(registry);
     }
 
     static AgentSlashCommandHandler agentSlashCommandHandler(

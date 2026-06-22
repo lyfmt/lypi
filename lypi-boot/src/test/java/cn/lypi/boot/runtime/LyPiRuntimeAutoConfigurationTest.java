@@ -46,6 +46,7 @@ import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AppEntry;
 import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.CompactionRequest;
 import cn.lypi.contracts.runtime.CompactionResult;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
@@ -110,6 +111,7 @@ import cn.lypi.runtime.memory.MemoryConsolidationPromptFactory;
 import cn.lypi.runtime.memory.MemoryConsolidationRunner;
 import cn.lypi.runtime.memory.MemoryConsolidationTrigger;
 import cn.lypi.runtime.memory.MemoryConsolidationTurnEndListener;
+import cn.lypi.runtime.subagent.AgentCompactStateBackfill;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
@@ -1255,8 +1257,23 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(context).hasSingleBean(SubagentProcessRunner.class);
                 assertThat(context).hasSingleBean(AgentCenterPort.class);
                 assertThat(context).hasSingleBean(AgentRegistryPort.class);
+                assertThat(context).hasSingleBean(CompactStateBackfillPort.class);
                 assertThat(context.getBean(AgentRegistryPort.class)).isInstanceOf(DefaultAgentRegistry.class);
+                assertThat(context.getBean(CompactStateBackfillPort.class)).isInstanceOf(AgentCompactStateBackfill.class);
                 assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(null)).isFalse();
+            });
+    }
+
+    @Test
+    void keepsUserProvidedCompactStateBackfillPort() {
+        CompactStateBackfillPort backfill = request -> List.of();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(CompactStateBackfillPort.class, () -> backfill)
+            .run(context -> {
+                assertThat(context).hasSingleBean(CompactStateBackfillPort.class);
+                assertThat(context.getBean(CompactStateBackfillPort.class)).isSameAs(backfill);
             });
     }
 
