@@ -15,6 +15,10 @@ import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
+import cn.lypi.contracts.hook.AfterTurnHookContext;
+import cn.lypi.contracts.hook.BeforeTurnHookContext;
+import cn.lypi.contracts.hook.BeforeTurnHookResult;
+import cn.lypi.contracts.hook.TurnHookRuntime;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
@@ -44,8 +48,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private final ContextBudgetEstimator budgetEstimator;
     private final TurnContinuationGuard continuationGuard;
     private final TurnEventPublisher eventPublisher;
+    private final TurnHookRuntime turnHooks;
 
     public DefaultTurnExecutor(AgentCoreRuntimePorts ports, TurnIds ids, Clock clock) {
+        this(ports, ids, clock, TurnHookRuntime.noop());
+    }
+
+    public DefaultTurnExecutor(AgentCoreRuntimePorts ports, TurnIds ids, Clock clock, TurnHookRuntime turnHooks) {
         this.ports = ports;
         this.ids = ids;
         this.clock = clock;
@@ -55,6 +64,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         this.budgetEstimator = new ContextBudgetEstimator();
         this.continuationGuard = new TurnContinuationGuard(ports.sessionManager());
         this.eventPublisher = new TurnEventPublisher(ports.eventBus(), clock);
+        this.turnHooks = turnHooks == null ? TurnHookRuntime.noop() : turnHooks;
     }
 
     @Override
@@ -73,30 +83,43 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         request.parentEntryId().ifPresent(parentEntryId -> ports.sessionManager().switchLeaf(parentEntryId));
         Instant startedAt = clock.instant();
         ports.eventBus().publish(new TurnStartEvent(request.sessionId(), turnId, startedAt, startedAt));
-        Optional<String> unsafeReason = continuationGuard.unsafeContinuationReason(currentLeafId());
-        if (unsafeReason.isPresent()) {
-            ports.eventBus().publish(new ErrorEvent(
-                request.sessionId(),
-                unsafeReason.orElseThrow(),
-                "当前分支停在 assistant 工具调用消息上，不能直接追加用户消息。请选择上一条用户消息或工具结果之后继续。",
-                clock.instant()
-            ));
-            return failedState(turnId, request.sessionId(), null, List.of(), 0, startedAt, currentLeafId());
-        }
-
-        AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
-        String contextLeafId = appendNewMessage(request.sessionId(), user);
-        newMessages.add(user);
 
         ContextSnapshot context = null;
         int toolRound = 0;
+        String contextLeafId = currentLeafId();
         try {
+            BeforeTurnHookResult beforeHook = turnHooks.beforeTurn(new BeforeTurnHookContext(request, turnId, ports.cwd()));
+            if (beforeHook != null && beforeHook.blocked()) {
+                String message = beforeHook.message() == null ? "turn hook blocked" : beforeHook.message();
+                ports.eventBus().publish(new ErrorEvent(
+                    request.sessionId(),
+                    "turn-hook-blocked",
+                    message,
+                    clock.instant()
+                ));
+                return failedState(request, turnId, null, List.of(), 0, startedAt, contextLeafId);
+            }
+            Optional<String> unsafeReason = continuationGuard.unsafeContinuationReason(currentLeafId());
+            if (unsafeReason.isPresent()) {
+                ports.eventBus().publish(new ErrorEvent(
+                    request.sessionId(),
+                    unsafeReason.orElseThrow(),
+                    "当前分支停在 assistant 工具调用消息上，不能直接追加用户消息。请选择上一条用户消息或工具结果之后继续。",
+                    clock.instant()
+                ));
+                return failedState(request, turnId, null, List.of(), 0, startedAt, currentLeafId());
+            }
+
+            AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
+            contextLeafId = appendNewMessage(request.sessionId(), user);
+            newMessages.add(user);
+
             context = buildContext(request, Optional.of(contextLeafId));
             AgentMessage assistant = runModel(request, context);
             contextLeafId = appendStartedMessage(request.sessionId(), assistant);
             newMessages.add(assistant);
             if (isAssistantError(assistant, request)) {
-                return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, contextLeafId);
+                return failedState(request, turnId, context, newMessages, toolRound, startedAt, contextLeafId);
             }
 
             while (!request.abortSignal().aborted()) {
@@ -108,7 +131,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     );
                     appendNewMessage(request.sessionId(), error);
                     newMessages.add(error);
-                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, contextLeafId);
+                    return failedState(request, turnId, context, newMessages, toolRound, startedAt, contextLeafId);
                 }
                 List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
                 if (toolRequests.isEmpty()) {
@@ -134,7 +157,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 contextLeafId = appendStartedMessage(request.sessionId(), assistant);
                 newMessages.add(assistant);
                 if (isAssistantError(assistant, request)) {
-                    return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, contextLeafId);
+                    return failedState(request, turnId, context, newMessages, toolRound, startedAt, contextLeafId);
                 }
             }
         } catch (RuntimeException failure) {
@@ -145,13 +168,12 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             );
             appendNewMessage(request.sessionId(), handled.message());
             newMessages.add(handled.message());
-            return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, currentLeafId());
+            return failedState(request, turnId, context, newMessages, toolRound, startedAt, currentLeafId());
         }
 
         TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
         TurnState state = new TurnState(turnId, request.sessionId(), context, List.copyOf(newMessages), toolRound, status);
-        eventPublisher.publishTurnEnd(request.sessionId(), turnId, status, startedAt, toolRound, contextLeafId);
-        return state;
+        return finishTurn(request, state, startedAt, contextLeafId);
     }
 
     private boolean isAssistantError(AgentMessage assistant, TurnRequest request) {
@@ -171,8 +193,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     }
 
     private TurnState failedState(
+        TurnRequest request,
         String turnId,
-        String sessionId,
         ContextSnapshot context,
         List<AgentMessage> newMessages,
         int toolRound,
@@ -181,14 +203,47 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     ) {
         TurnState state = new TurnState(
             turnId,
-            sessionId,
+            request.sessionId(),
             context,
             List.copyOf(newMessages),
             toolRound,
             TurnStatus.FAILED
         );
-        eventPublisher.publishTurnEnd(sessionId, turnId, TurnStatus.FAILED, startedAt, toolRound, leafEntryId);
-        return state;
+        return finishTurn(request, state, startedAt, leafEntryId);
+    }
+
+    private TurnState finishTurn(TurnRequest request, TurnState state, Instant startedAt, String leafEntryId) {
+        TurnState finalState = state;
+        String finalLeafEntryId = leafEntryId;
+        try {
+            finalState = turnHooks.afterTurn(new AfterTurnHookContext(request, state, ports.cwd())).orElse(state);
+        } catch (RuntimeException failure) {
+            AgentCoreExceptionHandler.Failure handled = exceptionHandler.handle(
+                request.sessionId(),
+                ids.newMessageId(),
+                failure
+            );
+            finalLeafEntryId = appendNewMessage(request.sessionId(), handled.message());
+            List<AgentMessage> messages = new ArrayList<>(state.newMessages());
+            messages.add(handled.message());
+            finalState = new TurnState(
+                state.turnId(),
+                state.sessionId(),
+                state.context(),
+                List.copyOf(messages),
+                state.currentToolRound(),
+                TurnStatus.FAILED
+            );
+        }
+        eventPublisher.publishTurnEnd(
+            request.sessionId(),
+            finalState.turnId(),
+            finalState.status(),
+            startedAt,
+            finalState.currentToolRound(),
+            finalLeafEntryId
+        );
+        return finalState;
     }
 
     private ContextSnapshot buildContext(TurnRequest request, Optional<String> leafEntryId) {
