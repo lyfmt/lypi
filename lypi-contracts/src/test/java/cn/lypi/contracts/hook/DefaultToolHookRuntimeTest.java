@@ -209,6 +209,24 @@ class DefaultToolHookRuntimeTest {
     }
 
     @Test
+    void missingAuditMetadataDoesNotBlockHookExecution() {
+        CapturingEventBus events = new CapturingEventBus();
+        ToolUseRequest request = new ToolUseRequest(null, null, Map.of("value", "demo"), null);
+        ToolUseContext context = new ToolUseContext(null, null, Path.of("."), Map.of());
+        BeforeToolHookContext hookContext = new BeforeToolHookContext(request, tool(), Map.of("value", "demo"), context);
+        ToolHook hook = ToolHook.before(ignored -> BeforeToolHookResult.allow());
+
+        BeforeToolHookResult result = new DefaultToolHookRuntime(List.of(hook), events)
+            .beforeToolCall(hookContext);
+
+        assertFalse(result.blocked());
+        HookStartEvent start = assertInstanceOf(HookStartEvent.class, events.events.getFirst());
+        assertEquals("session_unknown", start.sessionId());
+        assertEquals("toolu_unknown", start.toolUseId());
+        assertEquals("tool_unknown", start.toolName());
+    }
+
+    @Test
     void beforeContextNormalizesInputForContextAndRequest() {
         Map<String, Object> mutableInput = new LinkedHashMap<>();
         mutableInput.put("value", "demo");

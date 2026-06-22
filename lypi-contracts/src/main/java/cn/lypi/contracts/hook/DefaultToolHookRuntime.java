@@ -98,11 +98,11 @@ public final class DefaultToolHookRuntime implements ToolHookRuntime {
         Instant startedAt = Instant.now();
         String hookRunId = hookRunId(request.toolUseId(), phase, index);
         HookRun run = new HookRun(
-            context.sessionId(),
-            request.toolUseId(),
+            safeText(context.sessionId(), "session_unknown"),
+            safeText(request.toolUseId(), "toolu_unknown"),
             request.parentMessageId(),
             turnId(context),
-            request.toolName(),
+            safeText(request.toolName(), "tool_unknown"),
             hookRunId,
             hookName(hook),
             phase,
@@ -161,7 +161,7 @@ public final class DefaultToolHookRuntime implements ToolHookRuntime {
     }
 
     private String hookRunId(String toolUseId, HookPhase phase, int index) {
-        return "hook_" + toolUseId + "_" + phaseToken(phase) + "_" + index;
+        return "hook_" + safeText(toolUseId, "toolu_unknown") + "_" + phaseToken(phase) + "_" + index;
     }
 
     private String hookName(ToolHook hook) {
@@ -171,6 +171,10 @@ public final class DefaultToolHookRuntime implements ToolHookRuntime {
 
     private String phaseToken(HookPhase phase) {
         return phase == HookPhase.BEFORE_TOOL_CALL ? "before" : "after";
+    }
+
+    private String safeText(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     private record HookRun(
