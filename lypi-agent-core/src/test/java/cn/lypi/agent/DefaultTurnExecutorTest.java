@@ -154,6 +154,58 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void afterTurnHookReplacementUpdatesReturnedStateAndTurnEndStatus() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "entry-1"),
+            clock,
+            new DefaultTurnHookRuntime(List.of(TurnHook.after(context -> AfterTurnHookResult.replace(new TurnState(
+                context.state().turnId(),
+                context.state().sessionId(),
+                context.state().context(),
+                context.state().newMessages(),
+                context.state().currentToolRound() + 1,
+                TurnStatus.FAILED
+            )))))
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(state.currentToolRound()).isEqualTo(1);
+        TurnEndEvent turnEnd = (TurnEndEvent) eventBus.events.getLast();
+        assertThat(turnEnd.status()).isEqualTo("FAILED");
+        assertThat(turnEnd.toolRounds()).isEqualTo(1);
+        assertThat(turnEnd.leafEntryId()).isEqualTo("entry-msg-assistant");
+    }
+
+    @Test
     void executesSimpleTurnWithoutTools() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
