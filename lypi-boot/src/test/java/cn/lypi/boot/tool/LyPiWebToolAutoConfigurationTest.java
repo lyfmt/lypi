@@ -30,7 +30,7 @@ final class LyPiWebToolAutoConfigurationTest {
     }
 
     @Test
-    void webToolsStayDisabledWhenEnabledWithoutProviderKey() {
+    void registersLocalFetchWhenEnabledWithoutProviderKey() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withPropertyValues("lypi.web.enabled=true")
@@ -39,12 +39,12 @@ final class LyPiWebToolAutoConfigurationTest {
                 ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
 
                 assertThat(runtime.resolve("web_search")).isEmpty();
-                assertThat(runtime.resolve("web_fetch")).isEmpty();
+                assertThat(runtime.resolve("web_fetch")).isPresent();
             });
     }
 
     @Test
-    void registersTavilySearchAndFetchWhenApiKeyIsConfigured() {
+    void registersTavilySearchAndLocalFetchWhenApiKeyIsConfigured() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withPropertyValues(
@@ -61,7 +61,7 @@ final class LyPiWebToolAutoConfigurationTest {
     }
 
     @Test
-    void skipsProviderWhenProviderIsDisabled() {
+    void providerDisableDoesNotDisableLocalFetch() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withPropertyValues(
@@ -74,7 +74,7 @@ final class LyPiWebToolAutoConfigurationTest {
                 ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
 
                 assertThat(runtime.resolve("web_search")).isEmpty();
-                assertThat(runtime.resolve("web_fetch")).isEmpty();
+                assertThat(runtime.resolve("web_fetch")).isPresent();
             });
     }
 
@@ -119,7 +119,7 @@ final class LyPiWebToolAutoConfigurationTest {
     }
 
     @Test
-    void registersSearchOnlyProvidersTogether() {
+    void registersSearchProvidersTogetherWithLocalFetch() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withPropertyValues(
@@ -133,7 +133,7 @@ final class LyPiWebToolAutoConfigurationTest {
                 ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
 
                 assertThat(runtime.resolve("web_search")).isPresent();
-                assertThat(runtime.resolve("web_fetch")).isEmpty();
+                assertThat(runtime.resolve("web_fetch")).isPresent();
             });
     }
 

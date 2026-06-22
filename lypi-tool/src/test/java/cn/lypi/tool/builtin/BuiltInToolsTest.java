@@ -21,6 +21,9 @@ import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.tool.web.WebProviderRegistry;
+import cn.lypi.tool.web.WebSearchProvider;
+import cn.lypi.contracts.web.WebSearchResponse;
 import cn.lypi.tool.DefaultToolRuntime;
 import java.util.List;
 import java.util.Map;
@@ -104,6 +107,27 @@ class BuiltInToolsTest {
     }
 
     @Test
+    void registersWebToolsOnce() {
+        DefaultToolRuntime runtime = new DefaultToolRuntime((request, context) ->
+            new PermissionDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.TOOL_SPECIFIC,
+                "allowed",
+                Optional.<PermissionUpdate>empty(),
+                Map.of()
+            )
+        );
+
+        BuiltInTools.registerWebTools(
+            runtime,
+            new WebProviderRegistry("test", Map.of("test", searchProvider()))
+        );
+
+        assertTrue(runtime.resolve("web_search").isPresent());
+        assertTrue(runtime.resolve("web_fetch").isPresent());
+    }
+
+    @Test
     void createsSubagentToolSetWithAgentRegistryTools() {
         List<Tool<?, ?>> subagentTools = BuiltInTools.createSubagentTools(agentCenter(), mailbox(), agentRegistry());
 
@@ -137,6 +161,20 @@ class BuiltInToolsTest {
                 cn.lypi.contracts.common.AbortSignal signal
             ) {
                 return new ExecutionResult(0, "", "", false, Optional.empty());
+            }
+        };
+    }
+
+    private WebSearchProvider searchProvider() {
+        return new WebSearchProvider() {
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public WebSearchResponse search(cn.lypi.tool.web.WebSearchRequest request) {
+                return new WebSearchResponse("test", request.query(), Optional.empty(), List.of(), Optional.empty());
             }
         };
     }

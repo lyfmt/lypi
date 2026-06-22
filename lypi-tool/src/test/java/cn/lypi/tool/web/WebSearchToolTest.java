@@ -147,7 +147,7 @@ final class WebSearchToolTest {
     }
 
     private WebProviderRegistry registry(WebSearchProvider provider) {
-        return new WebProviderRegistry("tavily", Map.of("tavily", provider), Map.of());
+        return new WebProviderRegistry("tavily", Map.of("tavily", provider));
     }
 
     private WebSearchProvider successProvider() {

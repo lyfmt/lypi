@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import cn.lypi.contracts.web.WebFetchResponse;
 import cn.lypi.contracts.web.WebSearchResponse;
 import java.time.Duration;
 import java.util.List;
@@ -70,7 +69,7 @@ final class TavilyWebProviderTest {
     }
 
     @Test
-    void usesConfiguredEndpointForSearchAndExtract() {
+    void usesConfiguredEndpointForSearch() {
         RecordingHttpTransport transport = new RecordingHttpTransport();
         TavilyWebProvider provider = new TavilyWebProvider(
             new JavaHttpWebClient(transport, objectMapper, Duration.ofSeconds(5)),
@@ -91,15 +90,6 @@ final class TavilyWebProviderTest {
             false
         ));
         assertEquals("https://tavily.internal/api/search", transport.request.uri().toString());
-
-        provider.fetch(new WebFetchRequest(
-            "https://example.com/doc",
-            Optional.empty(),
-            "markdown",
-            10_000,
-            Optional.empty()
-        ));
-        assertEquals("https://tavily.internal/api/extract", transport.request.uri().toString());
     }
 
     @Test
@@ -124,43 +114,6 @@ final class TavilyWebProviderTest {
         );
 
         assertFalse(exception.getMessage().contains("test-key"));
-    }
-
-    @Test
-    void mapsExtractRequestAndResponse() throws Exception {
-        RecordingHttpTransport transport = new RecordingHttpTransport();
-        transport.responseBody = """
-            {
-              "request_id": "extract-1",
-              "results": [
-                {
-                  "url": "https://example.com/doc",
-                  "raw_content": "# Example\\n\\nBody",
-                  "title": "Example"
-                }
-              ]
-            }
-            """;
-        TavilyWebProvider provider = provider(transport);
-
-        WebFetchResponse response = provider.fetch(new WebFetchRequest(
-            "https://example.com/doc",
-            Optional.of("pricing"),
-            "markdown",
-            10_000,
-            Optional.empty()
-        ));
-
-        JsonNode request = objectMapper.readTree(transport.requestBody);
-        assertEquals("POST", transport.request.method());
-        assertEquals("https://api.tavily.com/extract", transport.request.uri().toString());
-        assertEquals("https://example.com/doc", request.get("urls").get(0).asText());
-        assertTrue(request.path("include_images").isMissingNode() || !request.path("include_images").asBoolean());
-        assertEquals("tavily", response.provider());
-        assertEquals(Optional.of("Example"), response.title());
-        assertEquals("# Example\n\nBody", response.content());
-        assertEquals("markdown", response.format());
-        assertEquals(Optional.of("extract-1"), response.usage().orElseThrow().requestId());
     }
 
     private TavilyWebProvider provider(RecordingHttpTransport transport) {

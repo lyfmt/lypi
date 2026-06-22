@@ -44,7 +44,6 @@ import cn.lypi.tool.web.BraveWebSearchProvider;
 import cn.lypi.tool.web.JavaHttpWebClient;
 import cn.lypi.tool.web.PerplexityWebSearchProvider;
 import cn.lypi.tool.web.TavilyWebProvider;
-import cn.lypi.tool.web.WebFetchProvider;
 import cn.lypi.tool.web.WebProviderRegistry;
 import cn.lypi.tool.web.WebSearchProvider;
 import cn.lypi.transport.headless.HeadlessTransport;
@@ -237,8 +236,11 @@ public class LyPiToolAutoConfiguration {
                     new FilePermissionAmendmentStore(runtimeCwd)
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
+                if (webProperties.isEnabled()) {
+                    BuiltInTools.registerWebFetchTool(runtime, webProperties.getTimeout());
+                }
                 webProviderRegistry(webProperties, resolvedObjectMapper, environment)
-                    .ifPresent(providers -> BuiltInTools.registerWebTools(runtime, providers, webProperties.getMaxResults()));
+                    .ifPresent(providers -> BuiltInTools.registerWebSearchTools(runtime, providers, webProperties.getMaxResults()));
                 AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
                 MailboxPort resolvedMailbox = mailbox.getIfAvailable();
                 if (resolvedAgentCenter != null && resolvedMailbox != null) {
@@ -435,7 +437,6 @@ public class LyPiToolAutoConfiguration {
             properties.getTimeout() == null ? Duration.ofSeconds(20) : properties.getTimeout()
         );
         Map<String, WebSearchProvider> searchProviders = new LinkedHashMap<>();
-        Map<String, WebFetchProvider> fetchProviders = new LinkedHashMap<>();
         apiKey(properties, environment, "tavily").ifPresent(apiKey -> {
             TavilyWebProvider tavily = new TavilyWebProvider(
                 client,
@@ -444,7 +445,6 @@ public class LyPiToolAutoConfiguration {
                 endpoint(properties, "tavily")
             );
             searchProviders.put("tavily", tavily);
-            fetchProviders.put("tavily", tavily);
         });
         apiKey(properties, environment, "brave").ifPresent(apiKey ->
             searchProviders.put("brave", new BraveWebSearchProvider(client, apiKey, endpoint(properties, "brave")))
@@ -455,10 +455,10 @@ public class LyPiToolAutoConfiguration {
                 new PerplexityWebSearchProvider(client, objectMapper, apiKey, endpoint(properties, "perplexity"))
             )
         );
-        if (searchProviders.isEmpty() && fetchProviders.isEmpty()) {
+        if (searchProviders.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(new WebProviderRegistry(properties.getDefaultProvider(), searchProviders, fetchProviders));
+        return Optional.of(new WebProviderRegistry(properties.getDefaultProvider(), searchProviders));
     }
 
     private Optional<String> apiKey(LyPiWebProperties properties, Environment environment, String providerName) {

@@ -9,11 +9,9 @@ public record WebFetchRequest(
     String url,
     Optional<String> query,
     String format,
-    int maxChars,
-    Optional<String> provider
+    int maxChars
 ) {
     public WebFetchRequest {
         query = query == null ? Optional.empty() : query;
-        provider = provider == null ? Optional.empty() : provider;
     }
 }

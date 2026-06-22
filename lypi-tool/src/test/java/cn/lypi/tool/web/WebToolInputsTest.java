@@ -75,15 +75,13 @@ final class WebToolInputsTest {
             "url", " https://example.com/doc ",
             "query", " pricing ",
             "format", "text",
-            "maxChars", 100_000,
-            "provider", "TAVILY"
+            "maxChars", 100_000
         ));
 
         assertEquals("https://example.com/doc", request.url());
         assertEquals(Optional.of("pricing"), request.query());
         assertEquals("text", request.format());
         assertEquals(50_000, request.maxChars());
-        assertEquals(Optional.of("tavily"), request.provider());
     }
 
     @Test
@@ -96,8 +94,14 @@ final class WebToolInputsTest {
             IllegalArgumentException.class,
             () -> WebToolInputs.fetch(Map.of("url", "https://example.com", "format", "html"))
         );
+        IllegalArgumentException provider = assertThrows(
+            IllegalArgumentException.class,
+            () -> WebToolInputs.fetch(Map.of("url", "https://example.com", "provider", "tavily"))
+        );
 
         assertTrue(blankUrl.getMessage().contains("url"));
         assertTrue(format.getMessage().contains("format"));
+        assertTrue(provider.getMessage().contains("provider"));
+        assertTrue(provider.getMessage().contains("不支持"));
     }
 }

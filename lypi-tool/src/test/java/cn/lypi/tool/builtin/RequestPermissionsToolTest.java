@@ -492,8 +492,7 @@ class RequestPermissionsToolTest {
         runtime.register(new WebSearchTool(
             new WebProviderRegistry(
                 "tavily",
-                Map.of("tavily", new CountingSearchProvider(searches)),
-                Map.of()
+                Map.of("tavily", new CountingSearchProvider(searches))
             )
         ));
 

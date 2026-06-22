@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import cn.lypi.contracts.web.WebFetchResponse;
 import cn.lypi.contracts.web.WebSearchResponse;
 import java.util.List;
 import java.util.Map;
@@ -18,8 +17,7 @@ final class WebProviderRegistryTest {
         FakeSearchProvider tavily = new FakeSearchProvider("tavily");
         WebProviderRegistry registry = new WebProviderRegistry(
             "tavily",
-            Map.of("tavily", tavily),
-            Map.of()
+            Map.of("tavily", tavily)
         );
 
         assertSame(tavily, registry.searchProvider(Optional.empty()));
@@ -31,8 +29,7 @@ final class WebProviderRegistryTest {
         FakeSearchProvider brave = new FakeSearchProvider("brave");
         WebProviderRegistry registry = new WebProviderRegistry(
             "tavily",
-            Map.of("tavily", tavily, "brave", brave),
-            Map.of()
+            Map.of("tavily", tavily, "brave", brave)
         );
 
         assertSame(brave, registry.searchProvider(Optional.of("brave")));
@@ -42,8 +39,7 @@ final class WebProviderRegistryTest {
     void rejectsUnknownSearchProvider() {
         WebProviderRegistry registry = new WebProviderRegistry(
             "tavily",
-            Map.of("tavily", new FakeSearchProvider("tavily")),
-            Map.of()
+            Map.of("tavily", new FakeSearchProvider("tavily"))
         );
 
         IllegalArgumentException exception = assertThrows(
@@ -56,18 +52,6 @@ final class WebProviderRegistryTest {
     }
 
     @Test
-    void selectsFetchProviderSeparately() {
-        FakeFetchProvider tavily = new FakeFetchProvider("tavily");
-        WebProviderRegistry registry = new WebProviderRegistry(
-            "brave",
-            Map.of("brave", new FakeSearchProvider("brave")),
-            Map.of("tavily", tavily)
-        );
-
-        assertSame(tavily, registry.fetchProvider(Optional.empty()));
-    }
-
-    @Test
     void exposesProviderNamesInStableOrder() {
         WebProviderRegistry registry = new WebProviderRegistry(
             "tavily",
@@ -75,25 +59,16 @@ final class WebProviderRegistryTest {
                 "perplexity", new FakeSearchProvider("perplexity"),
                 "tavily", new FakeSearchProvider("tavily"),
                 "brave", new FakeSearchProvider("brave")
-            ),
-            Map.of("tavily", new FakeFetchProvider("tavily"))
+            )
         );
 
         assertEquals(List.of("brave", "perplexity", "tavily"), registry.searchProviderNames());
-        assertEquals(List.of("tavily"), registry.fetchProviderNames());
     }
 
     private record FakeSearchProvider(String name) implements WebSearchProvider {
         @Override
         public WebSearchResponse search(WebSearchRequest request) {
             return new WebSearchResponse(name, request.query(), Optional.empty(), List.of(), Optional.empty());
-        }
-    }
-
-    private record FakeFetchProvider(String name) implements WebFetchProvider {
-        @Override
-        public WebFetchResponse fetch(WebFetchRequest request) {
-            return new WebFetchResponse(name, request.url(), Optional.empty(), "", "markdown", Optional.empty(), Optional.empty());
         }
     }
 }

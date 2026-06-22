@@ -11,7 +11,6 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
-import cn.lypi.contracts.web.WebFetchResponse;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
@@ -19,8 +18,8 @@ import org.junit.jupiter.api.Test;
 
 final class WebFetchToolTest {
     @Test
-    void inputSchemaExposesFetchFields() {
-        WebFetchTool tool = new WebFetchTool(registry(successProvider()));
+    void inputSchemaExposesLocalFetchFieldsWithoutProvider() {
+        WebFetchTool tool = new WebFetchTool(successFetcher());
 
         @SuppressWarnings("unchecked")
         Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
@@ -30,12 +29,12 @@ final class WebFetchToolTest {
         assertTrue(properties.containsKey("query"));
         assertTrue(properties.containsKey("format"));
         assertTrue(properties.containsKey("maxChars"));
-        assertTrue(properties.containsKey("provider"));
+        assertFalse(properties.containsKey("provider"));
     }
 
     @Test
     void rejectsUnsafeUrl() {
-        WebFetchTool tool = new WebFetchTool(registry(successProvider()));
+        WebFetchTool tool = new WebFetchTool(successFetcher());
 
         var validation = tool.validateInput(Map.of("url", "https://127.0.0.1"), context(PermissionMode.BYPASS));
 
@@ -44,22 +43,22 @@ final class WebFetchToolTest {
     }
 
     @Test
-    void rejectsProviderNotAvailableForFetch() {
-        WebFetchTool tool = new WebFetchTool(registry(successProvider()));
+    void rejectsProviderFieldBecauseFetchIsLocal() {
+        WebFetchTool tool = new WebFetchTool(successFetcher());
 
         var validation = tool.validateInput(
-            Map.of("url", "https://example.com/doc", "provider", "brave"),
+            Map.of("url", "https://example.com/doc", "provider", "tavily"),
             context(PermissionMode.BYPASS)
         );
 
         assertFalse(validation.valid());
         assertTrue(validation.messages().getFirst().contains("provider"));
-        assertTrue(validation.messages().getFirst().contains("tavily"));
+        assertTrue(validation.messages().getFirst().contains("不支持"));
     }
 
     @Test
     void asksWithDomainMetadataWhenNetworkRestricted() {
-        WebFetchTool tool = new WebFetchTool(registry(successProvider()));
+        WebFetchTool tool = new WebFetchTool(successFetcher());
 
         var decision = tool.checkPermissions(Map.of("url", "https://example.com/doc"), context(PermissionMode.DEFAULT_EXECUTE));
 
@@ -69,7 +68,7 @@ final class WebFetchToolTest {
 
     @Test
     void allowsWhenAdditionalNetworkPermissionWasApproved() {
-        WebFetchTool tool = new WebFetchTool(registry(successProvider()));
+        WebFetchTool tool = new WebFetchTool(successFetcher());
 
         var decision = tool.checkPermissions(Map.of("url", "https://example.com/doc"), contextWithAdditionalNetworkPermission());
 
@@ -78,48 +77,43 @@ final class WebFetchToolTest {
     }
 
     @Test
-    void executesFetchAndTruncatesContent() {
-        WebFetchTool tool = new WebFetchTool(registry(successProvider()));
+    void executesLocalFetchCleansHtmlAndTruncatesContent() {
+        WebFetchTool tool = new WebFetchTool(successFetcher());
 
         ToolResult<String> result = tool.execute(
-            Map.of("url", "https://example.com/doc", "maxChars", 7),
+            Map.of("url", "https://example.com/doc", "maxChars", 18),
             context(PermissionMode.BYPASS),
             progress -> {
             }
         );
 
         assertFalse(result.isError());
-        assertTrue(result.output().contains("provider=tavily"));
-        assertTrue(result.output().contains("content:\n# Title"));
-        assertFalse(result.output().contains("Body"));
+        assertTrue(result.output().contains("source=local"));
+        assertTrue(result.output().contains("url=https://example.com/doc"));
+        assertTrue(result.output().contains("finalUrl=https://example.com/doc"));
+        assertTrue(result.output().contains("title=Example"));
+        assertTrue(result.output().contains("content:\n# Example\n\nBody t"));
+        assertFalse(result.output().contains("console.log"));
     }
 
-    private WebProviderRegistry registry(WebFetchProvider provider) {
-        return new WebProviderRegistry("tavily", Map.of(), Map.of("tavily", provider));
-    }
-
-    private WebFetchProvider successProvider() {
-        return new SuccessFetchProvider();
-    }
-
-    private record SuccessFetchProvider() implements WebFetchProvider {
-        @Override
-        public String name() {
-            return "tavily";
-        }
-
-        @Override
-        public WebFetchResponse fetch(WebFetchRequest request) {
-            return new WebFetchResponse(
-                "tavily",
-                request.url(),
-                Optional.of("Example"),
-                "# Title\n\nBody",
-                request.format(),
-                Optional.empty(),
-                Optional.empty()
-            );
-        }
+    private WebPageFetcher successFetcher() {
+        return url -> new WebPageFetchResult(
+            url,
+            "text/html; charset=utf-8",
+            """
+            <html>
+              <head>
+                <title>Example</title>
+                <style>.hidden { display: none; }</style>
+                <script>console.log('secret');</script>
+              </head>
+              <body>
+                <h1>Example</h1>
+                <p>Body text with pricing details.</p>
+              </body>
+            </html>
+            """
+        );
     }
 
     private ToolUseContext context(PermissionMode mode) {

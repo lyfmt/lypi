@@ -81,14 +81,35 @@ public final class BuiltInTools {
      * 注册 Web 工具集合。
      */
     public static void registerWebTools(ToolRuntimePort runtime, WebProviderRegistry providers, int maxResults) {
+        registerWebSearchTools(runtime, providers, maxResults);
+        registerWebFetchTool(runtime);
+    }
+
+    /**
+     * 注册 Web 搜索工具集合。
+     */
+    public static void registerWebSearchTools(ToolRuntimePort runtime, WebProviderRegistry providers, int maxResults) {
         Objects.requireNonNull(runtime, "runtime must not be null");
         Objects.requireNonNull(providers, "providers must not be null");
         if (!providers.searchProviderNames().isEmpty()) {
             runtime.register(new WebSearchTool(providers, maxResults));
         }
-        if (!providers.fetchProviderNames().isEmpty()) {
-            runtime.register(new WebFetchTool(providers));
-        }
+    }
+
+    /**
+     * 注册本地 Web 抓取工具。
+     */
+    public static void registerWebFetchTool(ToolRuntimePort runtime) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        runtime.register(new WebFetchTool());
+    }
+
+    /**
+     * 注册本地 Web 抓取工具。
+     */
+    public static void registerWebFetchTool(ToolRuntimePort runtime, java.time.Duration timeout) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        runtime.register(new WebFetchTool(timeout));
     }
 
     /**

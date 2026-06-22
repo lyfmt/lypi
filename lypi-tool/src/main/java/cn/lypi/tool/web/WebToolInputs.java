@@ -57,23 +57,18 @@ public final class WebToolInputs {
      * 解析 `web_fetch` 输入。
      */
     public static WebFetchRequest fetch(Map<String, Object> input) {
-        return fetch(input, PROVIDERS);
-    }
-
-    /**
-     * 解析 `web_fetch` 输入，并使用可用 provider 列表校验 provider 字段。
-     */
-    public static WebFetchRequest fetch(Map<String, Object> input, List<String> providers) {
         String format = optionalString(input, "format").orElse("markdown").toLowerCase(Locale.ROOT);
         if (!FETCH_FORMATS.contains(format)) {
             throw new IllegalArgumentException("format 只支持 markdown 或 text。");
+        }
+        if (optionalString(input, "provider").isPresent()) {
+            throw new IllegalArgumentException("web_fetch 不支持 provider；它使用本地 HTTP 抓取。");
         }
         return new WebFetchRequest(
             requiredString(input, "url"),
             optionalString(input, "query"),
             format,
-            intInput(input, "maxChars", DEFAULT_FETCH_CHARS, 1, MAX_FETCH_CHARS),
-            optionalProvider(input, providers)
+            intInput(input, "maxChars", DEFAULT_FETCH_CHARS, 1, MAX_FETCH_CHARS)
         );
     }
 
