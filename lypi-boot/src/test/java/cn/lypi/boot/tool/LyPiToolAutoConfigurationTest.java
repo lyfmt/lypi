@@ -517,8 +517,35 @@ class LyPiToolAutoConfigurationTest {
                 ).getFirst();
 
                 assertThat(result.isError()).isFalse();
-                assertThat(eventBus.events).anyMatch(HookStartEvent.class::isInstance);
-                assertThat(eventBus.events).anyMatch(HookEndEvent.class::isInstance);
+                ToolStartEvent toolStart = eventBus.events.stream()
+                    .filter(ToolStartEvent.class::isInstance)
+                    .map(ToolStartEvent.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+                HookStartEvent hookStart = eventBus.events.stream()
+                    .filter(HookStartEvent.class::isInstance)
+                    .map(HookStartEvent.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+                HookEndEvent hookEnd = eventBus.events.stream()
+                    .filter(HookEndEvent.class::isInstance)
+                    .map(HookEndEvent.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+                ToolEndEvent toolEnd = eventBus.events.stream()
+                    .filter(ToolEndEvent.class::isInstance)
+                    .map(ToolEndEvent.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+
+                assertThat(hookStart.sessionId()).isEqualTo(toolStart.sessionId());
+                assertThat(hookStart.toolUseId()).isEqualTo(toolStart.toolUseId());
+                assertThat(hookStart.parentMessageId()).isEqualTo(toolStart.parentMessageId());
+                assertThat(hookStart.turnId()).isEqualTo(toolStart.turnId());
+                assertThat(hookStart.toolName()).isEqualTo(toolStart.toolName());
+                assertThat(hookEnd.sessionId()).isEqualTo(toolEnd.sessionId());
+                assertThat(hookEnd.toolUseId()).isEqualTo(toolEnd.toolUseId());
+                assertThat(hookEnd.hookRunId()).isEqualTo(hookStart.hookRunId());
             });
     }
 
