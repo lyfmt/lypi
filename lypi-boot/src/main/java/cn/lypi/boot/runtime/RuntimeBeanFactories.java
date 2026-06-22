@@ -20,6 +20,8 @@ import cn.lypi.boot.tool.LyPiPermissionsProperties;
 import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.hook.DefaultTurnHookRuntime;
+import cn.lypi.contracts.hook.TurnHook;
 import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.runtime.AgentCenterPort;
@@ -216,6 +218,7 @@ final class RuntimeBeanFactories {
         EventBus eventBus,
         ContextAssembler contextAssembler,
         CompactionCoordinator compactionCoordinator,
+        ObjectProvider<TurnHook> turnHooks,
         Clock clock
     ) {
         AgentCoreRuntimePorts ports = new AgentCoreRuntimePorts(
@@ -231,7 +234,7 @@ final class RuntimeBeanFactories {
             compactionCoordinator,
             new NoopMemoryExtractionWorker()
         );
-        return new DefaultTurnExecutor(ports, TurnIds.random(), clock);
+        return new DefaultTurnExecutor(ports, TurnIds.random(), clock, turnHookRuntime(turnHooks));
     }
 
     static AgentCoreFactoryPort agentCoreFactory(
@@ -243,6 +246,7 @@ final class RuntimeBeanFactories {
         EventBus eventBus,
         ObjectProvider<CompactionSummarizer> compactionSummarizer,
         ObjectProvider<ModelCatalogPort> modelCatalog,
+        ObjectProvider<TurnHook> turnHooks,
         Clock clock
     ) {
         return new AgentCoreFactoryPort() {
@@ -308,10 +312,15 @@ final class RuntimeBeanFactories {
                         new NoopMemoryExtractionWorker()
                     ),
                     TurnIds.random(),
-                    clock
+                    clock,
+                    turnHookRuntime(turnHooks)
                 );
             }
         };
+    }
+
+    private static DefaultTurnHookRuntime turnHookRuntime(ObjectProvider<TurnHook> turnHooks) {
+        return new DefaultTurnHookRuntime(turnHooks == null ? List.of() : turnHooks.orderedStream().toList());
     }
 
     static MemoryConsolidationTrigger memoryConsolidationTrigger() {

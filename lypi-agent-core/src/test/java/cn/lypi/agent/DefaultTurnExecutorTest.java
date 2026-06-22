@@ -27,6 +27,10 @@ import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.common.JsonSchema;
+import cn.lypi.contracts.hook.AfterTurnHookResult;
+import cn.lypi.contracts.hook.BeforeTurnHookResult;
+import cn.lypi.contracts.hook.DefaultTurnHookRuntime;
+import cn.lypi.contracts.hook.TurnHook;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
@@ -57,6 +61,196 @@ import static cn.lypi.agent.AgentCoreTestFixtures.NOW;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class DefaultTurnExecutorTest {
+    @Test
+    void beforeTurnHookCanBlockBeforeAppendingUserMessage() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                request -> {
+                    throw new AssertionError("阻断后不应构建 context");
+                },
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "entry-1"),
+            Clock.fixed(NOW, ZoneOffset.UTC),
+            new DefaultTurnHookRuntime(List.of(TurnHook.before(context -> BeforeTurnHookResult.block("denied"))))
+        );
+
+        TurnState state = executor.execute(new TurnRequest(
+            "session-1",
+            "hello",
+            Optional.empty(),
+            () -> false
+        ));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(session.messages()).isEmpty();
+        assertThat(provider.contexts).isEmpty();
+        assertThat(eventBus.events).extracting(AgentEvent::getClass)
+            .containsExactly(TurnStartEvent.class, ErrorEvent.class, TurnEndEvent.class);
+        ErrorEvent error = (ErrorEvent) eventBus.events.get(1);
+        assertThat(error.message()).isEqualTo("denied");
+        TurnEndEvent turnEnd = (TurnEndEvent) eventBus.events.getLast();
+        assertThat(turnEnd.status()).isEqualTo("FAILED");
+        assertThat(turnEnd.leafEntryId()).isEmpty();
+    }
+
+    @Test
+    void afterTurnHookReceivesCompletedStateBeforeTurnEndEvent() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        List<TurnState> observed = new ArrayList<>();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "entry-1"),
+            clock,
+            new DefaultTurnHookRuntime(List.of(TurnHook.after(context -> {
+                observed.add(context.state());
+                return AfterTurnHookResult.keep();
+            })))
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(observed).hasSize(1);
+        assertThat(observed.getFirst().status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(eventBus.events.getLast()).isInstanceOf(TurnEndEvent.class);
+        TurnEndEvent turnEnd = (TurnEndEvent) eventBus.events.getLast();
+        assertThat(turnEnd.status()).isEqualTo("COMPLETED");
+        assertThat(turnEnd.leafEntryId()).isEqualTo("entry-msg-assistant");
+    }
+
+    @Test
+    void afterTurnHookFailureKeepsOriginalLeafEntryId() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("hi"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback", "msg-hook-error"),
+            clock,
+            new DefaultTurnHookRuntime(List.of(TurnHook.after(context -> {
+                throw new IllegalStateException("after hook down");
+            })))
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(state.currentToolRound()).isZero();
+        assertThat(state.newMessages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-assistant", "msg-hook-error");
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-assistant", "msg-hook-error");
+        TurnEndEvent turnEnd = (TurnEndEvent) eventBus.events.getLast();
+        assertThat(turnEnd.status()).isEqualTo("FAILED");
+        assertThat(turnEnd.toolRounds()).isZero();
+        assertThat(turnEnd.leafEntryId()).isEqualTo("entry-msg-assistant");
+    }
+
+    @Test
+    void afterTurnHookReceivesFailedStateBeforeTurnEndEvent() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        List<TurnState> observed = new ArrayList<>();
+        provider.failWith(new RuntimeException("provider down"));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "entry-1"),
+            clock,
+            new DefaultTurnHookRuntime(List.of(TurnHook.after(context -> {
+                observed.add(context.state());
+                return AfterTurnHookResult.keep();
+            })))
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(observed).hasSize(1);
+        assertThat(observed.getFirst().status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(observed.getFirst().newMessages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "entry-1");
+        TurnEndEvent turnEnd = (TurnEndEvent) eventBus.events.getLast();
+        assertThat(turnEnd.status()).isEqualTo("FAILED");
+        assertThat(turnEnd.leafEntryId()).isEqualTo("entry-entry-1");
+    }
+
     @Test
     void executesSimpleTurnWithoutTools() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
@@ -1131,6 +1325,7 @@ class DefaultTurnExecutorTest {
                 "MessageStartEvent:msg-error",
                 "MessageEndEvent:msg-error"
             );
+        assertThat(((TurnEndEvent) eventBus.events.getLast()).leafEntryId()).isEqualTo("entry-msg-error");
         assertThat(memory.calls).isZero();
     }
 

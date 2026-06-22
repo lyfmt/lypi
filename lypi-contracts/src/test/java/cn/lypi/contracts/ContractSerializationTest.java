@@ -22,6 +22,8 @@ import cn.lypi.contracts.error.LyPiException;
 import cn.lypi.contracts.error.ToolValidationException;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventEnvelope;
+import cn.lypi.contracts.event.HookEndEvent;
+import cn.lypi.contracts.event.HookStartEvent;
 import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
@@ -35,6 +37,8 @@ import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
+import cn.lypi.contracts.hook.HookPhase;
+import cn.lypi.contracts.hook.HookRunStatus;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ProviderRetryNotice;
@@ -1109,6 +1113,62 @@ class ContractSerializationTest {
         assertEquals("bash failed", end.resultSummary().title());
         assertEquals("toolout_01", end.resultRef().refId());
         assertEquals(end.endedAt(), end.timestamp());
+    }
+
+    @Test
+    void hookStartEventRoundTripThroughAgentEvent() throws Exception {
+        Instant now = Instant.parse("2026-06-22T10:15:30Z");
+        AgentEvent event = new HookStartEvent(
+            "session-1",
+            "toolu-1",
+            "msg-1",
+            "turn-1",
+            "Bash",
+            "hook_toolu-1_before_0",
+            "cn.lypi.TestHook",
+            HookPhase.BEFORE_TOOL_CALL,
+            now,
+            now
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"hook_start\""));
+        HookStartEvent start = assertInstanceOf(HookStartEvent.class, restored);
+        assertEquals("session-1", start.sessionId());
+        assertEquals("toolu-1", start.toolUseId());
+        assertEquals(HookPhase.BEFORE_TOOL_CALL, start.phase());
+    }
+
+    @Test
+    void hookEndEventRoundTripThroughAgentEvent() throws Exception {
+        Instant startedAt = Instant.parse("2026-06-22T10:15:30Z");
+        Instant endedAt = startedAt.plusMillis(25);
+        AgentEvent event = new HookEndEvent(
+            "session-1",
+            "toolu-1",
+            "msg-1",
+            "turn-1",
+            "Bash",
+            "hook_toolu-1_after_0",
+            "cn.lypi.TestHook",
+            HookPhase.AFTER_TOOL_CALL,
+            HookRunStatus.REPLACED,
+            "工具结果已替换。",
+            startedAt,
+            endedAt,
+            25L,
+            endedAt
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"hook_end\""));
+        HookEndEvent end = assertInstanceOf(HookEndEvent.class, restored);
+        assertEquals(HookRunStatus.REPLACED, end.status());
+        assertEquals(25L, end.durationMillis());
     }
 
     @Test
