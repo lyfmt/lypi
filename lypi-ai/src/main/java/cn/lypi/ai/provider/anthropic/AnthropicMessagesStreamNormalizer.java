@@ -62,7 +62,9 @@ public final class AnthropicMessagesStreamNormalizer {
     }
 
     private List<AssistantStreamEvent> start(JsonNode event) {
-        String id = event.path("message").path("id").asText("assistant");
+        JsonNode message = event.path("message");
+        mergeUsage(message.path("usage"));
+        String id = message.path("id").asText("assistant");
         return List.of(new AssistantStart(id));
     }
 
@@ -119,15 +121,30 @@ public final class AnthropicMessagesStreamNormalizer {
             stopReason = reason;
         }
         JsonNode eventUsage = event.path("usage");
-        if (eventUsage.isObject()) {
-            usage = new TokenUsage(
-                eventUsage.path("input_tokens").asLong(),
-                eventUsage.path("output_tokens").asLong(),
-                eventUsage.path("cache_read_input_tokens").asLong(),
-                0
-            );
-        }
+        mergeUsage(eventUsage);
         return List.of();
+    }
+
+    private void mergeUsage(JsonNode eventUsage) {
+        if (!eventUsage.isObject()) {
+            return;
+        }
+        long inputTokens = usage == null ? 0 : usage.inputTokens();
+        long outputTokens = usage == null ? 0 : usage.outputTokens();
+        long cachedInputTokens = usage == null ? 0 : usage.cachedInputTokens();
+        long reasoningTokens = usage == null ? 0 : usage.reasoningTokens();
+
+        if (eventUsage.hasNonNull("input_tokens")) {
+            inputTokens = eventUsage.path("input_tokens").asLong();
+        }
+        if (eventUsage.hasNonNull("output_tokens")) {
+            outputTokens = eventUsage.path("output_tokens").asLong();
+        }
+        // NOTE: TokenUsage.cachedInputTokens 表示已从缓存读取的 token，不包含本次写入缓存的 token。
+        if (eventUsage.hasNonNull("cache_read_input_tokens")) {
+            cachedInputTokens = eventUsage.path("cache_read_input_tokens").asLong();
+        }
+        usage = new TokenUsage(inputTokens, outputTokens, cachedInputTokens, reasoningTokens);
     }
 
     private List<AssistantStreamEvent> done() {

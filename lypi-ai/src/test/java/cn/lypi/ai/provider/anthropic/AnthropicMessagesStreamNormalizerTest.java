@@ -60,6 +60,91 @@ class AnthropicMessagesStreamNormalizerTest {
     }
 
     @Test
+    void combinesMessageStartAndDeltaUsage() {
+        AnthropicMessagesStreamNormalizer normalizer = new AnthropicMessagesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("""
+                {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":2679,"cache_read_input_tokens":17,"output_tokens":3}}}
+                """),
+            normalizer.normalize("""
+                {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":510,"cache_read_input_tokens":19}}
+                """),
+            normalizer.normalize("""
+                {"type":"message_stop"}
+                """)
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new AssistantStart("msg_1"),
+            new AssistantDone(Optional.of(new TokenUsage(2679, 510, 19, 0)), Optional.of("end_turn"))
+        );
+    }
+
+    @Test
+    void usesMessageStartUsageWhenNoDeltaUsageArrives() {
+        AnthropicMessagesStreamNormalizer normalizer = new AnthropicMessagesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("""
+                {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":41,"cache_read_input_tokens":7,"output_tokens":1}}}
+                """),
+            normalizer.normalize("""
+                {"type":"message_stop"}
+                """)
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new AssistantStart("msg_1"),
+            new AssistantDone(Optional.of(new TokenUsage(41, 1, 7, 0)), Optional.of("stop"))
+        );
+    }
+
+    @Test
+    void mergesSparseUsageAcrossMultipleDeltas() {
+        AnthropicMessagesStreamNormalizer normalizer = new AnthropicMessagesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("""
+                {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":100,"cache_read_input_tokens":5,"output_tokens":1}}}
+                """),
+            normalizer.normalize("""
+                {"type":"message_delta","delta":{},"usage":{"output_tokens":8}}
+                """),
+            normalizer.normalize("""
+                {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"cache_read_input_tokens":9}}
+                """),
+            normalizer.normalize("""
+                {"type":"message_stop"}
+                """)
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new AssistantStart("msg_1"),
+            new AssistantDone(Optional.of(new TokenUsage(100, 8, 9, 0)), Optional.of("end_turn"))
+        );
+    }
+
+    @Test
+    void ignoresCacheCreationTokensBecauseTokenUsageTracksCacheReads() {
+        AnthropicMessagesStreamNormalizer normalizer = new AnthropicMessagesStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("""
+                {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":100,"cache_creation_input_tokens":37,"cache_read_input_tokens":5,"output_tokens":1}}}
+                """),
+            normalizer.normalize("""
+                {"type":"message_stop"}
+                """)
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new AssistantStart("msg_1"),
+            new AssistantDone(Optional.of(new TokenUsage(100, 1, 5, 0)), Optional.of("stop"))
+        );
+    }
+
+    @Test
     void ignoresPingAndUnknownEvents() {
         AnthropicMessagesStreamNormalizer normalizer = new AnthropicMessagesStreamNormalizer();
 
