@@ -257,6 +257,25 @@ class DefaultAgentRegistryTest {
             .containsExactly("ses_child_visible");
     }
 
+    @Test
+    void listUsesRequestedLeafInsteadOfCurrentViewLeaf() {
+        BranchByLeafParentSession parentSession = new BranchByLeafParentSession("ses_parent", "entry_current");
+        DefaultMailboxService mailbox = mailbox(parentSession);
+        DefaultAgentRegistry registry = new DefaultAgentRegistry(
+            parentSession,
+            mailbox,
+            parentSessionId -> List.of(),
+            parentSessionId -> List.of()
+        );
+
+        List<AgentView> views = registry.list("ses_parent", Optional.of("entry_target"), Set.of());
+
+        assertThat(parentSession.requestedLeafIds).containsExactly("entry_target");
+        assertThat(views)
+            .extracting(AgentView::agentId)
+            .containsExactly("agent_target");
+    }
+
     private DefaultMailboxService mailbox(SessionManagerPort parentSession) {
         return new DefaultMailboxService(
             new JsonlMailboxStore(tempDir),
@@ -370,6 +389,89 @@ class DefaultAgentRegistryTest {
         @Override
         public SessionView currentView() {
             return new SessionView(sessionId, leafId);
+        }
+
+        @Override
+        public SessionView view(String leafId) {
+            return new SessionView(sessionId, leafId);
+        }
+
+        @Override
+        public List<AgentMessage> transcript(String leafId) {
+            return List.of();
+        }
+
+        @Override
+        public SessionContext context(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle appendMessage(AgentMessage message) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle fork(ForkRequest request) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private static final class BranchByLeafParentSession implements SessionManagerPort {
+        private final String sessionId;
+        private final String currentLeafId;
+        private final List<String> requestedLeafIds = new ArrayList<>();
+
+        private BranchByLeafParentSession(String sessionId, String currentLeafId) {
+            this.sessionId = sessionId;
+            this.currentLeafId = currentLeafId;
+        }
+
+        @Override
+        public SessionHandle openOrCreate(String sessionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle append(SessionEntry entry) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SessionHandle switchLeaf(String leafId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<SessionEntry> branch(String leafId) {
+            requestedLeafIds.add(leafId);
+            if ("entry_target".equals(leafId)) {
+                return List.of(new AgentLifecycleEntry(
+                    "entry_target",
+                    null,
+                    "agent_target",
+                    "ses_child_target",
+                    sessionId,
+                    "spawned",
+                    Map.of(),
+                    NOW
+                ));
+            }
+            return List.of(new AgentLifecycleEntry(
+                "entry_current",
+                null,
+                "agent_current",
+                "ses_child_current",
+                sessionId,
+                "spawned",
+                Map.of(),
+                NOW
+            ));
+        }
+
+        @Override
+        public SessionView currentView() {
+            return new SessionView(sessionId, currentLeafId);
         }
 
         @Override

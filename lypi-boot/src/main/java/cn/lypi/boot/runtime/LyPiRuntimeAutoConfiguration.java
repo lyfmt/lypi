@@ -199,6 +199,7 @@ public class LyPiRuntimeAutoConfiguration {
         SessionManagerPort sessionManager,
         ContextAssembler contextAssembler,
         EventBus eventBus,
+        ObjectProvider<ToolRuntimePort> toolRuntime,
         CompactionSummarizer summarizer,
         ObjectProvider<CompactStateBackfillPort> compactStateBackfill
     ) {
@@ -206,6 +207,7 @@ public class LyPiRuntimeAutoConfiguration {
             sessionManager,
             contextAssembler,
             eventBus,
+            toolRuntime.getIfAvailable(),
             summarizer,
             compactStateBackfill.getIfAvailable(CompactStateBackfillPort::none),
             Clock.systemUTC()

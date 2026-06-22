@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class AgentCompactStateBackfillTest {
@@ -90,6 +91,39 @@ class AgentCompactStateBackfillTest {
     }
 
     @Test
+    void passesTargetLeafEntryIdToRegistry() {
+        AtomicReference<Optional<String>> seenLeafEntryId = new AtomicReference<>();
+        AgentRegistryPort registry = new AgentRegistryPort() {
+            @Override
+            public List<AgentView> list(String parentSessionId, Set<AgentRunStatus> statuses) {
+                throw new AssertionError("leaf-aware list should be used");
+            }
+
+            @Override
+            public List<AgentView> list(
+                String parentSessionId,
+                Optional<String> leafEntryId,
+                Set<AgentRunStatus> statuses
+            ) {
+                seenLeafEntryId.set(leafEntryId);
+                return List.of();
+            }
+        };
+        AgentCompactStateBackfill backfill = new AgentCompactStateBackfill(registry);
+
+        backfill.backfill(new CompactStateBackfillRequest(
+            "session-1",
+            Optional.of("entry-target-leaf"),
+            Path.of("."),
+            null,
+            null,
+            List.of()
+        ));
+
+        assertThat(seenLeafEntryId.get()).contains("entry-target-leaf");
+    }
+
+    @Test
     void truncatesLargeAgentListAndKeepsAgentCountMetadata() {
         AgentRegistryPort registry = (sessionId, statuses) -> List.of(new AgentView(
             "agent-large",
@@ -116,6 +150,6 @@ class AgentCompactStateBackfillTest {
     }
 
     private static CompactStateBackfillRequest request(String sessionId) {
-        return new CompactStateBackfillRequest(sessionId, Path.of("."), null, null, List.of());
+        return new CompactStateBackfillRequest(sessionId, Optional.empty(), Path.of("."), null, null, List.of());
     }
 }

@@ -204,16 +204,26 @@ final class RuntimeBeanFactories {
         SessionManagerPort sessionManager,
         ContextAssembler contextAssembler,
         EventBus eventBus,
+        ToolRuntimePort toolRuntime,
         CompactionSummarizer summarizer,
         Clock clock
     ) {
-        return compactionRuntime(sessionManager, contextAssembler, eventBus, summarizer, CompactStateBackfillPort.none(), clock);
+        return compactionRuntime(
+            sessionManager,
+            contextAssembler,
+            eventBus,
+            toolRuntime,
+            summarizer,
+            CompactStateBackfillPort.none(),
+            clock
+        );
     }
 
     static CompactionRuntimePort compactionRuntime(
         SessionManagerPort sessionManager,
         ContextAssembler contextAssembler,
         EventBus eventBus,
+        ToolRuntimePort toolRuntime,
         CompactionSummarizer summarizer,
         CompactStateBackfillPort compactStateBackfill,
         Clock clock
@@ -228,7 +238,8 @@ final class RuntimeBeanFactories {
                 summarizer,
                 compactStateBackfill,
                 clock
-            )
+            ),
+            toolRuntime
         );
     }
 

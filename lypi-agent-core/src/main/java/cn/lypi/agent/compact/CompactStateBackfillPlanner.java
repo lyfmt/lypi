@@ -76,13 +76,23 @@ final class CompactStateBackfillPlanner {
             List<SkillMention> mentions = buildRequest == null ? List.of() : safeList(buildRequest.skillMentions());
             items = stateBackfillPort.backfill(new CompactStateBackfillRequest(
                 request.sessionId(),
+                request.leafEntryId(),
                 request.cwd(),
                 resources,
                 request.tools(),
                 mentions
             ));
         } catch (RuntimeException exception) {
-            return List.of();
+            return List.of(entry(
+                compactionEntryId,
+                "compact-runtime-state-warning",
+                "# State Backfill Warning\n\nRuntime state backfill failed: " + safeText(exception.getMessage()),
+                Map.of(
+                    "backfillType", "runtime-warning",
+                    "truncated", false
+                ),
+                timestamp
+            ));
         }
         if (items == null || items.isEmpty()) {
             return List.of();

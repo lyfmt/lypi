@@ -36,10 +36,19 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
 
     @Override
     public List<AgentView> list(String parentSessionId, Set<AgentRunStatus> statuses) {
+        return list(parentSessionId, Optional.empty(), statuses);
+    }
+
+    @Override
+    public List<AgentView> list(
+        String parentSessionId,
+        Optional<String> leafEntryId,
+        Set<AgentRunStatus> statuses
+    ) {
         if (parentSessionId == null || parentSessionId.isBlank()) {
             return List.of();
         }
-        List<SessionEntry> branch = currentBranch();
+        List<SessionEntry> branch = branch(leafEntryId);
         Set<String> branchEntryIds = branchEntryIds(branch);
         Map<String, AgentRecord> records = new LinkedHashMap<>();
         lifecycleRecords(parentSessionId, branch, records);
@@ -52,8 +61,10 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
             .toList();
     }
 
-    private List<SessionEntry> currentBranch() {
-        String leafId = parentSession.currentView().leafId();
+    private List<SessionEntry> branch(Optional<String> leafEntryId) {
+        String leafId = leafEntryId == null || leafEntryId.isEmpty()
+            ? parentSession.currentView().leafId()
+            : leafEntryId.orElseThrow();
         if (leafId == null || leafId.isBlank()) {
             return List.of();
         }

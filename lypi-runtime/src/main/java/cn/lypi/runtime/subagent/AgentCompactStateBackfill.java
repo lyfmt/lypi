@@ -29,7 +29,7 @@ public final class AgentCompactStateBackfill implements CompactStateBackfillPort
 
     @Override
     public List<CompactStateBackfillItem> backfill(CompactStateBackfillRequest request) {
-        List<AgentView> agents = registry.list(request.sessionId(), Set.of());
+        List<AgentView> agents = registry.list(request.sessionId(), request.leafEntryId(), Set.of());
         if (agents == null || agents.isEmpty()) {
             return List.of();
         }

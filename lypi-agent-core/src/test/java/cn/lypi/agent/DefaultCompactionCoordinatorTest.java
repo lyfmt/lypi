@@ -709,6 +709,44 @@ class DefaultCompactionCoordinatorTest {
     }
 
     @Test
+    void runtimeBackfillReceivesTargetLeafEntryIdAndFailureIsVisible() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        String targetLeafId = session.leafId();
+        DefaultContextAssembler assembler = resourceAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        java.util.concurrent.atomic.AtomicReference<cn.lypi.contracts.runtime.CompactStateBackfillRequest> seenRequest =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        CompactStateBackfillPort runtimeBackfill = request -> {
+            seenRequest.set(request);
+            throw new IllegalStateException("registry unavailable");
+        };
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary after compact"),
+            runtimeBackfill,
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(seenRequest.get().leafEntryId()).contains(targetLeafId);
+        assertThat(backfillAttachments(session))
+            .filteredOn(attachment -> attachment.attachmentId().equals("compact-runtime-state-warning"))
+            .singleElement()
+            .satisfies(attachment -> {
+                assertThat(attachment.text())
+                    .contains("State Backfill Warning")
+                    .contains("registry unavailable");
+                assertThat(attachment.metadata()).containsEntry("backfillType", "runtime-warning");
+            });
+    }
+
+    @Test
     void stateBackfillDeduplicatesAttachmentIdsAndMarksTruncation(@TempDir Path tempDir) throws Exception {
         Path missingSkill = tempDir.resolve("missing-skill").resolve("SKILL.md");
         AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();

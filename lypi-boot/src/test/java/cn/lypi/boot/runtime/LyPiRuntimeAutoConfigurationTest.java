@@ -452,6 +452,7 @@ class LyPiRuntimeAutoConfigurationTest {
             ))
             .run(context -> {
                 SessionManagerPort session = context.getBean(SessionManagerPort.class);
+                context.getBean(ToolRuntimePort.class).register(new McpSnapshotTool());
                 session.openOrCreate("session-manual-compact");
                 String rootLeaf = session.currentView().leafId();
                 session.append(messageEntry("entry-user-1", rootLeaf, MessageRole.USER, "old user"));
@@ -471,6 +472,10 @@ class LyPiRuntimeAutoConfigurationTest {
                     .singleElement()
                     .satisfies(entry -> assertThat(((cn.lypi.contracts.session.CompactionEntry) entry).kind())
                         .isEqualTo(cn.lypi.contracts.session.CompactionKind.MANUAL));
+                assertThat(session.context(session.currentView().leafId()).messages())
+                    .flatExtracting(AgentMessage::content)
+                    .extracting(cn.lypi.contracts.context.ContentBlock::text)
+                    .anySatisfy(text -> assertThat(text).contains("mcp__filesystem__read_file"));
             });
     }
 
@@ -2160,6 +2165,87 @@ class LyPiRuntimeAutoConfigurationTest {
                 MessageRole.TOOL_RESULT,
                 MessageKind.TOOL_RESULT,
                 List.of(new ToolResultContentBlock("toolu_1", output, false)),
+                Instant.EPOCH,
+                java.util.Optional.empty(),
+                java.util.Optional.empty()
+            );
+        }
+    }
+
+    private static final class McpSnapshotTool implements Tool<Map<String, Object>, String> {
+        @Override
+        public String name() {
+            return "mcp__filesystem__read_file";
+        }
+
+        @Override
+        public List<String> aliases() {
+            return List.of();
+        }
+
+        @Override
+        public cn.lypi.contracts.common.JsonSchema inputSchema() {
+            return new cn.lypi.contracts.common.JsonSchema(Map.of("type", "object"));
+        }
+
+        @Override
+        public ValidationResult validateInput(Map<String, Object> input, ToolUseContext context) {
+            return new ValidationResult(true, List.of());
+        }
+
+        @Override
+        public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
+            return new PermissionDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.TOOL_SPECIFIC,
+                "只读 MCP 工具",
+                java.util.Optional.empty(),
+                Map.of()
+            );
+        }
+
+        @Override
+        public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+            return new ToolResult<>("{}", false, List.of(serializeForContext("{}")), java.util.Optional.empty());
+        }
+
+        @Override
+        public boolean isReadOnly(Map<String, Object> input) {
+            return true;
+        }
+
+        @Override
+        public cn.lypi.contracts.tool.InterruptBehavior interruptBehavior() {
+            return cn.lypi.contracts.tool.InterruptBehavior.CANCEL;
+        }
+
+        @Override
+        public boolean isConcurrencySafe(Map<String, Object> input) {
+            return true;
+        }
+
+        @Override
+        public boolean isDestructive(Map<String, Object> input) {
+            return false;
+        }
+
+        @Override
+        public int maxResultSize() {
+            return 4096;
+        }
+
+        @Override
+        public String renderForUser(Map<String, Object> input) {
+            return "mcp read_file " + input;
+        }
+
+        @Override
+        public AgentMessage serializeForContext(String output) {
+            return new AgentMessage(
+                "msg_mcp_tool_result",
+                MessageRole.TOOL_RESULT,
+                MessageKind.TOOL_RESULT,
+                List.of(new ToolResultContentBlock("toolu_mcp", output, false)),
                 Instant.EPOCH,
                 java.util.Optional.empty(),
                 java.util.Optional.empty()

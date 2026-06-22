@@ -8,17 +8,25 @@ import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.agent.compact.CompactionDecision;
 import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.DefaultCompactionCoordinator;
+import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.runtime.CompactionResult;
+import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.CompactionKind;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionPlan;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.ToolDescriptor;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
+import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolUseRequest;
 import java.time.Clock;
 import java.time.ZoneOffset;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -52,6 +60,39 @@ class DefaultCompactionRuntimeTest {
         assertEquals(Optional.of("leaf_9"), coordinator.request.leafEntryId());
         assertEquals(assembler.assembly, coordinator.request.assembly());
         assertTrue(coordinator.request.tools().tools().isEmpty());
+    }
+
+    @Test
+    void compactDelegatesCurrentToolSnapshotForManualMcpBackfill() {
+        RecordingAssembler assembler = new RecordingAssembler();
+        RecordingCoordinator coordinator = new RecordingCoordinator(new CompactionDecision(
+            new ContextSnapshot(null, java.util.List.of(), null, null, null, PermissionMode.DEFAULT_EXECUTE, null),
+            Optional.empty(),
+            false,
+            "within budget"
+        ));
+        ToolRegistrySnapshot snapshot = new ToolRegistrySnapshot(List.of(new ToolDescriptor(
+            "mcp__filesystem__read_file",
+            List.of(),
+            "Read file",
+            new JsonSchema(Map.of("type", "object")),
+            true,
+            false
+        )));
+        DefaultCompactionRuntime runtime = new DefaultCompactionRuntime(
+            assembler,
+            coordinator,
+            new SnapshotToolRuntime(snapshot)
+        );
+
+        runtime.compact(new cn.lypi.contracts.runtime.CompactionRequest(
+            "ses_1",
+            Optional.of("leaf_9"),
+            Path.of("/tmp/project"),
+            () -> false
+        ));
+
+        assertEquals(snapshot, coordinator.request.tools());
     }
 
     @Test
@@ -163,6 +204,38 @@ class DefaultCompactionRuntimeTest {
         public CompactionDecision preflight(cn.lypi.agent.compact.CompactionRequest request) {
             this.request = request;
             return decision;
+        }
+    }
+
+    private static final class SnapshotToolRuntime implements ToolRuntimePort {
+        private final ToolRegistrySnapshot snapshot;
+
+        private SnapshotToolRuntime(ToolRegistrySnapshot snapshot) {
+            this.snapshot = snapshot;
+        }
+
+        @Override
+        public void register(Tool<?, ?> tool) {
+        }
+
+        @Override
+        public Optional<Tool<?, ?>> resolve(String nameOrAlias) {
+            return Optional.empty();
+        }
+
+        @Override
+        public ToolRegistrySnapshot snapshot() {
+            return snapshot;
+        }
+
+        @Override
+        public Path cwd() {
+            return Path.of(".").toAbsolutePath().normalize();
+        }
+
+        @Override
+        public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
+            return List.of();
         }
     }
 }
