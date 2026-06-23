@@ -4,6 +4,7 @@ import cn.lypi.contracts.tui.SessionResumeInfo;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 查询当前 cwd 下可恢复的 session 列表。
@@ -20,9 +21,18 @@ public final class SessionResumeQuery {
      */
     public List<SessionResumeInfo> sessions() {
         return store.resumeScans().stream()
-            .map(this::info)
+            .map(this::tryInfo)
+            .flatMap(Optional::stream)
             .sorted(Comparator.comparing(SessionResumeInfo::modified).reversed())
             .toList();
+    }
+
+    private Optional<SessionResumeInfo> tryInfo(SessionResumeScan scan) {
+        try {
+            return Optional.of(info(scan));
+        } catch (SessionEngineException exception) {
+            return Optional.empty();
+        }
     }
 
     private SessionResumeInfo info(SessionResumeScan scan) {

@@ -207,6 +207,20 @@ class SessionResumeQueryTest {
     }
 
     @Test
+    void sessionsSkipFilesWithUnsafeParentSessionIds() {
+        SessionManager good = new SessionManagerImpl(tempDir);
+        good.openOrCreate("ses_good");
+        good.append(new MessageEntry("entry_good", null, message("msg_good", MessageRole.USER, "good", NEWER), NEWER));
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(new SessionHeader("session", 1, "ses_bad_parent", tempDir, Optional.of("bad/parent"), OLDER));
+        store.append("ses_bad_parent", new MessageEntry("entry_bad", null, message("msg_bad", MessageRole.USER, "bad", OLDER), OLDER));
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).extracting(SessionResumeInfo::sessionId).containsExactly("ses_good");
+    }
+
+    @Test
     void sessionsScanEachFileOnceForResumeInfo() {
         SessionManager manager = new SessionManagerImpl(tempDir);
         manager.openOrCreate("ses_large");
