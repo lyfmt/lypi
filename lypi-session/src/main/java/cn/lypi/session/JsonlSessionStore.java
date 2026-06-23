@@ -324,6 +324,9 @@ final class JsonlSessionStore {
         if (header.version() != SUPPORTED_SESSION_VERSION) {
             throw new SessionEngineException("Unsupported session version: " + header.version());
         }
+        if (header.id() == null || header.cwd() == null || header.timestamp() == null) {
+            throw new SessionEngineException("Session header is missing required fields: " + header.id());
+        }
     }
 
     private void validateSessionFileHeader(Path file, SessionHeader header) {

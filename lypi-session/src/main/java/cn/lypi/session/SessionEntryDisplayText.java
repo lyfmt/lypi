@@ -16,10 +16,14 @@ final class SessionEntryDisplayText {
     static String text(SessionEntry entry) {
         return switch (entry) {
             case MessageEntry messageEntry -> messageText(messageEntry.message());
-            case CustomMessageEntry customMessage -> customMessage.content();
-            case BranchSummaryEntry branchSummary -> branchSummary.summary();
+            case CustomMessageEntry customMessage -> blankIfNull(customMessage.content());
+            case BranchSummaryEntry branchSummary -> blankIfNull(branchSummary.summary());
             default -> "";
         };
+    }
+
+    private static String blankIfNull(String text) {
+        return text == null ? "" : text;
     }
 
     private static String messageText(AgentMessage message) {

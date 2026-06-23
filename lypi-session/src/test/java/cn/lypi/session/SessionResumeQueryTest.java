@@ -336,6 +336,49 @@ class SessionResumeQueryTest {
         assertThat(sessions).extracting(SessionResumeInfo::sessionId).containsExactly("ses_good");
     }
 
+    @Test
+    void sessionsTreatMissingDisplayTextAsBlank() throws Exception {
+        SessionManager good = new SessionManagerImpl(tempDir);
+        good.openOrCreate("ses_good");
+        good.append(new MessageEntry("entry_good", null, message("msg_good", MessageRole.USER, "good", NEWER), NEWER));
+        Path badFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_bad_text.jsonl");
+        Files.writeString(
+            badFile,
+            """
+            {"type":"session","version":1,"id":"ses_bad_text","cwd":"%s","parentSessionId":null,"timestamp":"2026-06-10T00:00:00Z"}
+            {"type":"custom_message","id":"entry_bad","parentId":null,"content":null,"timestamp":"2026-06-10T00:00:00Z"}
+            {"type":"branch_summary","id":"entry_summary","parentId":"entry_bad","fromId":"entry_bad","summary":null,"timestamp":"2026-06-10T00:00:01Z"}
+            """.formatted(tempDir.toString().replace("\\", "\\\\"))
+        );
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).extracting(SessionResumeInfo::sessionId).containsExactly("ses_good", "ses_bad_text");
+        assertThat(sessions.get(1)).satisfies(session -> {
+            assertThat(session.messageCount()).isZero();
+            assertThat(session.firstMessage()).isEqualTo("(no messages)");
+            assertThat(session.allMessagesText()).isEmpty();
+        });
+    }
+
+    @Test
+    void sessionsSkipFilesWithMissingHeaderTimestamp() throws Exception {
+        SessionManager good = new SessionManagerImpl(tempDir);
+        good.openOrCreate("ses_good");
+        good.append(new MessageEntry("entry_good", null, message("msg_good", MessageRole.USER, "good", NEWER), NEWER));
+        Path badFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_bad_timestamp.jsonl");
+        Files.writeString(
+            badFile,
+            """
+            {"type":"session","version":1,"id":"ses_bad_timestamp","cwd":"%s","parentSessionId":null}
+            """.formatted(tempDir.toString().replace("\\", "\\\\"))
+        );
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).extracting(SessionResumeInfo::sessionId).containsExactly("ses_good");
+    }
+
     private AgentMessage message(String id, MessageRole role, String text, Instant timestamp) {
         return new AgentMessage(
             id,
