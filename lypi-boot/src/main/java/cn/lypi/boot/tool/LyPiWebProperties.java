@@ -11,6 +11,7 @@ public class LyPiWebProperties {
     private String defaultProvider = "tavily";
     private Duration timeout = Duration.ofSeconds(20);
     private int maxResults = 10;
+    private CacheProperties cache = new CacheProperties();
     private Map<String, ProviderProperties> providers = defaultProviders();
 
     public boolean isEnabled() {
@@ -47,6 +48,14 @@ public class LyPiWebProperties {
 
     public void setMaxResults(int maxResults) {
         this.maxResults = Math.max(1, Math.min(10, maxResults));
+    }
+
+    public CacheProperties getCache() {
+        return cache;
+    }
+
+    public void setCache(CacheProperties cache) {
+        this.cache = cache == null ? new CacheProperties() : cache;
     }
 
     public Map<String, ProviderProperties> getProviders() {
@@ -117,6 +126,18 @@ public class LyPiWebProperties {
 
         public void setEndpoint(String endpoint) {
             this.endpoint = endpoint;
+        }
+    }
+
+    public static class CacheProperties {
+        private boolean enabled = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
         }
     }
 }

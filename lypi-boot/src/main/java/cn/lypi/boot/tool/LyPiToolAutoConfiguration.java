@@ -239,7 +239,7 @@ public class LyPiToolAutoConfiguration {
                     new FilePermissionAmendmentStore(runtimeCwd)
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
-                WebResultStore webResultStore = new FileWebResultStore(runtimeCwd);
+                WebResultStore webResultStore = webResultStore(webProperties, runtimeCwd);
                 if (webProperties.isEnabled()) {
                     BuiltInTools.registerWebFetchTool(runtime, webProperties.getTimeout(), webResultStore);
                     BuiltInTools.registerWebContentTools(runtime, webResultStore);
@@ -272,6 +272,13 @@ public class LyPiToolAutoConfiguration {
                 );
             }
         };
+    }
+
+    private WebResultStore webResultStore(LyPiWebProperties properties, Path runtimeCwd) {
+        if (properties != null && properties.getCache() != null && !properties.getCache().isEnabled()) {
+            return WebResultStore.disabled("Web 结果缓存未启用。请启用 lypi.web.cache.enabled=true 后再取回内容。");
+        }
+        return new FileWebResultStore(runtimeCwd);
     }
 
     /**

@@ -96,6 +96,66 @@ final class LyPiWebToolAutoConfigurationTest {
     }
 
     @Test
+    void cacheCanBeDisabledAndContentToolReportsThatClearly() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.web.enabled=true",
+                "lypi.web.cache.enabled=false"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiWebToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(runtime.resolve("web_fetch")).isPresent();
+                assertThat(runtime.resolve("get_search_content")).isPresent();
+
+                List<ToolResult<?>> results = runtime.execute(
+                    List.of(new ToolUseRequest(
+                        "toolu_content",
+                        "get_search_content",
+                        Map.of("responseId", "web_20260623_000001"),
+                        "message"
+                    )),
+                    contextSnapshot(),
+                    new ToolRuntimeInvocation("session", "turn")
+                );
+
+                assertThat(results).hasSize(1);
+                assertThat(results.getFirst().isError()).isTrue();
+                assertThat(results.getFirst().output().toString()).contains("Web 结果缓存未启用");
+            });
+    }
+
+    @Test
+    void runtimeCwdCreatesIsolatedWebCacheStores(@TempDir Path tempDir) throws Exception {
+        Path firstCwd = tempDir.resolve("first");
+        Path secondCwd = tempDir.resolve("second");
+        writeCachedFetch(firstCwd, "First cwd body");
+        writeCachedFetch(secondCwd, "Second cwd body");
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues("lypi.web.enabled=true")
+            .withBean(SecurityRuntimePort.class, () -> LyPiWebToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimeFactoryPort factory = context.getBean(ToolRuntimeFactoryPort.class);
+
+                ToolResult<?> first = readCachedBody(factory.create(firstCwd));
+                ToolResult<?> second = readCachedBody(factory.create(secondCwd));
+
+                assertThat(first.isError()).isFalse();
+                assertThat(first.output().toString())
+                    .contains("First cwd body")
+                    .doesNotContain("Second cwd body");
+                assertThat(second.isError()).isFalse();
+                assertThat(second.output().toString())
+                    .contains("Second cwd body")
+                    .doesNotContain("First cwd body");
+            });
+    }
+
+    @Test
     void registersTavilySearchAndLocalFetchWhenApiKeyIsConfigured() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
@@ -231,5 +291,30 @@ final class LyPiWebToolAutoConfigurationTest {
             Optional.empty(),
             Map.of()
         );
+    }
+
+    private static void writeCachedFetch(Path runtimeCwd, String body) throws Exception {
+        Path storeFile = runtimeCwd.resolve(".ly-pi").resolve("web-results.jsonl");
+        Files.createDirectories(storeFile.getParent());
+        Files.writeString(
+            storeFile,
+            """
+            {"sessionId":"session","messageId":"message","responseId":"web_20260623_000001","sourceTool":"web_fetch","query":null,"url":"https://example.com/doc","items":[{"url":"https://example.com/doc","title":"Example","snippet":null,"content":"%s","format":"markdown","truncated":false,"source":"local"}],"createdAt":"2026-06-23T00:00:00Z"}
+            """.formatted(body),
+            StandardCharsets.UTF_8
+        );
+    }
+
+    private static ToolResult<?> readCachedBody(ToolRuntimePort runtime) {
+        return runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_content",
+                "get_search_content",
+                Map.of("responseId", "web_20260623_000001"),
+                "message"
+            )),
+            contextSnapshot(),
+            new ToolRuntimeInvocation("session", "turn")
+        ).getFirst();
     }
 }
