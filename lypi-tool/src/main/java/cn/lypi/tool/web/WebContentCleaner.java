@@ -19,6 +19,16 @@ public final class WebContentCleaner {
     private static final Pattern CONTROL = Pattern.compile("[\\p{Cntrl}&&[^\r\n\t]]");
     private static final Pattern BLANK_LINES = Pattern.compile("(?m)(?:\\s*\\R){3,}");
 
+    private final JsoupWebContentCleaner jsoupCleaner;
+
+    public WebContentCleaner() {
+        this(null);
+    }
+
+    WebContentCleaner(JsoupWebContentCleaner jsoupCleaner) {
+        this.jsoupCleaner = jsoupCleaner;
+    }
+
     /**
      * 清洗抓取结果。
      */
@@ -30,6 +40,9 @@ public final class WebContentCleaner {
     ) {
         String normalizedFormat = "text".equalsIgnoreCase(format) ? "text" : "markdown";
         String body = result == null ? "" : result.body();
+        if (jsoupCleaner != null && isHtml(result == null ? "" : result.contentType(), body)) {
+            return jsoupCleaner.clean(result, normalizedFormat, query, maxChars);
+        }
         Optional<String> title = htmlTitle(body);
         String content = isHtml(result == null ? "" : result.contentType(), body)
             ? htmlToText(body, normalizedFormat)

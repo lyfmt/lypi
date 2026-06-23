@@ -1,7 +1,6 @@
 package cn.lypi.tool.web;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -36,6 +35,27 @@ public final class WebProviderRegistry {
     }
 
     /**
+     * 返回默认搜索 provider 及其 fallback 链。
+     */
+    public WebSearchProvider fallbackSearchProvider(Optional<String> requestedProvider) {
+        if (requestedProvider != null && requestedProvider.isPresent()) {
+            return searchProvider(requestedProvider);
+        }
+        List<WebSearchProvider> providers = new ArrayList<>();
+        String defaultName = defaultSearchProvider();
+        WebSearchProvider defaultSearchProvider = searchProviders.get(defaultName);
+        if (defaultSearchProvider != null) {
+            providers.add(defaultSearchProvider);
+        }
+        searchProviders.forEach((name, provider) -> {
+            if (!name.equals(defaultName)) {
+                providers.add(provider);
+            }
+        });
+        return new FallbackWebSearchProvider(providers);
+    }
+
+    /**
      * 返回可用搜索 provider 名称。
      */
     public List<String> searchProviderNames() {
@@ -46,7 +66,7 @@ public final class WebProviderRegistry {
         if (searchProviders.containsKey(defaultProvider)) {
             return defaultProvider;
         }
-        return searchProviderNames().stream()
+        return searchProviders.keySet().stream()
             .findFirst()
             .orElse(defaultProvider);
     }
@@ -60,7 +80,7 @@ public final class WebProviderRegistry {
                 }
             });
         }
-        return Map.copyOf(copy);
+        return java.util.Collections.unmodifiableMap(copy);
     }
 
     private static String normalize(String provider) {
@@ -69,7 +89,7 @@ public final class WebProviderRegistry {
 
     private static List<String> sortedNames(Map<String, ?> providers) {
         List<String> names = new ArrayList<>(providers.keySet());
-        names.sort(Comparator.naturalOrder());
+        names.sort(java.util.Comparator.naturalOrder());
         return List.copyOf(names);
     }
 }

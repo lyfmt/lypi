@@ -56,11 +56,11 @@ final class WebSearchToolTest {
     }
 
     @Test
-    void searchToolIsReadOnlyAndConcurrencySafe() {
+    void searchToolWritesCacheAndRunsSerially() {
         WebSearchTool tool = new WebSearchTool(registry(successProvider()));
 
-        assertTrue(tool.isReadOnly(Map.of("query", "java")));
-        assertTrue(tool.isConcurrencySafe(Map.of("query", "java")));
+        assertFalse(tool.isReadOnly(Map.of("query", "java")));
+        assertFalse(tool.isConcurrencySafe(Map.of("query", "java")));
         assertFalse(tool.isDestructive(Map.of("query", "java")));
     }
 
@@ -136,11 +136,92 @@ final class WebSearchToolTest {
     }
 
     @Test
+    void storesSearchSnippetSeparatelyFromMissingContent() {
+        RecordingWebResultStore store = new RecordingWebResultStore("web_1");
+        WebSearchTool tool = new WebSearchTool(registry(successProvider()), store);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("query", "java", "maxResults", 1),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("responseId=web_1"));
+        assertEquals("session", store.saved().sessionId());
+        assertEquals("message", store.saved().messageId());
+        assertEquals("web_search", store.saved().sourceTool());
+        assertEquals(Optional.of("java"), store.saved().query());
+        assertEquals("https://example.com", store.saved().items().getFirst().url());
+        assertEquals(Optional.of("Example"), store.saved().items().getFirst().title());
+        assertEquals(Optional.of("snippet"), store.saved().items().getFirst().snippet());
+        assertEquals("", store.saved().items().getFirst().content());
+    }
+
+    @Test
+    void disabledCacheRendersClearRetrievalNote() {
+        WebSearchTool tool = new WebSearchTool(registry(successProvider()), WebResultStore.disabled("Web 结果缓存未启用。"));
+
+        ToolResult<String> result = tool.execute(
+            Map.of("query", "java", "maxResults", 1),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("responseId=cache_disabled"));
+        assertTrue(result.output().contains("cache=disabled"));
+        assertTrue(result.output().contains("Web 结果缓存未启用"));
+    }
+
+    @Test
     void providerFailureReturnsToolError() {
-        WebSearchTool tool = new WebSearchTool(registry(new FailingSearchProvider()));
+        RecordingWebResultStore store = new RecordingWebResultStore("web_1");
+        WebSearchTool tool = new WebSearchTool(registry(new FailingSearchProvider()), store);
 
         ToolResult<String> result = tool.execute(Map.of("query", "java"), context(PermissionMode.BYPASS), progress -> {
         });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("provider down"));
+        assertFalse(store.wasSaved());
+    }
+
+    @Test
+    void fallsBackWhenDefaultProviderFails() {
+        WebSearchTool tool = new WebSearchTool(new WebProviderRegistry(
+            "tavily",
+            Map.of(
+                "tavily", new FailingSearchProvider(),
+                "brave", new NamedSuccessSearchProvider("brave")
+            )
+        ));
+
+        ToolResult<String> result = tool.execute(Map.of("query", "java"), context(PermissionMode.BYPASS), progress -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("provider=brave"));
+    }
+
+    @Test
+    void doesNotFallbackWhenProviderWasRequested() {
+        WebSearchTool tool = new WebSearchTool(new WebProviderRegistry(
+            "brave",
+            Map.of(
+                "tavily", new FailingSearchProvider(),
+                "brave", new NamedSuccessSearchProvider("brave")
+            )
+        ));
+
+        ToolResult<String> result = tool.execute(
+            Map.of("query", "java", "provider", "tavily"),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
 
         assertTrue(result.isError());
         assertTrue(result.output().contains("provider down"));
@@ -186,6 +267,30 @@ final class WebSearchToolTest {
         public WebSearchResponse search(WebSearchRequest request) {
             capturedRequest.set(request);
             return searchResponse(request);
+        }
+    }
+
+    private final class NamedSuccessSearchProvider implements WebSearchProvider {
+        private final String name;
+
+        private NamedSuccessSearchProvider(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public WebSearchResponse search(WebSearchRequest request) {
+            return new WebSearchResponse(
+                name,
+                request.query(),
+                Optional.empty(),
+                List.of(),
+                Optional.empty()
+            );
         }
     }
 
@@ -244,5 +349,38 @@ final class WebSearchToolTest {
                 )
             )
         );
+    }
+
+    private static final class RecordingWebResultStore implements WebResultStore {
+        private final String responseId;
+        private WebStoredResult saved;
+
+        private RecordingWebResultStore(String responseId) {
+            this.responseId = responseId;
+        }
+
+        @Override
+        public WebStoredResult save(WebStoredResult result) {
+            saved = result.withResponseId(responseId);
+            return saved;
+        }
+
+        @Override
+        public Optional<WebStoredResult> findByResponseId(String sessionId, String responseId) {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<WebStoredResult> findLatestByQuery(String sessionId, String query) {
+            return Optional.empty();
+        }
+
+        private boolean wasSaved() {
+            return saved != null;
+        }
+
+        private WebStoredResult saved() {
+            return saved;
+        }
     }
 }

@@ -58,7 +58,7 @@
 | 执行工具 | `bash` |
 | 权限工具 | `request_permissions` |
 
-Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册本地 `web_fetch`；如果至少一个商业 provider API key 可用，还会注册 `web_search`。当前 `web_search` 支持 Tavily、Brave Search 和 Perplexity Search；`web_fetch` 使用本机 HTTP client 抓取公开网页，不依赖商业 provider。
+Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册 `web_fetch` 和 `get_search_content`；如果 Exa 启用或至少一个商业 provider API key 可用，还会注册 `web_search`。当前 `web_search` 支持 Exa、Tavily、Brave Search 和 Perplexity Search；`web_fetch` 使用本机 HTTP client 抓取公开网页，不依赖商业 provider。
 
 子代理工具在运行层可用时另行注册，包括 `spawn_agent`、`continue_agent`、`wait_agent`、`interrupt_agent`、`read_agent_result`、`read_mailbox`、`accept_mailbox_message`、`stash_mailbox_message`、`discard_mailbox_message` 和 `list_agents`。MCP 工具通过 adapter 映射到内部 `Tool` 契约，并使用规范化名称避免与内建工具直接冲突。
 
@@ -66,7 +66,7 @@ Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册
 
 `request_permissions` 用于请求本轮或本会话 additional permissions。`bash` 只有在对应请求已批准后，才应使用 `sandboxPermissions=withAdditionalPermissions` 扩大 managed sandbox 权限。路径安全、Bash 风险、网络策略、显式规则和人工审批都在统一管线中处理；当沙盒策略无法满足时，工具结果会返回可审计的 retry 提示，而不是自动提权。
 
-`web_search` 会把 query 或域名发送给配置的商业 provider；`web_fetch` 会由本机直接访问目标 URL。网络 profile 未启用时，工具级权限检查会进入人工审批而不是静默放行。`web_fetch` 会校验 URL scheme、credential、localhost、loopback、private 和 link-local 地址，避免访问明显的本地或内网地址。
+`web_search` 会把 query 或域名发送给配置的 provider；`web_fetch` 会由本机直接访问目标 URL，必要时回退到 Jina Reader。网络 profile 未启用时，工具级权限检查会进入人工审批而不是静默放行。`web_fetch` 会校验 URL scheme、credential、localhost、loopback、private 和 link-local 地址，避免访问明显的本地或内网地址。Jina fallback 复用同一次 `web_fetch` 权限决策，不作为网络权限绕过。
 
 ### 模型适配
 
@@ -151,6 +151,20 @@ lypi-boot/src/main/resources/application.yml.example
 lypi.web.enabled=true
 ```
 
+启用后，默认会注册：
+
+- `web_search`：默认 provider 顺序优先使用 `lypi.web.default-provider`；未指定或默认 provider 不可用时，按 Exa、Tavily、Brave Search、Perplexity 的注册顺序 fallback。Exa 默认启用，endpoint 为 `https://mcp.exa.ai/mcp`，无需本地商业 API key。
+- `web_fetch`：先本地抓取并用 jsoup 清洗 HTML；遇到 403、406、429、5xx、不支持的 `content-type` 或正文过短时，回退到 Jina Reader。
+- `get_search_content`：按 `responseId`、`url`、`urlIndex`、`query` 或 `queryIndex` 取回 `web_search` / `web_fetch` 保存的结果。`web_search` 仅在 provider 返回正文时保存完整内容；只有摘要的搜索结果会提示改用 `web_fetch` 拉取 URL。
+
+Web 结果缓存默认写入运行 cwd 下的 `.ly-pi/web-results.jsonl`。该文件是本地运行缓存，不应提交。可以关闭缓存：
+
+```properties
+lypi.web.cache.enabled=false
+```
+
+关闭缓存后，`web_search` 和 `web_fetch` 仍可运行，但结果不会落盘；工具输出会标记 `cache=disabled`，`get_search_content` 会返回明确的缓存未启用错误。
+
 启用商业 `web_search` provider 的配置示例：
 
 ```properties
@@ -162,6 +176,21 @@ lypi.web.providers.brave.api-key-env=BRAVE_SEARCH_API_KEY
 lypi.web.providers.perplexity.api-key-env=PERPLEXITY_API_KEY
 ```
 
-也可以用 `lypi.web.providers.<provider>.api-key` 直接配置 key；该方式只建议用于本地临时验证，避免把密钥写入仓库或会话记录。单个 provider 可通过 `lypi.web.providers.<provider>.enabled=false` 关闭，或通过 `lypi.web.providers.<provider>.endpoint` 指向代理网关、私有中转或兼容服务。
+也可以用 `lypi.web.providers.<provider>.api-key` 直接配置 key；该方式只建议用于本地临时验证，避免把密钥写入仓库或会话记录。单个 provider 可通过 `lypi.web.providers.<provider>.enabled=false` 关闭，或通过 `lypi.web.providers.<provider>.endpoint` 指向代理网关、私有中转或兼容服务。要禁用 Exa fallback，可配置 `lypi.web.providers.exa.enabled=false`。
 
-`web_fetch` 使用本地 HTTP GET 抓取网页，手动处理同 host redirect，并做基础内容清洗：过滤 script/style/noscript/template、HTML 注释和控制字符，归一化空白，支持输出 `markdown` 或 `text`，并按读取上限和 `maxChars` 截断。`web_fetch` 只做静态 URL 字面量防护，会拒绝明显的本地、内网、link-local、unspecified 和 URL credential；当前不做 DNS 解析级防护。
+`web_fetch` 的 Jina fallback 可以单独配置：
+
+```properties
+lypi.web.fetch.fallback.enabled=true
+lypi.web.fetch.fallback.min-body-chars=200
+lypi.web.fetch.jina.enabled=true
+lypi.web.fetch.jina.endpoint=https://r.jina.ai/http://
+```
+
+`get_search_content` 示例：
+
+```json
+{"responseId":"web_20260623_000001","urlIndex":1,"maxChars":30000}
+```
+
+`web_fetch` 使用本地 HTTP GET 抓取网页，手动处理同 host redirect，并做 jsoup 内容清洗：过滤 script/style/nav/footer/隐藏节点和控制字符，优先抽取 `article`、`main` 或 `[role=main]`，支持输出 `markdown` 或 `text`，并按读取上限和 `maxChars` 截断。`web_fetch` 只做静态 URL 字面量防护，会拒绝明显的本地、内网、link-local、unspecified 和 URL credential；当前不做 DNS 解析级防护。第一阶段暂不支持 PDF、视频、GitHub 专用抽取或 curator UI。

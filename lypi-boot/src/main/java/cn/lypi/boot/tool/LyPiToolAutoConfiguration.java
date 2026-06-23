@@ -41,10 +41,13 @@ import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import cn.lypi.tool.web.BraveWebSearchProvider;
+import cn.lypi.tool.web.ExaWebSearchProvider;
+import cn.lypi.tool.web.FileWebResultStore;
 import cn.lypi.tool.web.JavaHttpWebClient;
 import cn.lypi.tool.web.PerplexityWebSearchProvider;
 import cn.lypi.tool.web.TavilyWebProvider;
 import cn.lypi.tool.web.WebProviderRegistry;
+import cn.lypi.tool.web.WebResultStore;
 import cn.lypi.tool.web.WebSearchProvider;
 import cn.lypi.transport.headless.HeadlessTransport;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -236,11 +239,15 @@ public class LyPiToolAutoConfiguration {
                     new FilePermissionAmendmentStore(runtimeCwd)
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
+                WebResultStore webResultStore = webResultStore(webProperties, runtimeCwd);
                 if (webProperties.isEnabled()) {
-                    BuiltInTools.registerWebFetchTool(runtime, webProperties.getTimeout());
+                    registerWebFetchTool(runtime, webProperties, webResultStore);
+                    BuiltInTools.registerWebContentTools(runtime, webResultStore);
                 }
                 webProviderRegistry(webProperties, resolvedObjectMapper, environment)
-                    .ifPresent(providers -> BuiltInTools.registerWebSearchTools(runtime, providers, webProperties.getMaxResults()));
+                    .ifPresent(providers ->
+                        BuiltInTools.registerWebSearchTools(runtime, providers, webResultStore, webProperties.getMaxResults())
+                    );
                 AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
                 MailboxPort resolvedMailbox = mailbox.getIfAvailable();
                 if (resolvedAgentCenter != null && resolvedMailbox != null) {
@@ -265,6 +272,27 @@ public class LyPiToolAutoConfiguration {
                 );
             }
         };
+    }
+
+    private WebResultStore webResultStore(LyPiWebProperties properties, Path runtimeCwd) {
+        if (properties != null && properties.getCache() != null && !properties.getCache().isEnabled()) {
+            return WebResultStore.disabled("Web 结果缓存未启用。请启用 lypi.web.cache.enabled=true 后再取回内容。");
+        }
+        return new FileWebResultStore(runtimeCwd);
+    }
+
+    private void registerWebFetchTool(ToolRuntimePort runtime, LyPiWebProperties properties, WebResultStore webResultStore) {
+        LyPiWebProperties.FetchProperties fetch = properties.getFetch();
+        LyPiWebProperties.JinaProperties jina = fetch.getJina();
+        LyPiWebProperties.FallbackProperties fallback = fetch.getFallback();
+        BuiltInTools.registerWebFetchTool(
+            runtime,
+            properties.getTimeout(),
+            fallback.isEnabled() && jina.isEnabled(),
+            jina.getEndpoint(),
+            fallback.getMinBodyChars(),
+            webResultStore
+        );
     }
 
     /**
@@ -437,6 +465,9 @@ public class LyPiToolAutoConfiguration {
             properties.getTimeout() == null ? Duration.ofSeconds(20) : properties.getTimeout()
         );
         Map<String, WebSearchProvider> searchProviders = new LinkedHashMap<>();
+        if (providerEnabled(properties, "exa")) {
+            searchProviders.put("exa", new ExaWebSearchProvider(client, objectMapper, endpoint(properties, "exa")));
+        }
         apiKey(properties, environment, "tavily").ifPresent(apiKey -> {
             TavilyWebProvider tavily = new TavilyWebProvider(
                 client,
@@ -459,6 +490,11 @@ public class LyPiToolAutoConfiguration {
             return Optional.empty();
         }
         return Optional.of(new WebProviderRegistry(properties.getDefaultProvider(), searchProviders));
+    }
+
+    private boolean providerEnabled(LyPiWebProperties properties, String providerName) {
+        LyPiWebProperties.ProviderProperties provider = properties.getProviders().get(providerName);
+        return provider != null && provider.isEnabled();
     }
 
     private Optional<String> apiKey(LyPiWebProperties properties, Environment environment, String providerName) {

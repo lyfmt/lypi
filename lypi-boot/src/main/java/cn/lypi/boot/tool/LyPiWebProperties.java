@@ -11,6 +11,8 @@ public class LyPiWebProperties {
     private String defaultProvider = "tavily";
     private Duration timeout = Duration.ofSeconds(20);
     private int maxResults = 10;
+    private CacheProperties cache = new CacheProperties();
+    private FetchProperties fetch = new FetchProperties();
     private Map<String, ProviderProperties> providers = defaultProviders();
 
     public boolean isEnabled() {
@@ -49,6 +51,22 @@ public class LyPiWebProperties {
         this.maxResults = Math.max(1, Math.min(10, maxResults));
     }
 
+    public CacheProperties getCache() {
+        return cache;
+    }
+
+    public void setCache(CacheProperties cache) {
+        this.cache = cache == null ? new CacheProperties() : cache;
+    }
+
+    public FetchProperties getFetch() {
+        return fetch;
+    }
+
+    public void setFetch(FetchProperties fetch) {
+        this.fetch = fetch == null ? new FetchProperties() : fetch;
+    }
+
     public Map<String, ProviderProperties> getProviders() {
         return providers;
     }
@@ -63,6 +81,10 @@ public class LyPiWebProperties {
 
     private static Map<String, ProviderProperties> defaultProviders() {
         Map<String, ProviderProperties> defaults = new LinkedHashMap<>();
+        ProviderProperties exa = new ProviderProperties();
+        exa.setEndpoint("https://mcp.exa.ai/mcp");
+        defaults.put("exa", exa);
+
         ProviderProperties tavily = new ProviderProperties();
         tavily.setApiKeyEnv("TAVILY_API_KEY");
         defaults.put("tavily", tavily);
@@ -113,6 +135,81 @@ public class LyPiWebProperties {
 
         public void setEndpoint(String endpoint) {
             this.endpoint = endpoint;
+        }
+    }
+
+    public static class CacheProperties {
+        private boolean enabled = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+    }
+
+    public static class FetchProperties {
+        private JinaProperties jina = new JinaProperties();
+        private FallbackProperties fallback = new FallbackProperties();
+
+        public JinaProperties getJina() {
+            return jina;
+        }
+
+        public void setJina(JinaProperties jina) {
+            this.jina = jina == null ? new JinaProperties() : jina;
+        }
+
+        public FallbackProperties getFallback() {
+            return fallback;
+        }
+
+        public void setFallback(FallbackProperties fallback) {
+            this.fallback = fallback == null ? new FallbackProperties() : fallback;
+        }
+    }
+
+    public static class JinaProperties {
+        private boolean enabled = true;
+        private String endpoint = "https://r.jina.ai/http://";
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getEndpoint() {
+            return endpoint;
+        }
+
+        public void setEndpoint(String endpoint) {
+            this.endpoint = endpoint == null || endpoint.isBlank() ? "https://r.jina.ai/http://" : endpoint;
+        }
+    }
+
+    public static class FallbackProperties {
+        private boolean enabled = true;
+        private int minBodyChars = 200;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMinBodyChars() {
+            return minBodyChars;
+        }
+
+        public void setMinBodyChars(int minBodyChars) {
+            this.minBodyChars = Math.max(0, minBodyChars);
         }
     }
 }

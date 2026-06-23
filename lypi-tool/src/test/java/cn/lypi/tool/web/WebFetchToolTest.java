@@ -33,6 +33,15 @@ final class WebFetchToolTest {
     }
 
     @Test
+    void fetchToolWritesCacheAndRunsSerially() {
+        WebFetchTool tool = new WebFetchTool(successFetcher());
+
+        assertFalse(tool.isReadOnly(Map.of("url", "https://example.com/doc")));
+        assertFalse(tool.isConcurrencySafe(Map.of("url", "https://example.com/doc")));
+        assertFalse(tool.isDestructive(Map.of("url", "https://example.com/doc")));
+    }
+
+    @Test
     void rejectsUnsafeUrl() {
         WebFetchTool tool = new WebFetchTool(successFetcher());
 
@@ -96,6 +105,73 @@ final class WebFetchToolTest {
         assertFalse(result.output().contains("console.log"));
     }
 
+    @Test
+    void storesFetchedContentAndRendersResponseId() {
+        RecordingWebResultStore store = new RecordingWebResultStore("web_fetch_1");
+        WebFetchTool tool = new WebFetchTool(successFetcher(), new WebContentCleaner(), store);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("url", "https://example.com/doc", "maxChars", 40),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("responseId=web_fetch_1"));
+        assertEquals("session", store.saved().sessionId());
+        assertEquals("message", store.saved().messageId());
+        assertEquals("web_fetch", store.saved().sourceTool());
+        assertEquals(Optional.of("https://example.com/doc"), store.saved().url());
+        assertEquals("https://example.com/doc", store.saved().items().getFirst().url());
+        assertEquals(Optional.of("Example"), store.saved().items().getFirst().title());
+        assertTrue(store.saved().items().getFirst().content().contains("Body text"));
+    }
+
+    @Test
+    void disabledCacheRendersClearRetrievalNote() {
+        WebFetchTool tool = new WebFetchTool(
+            successFetcher(),
+            new WebContentCleaner(),
+            WebResultStore.disabled("Web 结果缓存未启用。")
+        );
+
+        ToolResult<String> result = tool.execute(
+            Map.of("url", "https://example.com/doc", "maxChars", 40),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("responseId=cache_disabled"));
+        assertTrue(result.output().contains("cache=disabled"));
+        assertTrue(result.output().contains("Web 结果缓存未启用"));
+    }
+
+    @Test
+    void rendersAndStoresJinaSourceWhenFallbackFetcherWasUsed() {
+        RecordingWebResultStore store = new RecordingWebResultStore("web_fetch_1");
+        WebPageFetcher fetcher = url -> new WebPageFetchResult(
+            url,
+            "text/markdown",
+            "# Reader\n\nFallback body",
+            "jina"
+        );
+        WebFetchTool tool = new WebFetchTool(fetcher, new WebContentCleaner(), store);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("url", "https://example.com/doc", "maxChars", 100),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("source=jina"));
+        assertEquals(Optional.of("jina"), store.saved().items().getFirst().source());
+    }
+
     private WebPageFetcher successFetcher() {
         return url -> new WebPageFetchResult(
             url,
@@ -140,5 +216,34 @@ final class WebFetchToolTest {
                 )
             )
         );
+    }
+
+    private static final class RecordingWebResultStore implements WebResultStore {
+        private final String responseId;
+        private WebStoredResult saved;
+
+        private RecordingWebResultStore(String responseId) {
+            this.responseId = responseId;
+        }
+
+        @Override
+        public WebStoredResult save(WebStoredResult result) {
+            saved = result.withResponseId(responseId);
+            return saved;
+        }
+
+        @Override
+        public Optional<WebStoredResult> findByResponseId(String sessionId, String responseId) {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<WebStoredResult> findLatestByQuery(String sessionId, String query) {
+            return Optional.empty();
+        }
+
+        private WebStoredResult saved() {
+            return saved;
+        }
     }
 }
