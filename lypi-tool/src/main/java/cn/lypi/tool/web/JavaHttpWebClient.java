@@ -58,6 +58,17 @@ public final class JavaHttpWebClient {
     }
 
     /**
+     * 发送 GET 请求并返回原始文本。
+     */
+    public String getText(URI uri, Map<String, String> headers) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
+            .timeout(timeout)
+            .GET();
+        addHeaders(builder, headers);
+        return sendText(builder.build());
+    }
+
+    /**
      * 发送 GET 请求。
      */
     public JsonNode get(URI uri, Map<String, String> headers) {

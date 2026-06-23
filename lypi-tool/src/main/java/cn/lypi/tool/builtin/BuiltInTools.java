@@ -153,8 +153,8 @@ public final class BuiltInTools {
     public static void registerWebFetchTool(ToolRuntimePort runtime, WebResultStore store) {
         Objects.requireNonNull(runtime, "runtime must not be null");
         runtime.register(new WebFetchTool(
-            new cn.lypi.tool.web.JdkWebPageFetcher(java.time.Duration.ofSeconds(20)),
-            new cn.lypi.tool.web.WebContentCleaner(),
+            cn.lypi.tool.web.WebFetchTool.defaultFetcher(java.time.Duration.ofSeconds(20)),
+            cn.lypi.tool.web.WebFetchTool.defaultCleaner(),
             store == null ? WebResultStore.noop() : store
         ));
     }
@@ -172,8 +172,8 @@ public final class BuiltInTools {
     public static void registerWebFetchTool(ToolRuntimePort runtime, java.time.Duration timeout, WebResultStore store) {
         Objects.requireNonNull(runtime, "runtime must not be null");
         runtime.register(new WebFetchTool(
-            new cn.lypi.tool.web.JdkWebPageFetcher(timeout),
-            new cn.lypi.tool.web.WebContentCleaner(),
+            cn.lypi.tool.web.WebFetchTool.defaultFetcher(timeout),
+            cn.lypi.tool.web.WebFetchTool.defaultCleaner(),
             store == null ? WebResultStore.noop() : store
         ));
     }

@@ -128,6 +128,29 @@ final class WebFetchToolTest {
         assertTrue(store.saved().items().getFirst().content().contains("Body text"));
     }
 
+    @Test
+    void rendersAndStoresJinaSourceWhenFallbackFetcherWasUsed() {
+        RecordingWebResultStore store = new RecordingWebResultStore("web_fetch_1");
+        WebPageFetcher fetcher = url -> new WebPageFetchResult(
+            url,
+            "text/markdown",
+            "# Reader\n\nFallback body",
+            "jina"
+        );
+        WebFetchTool tool = new WebFetchTool(fetcher, new WebContentCleaner(), store);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("url", "https://example.com/doc", "maxChars", 100),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("source=jina"));
+        assertEquals(Optional.of("jina"), store.saved().items().getFirst().source());
+    }
+
     private WebPageFetcher successFetcher() {
         return url -> new WebPageFetchResult(
             url,

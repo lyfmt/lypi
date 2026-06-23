@@ -23,11 +23,11 @@ public final class WebFetchTool extends AbstractWebTool {
     private final WebResultStore store;
 
     public WebFetchTool() {
-        this(new JdkWebPageFetcher(Duration.ofSeconds(20)), new WebContentCleaner(), WebResultStore.noop());
+        this(defaultFetcher(Duration.ofSeconds(20)), defaultCleaner(), WebResultStore.noop());
     }
 
     public WebFetchTool(Duration timeout) {
-        this(new JdkWebPageFetcher(timeout), new WebContentCleaner(), WebResultStore.noop());
+        this(defaultFetcher(timeout), defaultCleaner(), WebResultStore.noop());
     }
 
     WebFetchTool(WebPageFetcher fetcher) {
@@ -133,7 +133,7 @@ public final class WebFetchTool extends AbstractWebTool {
     ) {
         StringBuilder builder = new StringBuilder();
         builder.append("responseId=").append(responseId);
-        builder.append("\nsource=local");
+        builder.append("\nsource=").append(fetched.source());
         builder.append("\nurl=").append(request.url());
         builder.append("\nfinalUrl=").append(fetched.finalUrl());
         content.title().ifPresent(title -> builder.append("\ntitle=").append(title));
@@ -162,9 +162,21 @@ public final class WebFetchTool extends AbstractWebTool {
                 content.content(),
                 Optional.of(request.format()),
                 false,
-                Optional.of("local")
+                Optional.of(fetched.source())
             )),
             Instant.now()
         );
+    }
+
+    public static WebPageFetcher defaultFetcher(Duration timeout) {
+        return new FallbackWebPageFetcher(
+            new JdkWebPageFetcher(timeout),
+            new JinaReaderFetcher(timeout),
+            200
+        );
+    }
+
+    public static WebContentCleaner defaultCleaner() {
+        return new WebContentCleaner(new JsoupWebContentCleaner());
     }
 }
