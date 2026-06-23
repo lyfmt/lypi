@@ -2,6 +2,7 @@ package cn.lypi.session;
 
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
@@ -96,25 +97,26 @@ final class JsonlSessionStore {
      */
     SessionFile read(String sessionId) {
         Path file = sessionFile(sessionId);
-        List<String> lines;
-        try {
-            lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String headerLine = reader.readLine();
+            if (headerLine == null) {
+                throw new SessionEngineException("Session file is empty: " + file);
+            }
+            SessionHeader header = readHeaderLine(file, headerLine);
+            validateHeader(header);
+            List<SessionEntry> entries = new ArrayList<>();
+            String line;
+            int lineNumber = 1;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (!line.isBlank()) {
+                    entries.add(readEntryLine(file, line, lineNumber));
+                }
+            }
+            return new SessionFile(header, List.copyOf(entries));
         } catch (IOException e) {
             throw new SessionEngineException("Failed to read session file: " + file, e);
         }
-        if (lines.isEmpty()) {
-            throw new SessionEngineException("Session file is empty: " + file);
-        }
-        SessionHeader header = readHeaderLine(file, lines.get(0));
-        validateHeader(header);
-        List<SessionEntry> entries = new ArrayList<>();
-        for (int i = 1; i < lines.size(); i++) {
-            String line = lines.get(i);
-            if (!line.isBlank()) {
-                entries.add(readEntryLine(file, line, i + 1));
-            }
-        }
-        return new SessionFile(header, List.copyOf(entries));
     }
 
     /**
