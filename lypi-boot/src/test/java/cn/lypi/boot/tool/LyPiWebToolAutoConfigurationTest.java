@@ -156,6 +156,29 @@ final class LyPiWebToolAutoConfigurationTest {
     }
 
     @Test
+    void webFetchConfigurationBindsJinaAndFallbackOptions() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.web.enabled=true",
+                "lypi.web.fetch.fallback.enabled=false",
+                "lypi.web.fetch.fallback.min-body-chars=321",
+                "lypi.web.fetch.jina.enabled=false",
+                "lypi.web.fetch.jina.endpoint=https://reader.example/http://"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiWebToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                LyPiWebProperties properties = context.getBean(LyPiWebProperties.class);
+
+                assertThat(properties.getFetch().getFallback().isEnabled()).isFalse();
+                assertThat(properties.getFetch().getFallback().getMinBodyChars()).isEqualTo(321);
+                assertThat(properties.getFetch().getJina().isEnabled()).isFalse();
+                assertThat(properties.getFetch().getJina().getEndpoint()).isEqualTo("https://reader.example/http://");
+                assertThat(context.getBean(ToolRuntimePort.class).resolve("web_fetch")).isPresent();
+            });
+    }
+
+    @Test
     void registersTavilySearchAndLocalFetchWhenApiKeyIsConfigured() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)

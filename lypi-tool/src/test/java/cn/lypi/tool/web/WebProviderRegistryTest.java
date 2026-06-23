@@ -93,6 +93,30 @@ final class WebProviderRegistryTest {
     }
 
     @Test
+    void returnsFallbackProviderWithRegistrationOrderWhenDefaultIsUnavailable() {
+        FakeSearchProvider exa = new FakeSearchProvider("exa");
+        FakeSearchProvider brave = new FakeSearchProvider("brave");
+        Map<String, WebSearchProvider> providers = new LinkedHashMap<>();
+        providers.put("exa", exa);
+        providers.put("brave", brave);
+        WebProviderRegistry registry = new WebProviderRegistry("missing", providers);
+
+        WebSearchResponse response = registry.fallbackSearchProvider(Optional.empty()).search(new WebSearchRequest(
+            "java",
+            5,
+            List.of(),
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            false
+        ));
+
+        assertEquals("exa", response.provider());
+    }
+
+    @Test
     void requestedFallbackProviderReturnsOnlyRequestedProvider() {
         FakeSearchProvider tavily = new FakeSearchProvider("tavily");
         FakeSearchProvider brave = new FakeSearchProvider("brave");

@@ -241,7 +241,7 @@ public class LyPiToolAutoConfiguration {
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
                 WebResultStore webResultStore = webResultStore(webProperties, runtimeCwd);
                 if (webProperties.isEnabled()) {
-                    BuiltInTools.registerWebFetchTool(runtime, webProperties.getTimeout(), webResultStore);
+                    registerWebFetchTool(runtime, webProperties, webResultStore);
                     BuiltInTools.registerWebContentTools(runtime, webResultStore);
                 }
                 webProviderRegistry(webProperties, resolvedObjectMapper, environment)
@@ -279,6 +279,20 @@ public class LyPiToolAutoConfiguration {
             return WebResultStore.disabled("Web 结果缓存未启用。请启用 lypi.web.cache.enabled=true 后再取回内容。");
         }
         return new FileWebResultStore(runtimeCwd);
+    }
+
+    private void registerWebFetchTool(ToolRuntimePort runtime, LyPiWebProperties properties, WebResultStore webResultStore) {
+        LyPiWebProperties.FetchProperties fetch = properties.getFetch();
+        LyPiWebProperties.JinaProperties jina = fetch.getJina();
+        LyPiWebProperties.FallbackProperties fallback = fetch.getFallback();
+        BuiltInTools.registerWebFetchTool(
+            runtime,
+            properties.getTimeout(),
+            fallback.isEnabled() && jina.isEnabled(),
+            jina.getEndpoint(),
+            fallback.getMinBodyChars(),
+            webResultStore
+        );
     }
 
     /**

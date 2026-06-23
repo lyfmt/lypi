@@ -167,6 +167,7 @@ public final class WebSearchTool extends AbstractWebTool {
     private String render(WebSearchResponse response, String responseId) {
         StringBuilder builder = new StringBuilder();
         builder.append("responseId=").append(responseId);
+        appendCacheStatus(builder, responseId);
         builder.append("\nprovider=").append(response.provider());
         builder.append("\nquery=").append(response.query());
         response.answer().ifPresent(answer -> builder.append("\nanswer=").append(answer));
@@ -179,5 +180,12 @@ public final class WebSearchTool extends AbstractWebTool {
             result.content().ifPresent(content -> builder.append("\n   content: ").append(content));
         }
         return builder.toString();
+    }
+
+    private void appendCacheStatus(StringBuilder builder, String responseId) {
+        if (WebResultStore.DISABLED_RESPONSE_ID.equals(responseId)) {
+            builder.append("\ncache=disabled");
+            builder.append("\nnote=Web 结果缓存未启用，当前结果不可通过 get_search_content 取回。");
+        }
     }
 }

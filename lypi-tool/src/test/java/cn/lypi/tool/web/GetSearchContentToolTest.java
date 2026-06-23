@@ -81,6 +81,22 @@ final class GetSearchContentToolTest {
     }
 
     @Test
+    void retrievesFetchContentByOriginalUrlWhenFinalUrlDiffers() {
+        GetSearchContentTool tool = new GetSearchContentTool(storeWith(fetchRedirectResult()));
+
+        ToolResult<String> result = tool.execute(
+            Map.of("responseId", "web_fetch_1", "url", "https://example.com/start"),
+            context(),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("url=https://example.com/final"));
+        assertTrue(result.output().contains("redirected content"));
+    }
+
+    @Test
     void retrievesLatestResultByQueryAndQueryIndex() {
         GetSearchContentTool tool = new GetSearchContentTool(storeWith(sampleResult()));
 
@@ -140,6 +156,19 @@ final class GetSearchContentToolTest {
                 item("https://example.com/a", "First", "first content"),
                 item("https://example.com/b", "Second", "second content")
             ),
+            Instant.parse("2026-06-23T00:00:00Z")
+        );
+    }
+
+    private WebStoredResult fetchRedirectResult() {
+        return new WebStoredResult(
+            "session",
+            "message",
+            "web_fetch_1",
+            "web_fetch",
+            Optional.empty(),
+            Optional.of("https://example.com/start"),
+            List.of(item("https://example.com/final", "Redirected", "redirected content")),
             Instant.parse("2026-06-23T00:00:00Z")
         );
     }

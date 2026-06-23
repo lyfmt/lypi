@@ -12,6 +12,7 @@ public class LyPiWebProperties {
     private Duration timeout = Duration.ofSeconds(20);
     private int maxResults = 10;
     private CacheProperties cache = new CacheProperties();
+    private FetchProperties fetch = new FetchProperties();
     private Map<String, ProviderProperties> providers = defaultProviders();
 
     public boolean isEnabled() {
@@ -56,6 +57,14 @@ public class LyPiWebProperties {
 
     public void setCache(CacheProperties cache) {
         this.cache = cache == null ? new CacheProperties() : cache;
+    }
+
+    public FetchProperties getFetch() {
+        return fetch;
+    }
+
+    public void setFetch(FetchProperties fetch) {
+        this.fetch = fetch == null ? new FetchProperties() : fetch;
     }
 
     public Map<String, ProviderProperties> getProviders() {
@@ -138,6 +147,69 @@ public class LyPiWebProperties {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+    }
+
+    public static class FetchProperties {
+        private JinaProperties jina = new JinaProperties();
+        private FallbackProperties fallback = new FallbackProperties();
+
+        public JinaProperties getJina() {
+            return jina;
+        }
+
+        public void setJina(JinaProperties jina) {
+            this.jina = jina == null ? new JinaProperties() : jina;
+        }
+
+        public FallbackProperties getFallback() {
+            return fallback;
+        }
+
+        public void setFallback(FallbackProperties fallback) {
+            this.fallback = fallback == null ? new FallbackProperties() : fallback;
+        }
+    }
+
+    public static class JinaProperties {
+        private boolean enabled = true;
+        private String endpoint = "https://r.jina.ai/http://";
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getEndpoint() {
+            return endpoint;
+        }
+
+        public void setEndpoint(String endpoint) {
+            this.endpoint = endpoint == null || endpoint.isBlank() ? "https://r.jina.ai/http://" : endpoint;
+        }
+    }
+
+    public static class FallbackProperties {
+        private boolean enabled = true;
+        private int minBodyChars = 200;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMinBodyChars() {
+            return minBodyChars;
+        }
+
+        public void setMinBodyChars(int minBodyChars) {
+            this.minBodyChars = Math.max(0, minBodyChars);
         }
     }
 }

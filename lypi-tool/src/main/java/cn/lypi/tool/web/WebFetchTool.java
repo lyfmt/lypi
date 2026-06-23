@@ -133,6 +133,7 @@ public final class WebFetchTool extends AbstractWebTool {
     ) {
         StringBuilder builder = new StringBuilder();
         builder.append("responseId=").append(responseId);
+        appendCacheStatus(builder, responseId);
         builder.append("\nsource=").append(fetched.source());
         builder.append("\nurl=").append(request.url());
         builder.append("\nfinalUrl=").append(fetched.finalUrl());
@@ -169,14 +170,34 @@ public final class WebFetchTool extends AbstractWebTool {
     }
 
     public static WebPageFetcher defaultFetcher(Duration timeout) {
+        return defaultFetcher(timeout, true, JinaReaderFetcher.DEFAULT_ENDPOINT, 200);
+    }
+
+    public static WebPageFetcher defaultFetcher(
+        Duration timeout,
+        boolean jinaEnabled,
+        String jinaEndpoint,
+        int minBodyChars
+    ) {
+        WebPageFetcher local = new JdkWebPageFetcher(timeout);
+        if (!jinaEnabled) {
+            return local;
+        }
         return new FallbackWebPageFetcher(
-            new JdkWebPageFetcher(timeout),
-            new JinaReaderFetcher(timeout),
-            200
+            local,
+            new JinaReaderFetcher(timeout, jinaEndpoint),
+            minBodyChars
         );
     }
 
     public static WebContentCleaner defaultCleaner() {
         return new WebContentCleaner(new JsoupWebContentCleaner());
+    }
+
+    private void appendCacheStatus(StringBuilder builder, String responseId) {
+        if (WebResultStore.DISABLED_RESPONSE_ID.equals(responseId)) {
+            builder.append("\ncache=disabled");
+            builder.append("\nnote=Web 结果缓存未启用，当前结果不可通过 get_search_content 取回。");
+        }
     }
 }

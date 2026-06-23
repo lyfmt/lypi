@@ -8,7 +8,7 @@ import java.util.Map;
  * 通过 Jina Reader 抽取网页 Markdown。
  */
 public final class JinaReaderFetcher implements WebPageFetcher {
-    private static final String DEFAULT_ENDPOINT = "https://r.jina.ai/http://";
+    public static final String DEFAULT_ENDPOINT = "https://r.jina.ai/http://";
 
     private final JavaHttpWebClient client;
     private final URI endpoint;
@@ -18,6 +18,10 @@ public final class JinaReaderFetcher implements WebPageFetcher {
     }
 
     public JinaReaderFetcher(Duration timeout) {
+        this(timeout, DEFAULT_ENDPOINT);
+    }
+
+    public JinaReaderFetcher(Duration timeout, String endpoint) {
         this(new JavaHttpWebClient(
             new JavaHttpWebClient.HttpTransport() {
                 private final java.net.http.HttpClient delegate = java.net.http.HttpClient.newHttpClient();
@@ -30,7 +34,7 @@ public final class JinaReaderFetcher implements WebPageFetcher {
             },
             new com.fasterxml.jackson.databind.ObjectMapper(),
             timeout == null ? Duration.ofSeconds(20) : timeout
-        ), DEFAULT_ENDPOINT);
+        ), endpoint);
     }
 
     public JinaReaderFetcher(JavaHttpWebClient client) {

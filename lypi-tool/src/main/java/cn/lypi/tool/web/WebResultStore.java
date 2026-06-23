@@ -6,6 +6,8 @@ import java.util.Optional;
  * 保存和查询 Web 工具结果。
  */
 public interface WebResultStore {
+    String DISABLED_RESPONSE_ID = "cache_disabled";
+
     /**
      * 保存 Web 结果并返回带有 `responseId` 的记录。
      */
@@ -67,7 +69,8 @@ public interface WebResultStore {
 
         @Override
         public WebStoredResult save(WebStoredResult result) {
-            return result == null ? emptyResult() : result;
+            WebStoredResult stored = result == null ? emptyResult() : result;
+            return stored.withResponseId(DISABLED_RESPONSE_ID);
         }
 
         @Override

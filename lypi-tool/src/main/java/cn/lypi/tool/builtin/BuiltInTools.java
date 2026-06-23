@@ -170,9 +170,23 @@ public final class BuiltInTools {
      * 注册本地 Web 抓取工具。
      */
     public static void registerWebFetchTool(ToolRuntimePort runtime, java.time.Duration timeout, WebResultStore store) {
+        registerWebFetchTool(runtime, timeout, true, cn.lypi.tool.web.JinaReaderFetcher.DEFAULT_ENDPOINT, 200, store);
+    }
+
+    /**
+     * 注册本地 Web 抓取工具。
+     */
+    public static void registerWebFetchTool(
+        ToolRuntimePort runtime,
+        java.time.Duration timeout,
+        boolean jinaEnabled,
+        String jinaEndpoint,
+        int minBodyChars,
+        WebResultStore store
+    ) {
         Objects.requireNonNull(runtime, "runtime must not be null");
         runtime.register(new WebFetchTool(
-            cn.lypi.tool.web.WebFetchTool.defaultFetcher(timeout),
+            cn.lypi.tool.web.WebFetchTool.defaultFetcher(timeout, jinaEnabled, jinaEndpoint, minBodyChars),
             cn.lypi.tool.web.WebFetchTool.defaultCleaner(),
             store == null ? WebResultStore.noop() : store
         ));

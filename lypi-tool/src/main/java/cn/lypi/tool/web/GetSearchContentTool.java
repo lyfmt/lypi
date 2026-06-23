@@ -118,9 +118,17 @@ public final class GetSearchContentTool extends AbstractWebTool {
         Optional<String> requestedUrl = text(input, "url").map(GetSearchContentTool::normalizeUrl);
         if (requestedUrl.isPresent()) {
             String url = requestedUrl.orElseThrow();
-            return result.items().stream()
+            Optional<WebStoredItem> byItemUrl = result.items().stream()
                 .filter(item -> normalizeUrl(item.url()).equals(url))
                 .findFirst();
+            if (byItemUrl.isPresent()) {
+                return byItemUrl;
+            }
+            if (result.url().map(GetSearchContentTool::normalizeUrl).map(url::equals).orElse(false)
+                && !result.items().isEmpty()) {
+                return Optional.of(result.items().getFirst());
+            }
+            return Optional.empty();
         }
         int index = input.containsKey("query") && !input.containsKey("urlIndex")
             ? intInput(input, "queryIndex", 1, 1, Integer.MAX_VALUE)

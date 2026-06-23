@@ -159,6 +159,23 @@ final class WebSearchToolTest {
     }
 
     @Test
+    void disabledCacheRendersClearRetrievalNote() {
+        WebSearchTool tool = new WebSearchTool(registry(successProvider()), WebResultStore.disabled("Web 结果缓存未启用。"));
+
+        ToolResult<String> result = tool.execute(
+            Map.of("query", "java", "maxResults", 1),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("responseId=cache_disabled"));
+        assertTrue(result.output().contains("cache=disabled"));
+        assertTrue(result.output().contains("Web 结果缓存未启用"));
+    }
+
+    @Test
     void providerFailureReturnsToolError() {
         RecordingWebResultStore store = new RecordingWebResultStore("web_1");
         WebSearchTool tool = new WebSearchTool(registry(new FailingSearchProvider()), store);

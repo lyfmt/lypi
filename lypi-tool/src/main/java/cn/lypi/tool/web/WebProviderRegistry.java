@@ -1,7 +1,6 @@
 package cn.lypi.tool.web;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -67,7 +66,7 @@ public final class WebProviderRegistry {
         if (searchProviders.containsKey(defaultProvider)) {
             return defaultProvider;
         }
-        return searchProviderNames().stream()
+        return searchProviders.keySet().stream()
             .findFirst()
             .orElse(defaultProvider);
     }
@@ -81,7 +80,7 @@ public final class WebProviderRegistry {
                 }
             });
         }
-        return Map.copyOf(copy);
+        return java.util.Collections.unmodifiableMap(copy);
     }
 
     private static String normalize(String provider) {
@@ -90,7 +89,7 @@ public final class WebProviderRegistry {
 
     private static List<String> sortedNames(Map<String, ?> providers) {
         List<String> names = new ArrayList<>(providers.keySet());
-        names.sort(Comparator.naturalOrder());
+        names.sort(java.util.Comparator.naturalOrder());
         return List.copyOf(names);
     }
 }

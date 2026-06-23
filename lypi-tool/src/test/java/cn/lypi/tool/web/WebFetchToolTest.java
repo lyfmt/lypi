@@ -129,6 +129,27 @@ final class WebFetchToolTest {
     }
 
     @Test
+    void disabledCacheRendersClearRetrievalNote() {
+        WebFetchTool tool = new WebFetchTool(
+            successFetcher(),
+            new WebContentCleaner(),
+            WebResultStore.disabled("Web 结果缓存未启用。")
+        );
+
+        ToolResult<String> result = tool.execute(
+            Map.of("url", "https://example.com/doc", "maxChars", 40),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("responseId=cache_disabled"));
+        assertTrue(result.output().contains("cache=disabled"));
+        assertTrue(result.output().contains("Web 结果缓存未启用"));
+    }
+
+    @Test
     void rendersAndStoresJinaSourceWhenFallbackFetcherWasUsed() {
         RecordingWebResultStore store = new RecordingWebResultStore("web_fetch_1");
         WebPageFetcher fetcher = url -> new WebPageFetchResult(
