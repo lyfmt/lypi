@@ -136,7 +136,7 @@ final class WebSearchToolTest {
     }
 
     @Test
-    void storesSearchResultAndRendersResponseId() {
+    void storesSearchSnippetSeparatelyFromMissingContent() {
         RecordingWebResultStore store = new RecordingWebResultStore("web_1");
         WebSearchTool tool = new WebSearchTool(registry(successProvider()), store);
 
@@ -155,7 +155,8 @@ final class WebSearchToolTest {
         assertEquals(Optional.of("java"), store.saved().query());
         assertEquals("https://example.com", store.saved().items().getFirst().url());
         assertEquals(Optional.of("Example"), store.saved().items().getFirst().title());
-        assertEquals("snippet", store.saved().items().getFirst().content());
+        assertEquals(Optional.of("snippet"), store.saved().items().getFirst().snippet());
+        assertEquals("", store.saved().items().getFirst().content());
     }
 
     @Test

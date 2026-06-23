@@ -9,6 +9,12 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -97,6 +103,26 @@ final class FileWebResultStoreTest {
         assertTrue(item.truncated());
     }
 
+    @Test
+    void assignsUniqueResponseIdsAcrossConcurrentStoreInstances() throws Exception {
+        FileWebResultStore firstStore = new FileWebResultStore(tempDir, () -> Instant.parse("2026-06-23T00:00:00Z"));
+        FileWebResultStore secondStore = new FileWebResultStore(tempDir, () -> Instant.parse("2026-06-23T00:00:00Z"));
+        CountDownLatch start = new CountDownLatch(1);
+        Callable<String> firstSave = () -> saveAfterStart(firstStore, "session-a", "java", start);
+        Callable<String> secondSave = () -> saveAfterStart(secondStore, "session-b", "kotlin", start);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<String> first = executor.submit(firstSave);
+            Future<String> second = executor.submit(secondSave);
+            start.countDown();
+
+            List<String> ids = List.of(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS));
+
+            assertEquals(2, Set.copyOf(ids).size());
+            assertEquals(2, Files.readAllLines(tempDir.resolve(".ly-pi/web-results.jsonl")).size());
+        }
+    }
+
     private WebStoredResult result(String sessionId, String query) {
         return new WebStoredResult(
             sessionId,
@@ -108,6 +134,16 @@ final class FileWebResultStoreTest {
             List.of(item("https://example.com/a", "Example", "content", false)),
             Instant.parse("2026-06-23T00:00:00Z")
         );
+    }
+
+    private String saveAfterStart(
+        FileWebResultStore store,
+        String sessionId,
+        String query,
+        CountDownLatch start
+    ) throws Exception {
+        assertTrue(start.await(5, TimeUnit.SECONDS));
+        return store.save(result(sessionId, query)).responseId();
     }
 
     private WebStoredItem item(String url, String title, String content, boolean truncated) {

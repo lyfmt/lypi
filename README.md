@@ -155,7 +155,7 @@ lypi.web.enabled=true
 
 - `web_search`：默认 provider 顺序优先使用 `lypi.web.default-provider`；未指定或默认 provider 不可用时，按 Exa、Tavily、Brave Search、Perplexity 的注册顺序 fallback。Exa 默认启用，endpoint 为 `https://mcp.exa.ai/mcp`，无需本地商业 API key。
 - `web_fetch`：先本地抓取并用 jsoup 清洗 HTML；遇到 403、406、429、5xx、不支持的 `content-type` 或正文过短时，回退到 Jina Reader。
-- `get_search_content`：按 `responseId`、`url`、`urlIndex`、`query` 或 `queryIndex` 取回 `web_search` / `web_fetch` 保存的完整结果。
+- `get_search_content`：按 `responseId`、`url`、`urlIndex`、`query` 或 `queryIndex` 取回 `web_search` / `web_fetch` 保存的结果。`web_search` 仅在 provider 返回正文时保存完整内容；只有摘要的搜索结果会提示改用 `web_fetch` 拉取 URL。
 
 Web 结果缓存默认写入运行 cwd 下的 `.ly-pi/web-results.jsonl`。该文件是本地运行缓存，不应提交。可以关闭缓存：
 

@@ -3,6 +3,8 @@ package cn.lypi.tool.web;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,7 +15,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
@@ -24,8 +28,11 @@ public final class FileWebResultStore implements WebResultStore {
     private static final DateTimeFormatter RESPONSE_ID_DATE = DateTimeFormatter
         .ofPattern("yyyyMMdd")
         .withZone(ZoneOffset.UTC);
+    private static final Map<Path, Object> STORE_LOCKS = new ConcurrentHashMap<>();
 
     private final Path storeFile;
+    private final Path lockFile;
+    private final Object storeLock;
     private final Supplier<Instant> clock;
     private final int maxItemContentChars;
     private final ObjectMapper jsonMapper;
@@ -40,25 +47,29 @@ public final class FileWebResultStore implements WebResultStore {
 
     FileWebResultStore(Path runtimeCwd, Supplier<Instant> clock, int maxItemContentChars) {
         Path root = runtimeCwd == null ? Path.of(".") : runtimeCwd;
-        this.storeFile = root.resolve(".ly-pi").resolve("web-results.jsonl");
+        this.storeFile = root.resolve(".ly-pi").resolve("web-results.jsonl").toAbsolutePath().normalize();
+        this.lockFile = storeFile.resolveSibling(storeFile.getFileName() + ".lock");
+        this.storeLock = STORE_LOCKS.computeIfAbsent(storeFile, ignored -> new Object());
         this.clock = clock == null ? Instant::now : clock;
         this.maxItemContentChars = Math.max(1, maxItemContentChars);
         this.jsonMapper = new ObjectMapper().registerModule(new Jdk8Module());
     }
 
     @Override
-    public synchronized WebStoredResult save(WebStoredResult result) {
-        WebStoredResult normalized = normalize(result);
+    public WebStoredResult save(WebStoredResult result) {
         try {
             Files.createDirectories(storeFile.getParent());
-            Files.writeString(
-                storeFile,
-                jsonMapper.writeValueAsString(StoredWebResult.from(normalized)) + "\n",
-                StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND
-            );
-            return normalized;
+            return withStoreLock(() -> {
+                WebStoredResult normalized = normalize(result);
+                Files.writeString(
+                    storeFile,
+                    jsonMapper.writeValueAsString(StoredWebResult.from(normalized)) + "\n",
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND
+                );
+                return normalized;
+            });
         } catch (IOException exception) {
             throw new IllegalStateException("Web 结果缓存写入失败: " + exception.getMessage(), exception);
         }
@@ -71,10 +82,10 @@ public final class FileWebResultStore implements WebResultStore {
         if (normalizedResponseId.isBlank()) {
             return Optional.empty();
         }
-        return readResults().stream()
+        return readWithLock(() -> readResults().stream()
             .filter(result -> result.sessionId().equals(normalizedSessionId))
             .filter(result -> result.responseId().equals(normalizedResponseId))
-            .reduce((first, second) -> second);
+            .reduce((first, second) -> second));
     }
 
     @Override
@@ -84,10 +95,40 @@ public final class FileWebResultStore implements WebResultStore {
         if (normalizedQuery.isBlank()) {
             return Optional.empty();
         }
-        return readResults().stream()
+        return readWithLock(() -> readResults().stream()
             .filter(result -> result.sessionId().equals(normalizedSessionId))
             .filter(result -> result.query().map(FileWebResultStore::normalizeQuery).orElse("").equals(normalizedQuery))
-            .reduce((first, second) -> second);
+            .reduce((first, second) -> second));
+    }
+
+    private <T> T readWithLock(StoreOperation<T> operation) {
+        if (!Files.isRegularFile(storeFile)) {
+            return operationWithoutFile(operation);
+        }
+        try {
+            return withStoreLock(operation);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Web 结果缓存读取失败: " + exception.getMessage(), exception);
+        }
+    }
+
+    private <T> T operationWithoutFile(StoreOperation<T> operation) {
+        try {
+            return operation.run();
+        } catch (IOException exception) {
+            throw new IllegalStateException("Web 结果缓存读取失败: " + exception.getMessage(), exception);
+        }
+    }
+
+    private <T> T withStoreLock(StoreOperation<T> operation) throws IOException {
+        synchronized (storeLock) {
+            try (
+                FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+                FileLock ignored = channel.lock()
+            ) {
+                return operation.run();
+            }
+        }
     }
 
     private WebStoredResult normalize(WebStoredResult result) {
@@ -181,6 +222,11 @@ public final class FileWebResultStore implements WebResultStore {
 
     private static String normalizeQuery(String value) {
         return normalizeText(value).toLowerCase(Locale.ROOT);
+    }
+
+    @FunctionalInterface
+    private interface StoreOperation<T> {
+        T run() throws IOException;
     }
 
     private record StoredWebResult(

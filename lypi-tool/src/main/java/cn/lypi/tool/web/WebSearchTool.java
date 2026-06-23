@@ -150,9 +150,7 @@ public final class WebSearchTool extends AbstractWebTool {
     }
 
     private WebStoredItem storedItem(WebSearchResult result) {
-        String content = result.content()
-            .or(() -> result.snippet())
-            .orElse("");
+        String content = result.content().orElse("");
         return new WebStoredItem(
             result.url(),
             Optional.ofNullable(result.title()).filter(title -> !title.isBlank()),
