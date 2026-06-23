@@ -12,8 +12,10 @@ import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.tui.SessionResumeInfo;
-import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -171,7 +173,7 @@ class SessionResumeQueryTest {
         SessionManager good = new SessionManagerImpl(tempDir);
         good.openOrCreate("ses_good");
         good.append(new MessageEntry("entry_good", null, message("msg_good", MessageRole.USER, "good", NEWER), NEWER));
-        Path badFile = tempDir.resolve(".lypi").resolve("sessions").resolve("ses_bad.jsonl");
+        Path badFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_bad.jsonl");
         Files.createDirectories(badFile.getParent());
         Files.writeString(
             badFile,
@@ -180,6 +182,21 @@ class SessionResumeQueryTest {
             {"type":"mode_change","id":"bad_mode","parentId":null,"agentMode":"BYPASS","reason":"/mode bypass","timestamp":"2026-06-10T00:00:01Z"}
             """.formatted(tempDir.toString().replace("\\", "\\\\"))
         );
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).extracting(SessionResumeInfo::sessionId).containsExactly("ses_good");
+    }
+
+    @Test
+    void sessionsSkipFilesWithUnreadableHeaders() throws Exception {
+        SessionManager good = new SessionManagerImpl(tempDir);
+        good.openOrCreate("ses_good");
+        good.append(new MessageEntry("entry_good", null, message("msg_good", MessageRole.USER, "good", NEWER), NEWER));
+        Path badFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_bad_header.jsonl");
+        Files.write(badFile, "{\"type\":\"session\",\"version\":1,\"id\":\"ses_".getBytes(StandardCharsets.UTF_8));
+        Files.write(badFile, new byte[] {(byte) 0xC3, (byte) 0x28}, StandardOpenOption.APPEND);
+        Files.write(badFile, "\"}\n".getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
 
         List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
 

@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
@@ -134,7 +135,8 @@ final class JsonlSessionStore {
             return files
                 .filter(file -> file.getFileName().toString().endsWith(".jsonl"))
                 .sorted()
-                .map(this::readHeaderFile)
+                .map(this::tryReadHeaderFile)
+                .flatMap(Optional::stream)
                 .toList();
         } catch (IOException e) {
             throw new SessionEngineException("Failed to list session headers: " + sessionsDir, e);
@@ -187,6 +189,14 @@ final class JsonlSessionStore {
             return header;
         } catch (IOException e) {
             throw new SessionEngineException("Failed to read session header: " + file, e);
+        }
+    }
+
+    private Optional<SessionHeader> tryReadHeaderFile(Path file) {
+        try {
+            return Optional.of(readHeaderFile(file));
+        } catch (SessionEngineException exception) {
+            return Optional.empty();
         }
     }
 

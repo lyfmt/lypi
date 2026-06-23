@@ -67,7 +67,7 @@ class SessionJsonlLargeFileTest {
     }
 
     @Test
-    void headersRejectMalformedUtf8InsideHeaderLine() throws Exception {
+    void readRejectsMalformedUtf8InsideHeaderLine() throws Exception {
         JsonlSessionStore store = new JsonlSessionStore(tempDir);
         Path file = store.sessionFile("ses_bad_header");
         Files.createDirectories(file.getParent());
@@ -80,9 +80,9 @@ class SessionJsonlLargeFileTest {
             StandardOpenOption.APPEND
         );
 
-        assertThatThrownBy(store::headers)
+        assertThatThrownBy(() -> store.read("ses_bad_header"))
             .isInstanceOf(SessionEngineException.class)
-            .hasMessageContaining("Failed to read session header");
+            .hasMessageContaining("Failed to read session file");
     }
 
     private SessionHeader sessionHeader(String id) {

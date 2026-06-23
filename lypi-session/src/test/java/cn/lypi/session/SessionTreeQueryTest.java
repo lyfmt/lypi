@@ -107,4 +107,30 @@ class SessionTreeQueryTest {
             .singleElement()
             .satisfies(child -> assertThat(child.sessionId()).isEqualTo("ses_child"));
     }
+
+    @Test
+    void childrenSkipSessionFilesWithUnreadableHeaders() throws Exception {
+        SessionManager parent = new SessionManagerImpl(tempDir);
+        parent.openOrCreate("ses_parent");
+        parent.append(new CustomMessageEntry("entry_root", null, "root", NOW));
+
+        ChildSessionService service = new ChildSessionService(Clock.fixed(NOW, ZoneOffset.UTC));
+        service.create(new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            tempDir,
+            1,
+            Optional.empty(),
+            Optional.empty()
+        ));
+        Path badFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_bad.jsonl");
+        Files.write(badFile, "{\"type\":\"session\",\"version\":1,\"id\":\"ses_".getBytes(StandardCharsets.UTF_8));
+        Files.write(badFile, new byte[] {(byte) 0xC3, (byte) 0x28}, StandardOpenOption.APPEND);
+        Files.write(badFile, "\"}\n".getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
+
+        assertThat(new SessionTreeQuery(tempDir).children("ses_parent"))
+            .singleElement()
+            .satisfies(child -> assertThat(child.sessionId()).isEqualTo("ses_child"));
+    }
 }
