@@ -22,6 +22,7 @@ import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.tool.web.WebProviderRegistry;
+import cn.lypi.tool.web.WebResultStore;
 import cn.lypi.tool.web.WebSearchProvider;
 import cn.lypi.contracts.web.WebSearchResponse;
 import cn.lypi.tool.DefaultToolRuntime;
@@ -120,11 +121,30 @@ class BuiltInToolsTest {
 
         BuiltInTools.registerWebTools(
             runtime,
-            new WebProviderRegistry("test", Map.of("test", searchProvider()))
+            new WebProviderRegistry("test", Map.of("test", searchProvider())),
+            WebResultStore.noop()
         );
 
         assertTrue(runtime.resolve("web_search").isPresent());
         assertTrue(runtime.resolve("web_fetch").isPresent());
+        assertTrue(runtime.resolve("get_search_content").isPresent());
+    }
+
+    @Test
+    void registersWebContentTool() {
+        DefaultToolRuntime runtime = new DefaultToolRuntime((request, context) ->
+            new PermissionDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.TOOL_SPECIFIC,
+                "allowed",
+                Optional.<PermissionUpdate>empty(),
+                Map.of()
+            )
+        );
+
+        BuiltInTools.registerWebContentTools(runtime, WebResultStore.noop());
+
+        assertTrue(runtime.resolve("get_search_content").isPresent());
     }
 
     @Test

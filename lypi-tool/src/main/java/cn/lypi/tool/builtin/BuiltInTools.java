@@ -20,7 +20,9 @@ import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import cn.lypi.tool.web.WebFetchTool;
+import cn.lypi.tool.web.GetSearchContentTool;
 import cn.lypi.tool.web.WebProviderRegistry;
+import cn.lypi.tool.web.WebResultStore;
 import cn.lypi.tool.web.WebSearchTool;
 import java.util.List;
 import java.util.Objects;
@@ -80,9 +82,37 @@ public final class BuiltInTools {
     /**
      * 注册 Web 工具集合。
      */
+    public static void registerWebTools(ToolRuntimePort runtime, WebProviderRegistry providers, WebResultStore store) {
+        registerWebTools(runtime, providers, store, 10);
+    }
+
+    /**
+     * 注册 Web 工具集合。
+     */
     public static void registerWebTools(ToolRuntimePort runtime, WebProviderRegistry providers, int maxResults) {
+        registerWebTools(runtime, providers, WebResultStore.noop(), maxResults);
+    }
+
+    /**
+     * 注册 Web 工具集合。
+     */
+    public static void registerWebTools(
+        ToolRuntimePort runtime,
+        WebProviderRegistry providers,
+        WebResultStore store,
+        int maxResults
+    ) {
         registerWebSearchTools(runtime, providers, maxResults);
         registerWebFetchTool(runtime);
+        registerWebContentTools(runtime, store);
+    }
+
+    /**
+     * 注册本地 Web 内容取回工具。
+     */
+    public static void registerWebContentTools(ToolRuntimePort runtime, WebResultStore store) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        runtime.register(new GetSearchContentTool(store == null ? WebResultStore.noop() : store));
     }
 
     /**
