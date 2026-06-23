@@ -14,12 +14,18 @@ import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
+import cn.lypi.contracts.mcp.McpServerConfig;
+import cn.lypi.contracts.mcp.McpStdioServerConfig;
+import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ContextFile;
 import cn.lypi.contracts.resource.ResourceSnapshot;
+import cn.lypi.contracts.runtime.CompactStateBackfillItem;
+import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
@@ -28,14 +34,21 @@ import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.skill.SkillDescriptor;
 import cn.lypi.contracts.skill.SkillIndex;
+import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.skill.SkillSource;
+import cn.lypi.contracts.tool.ToolDescriptor;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static cn.lypi.agent.AgentCoreTestFixtures.NOW;
 import static cn.lypi.agent.AgentCoreTestFixtures.assistantMessage;
@@ -630,6 +643,189 @@ class DefaultCompactionCoordinatorTest {
     }
 
     @Test
+    void appendsRuntimeSkillAndMcpBackfillEntriesAfterCompaction(@TempDir Path tempDir) throws Exception {
+        Path skillFile = tempDir.resolve("skills").resolve("compact-helper").resolve("SKILL.md");
+        Files.createDirectories(skillFile.getParent());
+        Files.writeString(skillFile, """
+            ---
+            name: compact-helper
+            description: restore compact details
+            ---
+
+            # Compact Helper
+
+            Use this skill body after compact.
+            """);
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = mcpResourceAssembler(session);
+        ContextBuildRequest buildRequest = new ContextBuildRequest(
+            "session-1",
+            Optional.of(session.leafId()),
+            Path.of("."),
+            true,
+            List.of(new SkillMention("compact-helper", skillFile))
+        );
+        ContextAssembly assembly = assembler.build(buildRequest);
+        CompactStateBackfillPort runtimeBackfill = request -> List.of(new CompactStateBackfillItem(
+            "compact-agent-state",
+            "Agent State",
+            "agentId=agent-1\nstatus=RUNNING\nUse wait_agent before reading results.",
+            Map.of("backfillType", "agent")
+        ));
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary after compact"),
+            runtimeBackfill,
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(
+            session,
+            buildRequest,
+            assembly,
+            mcpTools(),
+            () -> false
+        ));
+
+        assertThat(decision.compacted()).isTrue();
+        List<AttachmentContentBlock> attachments = backfillAttachments(session);
+        assertThat(attachments)
+            .extracting(AttachmentContentBlock::attachmentId)
+            .anySatisfy(id -> assertThat(id).contains("compact-agent-state"))
+            .anySatisfy(id -> assertThat(id).contains("compact-skill-compact-helper"))
+            .anySatisfy(id -> assertThat(id).contains("compact-mcp-guidance-filesystem"));
+        assertThat(attachments)
+            .extracting(AttachmentContentBlock::text)
+            .anySatisfy(text -> assertThat(text).contains("agentId=agent-1").contains("wait_agent"))
+            .anySatisfy(text -> assertThat(text).contains("Use this skill body after compact."))
+            .anySatisfy(text -> assertThat(text)
+                .contains("filesystem")
+                .contains("mcp__filesystem__read_file")
+                .doesNotContain("SECRET_TOKEN"));
+        assertThat(session.context(session.leafId()).messages()).containsExactlyElementsOf(decision.context().messages());
+    }
+
+    @Test
+    void runtimeBackfillReceivesTargetLeafEntryIdAndFailureIsVisible() {
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        String targetLeafId = session.leafId();
+        DefaultContextAssembler assembler = resourceAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        java.util.concurrent.atomic.AtomicReference<cn.lypi.contracts.runtime.CompactStateBackfillRequest> seenRequest =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        CompactStateBackfillPort runtimeBackfill = request -> {
+            seenRequest.set(request);
+            throw new IllegalStateException("registry unavailable");
+        };
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary after compact"),
+            runtimeBackfill,
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(seenRequest.get().leafEntryId()).contains(targetLeafId);
+        assertThat(backfillAttachments(session))
+            .filteredOn(attachment -> attachment.attachmentId().equals("compact-runtime-state-warning"))
+            .singleElement()
+            .satisfies(attachment -> {
+                assertThat(attachment.text())
+                    .contains("State Backfill Warning")
+                    .contains("registry unavailable");
+                assertThat(attachment.metadata()).containsEntry("backfillType", "runtime-warning");
+            });
+    }
+
+    @Test
+    void stateBackfillDeduplicatesAttachmentIdsAndMarksTruncation(@TempDir Path tempDir) throws Exception {
+        Path missingSkill = tempDir.resolve("missing-skill").resolve("SKILL.md");
+        AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLongBranch();
+        DefaultContextAssembler assembler = mcpResourceAssembler(session);
+        ContextBuildRequest buildRequest = new ContextBuildRequest(
+            "session-1",
+            Optional.of(session.leafId()),
+            Path.of("."),
+            true,
+            List.of(new SkillMention("missing-skill", missingSkill))
+        );
+        ContextAssembly assembly = assembler.build(buildRequest);
+        CompactStateBackfillPort runtimeBackfill = request -> List.of(
+            new CompactStateBackfillItem(
+                "duplicate-state",
+                "Duplicate State 1",
+                "A".repeat(16_000),
+                Map.of("source", "one")
+            ),
+            new CompactStateBackfillItem(
+                "duplicate-state",
+                "Duplicate State 2",
+                "second body",
+                Map.of("source", "two")
+            )
+        );
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary after compact"),
+            runtimeBackfill,
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(
+            session,
+            buildRequest,
+            assembly,
+            manyMcpTools(400),
+            () -> false
+        ));
+
+        assertThat(decision.compacted()).isTrue();
+        List<AttachmentContentBlock> attachments = backfillAttachments(session);
+        assertThat(attachments)
+            .extracting(AttachmentContentBlock::attachmentId)
+            .contains("duplicate-state", "duplicate-state-2", "compact-skill-missing-skill")
+            .doesNotHaveDuplicates();
+        assertThat(attachments)
+            .filteredOn(attachment -> attachment.attachmentId().equals("duplicate-state"))
+            .singleElement()
+            .satisfies(attachment -> {
+                assertThat(attachment.text()).contains("内容已截断").hasSizeLessThanOrEqualTo(12_000);
+                assertThat(attachment.metadata()).containsEntry("truncated", true);
+            });
+        assertThat(attachments)
+            .filteredOn(attachment -> attachment.attachmentId().equals("compact-skill-missing-skill"))
+            .singleElement()
+            .satisfies(attachment -> {
+                assertThat(attachment.text()).contains("Failed to read skill file");
+                assertThat(attachment.metadata()).containsEntry("backfillType", "skill");
+            });
+        assertThat(attachments)
+            .filteredOn(attachment -> attachment.attachmentId().startsWith("compact-mcp-guidance-"))
+            .singleElement()
+            .satisfies(attachment -> {
+                assertThat(attachment.text())
+                    .contains("内容已截断")
+                    .contains("mcp__filesystem__tool_0")
+                    .doesNotContain("SECRET_TOKEN");
+                assertThat(attachment.text()).hasSizeLessThanOrEqualTo(8_000);
+                assertThat(attachment.metadata()).containsEntry("truncated", true);
+            });
+        assertThat(session.context(session.leafId()).messages()).containsExactlyElementsOf(decision.context().messages());
+    }
+
+    @Test
     void readStateBackfillTruncationNoticeStaysWithinAttachmentLimit() {
         AgentCoreTestFixtures.InMemorySessionManager session = sessionWithLargeReadStateBranch();
         DefaultContextAssembler assembler = resourceAssembler(session);
@@ -671,7 +867,7 @@ class DefaultCompactionCoordinatorTest {
         CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
 
         assertThat(decision.compacted()).isTrue();
-        assertThat(decision.reason()).contains("resource backfill failed: backfill append failed");
+        assertThat(decision.reason()).contains("state backfill failed: backfill append failed");
         assertThat(decision.context()).isNotSameAs(assembly.snapshot());
         assertThat(decision.context().messages())
             .extracting(message -> message.content().getFirst().text())
@@ -693,6 +889,43 @@ class DefaultCompactionCoordinatorTest {
             .filteredOn(message -> message.role() == MessageRole.SYSTEM_LOCAL)
             .filteredOn(message -> message.kind() == MessageKind.ATTACHMENT)
             .isEmpty();
+    }
+
+    @Test
+    void stateBackfillAppendFailureReturnsReplayEquivalentContextAfterPartialAppend() {
+        PartialBackfillFailingSessionManager session = new PartialBackfillFailingSessionManager();
+        session.openOrCreate("session-1");
+        session.append(new MessageEntry("entry-user-1", "", userMessage("msg-user-1", "user one long enough to count"), NOW));
+        session.append(new MessageEntry("entry-assistant-1", "entry-user-1", assistantMessage("msg-assistant-1", "assistant one long enough"), NOW));
+        session.append(new MessageEntry("entry-user-2", "entry-assistant-1", userMessage("msg-user-2", "user two long enough"), NOW));
+        DefaultContextAssembler assembler = lowBudgetAssembler(session);
+        ContextBuildRequest buildRequest = buildRequest(session);
+        ContextAssembly assembly = assembler.build(buildRequest);
+        CompactStateBackfillPort runtimeBackfill = request -> List.of(
+            new CompactStateBackfillItem("compact-agent-one", "Agent One", "agent one survived", Map.of()),
+            new CompactStateBackfillItem("compact-agent-two", "Agent Two", "agent two failed", Map.of())
+        );
+        DefaultCompactionCoordinator coordinator = new DefaultCompactionCoordinator(
+            session,
+            assembler,
+            new AgentCoreTestFixtures.RecordingEventBus(),
+            new DefaultCompactionPlanner(4),
+            request -> summaryResult("summary text"),
+            runtimeBackfill,
+            CLOCK
+        );
+
+        CompactionDecision decision = coordinator.preflight(request(session, buildRequest, assembly));
+
+        assertThat(decision.compacted()).isTrue();
+        assertThat(decision.reason()).contains("state backfill failed: second backfill append failed");
+        assertThat(session.context(session.leafId()).messages()).containsExactlyElementsOf(decision.context().messages());
+        assertThat(decision.context().messages())
+            .flatExtracting(AgentMessage::content)
+            .extracting(ContentBlock::text)
+            .contains("summary text")
+            .anySatisfy(text -> assertThat(text).contains("agent one survived"))
+            .noneSatisfy(text -> assertThat(text).contains("agent two failed"));
     }
 
     private static cn.lypi.agent.compact.CompactionPlanner readStatePlan() {
@@ -959,6 +1192,39 @@ class DefaultCompactionCoordinatorTest {
         );
     }
 
+    private static DefaultContextAssembler mcpResourceAssembler(AgentCoreTestFixtures.InMemorySessionManager session) {
+        ResourceSnapshot resources = new ResourceSnapshot(
+            List.of(),
+            List.of(),
+            new SkillIndex(List.of(), List.of()),
+            List.of(),
+            List.of(new McpServerConfig(
+                "filesystem",
+                McpTransport.STDIO,
+                new McpStdioServerConfig(List.of("mcp-filesystem"), Map.of("TOKEN", "SECRET_TOKEN")),
+                null,
+                Duration.ofSeconds(5),
+                Duration.ofSeconds(30)
+            )),
+            List.of()
+        );
+        return new DefaultContextAssembler(
+            session,
+            new cn.lypi.contracts.runtime.ResourceRuntimePort() {
+                @Override
+                public ResourceSnapshot load(Path cwd) {
+                    return resources;
+                }
+
+                @Override
+                public SystemPrompt buildSystemPrompt(ResourceSnapshot ignored) {
+                    return new SystemPrompt("system", List.of("test"), "hash");
+                }
+            },
+            new ContextBudgetEstimator(512, 1, 8, 4)
+        );
+    }
+
     private static String resourceBackfillText(AgentCoreTestFixtures.InMemorySessionManager session) {
         return session.handle().byId().values().stream()
             .filter(MessageEntry.class::isInstance)
@@ -970,6 +1236,47 @@ class DefaultCompactionCoordinatorTest {
             .findFirst()
             .orElseThrow()
             .text();
+    }
+
+    private static List<AttachmentContentBlock> backfillAttachments(AgentCoreTestFixtures.InMemorySessionManager session) {
+        return session.handle().byId().values().stream()
+            .filter(MessageEntry.class::isInstance)
+            .map(MessageEntry.class::cast)
+            .map(MessageEntry::message)
+            .filter(message -> message.role() == MessageRole.SYSTEM_LOCAL)
+            .filter(message -> message.kind() == MessageKind.ATTACHMENT)
+            .flatMap(message -> message.content().stream())
+            .filter(AttachmentContentBlock.class::isInstance)
+            .map(AttachmentContentBlock.class::cast)
+            .toList();
+    }
+
+    private static ToolRegistrySnapshot mcpTools() {
+        return new ToolRegistrySnapshot(List.of(
+            new ToolDescriptor(
+                "mcp__filesystem__read_file",
+                List.of(),
+                "Read a file through the filesystem MCP server",
+                new JsonSchema(Map.of("type", "object")),
+                true,
+                false
+            )
+        ));
+    }
+
+    private static ToolRegistrySnapshot manyMcpTools(int count) {
+        List<ToolDescriptor> tools = new java.util.ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            tools.add(new ToolDescriptor(
+                "mcp__filesystem__tool_" + index,
+                List.of(),
+                "MCP tool description " + index + " " + "x".repeat(80),
+                new JsonSchema(Map.of("type", "object")),
+                true,
+                false
+            ));
+        }
+        return new ToolRegistrySnapshot(tools);
     }
 
     private static ContextBuildRequest buildRequest(AgentCoreTestFixtures.InMemorySessionManager session) {
@@ -990,12 +1297,23 @@ class DefaultCompactionCoordinatorTest {
         ContextAssembly assembly,
         AbortSignal abortSignal
     ) {
+        return request(session, buildRequest, assembly, new ToolRegistrySnapshot(List.of()), abortSignal);
+    }
+
+    private static CompactionRequest request(
+        AgentCoreTestFixtures.InMemorySessionManager session,
+        ContextBuildRequest buildRequest,
+        ContextAssembly assembly,
+        ToolRegistrySnapshot tools,
+        AbortSignal abortSignal
+    ) {
         return new CompactionRequest(
             "session-1",
             Optional.of(session.leafId()),
             Path.of("."),
             buildRequest,
             assembly,
+            tools,
             abortSignal
         );
     }
@@ -1064,6 +1382,29 @@ class DefaultCompactionCoordinatorTest {
                 && messageEntry.message().role() == MessageRole.SYSTEM_LOCAL
                 && messageEntry.message().kind() == MessageKind.ATTACHMENT) {
                 throw new IllegalStateException("backfill append failed");
+            }
+            cn.lypi.contracts.session.SessionHandle handle = super.append(entry);
+            if (entry instanceof CompactionEntry) {
+                compactionAppended = true;
+            }
+            return handle;
+        }
+    }
+
+    private static final class PartialBackfillFailingSessionManager
+        extends AgentCoreTestFixtures.InMemorySessionManager {
+        private boolean compactionAppended;
+        private int backfillCount;
+
+        @Override
+        public cn.lypi.contracts.session.SessionHandle append(SessionEntry entry) {
+            if (compactionAppended && entry instanceof MessageEntry messageEntry
+                && messageEntry.message().role() == MessageRole.SYSTEM_LOCAL
+                && messageEntry.message().kind() == MessageKind.ATTACHMENT) {
+                backfillCount++;
+                if (backfillCount == 2) {
+                    throw new IllegalStateException("second backfill append failed");
+                }
             }
             cn.lypi.contracts.session.SessionHandle handle = super.append(entry);
             if (entry instanceof CompactionEntry) {

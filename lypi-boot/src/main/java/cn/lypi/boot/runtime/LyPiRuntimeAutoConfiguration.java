@@ -15,6 +15,7 @@ import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AppEntry;
 import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
 import cn.lypi.contracts.runtime.MailboxPort;
@@ -176,13 +177,15 @@ public class LyPiRuntimeAutoConfiguration {
         SessionManagerPort sessionManager,
         ContextAssembler contextAssembler,
         EventBus eventBus,
-        CompactionSummarizer summarizer
+        CompactionSummarizer summarizer,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill
     ) {
         return RuntimeBeanFactories.compactionCoordinator(
             sessionManager,
             contextAssembler,
             eventBus,
             summarizer,
+            compactStateBackfill.getIfAvailable(CompactStateBackfillPort::none),
             Clock.systemUTC()
         );
     }
@@ -196,13 +199,17 @@ public class LyPiRuntimeAutoConfiguration {
         SessionManagerPort sessionManager,
         ContextAssembler contextAssembler,
         EventBus eventBus,
-        CompactionSummarizer summarizer
+        ObjectProvider<ToolRuntimePort> toolRuntime,
+        CompactionSummarizer summarizer,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill
     ) {
         return RuntimeBeanFactories.compactionRuntime(
             sessionManager,
             contextAssembler,
             eventBus,
+            toolRuntime.getIfAvailable(),
             summarizer,
+            compactStateBackfill.getIfAvailable(CompactStateBackfillPort::none),
             Clock.systemUTC()
         );
     }
@@ -222,7 +229,8 @@ public class LyPiRuntimeAutoConfiguration {
         ResourceRuntimePort resourceRuntime,
         EventBus eventBus,
         ContextAssembler contextAssembler,
-        CompactionCoordinator compactionCoordinator
+        CompactionCoordinator compactionCoordinator,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill
     ) {
         return RuntimeBeanFactories.agentCore(
             properties,
@@ -234,6 +242,7 @@ public class LyPiRuntimeAutoConfiguration {
             eventBus,
             contextAssembler,
             compactionCoordinator,
+            compactStateBackfill.getIfAvailable(CompactStateBackfillPort::none),
             Clock.systemUTC()
         );
     }
@@ -254,6 +263,7 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         EventBus eventBus,
         ObjectProvider<CompactionSummarizer> compactionSummarizer,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill,
         ObjectProvider<ModelCatalogPort> modelCatalog,
         Clock clock
     ) {
@@ -265,6 +275,7 @@ public class LyPiRuntimeAutoConfiguration {
             resourceRuntime,
             eventBus,
             compactionSummarizer,
+            compactStateBackfill,
             modelCatalog,
             clock
         );
@@ -643,6 +654,16 @@ public class LyPiRuntimeAutoConfiguration {
             runningAgentSnapshotProvider(runningAgents, agentCenter),
             childAgents
         );
+    }
+
+    /**
+     * 创建 compact 后运行态回填端口。
+     */
+    @Bean
+    @ConditionalOnMissingBean(CompactStateBackfillPort.class)
+    @ConditionalOnBean(AgentRegistryPort.class)
+    public CompactStateBackfillPort compactStateBackfill(AgentRegistryPort registry) {
+        return RuntimeBeanFactories.compactStateBackfill(registry);
     }
 
     /**
