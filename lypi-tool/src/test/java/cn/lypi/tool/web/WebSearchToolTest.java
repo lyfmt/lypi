@@ -56,11 +56,11 @@ final class WebSearchToolTest {
     }
 
     @Test
-    void searchToolIsReadOnlyAndConcurrencySafe() {
+    void searchToolWritesCacheAndRunsSerially() {
         WebSearchTool tool = new WebSearchTool(registry(successProvider()));
 
-        assertTrue(tool.isReadOnly(Map.of("query", "java")));
-        assertTrue(tool.isConcurrencySafe(Map.of("query", "java")));
+        assertFalse(tool.isReadOnly(Map.of("query", "java")));
+        assertFalse(tool.isConcurrencySafe(Map.of("query", "java")));
         assertFalse(tool.isDestructive(Map.of("query", "java")));
     }
 

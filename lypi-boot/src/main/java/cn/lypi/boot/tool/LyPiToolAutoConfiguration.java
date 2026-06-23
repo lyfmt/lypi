@@ -41,10 +41,12 @@ import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import cn.lypi.tool.web.BraveWebSearchProvider;
+import cn.lypi.tool.web.FileWebResultStore;
 import cn.lypi.tool.web.JavaHttpWebClient;
 import cn.lypi.tool.web.PerplexityWebSearchProvider;
 import cn.lypi.tool.web.TavilyWebProvider;
 import cn.lypi.tool.web.WebProviderRegistry;
+import cn.lypi.tool.web.WebResultStore;
 import cn.lypi.tool.web.WebSearchProvider;
 import cn.lypi.transport.headless.HeadlessTransport;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -236,11 +238,15 @@ public class LyPiToolAutoConfiguration {
                     new FilePermissionAmendmentStore(runtimeCwd)
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
+                WebResultStore webResultStore = new FileWebResultStore(runtimeCwd);
                 if (webProperties.isEnabled()) {
-                    BuiltInTools.registerWebFetchTool(runtime, webProperties.getTimeout());
+                    BuiltInTools.registerWebFetchTool(runtime, webProperties.getTimeout(), webResultStore);
+                    BuiltInTools.registerWebContentTools(runtime, webResultStore);
                 }
                 webProviderRegistry(webProperties, resolvedObjectMapper, environment)
-                    .ifPresent(providers -> BuiltInTools.registerWebSearchTools(runtime, providers, webProperties.getMaxResults()));
+                    .ifPresent(providers ->
+                        BuiltInTools.registerWebSearchTools(runtime, providers, webResultStore, webProperties.getMaxResults())
+                    );
                 AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
                 MailboxPort resolvedMailbox = mailbox.getIfAvailable();
                 if (resolvedAgentCenter != null && resolvedMailbox != null) {

@@ -66,6 +66,16 @@ public final class WebSearchTool extends AbstractWebTool {
     }
 
     @Override
+    public boolean isReadOnly(Map<String, Object> input) {
+        return false;
+    }
+
+    @Override
+    public boolean isConcurrencySafe(Map<String, Object> input) {
+        return false;
+    }
+
+    @Override
     public JsonSchema inputSchema() {
         return new JsonSchema(Map.of(
             "type", "object",

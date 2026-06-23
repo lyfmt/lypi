@@ -33,6 +33,15 @@ final class WebFetchToolTest {
     }
 
     @Test
+    void fetchToolWritesCacheAndRunsSerially() {
+        WebFetchTool tool = new WebFetchTool(successFetcher());
+
+        assertFalse(tool.isReadOnly(Map.of("url", "https://example.com/doc")));
+        assertFalse(tool.isConcurrencySafe(Map.of("url", "https://example.com/doc")));
+        assertFalse(tool.isDestructive(Map.of("url", "https://example.com/doc")));
+    }
+
+    @Test
     void rejectsUnsafeUrl() {
         WebFetchTool tool = new WebFetchTool(successFetcher());
 

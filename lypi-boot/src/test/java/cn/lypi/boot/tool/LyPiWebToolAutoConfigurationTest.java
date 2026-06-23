@@ -4,15 +4,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.context.ContextSnapshot;
+import cn.lypi.contracts.context.ContextBudget;
+import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 final class LyPiWebToolAutoConfigurationTest {
@@ -40,6 +52,46 @@ final class LyPiWebToolAutoConfigurationTest {
 
                 assertThat(runtime.resolve("web_search")).isEmpty();
                 assertThat(runtime.resolve("web_fetch")).isPresent();
+                assertThat(runtime.resolve("get_search_content")).isPresent();
+            });
+    }
+
+    @Test
+    void getSearchContentUsesRuntimeCwdCache(@TempDir Path runtimeCwd) throws Exception {
+        Path storeFile = runtimeCwd.resolve(".ly-pi").resolve("web-results.jsonl");
+        Files.createDirectories(storeFile.getParent());
+        Files.writeString(
+            storeFile,
+            """
+            {"sessionId":"session","messageId":"message","responseId":"web_20260623_000001","sourceTool":"web_fetch","query":null,"url":"https://example.com/doc","items":[{"url":"https://example.com/doc","title":"Example","snippet":null,"content":"Cached body","format":"markdown","truncated":false,"source":"local"}],"createdAt":"2026-06-23T00:00:00Z"}
+            """,
+            StandardCharsets.UTF_8
+        );
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.web.enabled=true",
+                "lypi.runtime.cwd=" + runtimeCwd
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiWebToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                List<ToolResult<?>> results = runtime.execute(
+                    List.of(new ToolUseRequest(
+                        "toolu_content",
+                        "get_search_content",
+                        Map.of("responseId", "web_20260623_000001"),
+                        "message"
+                    )),
+                    contextSnapshot(),
+                    new ToolRuntimeInvocation("session", "turn")
+                );
+
+                assertThat(results).hasSize(1);
+                assertThat(results.getFirst().isError()).isFalse();
+                assertThat(results.getFirst().output().toString()).contains("Cached body");
             });
     }
 
@@ -57,6 +109,7 @@ final class LyPiWebToolAutoConfigurationTest {
 
                 assertThat(runtime.resolve("web_search")).isPresent();
                 assertThat(runtime.resolve("web_fetch")).isPresent();
+                assertThat(runtime.resolve("get_search_content")).isPresent();
             });
     }
 
@@ -75,6 +128,7 @@ final class LyPiWebToolAutoConfigurationTest {
 
                 assertThat(runtime.resolve("web_search")).isEmpty();
                 assertThat(runtime.resolve("web_fetch")).isPresent();
+                assertThat(runtime.resolve("get_search_content")).isPresent();
             });
     }
 
@@ -134,7 +188,20 @@ final class LyPiWebToolAutoConfigurationTest {
 
                 assertThat(runtime.resolve("web_search")).isPresent();
                 assertThat(runtime.resolve("web_fetch")).isPresent();
+                assertThat(runtime.resolve("get_search_content")).isPresent();
             });
+    }
+
+    private static ContextSnapshot contextSnapshot() {
+        return new ContextSnapshot(
+            null,
+            List.of(),
+            null,
+            null,
+            AgentMode.EXECUTE,
+            PermissionMode.BYPASS,
+            new ContextBudget(0, 0, 0, 0, 0, 0, 0, BigDecimal.ZERO)
+        );
     }
 
     private static PermissionDecision allowAllSecurity(ToolUseRequest request, ToolUseContext context) {
