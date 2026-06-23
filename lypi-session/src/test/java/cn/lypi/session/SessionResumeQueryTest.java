@@ -1,6 +1,7 @@
 package cn.lypi.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.MessageKind;
@@ -24,6 +25,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -286,7 +289,7 @@ class SessionResumeQueryTest {
     }
 
     @Test
-    void sessionsHandleManySessionFilesAndSortByModified() {
+    void sessionsHandleManySessionFilesAndSortByModified() throws Exception {
         for (int i = 0; i < 50; i++) {
             SessionManager manager = new SessionManagerImpl(tempDir);
             manager.openOrCreate("ses_" + i);
@@ -298,12 +301,32 @@ class SessionResumeQueryTest {
                 timestamp
             ));
         }
+        Path badFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_bad_many.jsonl");
+        Files.writeString(
+            badFile,
+            """
+            {"type":"session","version":1,"id":"ses_bad_many","cwd":"%s","parentSessionId":null,"timestamp":"2026-06-10T00:00:00Z"}
+            {bad json}
+            """.formatted(tempDir.toString().replace("\\", "\\\\"))
+        );
 
         List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
 
-        assertThat(sessions).hasSize(50);
-        assertThat(sessions.getFirst().sessionId()).isEqualTo("ses_49");
-        assertThat(sessions.getLast().sessionId()).isEqualTo("ses_0");
+        assertThat(sessions).extracting(SessionResumeInfo::sessionId)
+            .containsExactlyElementsOf(java.util.stream.IntStream.rangeClosed(0, 49)
+                .map(i -> 49 - i)
+                .mapToObj(i -> "ses_" + i)
+                .toList());
+    }
+
+    @Test
+    void resumeScanFuturesDoNotHideUnexpectedFailures() {
+        CompletableFuture<Optional<SessionResumeScan>> future = new CompletableFuture<>();
+        future.completeExceptionally(new IllegalStateException("boom"));
+
+        assertThatThrownBy(() -> JsonlSessionStore.futureResult(future))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Unexpected failure while scanning session resume metadata");
     }
 
     @Test

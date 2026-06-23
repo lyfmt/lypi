@@ -182,6 +182,7 @@ final class JsonlSessionStore {
             return List.of();
         }
         ExecutorService executor = Executors.newFixedThreadPool(MAX_CONCURRENT_SESSION_INFO_LOADS);
+        boolean completed = false;
         try {
             List<Future<Optional<SessionResumeScan>>> futures = files.stream()
                 .map(file -> executor.submit(() -> resumeScan(file)))
@@ -190,20 +191,25 @@ final class JsonlSessionStore {
             for (Future<Optional<SessionResumeScan>> future : futures) {
                 futureResult(future).ifPresent(scans::add);
             }
+            completed = true;
             return List.copyOf(scans);
         } finally {
-            executor.shutdownNow();
+            if (completed) {
+                executor.shutdown();
+            } else {
+                executor.shutdownNow();
+            }
         }
     }
 
-    private Optional<SessionResumeScan> futureResult(Future<Optional<SessionResumeScan>> future) {
+    static Optional<SessionResumeScan> futureResult(Future<Optional<SessionResumeScan>> future) {
         try {
             return future.get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SessionEngineException("Interrupted while scanning session resume metadata", e);
         } catch (ExecutionException e) {
-            return Optional.empty();
+            throw new SessionEngineException("Unexpected failure while scanning session resume metadata", e.getCause());
         }
     }
 
