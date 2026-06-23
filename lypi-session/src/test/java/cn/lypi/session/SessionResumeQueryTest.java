@@ -286,6 +286,27 @@ class SessionResumeQueryTest {
     }
 
     @Test
+    void sessionsHandleManySessionFilesAndSortByModified() {
+        for (int i = 0; i < 50; i++) {
+            SessionManager manager = new SessionManagerImpl(tempDir);
+            manager.openOrCreate("ses_" + i);
+            Instant timestamp = OLDER.plusSeconds(i);
+            manager.append(new MessageEntry(
+                "entry_" + i,
+                null,
+                message("msg_" + i, MessageRole.USER, "session " + i, timestamp),
+                timestamp
+            ));
+        }
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).hasSize(50);
+        assertThat(sessions.getFirst().sessionId()).isEqualTo("ses_49");
+        assertThat(sessions.getLast().sessionId()).isEqualTo("ses_0");
+    }
+
+    @Test
     void resumeScansCollectMetadataInSinglePass() {
         JsonlSessionStore store = new JsonlSessionStore(tempDir);
         store.create(new SessionHeader("session", 1, "ses_scan", tempDir, Optional.empty(), OLDER));

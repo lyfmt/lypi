@@ -18,6 +18,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.StringJoiner;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
 
 /**
@@ -27,6 +31,7 @@ import java.util.stream.Stream;
  */
 final class JsonlSessionStore {
     private static final int SUPPORTED_SESSION_VERSION = 1;
+    private static final int MAX_CONCURRENT_SESSION_INFO_LOADS = 10;
     private final Path sessionsDir;
     private final SessionJsonMapper mapper;
 
@@ -154,12 +159,11 @@ final class JsonlSessionStore {
             return List.of();
         }
         try (Stream<Path> files = Files.list(sessionsDir)) {
-            return files
+            List<Path> sessionFiles = files
                 .filter(file -> file.getFileName().toString().endsWith(".jsonl"))
                 .sorted()
-                .map(this::resumeScan)
-                .flatMap(Optional::stream)
                 .toList();
+            return scanResumeFiles(sessionFiles);
         } catch (IOException e) {
             throw new SessionEngineException("Failed to list session resume metadata: " + sessionsDir, e);
         }
@@ -169,6 +173,36 @@ final class JsonlSessionStore {
         try {
             return Optional.of(readResumeScan(file));
         } catch (SessionEngineException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private List<SessionResumeScan> scanResumeFiles(List<Path> files) {
+        if (files.isEmpty()) {
+            return List.of();
+        }
+        ExecutorService executor = Executors.newFixedThreadPool(MAX_CONCURRENT_SESSION_INFO_LOADS);
+        try {
+            List<Future<Optional<SessionResumeScan>>> futures = files.stream()
+                .map(file -> executor.submit(() -> resumeScan(file)))
+                .toList();
+            List<SessionResumeScan> scans = new ArrayList<>();
+            for (Future<Optional<SessionResumeScan>> future : futures) {
+                futureResult(future).ifPresent(scans::add);
+            }
+            return List.copyOf(scans);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private Optional<SessionResumeScan> futureResult(Future<Optional<SessionResumeScan>> future) {
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SessionEngineException("Interrupted while scanning session resume metadata", e);
+        } catch (ExecutionException e) {
             return Optional.empty();
         }
     }
