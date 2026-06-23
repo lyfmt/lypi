@@ -105,6 +105,98 @@ final class ExaWebSearchProviderTest {
     }
 
     @Test
+    void mapsMcpPlainTextContentResponse() {
+        RecordingHttpTransport transport = new RecordingHttpTransport();
+        transport.responseBody = """
+            event: message
+            data: {"jsonrpc":"2.0","id":"lypi-1","result":{"content":[{"type":"text","text":"Title: Codex | AI Coding Partner from OpenAI | OpenAI\\nURL: https://openai.com/codex/\\nPublished Date: 2026-06-02T00:00:00.000Z\\nAuthor: OpenAI\\nText: OpenAI Codex is an AI coding partner."}]}}
+
+            """;
+        ExaWebSearchProvider provider = provider(transport);
+
+        WebSearchResponse response = provider.search(new WebSearchRequest(
+            "OpenAI Codex",
+            1,
+            List.of(),
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            false
+        ));
+
+        assertEquals(1, response.results().size());
+        assertEquals("Codex | AI Coding Partner from OpenAI | OpenAI", response.results().getFirst().title());
+        assertEquals("https://openai.com/codex/", response.results().getFirst().url());
+        assertEquals(Optional.of("OpenAI Codex is an AI coding partner."), response.results().getFirst().content());
+        assertTrue(response.results().getFirst().publishedAt().isPresent());
+    }
+
+    @Test
+    void mapsMultiplePlainTextResultsSeparatedByDivider() {
+        RecordingHttpTransport transport = new RecordingHttpTransport();
+        transport.responseBody = """
+            event: message
+            data: {"jsonrpc":"2.0","id":"lypi-1","result":{"content":[{"type":"text","text":"Title: Codex | AI Coding Partner from OpenAI | OpenAI\\nURL: https://openai.com/codex/\\nPublished: N/A\\nAuthor: N/A\\nHighlights:\\nCodex product page\\n...\\nA coding agent that helps you build and ship with AI.\\n\\n---\\n\\nTitle: Codex | OpenAI Developers\\nURL: https://developers.openai.com/codex\\nPublished: N/A\\nAuthor: N/A\\nHighlights:\\n# Codex\\n\\nCodex is OpenAI's coding agent for software development."}]}}
+
+            """;
+        ExaWebSearchProvider provider = provider(transport);
+
+        WebSearchResponse response = provider.search(new WebSearchRequest(
+            "OpenAI Codex",
+            2,
+            List.of(),
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            false
+        ));
+
+        assertEquals(2, response.results().size());
+        assertEquals("Codex | AI Coding Partner from OpenAI | OpenAI", response.results().get(0).title());
+        assertEquals("https://openai.com/codex/", response.results().get(0).url());
+        assertEquals(Optional.of("Codex product page\nA coding agent that helps you build and ship with AI."), response.results().get(0).content());
+        assertTrue(response.results().get(0).publishedAt().isEmpty());
+        assertEquals("Codex | OpenAI Developers", response.results().get(1).title());
+        assertEquals("https://developers.openai.com/codex", response.results().get(1).url());
+        assertEquals(Optional.of("# Codex\nCodex is OpenAI's coding agent for software development."), response.results().get(1).content());
+    }
+
+    @Test
+    void keepsReservedLabelsInsidePlainTextBody() {
+        RecordingHttpTransport transport = new RecordingHttpTransport();
+        transport.responseBody = """
+            event: message
+            data: {"jsonrpc":"2.0","id":"lypi-1","result":{"content":[{"type":"text","text":"Title: Original Result\\nURL: https://example.com/original\\nPublished: N/A\\nAuthor: N/A\\nHighlights:\\nTitle: this line is part of the page body\\nURL: https://example.com/body-link"}]}}
+
+            """;
+        ExaWebSearchProvider provider = provider(transport);
+
+        WebSearchResponse response = provider.search(new WebSearchRequest(
+            "reserved labels",
+            1,
+            List.of(),
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            false
+        ));
+
+        assertEquals(1, response.results().size());
+        assertEquals("Original Result", response.results().getFirst().title());
+        assertEquals("https://example.com/original", response.results().getFirst().url());
+        assertEquals(
+            Optional.of("Title: this line is part of the page body\nURL: https://example.com/body-link"),
+            response.results().getFirst().content()
+        );
+    }
+
+    @Test
     void usesConfiguredEndpoint() {
         RecordingHttpTransport transport = new RecordingHttpTransport();
         ExaWebSearchProvider provider = new ExaWebSearchProvider(
