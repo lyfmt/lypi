@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.web.WebSearchResponse;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -63,6 +64,44 @@ final class WebProviderRegistryTest {
         );
 
         assertEquals(List.of("brave", "perplexity", "tavily"), registry.searchProviderNames());
+    }
+
+    @Test
+    void returnsFallbackProviderWithDefaultFirstThenRegistrationOrder() {
+        FakeSearchProvider tavily = new FakeSearchProvider("tavily");
+        FakeSearchProvider brave = new FakeSearchProvider("brave");
+        FakeSearchProvider perplexity = new FakeSearchProvider("perplexity");
+        Map<String, WebSearchProvider> providers = new LinkedHashMap<>();
+        providers.put("brave", brave);
+        providers.put("tavily", tavily);
+        providers.put("perplexity", perplexity);
+        WebProviderRegistry registry = new WebProviderRegistry("tavily", providers);
+
+        WebSearchResponse response = registry.fallbackSearchProvider(Optional.empty()).search(new WebSearchRequest(
+            "java",
+            5,
+            List.of(),
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            false
+        ));
+
+        assertEquals("tavily", response.provider());
+    }
+
+    @Test
+    void requestedFallbackProviderReturnsOnlyRequestedProvider() {
+        FakeSearchProvider tavily = new FakeSearchProvider("tavily");
+        FakeSearchProvider brave = new FakeSearchProvider("brave");
+        WebProviderRegistry registry = new WebProviderRegistry(
+            "tavily",
+            Map.of("tavily", tavily, "brave", brave)
+        );
+
+        assertSame(brave, registry.fallbackSearchProvider(Optional.of("brave")));
     }
 
     private record FakeSearchProvider(String name) implements WebSearchProvider {

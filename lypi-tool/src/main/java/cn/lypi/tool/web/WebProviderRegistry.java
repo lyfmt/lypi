@@ -36,6 +36,27 @@ public final class WebProviderRegistry {
     }
 
     /**
+     * 返回默认搜索 provider 及其 fallback 链。
+     */
+    public WebSearchProvider fallbackSearchProvider(Optional<String> requestedProvider) {
+        if (requestedProvider != null && requestedProvider.isPresent()) {
+            return searchProvider(requestedProvider);
+        }
+        List<WebSearchProvider> providers = new ArrayList<>();
+        String defaultName = defaultSearchProvider();
+        WebSearchProvider defaultSearchProvider = searchProviders.get(defaultName);
+        if (defaultSearchProvider != null) {
+            providers.add(defaultSearchProvider);
+        }
+        searchProviders.forEach((name, provider) -> {
+            if (!name.equals(defaultName)) {
+                providers.add(provider);
+            }
+        });
+        return new FallbackWebSearchProvider(providers);
+    }
+
+    /**
      * 返回可用搜索 provider 名称。
      */
     public List<String> searchProviderNames() {

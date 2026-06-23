@@ -171,6 +171,44 @@ final class WebSearchToolTest {
         assertFalse(store.wasSaved());
     }
 
+    @Test
+    void fallsBackWhenDefaultProviderFails() {
+        WebSearchTool tool = new WebSearchTool(new WebProviderRegistry(
+            "tavily",
+            Map.of(
+                "tavily", new FailingSearchProvider(),
+                "brave", new NamedSuccessSearchProvider("brave")
+            )
+        ));
+
+        ToolResult<String> result = tool.execute(Map.of("query", "java"), context(PermissionMode.BYPASS), progress -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("provider=brave"));
+    }
+
+    @Test
+    void doesNotFallbackWhenProviderWasRequested() {
+        WebSearchTool tool = new WebSearchTool(new WebProviderRegistry(
+            "brave",
+            Map.of(
+                "tavily", new FailingSearchProvider(),
+                "brave", new NamedSuccessSearchProvider("brave")
+            )
+        ));
+
+        ToolResult<String> result = tool.execute(
+            Map.of("query", "java", "provider", "tavily"),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("provider down"));
+    }
+
     private WebProviderRegistry registry(WebSearchProvider provider) {
         return new WebProviderRegistry("tavily", Map.of("tavily", provider));
     }
@@ -211,6 +249,30 @@ final class WebSearchToolTest {
         public WebSearchResponse search(WebSearchRequest request) {
             capturedRequest.set(request);
             return searchResponse(request);
+        }
+    }
+
+    private final class NamedSuccessSearchProvider implements WebSearchProvider {
+        private final String name;
+
+        private NamedSuccessSearchProvider(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public WebSearchResponse search(WebSearchRequest request) {
+            return new WebSearchResponse(
+                name,
+                request.query(),
+                Optional.empty(),
+                List.of(),
+                Optional.empty()
+            );
         }
     }
 

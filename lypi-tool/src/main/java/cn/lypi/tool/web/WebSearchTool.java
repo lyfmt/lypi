@@ -104,7 +104,7 @@ public final class WebSearchTool extends AbstractWebTool {
         try {
             WebSearchRequest request = WebToolInputs.search(input, providers.searchProviderNames(), defaultMaxResults, maxResultsLimit);
             progress.progress(ToolProgress.phase("searching", "搜索 Web"));
-            WebSearchResponse response = providers.searchProvider(request.provider()).search(request);
+            WebSearchResponse response = searchProvider(request).search(request);
             WebStoredResult stored = store.save(storedResult(context, response));
             return success(context, render(response, stored.responseId()));
         } catch (RuntimeException exception) {
@@ -115,6 +115,13 @@ public final class WebSearchTool extends AbstractWebTool {
     @Override
     public String renderForUser(Map<String, Object> input) {
         return "web_search query=" + input.getOrDefault("query", "");
+    }
+
+    private WebSearchProvider searchProvider(WebSearchRequest request) {
+        if (request.provider().isPresent()) {
+            return providers.searchProvider(request.provider());
+        }
+        return providers.fallbackSearchProvider(Optional.empty());
     }
 
     private WebStoredResult storedResult(ToolUseContext context, WebSearchResponse response) {
