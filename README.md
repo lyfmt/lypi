@@ -58,11 +58,15 @@
 | 执行工具 | `bash` |
 | 权限工具 | `request_permissions` |
 
+Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册本地 `web_fetch`；如果至少一个商业 provider API key 可用，还会注册 `web_search`。当前 `web_search` 支持 Tavily、Brave Search 和 Perplexity Search；`web_fetch` 使用本机 HTTP client 抓取公开网页，不依赖商业 provider。
+
 子代理工具在运行层可用时另行注册，包括 `spawn_agent`、`continue_agent`、`wait_agent`、`interrupt_agent`、`read_agent_result`、`read_mailbox`、`accept_mailbox_message`、`stash_mailbox_message`、`discard_mailbox_message` 和 `list_agents`。MCP 工具通过 adapter 映射到内部 `Tool` 契约，并使用规范化名称避免与内建工具直接冲突。
 
 权限判定以 `PermissionRuntimeState` 为中心，包含审批策略、active permission profile、完整 profile、legacy behavior 和兼容用的 `legacyPermissionMode`。`PermissionMode` 仍用于旧配置、旧 JSON 和 UI 展示兼容，新运行时判定优先读取 `PermissionRuntimeState`。
 
 `request_permissions` 用于请求本轮或本会话 additional permissions。`bash` 只有在对应请求已批准后，才应使用 `sandboxPermissions=withAdditionalPermissions` 扩大 managed sandbox 权限。路径安全、Bash 风险、网络策略、显式规则和人工审批都在统一管线中处理；当沙盒策略无法满足时，工具结果会返回可审计的 retry 提示，而不是自动提权。
+
+`web_search` 会把 query 或域名发送给配置的商业 provider；`web_fetch` 会由本机直接访问目标 URL。网络 profile 未启用时，工具级权限检查会进入人工审批而不是静默放行。`web_fetch` 会校验 URL scheme、credential、localhost、loopback、private 和 link-local 地址，避免访问明显的本地或内网地址。
 
 ### 模型适配
 
@@ -140,3 +144,24 @@ java -jar lypi-boot/target/lypi-boot-0.0.1-SNAPSHOT.jar --lypi.runtime.cwd=/tmp/
 ```text
 lypi-boot/src/main/resources/application.yml.example
 ```
+
+启用 Web 工具的最小配置示例：
+
+```properties
+lypi.web.enabled=true
+```
+
+启用商业 `web_search` provider 的配置示例：
+
+```properties
+lypi.web.default-provider=tavily
+lypi.web.timeout-seconds=20
+lypi.web.max-results=10
+lypi.web.providers.tavily.api-key-env=TAVILY_API_KEY
+lypi.web.providers.brave.api-key-env=BRAVE_SEARCH_API_KEY
+lypi.web.providers.perplexity.api-key-env=PERPLEXITY_API_KEY
+```
+
+也可以用 `lypi.web.providers.<provider>.api-key` 直接配置 key；该方式只建议用于本地临时验证，避免把密钥写入仓库或会话记录。单个 provider 可通过 `lypi.web.providers.<provider>.enabled=false` 关闭，或通过 `lypi.web.providers.<provider>.endpoint` 指向代理网关、私有中转或兼容服务。
+
+`web_fetch` 使用本地 HTTP GET 抓取网页，手动处理同 host redirect，并做基础内容清洗：过滤 script/style/noscript/template、HTML 注释和控制字符，归一化空白，支持输出 `markdown` 或 `text`，并按读取上限和 `maxChars` 截断。`web_fetch` 只做静态 URL 字面量防护，会拒绝明显的本地、内网、link-local、unspecified 和 URL credential；当前不做 DNS 解析级防护。

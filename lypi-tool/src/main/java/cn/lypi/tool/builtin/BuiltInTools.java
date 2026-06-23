@@ -19,6 +19,9 @@ import cn.lypi.tool.builtin.subagent.WaitAgentTool;
 import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
+import cn.lypi.tool.web.WebFetchTool;
+import cn.lypi.tool.web.WebProviderRegistry;
+import cn.lypi.tool.web.WebSearchTool;
 import java.util.List;
 import java.util.Objects;
 
@@ -65,6 +68,48 @@ public final class BuiltInTools {
         for (Tool<?, ?> tool : createDefaultTools(executor, sandboxPolicyResolver)) {
             runtime.register(tool);
         }
+    }
+
+    /**
+     * 注册 Web 工具集合。
+     */
+    public static void registerWebTools(ToolRuntimePort runtime, WebProviderRegistry providers) {
+        registerWebTools(runtime, providers, 10);
+    }
+
+    /**
+     * 注册 Web 工具集合。
+     */
+    public static void registerWebTools(ToolRuntimePort runtime, WebProviderRegistry providers, int maxResults) {
+        registerWebSearchTools(runtime, providers, maxResults);
+        registerWebFetchTool(runtime);
+    }
+
+    /**
+     * 注册 Web 搜索工具集合。
+     */
+    public static void registerWebSearchTools(ToolRuntimePort runtime, WebProviderRegistry providers, int maxResults) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        Objects.requireNonNull(providers, "providers must not be null");
+        if (!providers.searchProviderNames().isEmpty()) {
+            runtime.register(new WebSearchTool(providers, maxResults));
+        }
+    }
+
+    /**
+     * 注册本地 Web 抓取工具。
+     */
+    public static void registerWebFetchTool(ToolRuntimePort runtime) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        runtime.register(new WebFetchTool());
+    }
+
+    /**
+     * 注册本地 Web 抓取工具。
+     */
+    public static void registerWebFetchTool(ToolRuntimePort runtime, java.time.Duration timeout) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        runtime.register(new WebFetchTool(timeout));
     }
 
     /**
