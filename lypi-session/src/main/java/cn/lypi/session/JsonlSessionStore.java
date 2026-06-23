@@ -237,6 +237,7 @@ final class JsonlSessionStore {
             }
             SessionHeader header = readHeaderLine(file, headerLine);
             validateHeader(header);
+            validateSessionFileHeader(file, header);
             String leafId = null;
             Instant modified = null;
             int messageCount = 0;
@@ -320,6 +321,13 @@ final class JsonlSessionStore {
     private void validateHeader(SessionHeader header) {
         if (header.version() != SUPPORTED_SESSION_VERSION) {
             throw new SessionEngineException("Unsupported session version: " + header.version());
+        }
+    }
+
+    private void validateSessionFileHeader(Path file, SessionHeader header) {
+        Path expected = sessionFile(header.id());
+        if (!expected.equals(file.toAbsolutePath().normalize())) {
+            throw new SessionEngineException("Session header id does not match file: " + file);
         }
     }
 }

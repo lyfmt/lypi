@@ -221,6 +221,45 @@ class SessionResumeQueryTest {
     }
 
     @Test
+    void sessionsSkipFilesWithUnsafeHeaderIds() throws Exception {
+        SessionManager good = new SessionManagerImpl(tempDir);
+        good.openOrCreate("ses_good");
+        good.append(new MessageEntry("entry_good", null, message("msg_good", MessageRole.USER, "good", NEWER), NEWER));
+        Path badFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_bad_id.jsonl");
+        Files.writeString(
+            badFile,
+            """
+            {"type":"session","version":1,"id":"bad/id","cwd":"%s","parentSessionId":null,"timestamp":"2026-06-10T00:00:00Z"}
+            {"type":"message","id":"entry_bad","parentId":null,"message":{"id":"msg_bad","role":"USER","kind":"TEXT","content":[{"type":"text","text":"bad","metadata":{}}],"timestamp":"2026-06-10T00:00:00Z","usage":null,"stopReason":null},"timestamp":"2026-06-10T00:00:00Z"}
+            """.formatted(tempDir.toString().replace("\\", "\\\\"))
+        );
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).extracting(SessionResumeInfo::sessionId).containsExactly("ses_good");
+    }
+
+    @Test
+    void sessionsSkipFilesWhenHeaderIdDoesNotMatchFileName() {
+        SessionManager good = new SessionManagerImpl(tempDir);
+        good.openOrCreate("ses_good");
+        good.append(new MessageEntry("entry_good", null, message("msg_good", MessageRole.USER, "good", NEWER), NEWER));
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(new SessionHeader("session", 1, "ses_header_id", tempDir, Optional.empty(), OLDER));
+        Path source = store.sessionFile("ses_header_id");
+        Path mismatched = source.resolveSibling("ses_file_id.jsonl");
+        try {
+            Files.move(source, mismatched);
+        } catch (java.io.IOException exception) {
+            throw new AssertionError(exception);
+        }
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).extracting(SessionResumeInfo::sessionId).containsExactly("ses_good");
+    }
+
+    @Test
     void sessionsScanEachFileOnceForResumeInfo() {
         SessionManager manager = new SessionManagerImpl(tempDir);
         manager.openOrCreate("ses_large");
