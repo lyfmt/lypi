@@ -13,9 +13,11 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.StringJoiner;
 import java.util.stream.Stream;
 
 /**
@@ -144,6 +146,33 @@ final class JsonlSessionStore {
     }
 
     /**
+     * 逐文件扫描 resume 所需的轻量 metadata。
+     */
+    List<SessionResumeScan> resumeScans() {
+        if (!Files.isDirectory(sessionsDir)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.list(sessionsDir)) {
+            return files
+                .filter(file -> file.getFileName().toString().endsWith(".jsonl"))
+                .sorted()
+                .map(this::resumeScan)
+                .flatMap(Optional::stream)
+                .toList();
+        } catch (IOException e) {
+            throw new SessionEngineException("Failed to list session resume metadata: " + sessionsDir, e);
+        }
+    }
+
+    Optional<SessionResumeScan> resumeScan(Path file) {
+        try {
+            return Optional.of(readResumeScan(file));
+        } catch (SessionEngineException exception) {
+            return Optional.empty();
+        }
+    }
+
+    /**
      * 追加一条 entry JSONL 行。
      */
     void append(String sessionId, SessionEntry entry) {
@@ -197,6 +226,56 @@ final class JsonlSessionStore {
             return Optional.of(readHeaderFile(file));
         } catch (SessionEngineException exception) {
             return Optional.empty();
+        }
+    }
+
+    private SessionResumeScan readResumeScan(Path file) {
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String headerLine = reader.readLine();
+            if (headerLine == null) {
+                throw new SessionEngineException("Session file is empty: " + file);
+            }
+            SessionHeader header = readHeaderLine(file, headerLine);
+            validateHeader(header);
+            String leafId = null;
+            Instant modified = null;
+            int messageCount = 0;
+            String firstMessage = null;
+            StringJoiner allMessagesText = new StringJoiner(" ");
+            String line;
+            int lineNumber = 1;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (line.isBlank()) {
+                    continue;
+                }
+                SessionEntry entry = readEntryLine(file, line, lineNumber);
+                if (SessionLeafSelector.advancesNavigableLeaf(entry)) {
+                    leafId = entry.id();
+                }
+                if (entry.timestamp() != null && (modified == null || entry.timestamp().isAfter(modified))) {
+                    modified = entry.timestamp();
+                }
+                String text = SessionEntryDisplayText.text(entry);
+                if (!text.isBlank()) {
+                    messageCount++;
+                    if (firstMessage == null) {
+                        firstMessage = text;
+                    }
+                    allMessagesText.add(text);
+                }
+            }
+            return new SessionResumeScan(
+                header,
+                file,
+                leafId,
+                modified == null ? header.timestamp() : modified,
+                messageCount,
+                firstMessage == null ? "(no messages)" : firstMessage,
+                allMessagesText.toString()
+            );
+        } catch (IOException e) {
+            throw new SessionEngineException("Failed to scan session resume metadata: " + file, e);
         }
     }
 

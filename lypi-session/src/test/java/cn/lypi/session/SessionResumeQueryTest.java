@@ -11,7 +11,10 @@ import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
+import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.tui.SessionResumeInfo;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -197,6 +200,83 @@ class SessionResumeQueryTest {
         Files.write(badFile, "{\"type\":\"session\",\"version\":1,\"id\":\"ses_".getBytes(StandardCharsets.UTF_8));
         Files.write(badFile, new byte[] {(byte) 0xC3, (byte) 0x28}, StandardOpenOption.APPEND);
         Files.write(badFile, "\"}\n".getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).extracting(SessionResumeInfo::sessionId).containsExactly("ses_good");
+    }
+
+    @Test
+    void sessionsScanEachFileOnceForResumeInfo() {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        manager.openOrCreate("ses_large");
+        manager.append(new MessageEntry("entry_user", null, message("msg_user", MessageRole.USER, "first", OLDER), OLDER));
+        manager.append(new MessageEntry("entry_assistant", "entry_user", message("msg_assistant", MessageRole.ASSISTANT, "reply", NEWER), NEWER));
+        manager.append(new ModelChangeEntry(
+            "entry_model",
+            "entry_assistant",
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.MEDIUM),
+            "test",
+            NEWER.plusSeconds(1)
+        ));
+
+        List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
+
+        assertThat(sessions).singleElement().satisfies(session -> {
+            assertThat(session.sessionId()).isEqualTo("ses_large");
+            assertThat(session.leafId()).isEqualTo("entry_assistant");
+            assertThat(session.messageCount()).isEqualTo(2);
+            assertThat(session.firstMessage()).isEqualTo("first");
+            assertThat(session.allMessagesText()).contains("first", "reply");
+            assertThat(session.modified()).isEqualTo(NEWER.plusSeconds(1));
+        });
+    }
+
+    @Test
+    void resumeScansCollectMetadataInSinglePass() {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(new SessionHeader("session", 1, "ses_scan", tempDir, Optional.empty(), OLDER));
+        store.append("ses_scan", new MessageEntry("entry_user", null, message("msg_user", MessageRole.USER, "first", OLDER), OLDER));
+        store.append("ses_scan", new MessageEntry("entry_assistant", "entry_user", message("msg_assistant", MessageRole.ASSISTANT, "reply", NEWER), NEWER));
+        store.append("ses_scan", new ModelChangeEntry(
+            "entry_model",
+            "entry_assistant",
+            new ModelSelection("openai", "gpt-5.4", ThinkingLevel.MEDIUM),
+            "test",
+            NEWER.plusSeconds(1)
+        ));
+
+        List<SessionResumeScan> scans = store.resumeScans();
+
+        assertThat(scans).singleElement().satisfies(scan -> {
+            assertThat(scan.header().id()).isEqualTo("ses_scan");
+            assertThat(scan.path()).isEqualTo(store.sessionFile("ses_scan"));
+            assertThat(scan.leafId()).isEqualTo("entry_assistant");
+            assertThat(scan.messageCount()).isEqualTo(2);
+            assertThat(scan.firstMessage()).isEqualTo("first");
+            assertThat(scan.allMessagesText()).contains("first", "reply");
+            assertThat(scan.modified()).isEqualTo(NEWER.plusSeconds(1));
+        });
+    }
+
+    @Test
+    void sessionsSkipMalformedEntriesBeforeLaterUnreadableBytes() throws Exception {
+        SessionManager good = new SessionManagerImpl(tempDir);
+        good.openOrCreate("ses_good");
+        good.append(new MessageEntry("entry_good", null, message("msg_good", MessageRole.USER, "good", NEWER), NEWER));
+
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(new SessionHeader(
+            "session",
+            1,
+            "ses_bad_entry",
+            tempDir,
+            Optional.empty(),
+            OLDER
+        ));
+        Path badFile = store.sessionFile("ses_bad_entry");
+        Files.write(badFile, "{bad json}\n".getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
+        Files.write(badFile, new byte[] {(byte) 0xC3, (byte) 0x28}, StandardOpenOption.APPEND);
 
         List<SessionResumeInfo> sessions = new SessionResumeQuery(tempDir).sessions();
 
