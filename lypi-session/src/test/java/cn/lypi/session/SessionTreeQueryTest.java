@@ -133,4 +133,33 @@ class SessionTreeQueryTest {
             .singleElement()
             .satisfies(child -> assertThat(child.sessionId()).isEqualTo("ses_child"));
     }
+
+    @Test
+    void childrenSkipSessionFilesWithUnsafeHeaderIds() throws Exception {
+        SessionManager parent = new SessionManagerImpl(tempDir);
+        parent.openOrCreate("ses_parent");
+        parent.append(new CustomMessageEntry("entry_root", null, "root", NOW));
+
+        ChildSessionService service = new ChildSessionService(Clock.fixed(NOW, ZoneOffset.UTC));
+        service.create(new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            tempDir,
+            1,
+            Optional.empty(),
+            Optional.empty()
+        ));
+        Path badFile = tempDir.resolve(".ly-pi").resolve("sessions").resolve("ses_bad_id.jsonl");
+        Files.writeString(
+            badFile,
+            """
+            {"type":"session","version":1,"id":"bad/id","cwd":"%s","parentSessionId":"ses_parent","parentSpawnEntryId":"entry_spawn","depth":1,"agentName":null,"agentRole":null,"timestamp":"2026-06-09T00:00:00Z"}
+            """.formatted(tempDir.toString().replace("\\", "\\\\"))
+        );
+
+        assertThat(new SessionTreeQuery(tempDir).children("ses_parent"))
+            .singleElement()
+            .satisfies(child -> assertThat(child.sessionId()).isEqualTo("ses_child"));
+    }
 }

@@ -85,6 +85,18 @@ class SessionJsonlLargeFileTest {
             .hasMessageContaining("Failed to read session file");
     }
 
+    @Test
+    void readRejectsHeaderIdThatDoesNotMatchFileName() throws Exception {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(sessionHeader("ses_header_id"));
+        Path source = store.sessionFile("ses_header_id");
+        Files.move(source, source.resolveSibling("ses_file_id.jsonl"));
+
+        assertThatThrownBy(() -> store.read("ses_file_id"))
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Session header id does not match file");
+    }
+
     private SessionHeader sessionHeader(String id) {
         return new SessionHeader("session", 1, id, tempDir, Optional.empty(), BASE);
     }

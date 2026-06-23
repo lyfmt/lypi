@@ -111,6 +111,7 @@ final class JsonlSessionStore {
             }
             SessionHeader header = readHeaderLine(file, headerLine);
             validateHeader(header);
+            validateSessionFileHeader(file, header);
             List<SessionEntry> entries = new ArrayList<>();
             String line;
             int lineNumber = 1;
@@ -215,6 +216,7 @@ final class JsonlSessionStore {
             }
             SessionHeader header = readHeaderLine(file, line);
             validateHeader(header);
+            validateSessionFileHeader(file, header);
             return header;
         } catch (IOException e) {
             throw new SessionEngineException("Failed to read session header: " + file, e);
