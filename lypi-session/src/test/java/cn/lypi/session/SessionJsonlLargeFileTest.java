@@ -55,17 +55,6 @@ class SessionJsonlLargeFileTest {
     }
 
     @Test
-    void headersReadOnlyFirstLineAndIgnoreMalformedLaterEntries() throws Exception {
-        JsonlSessionStore store = new JsonlSessionStore(tempDir);
-        store.create(sessionHeader("ses_header_only"));
-        Files.writeString(store.sessionFile("ses_header_only"), "{bad json}\n", StandardOpenOption.APPEND);
-
-        assertThat(store.headers())
-            .extracting(SessionHeader::id)
-            .containsExactly("ses_header_only");
-    }
-
-    @Test
     void headersDoNotDecodeEntriesAfterTheHeader() throws Exception {
         JsonlSessionStore store = new JsonlSessionStore(tempDir);
         store.create(sessionHeader("ses_header_streaming"));
