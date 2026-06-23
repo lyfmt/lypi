@@ -63,6 +63,10 @@ public class LyPiWebProperties {
 
     private static Map<String, ProviderProperties> defaultProviders() {
         Map<String, ProviderProperties> defaults = new LinkedHashMap<>();
+        ProviderProperties exa = new ProviderProperties();
+        exa.setEndpoint("https://mcp.exa.ai/mcp");
+        defaults.put("exa", exa);
+
         ProviderProperties tavily = new ProviderProperties();
         tavily.setApiKeyEnv("TAVILY_API_KEY");
         defaults.put("tavily", tavily);

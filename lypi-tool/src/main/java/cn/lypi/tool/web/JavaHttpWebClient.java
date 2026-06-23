@@ -42,7 +42,19 @@ public final class JavaHttpWebClient {
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body == null ? "{}" : body.toString()));
         addHeaders(builder, headers);
-        return send(builder.build());
+        return parseJson(sendText(builder.build()));
+    }
+
+    /**
+     * 发送 JSON POST 请求并返回原始文本。
+     */
+    public String postText(URI uri, Map<String, String> headers, String body) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
+            .timeout(timeout)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body == null ? "{}" : body));
+        addHeaders(builder, headers);
+        return sendText(builder.build());
     }
 
     /**
@@ -53,10 +65,10 @@ public final class JavaHttpWebClient {
             .timeout(timeout)
             .GET();
         addHeaders(builder, headers);
-        return send(builder.build());
+        return parseJson(sendText(builder.build()));
     }
 
-    private JsonNode send(HttpRequest request) {
+    private String sendText(HttpRequest request) {
         try {
             HttpResponse<String> response = transport.send(request);
             int status = response.statusCode();
@@ -69,12 +81,20 @@ public final class JavaHttpWebClient {
             if (status < 200 || status >= 300) {
                 throw new WebProviderException("provider HTTP " + status + "。");
             }
-            return objectMapper.readTree(response.body() == null ? "{}" : response.body());
-        } catch (IOException exception) {
-            throw new WebProviderException("provider 响应解析失败: " + exception.getMessage(), exception);
+            return response.body() == null ? "" : response.body();
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new WebProviderException("provider 请求被中断。", exception);
+        } catch (IOException exception) {
+            throw new WebProviderException("provider 请求失败: " + exception.getMessage(), exception);
+        }
+    }
+
+    private JsonNode parseJson(String body) {
+        try {
+            return objectMapper.readTree(body == null || body.isBlank() ? "{}" : body);
+        } catch (IOException exception) {
+            throw new WebProviderException("provider 响应解析失败: " + exception.getMessage(), exception);
         }
     }
 

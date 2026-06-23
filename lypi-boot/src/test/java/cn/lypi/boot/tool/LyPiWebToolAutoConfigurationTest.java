@@ -42,7 +42,7 @@ final class LyPiWebToolAutoConfigurationTest {
     }
 
     @Test
-    void registersLocalFetchWhenEnabledWithoutProviderKey() {
+    void registersExaSearchAndLocalFetchWhenEnabledWithoutProviderKey() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withPropertyValues("lypi.web.enabled=true")
@@ -50,7 +50,7 @@ final class LyPiWebToolAutoConfigurationTest {
             .run(context -> {
                 ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
 
-                assertThat(runtime.resolve("web_search")).isEmpty();
+                assertThat(runtime.resolve("web_search")).isPresent();
                 assertThat(runtime.resolve("web_fetch")).isPresent();
                 assertThat(runtime.resolve("get_search_content")).isPresent();
             });
@@ -120,7 +120,26 @@ final class LyPiWebToolAutoConfigurationTest {
             .withPropertyValues(
                 "lypi.web.enabled=true",
                 "lypi.web.providers.tavily.enabled=false",
-                "lypi.web.providers.tavily.api-key=test-key"
+                "lypi.web.providers.tavily.api-key=test-key",
+                "lypi.web.providers.exa.enabled=false"
+            )
+            .withBean(SecurityRuntimePort.class, () -> LyPiWebToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(runtime.resolve("web_search")).isEmpty();
+                assertThat(runtime.resolve("web_fetch")).isPresent();
+                assertThat(runtime.resolve("get_search_content")).isPresent();
+            });
+    }
+
+    @Test
+    void exaCanBeDisabledWithoutCommercialProviderKeys() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues(
+                "lypi.web.enabled=true",
+                "lypi.web.providers.exa.enabled=false"
             )
             .withBean(SecurityRuntimePort.class, () -> LyPiWebToolAutoConfigurationTest::allowAllSecurity)
             .run(context -> {

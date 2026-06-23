@@ -41,6 +41,7 @@ import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
 import cn.lypi.tool.web.BraveWebSearchProvider;
+import cn.lypi.tool.web.ExaWebSearchProvider;
 import cn.lypi.tool.web.FileWebResultStore;
 import cn.lypi.tool.web.JavaHttpWebClient;
 import cn.lypi.tool.web.PerplexityWebSearchProvider;
@@ -443,6 +444,9 @@ public class LyPiToolAutoConfiguration {
             properties.getTimeout() == null ? Duration.ofSeconds(20) : properties.getTimeout()
         );
         Map<String, WebSearchProvider> searchProviders = new LinkedHashMap<>();
+        if (providerEnabled(properties, "exa")) {
+            searchProviders.put("exa", new ExaWebSearchProvider(client, objectMapper, endpoint(properties, "exa")));
+        }
         apiKey(properties, environment, "tavily").ifPresent(apiKey -> {
             TavilyWebProvider tavily = new TavilyWebProvider(
                 client,
@@ -465,6 +469,11 @@ public class LyPiToolAutoConfiguration {
             return Optional.empty();
         }
         return Optional.of(new WebProviderRegistry(properties.getDefaultProvider(), searchProviders));
+    }
+
+    private boolean providerEnabled(LyPiWebProperties properties, String providerName) {
+        LyPiWebProperties.ProviderProperties provider = properties.getProviders().get(providerName);
+        return provider != null && provider.isEnabled();
     }
 
     private Optional<String> apiKey(LyPiWebProperties properties, Environment environment, String providerName) {
