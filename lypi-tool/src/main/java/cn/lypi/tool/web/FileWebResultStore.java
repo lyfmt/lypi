@@ -102,19 +102,9 @@ public final class FileWebResultStore implements WebResultStore {
     }
 
     private <T> T readWithLock(StoreOperation<T> operation) {
-        if (!Files.isRegularFile(storeFile)) {
-            return operationWithoutFile(operation);
-        }
         try {
+            Files.createDirectories(storeFile.getParent());
             return withStoreLock(operation);
-        } catch (IOException exception) {
-            throw new IllegalStateException("Web 结果缓存读取失败: " + exception.getMessage(), exception);
-        }
-    }
-
-    private <T> T operationWithoutFile(StoreOperation<T> operation) {
-        try {
-            return operation.run();
         } catch (IOException exception) {
             throw new IllegalStateException("Web 结果缓存读取失败: " + exception.getMessage(), exception);
         }

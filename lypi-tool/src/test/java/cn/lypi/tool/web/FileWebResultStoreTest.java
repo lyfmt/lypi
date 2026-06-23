@@ -104,6 +104,16 @@ final class FileWebResultStoreTest {
     }
 
     @Test
+    void emptyCacheReadsUseStoreLock() {
+        FileWebResultStore store = new FileWebResultStore(tempDir, () -> Instant.parse("2026-06-23T00:00:00Z"));
+
+        Optional<WebStoredResult> missing = store.findByResponseId("session-a", "web_20260623_000001");
+
+        assertTrue(missing.isEmpty());
+        assertTrue(Files.exists(tempDir.resolve(".ly-pi/web-results.jsonl.lock")));
+    }
+
+    @Test
     void assignsUniqueResponseIdsAcrossConcurrentStoreInstances() throws Exception {
         FileWebResultStore firstStore = new FileWebResultStore(tempDir, () -> Instant.parse("2026-06-23T00:00:00Z"));
         FileWebResultStore secondStore = new FileWebResultStore(tempDir, () -> Instant.parse("2026-06-23T00:00:00Z"));
