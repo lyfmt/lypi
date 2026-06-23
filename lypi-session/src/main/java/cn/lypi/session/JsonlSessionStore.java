@@ -6,7 +6,9 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.CodingErrorAction;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -206,7 +208,12 @@ final class JsonlSessionStore {
             if (length > 0 && bytes[length - 1] == '\r') {
                 length--;
             }
-            return new String(bytes, 0, length, StandardCharsets.UTF_8);
+            return StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes, 0, length))
+                .toString();
         }
     }
 

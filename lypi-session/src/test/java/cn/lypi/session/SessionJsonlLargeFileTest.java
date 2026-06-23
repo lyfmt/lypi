@@ -66,6 +66,25 @@ class SessionJsonlLargeFileTest {
             .containsExactly("ses_header_streaming");
     }
 
+    @Test
+    void headersRejectMalformedUtf8InsideHeaderLine() throws Exception {
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        Path file = store.sessionFile("ses_bad_header");
+        Files.createDirectories(file.getParent());
+        Files.write(file, "{\"type\":\"session\",\"version\":1,\"id\":\"ses_".getBytes(StandardCharsets.UTF_8));
+        Files.write(file, new byte[] {(byte) 0xC3, (byte) 0x28}, StandardOpenOption.APPEND);
+        Files.write(
+            file,
+            ("\",\"cwd\":\"" + tempDir + "\",\"parentSessionId\":null,\"timestamp\":\"2026-06-23T00:00:00Z\"}\n")
+                .getBytes(StandardCharsets.UTF_8),
+            StandardOpenOption.APPEND
+        );
+
+        assertThatThrownBy(store::headers)
+            .isInstanceOf(SessionEngineException.class)
+            .hasMessageContaining("Failed to read session header");
+    }
+
     private SessionHeader sessionHeader(String id) {
         return new SessionHeader("session", 1, id, tempDir, Optional.empty(), BASE);
     }
