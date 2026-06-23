@@ -24,6 +24,8 @@ Shared entry records and views live in `lypi-contracts/src/main/java/cn/lypi/con
 - `lypi-session/src/main/java/cn/lypi/session/ForkService.java`
 - `lypi-session/src/main/java/cn/lypi/session/ChildSessionService.java`
 - `lypi-session/src/main/java/cn/lypi/session/SessionResumeQuery.java`
+- `lypi-session/src/main/java/cn/lypi/session/SessionResumeScan.java`
+- `lypi-session/src/main/java/cn/lypi/session/SessionEntryDisplayText.java`
 - `lypi-session/src/main/java/cn/lypi/session/SessionBranchTreeQuery.java`
 - `lypi-session/src/main/java/cn/lypi/session/SessionFileQuery.java`
 - `lypi-session/src/main/java/cn/lypi/session/GitDiffQuery.java`
@@ -48,6 +50,9 @@ Shared entry records and views live in `lypi-contracts/src/main/java/cn/lypi/con
 ## Invariants
 
 - Entries have stable `id` and `parentId`; branching is represented by parent links.
+- JSONL full reads must parse line by line; header/list queries must read only the header line.
+- Resume queries use `JsonlSessionStore.resumeScans()` lightweight metadata scans, bounded by `MAX_CONCURRENT_SESSION_INFO_LOADS`, and must not full replay every session.
+- Header `id` must match the JSONL file name; list/resume paths skip unreadable or mismatched files, while direct reads fail loudly.
 - `switchLeaf()` moves the view only; it does not rewrite transcript.
 - `MessageEntry`, `BranchSummaryEntry`, `CustomMessageEntry`, and `CompactionEntry` can affect model-visible context.
 - Model, thinking, agent mode and permission runtime state are restored from entry history or child session header defaults.
@@ -83,7 +88,7 @@ Shared entry records and views live in `lypi-contracts/src/main/java/cn/lypi/con
 | New entry type | `lypi-contracts/src/main/java/cn/lypi/contracts/session/`, `SessionJsonMapper`, replay tests |
 | Change context reconstruction | `SessionReplayProjector`, `SessionManagerReplayTest` |
 | Change branch selection | `EntryTreeIndex`, `SessionLeafSelector`, branch query tests |
-| Change resume UI data | `SessionResumeQuery`, `SessionBranchTreeQuery`, TUI contract tests |
+| Change resume UI data | `SessionResumeQuery`, `SessionResumeScan`, `SessionEntryDisplayText`, `SessionBranchTreeQuery`, TUI contract tests |
 | Change child session metadata | `ChildSessionService`, subagent runtime tests |
 | Change permission runtime replay | `PermissionRuntimeStateChangeEntry`, `SessionReplayProjector`, contracts serialization tests |
 
