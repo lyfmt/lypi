@@ -59,8 +59,6 @@ class SessionJsonlLargeFileTest {
         JsonlSessionStore store = new JsonlSessionStore(tempDir);
         store.create(sessionHeader("ses_header_streaming"));
         Path file = store.sessionFile("ses_header_streaming");
-        Files.write(file, "{bad json}\n".getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
-        Files.write(file, " ".repeat(20_000).getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
         Files.write(file, new byte[] {(byte) 0xC3, (byte) 0x28}, StandardOpenOption.APPEND);
 
         assertThat(store.headers())

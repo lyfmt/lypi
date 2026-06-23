@@ -3,7 +3,9 @@ package cn.lypi.session;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -173,8 +175,8 @@ final class JsonlSessionStore {
     }
 
     private SessionHeader readHeaderFile(Path file) {
-        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            String line = reader.readLine();
+        try {
+            String line = readFirstLine(file);
             if (line == null) {
                 throw new SessionEngineException("Session file is empty: " + file);
             }
@@ -183,6 +185,28 @@ final class JsonlSessionStore {
             return header;
         } catch (IOException e) {
             throw new SessionEngineException("Failed to read session header: " + file, e);
+        }
+    }
+
+    private String readFirstLine(Path file) throws IOException {
+        try (InputStream input = Files.newInputStream(file)) {
+            ByteArrayOutputStream line = new ByteArrayOutputStream();
+            int value;
+            while ((value = input.read()) != -1) {
+                if (value == '\n') {
+                    break;
+                }
+                line.write(value);
+            }
+            if (value == -1 && line.size() == 0) {
+                return null;
+            }
+            byte[] bytes = line.toByteArray();
+            int length = bytes.length;
+            if (length > 0 && bytes[length - 1] == '\r') {
+                length--;
+            }
+            return new String(bytes, 0, length, StandardCharsets.UTF_8);
         }
     }
 
