@@ -34,7 +34,7 @@ final class SessionLeafSelector {
         return null;
     }
 
-    private static boolean advancesNavigableLeaf(SessionEntry entry) {
+    static boolean advancesNavigableLeaf(SessionEntry entry) {
         return !isToolCallAssistant(entry)
             && !isToolResult(entry)
             && !(entry instanceof AgentLifecycleEntry)
