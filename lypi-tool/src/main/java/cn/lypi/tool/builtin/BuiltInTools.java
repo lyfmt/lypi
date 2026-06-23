@@ -102,9 +102,10 @@ public final class BuiltInTools {
         WebResultStore store,
         int maxResults
     ) {
-        registerWebSearchTools(runtime, providers, maxResults);
-        registerWebFetchTool(runtime);
-        registerWebContentTools(runtime, store);
+        WebResultStore resolvedStore = store == null ? WebResultStore.noop() : store;
+        registerWebSearchTools(runtime, providers, resolvedStore, maxResults);
+        registerWebFetchTool(runtime, resolvedStore);
+        registerWebContentTools(runtime, resolvedStore);
     }
 
     /**
@@ -119,10 +120,22 @@ public final class BuiltInTools {
      * 注册 Web 搜索工具集合。
      */
     public static void registerWebSearchTools(ToolRuntimePort runtime, WebProviderRegistry providers, int maxResults) {
+        registerWebSearchTools(runtime, providers, WebResultStore.noop(), maxResults);
+    }
+
+    /**
+     * 注册 Web 搜索工具集合。
+     */
+    public static void registerWebSearchTools(
+        ToolRuntimePort runtime,
+        WebProviderRegistry providers,
+        WebResultStore store,
+        int maxResults
+    ) {
         Objects.requireNonNull(runtime, "runtime must not be null");
         Objects.requireNonNull(providers, "providers must not be null");
         if (!providers.searchProviderNames().isEmpty()) {
-            runtime.register(new WebSearchTool(providers, maxResults));
+            runtime.register(new WebSearchTool(providers, store == null ? WebResultStore.noop() : store, maxResults, maxResults));
         }
     }
 
@@ -137,9 +150,32 @@ public final class BuiltInTools {
     /**
      * 注册本地 Web 抓取工具。
      */
-    public static void registerWebFetchTool(ToolRuntimePort runtime, java.time.Duration timeout) {
+    public static void registerWebFetchTool(ToolRuntimePort runtime, WebResultStore store) {
         Objects.requireNonNull(runtime, "runtime must not be null");
-        runtime.register(new WebFetchTool(timeout));
+        runtime.register(new WebFetchTool(
+            new cn.lypi.tool.web.JdkWebPageFetcher(java.time.Duration.ofSeconds(20)),
+            new cn.lypi.tool.web.WebContentCleaner(),
+            store == null ? WebResultStore.noop() : store
+        ));
+    }
+
+    /**
+     * 注册本地 Web 抓取工具。
+     */
+    public static void registerWebFetchTool(ToolRuntimePort runtime, java.time.Duration timeout) {
+        registerWebFetchTool(runtime, timeout, WebResultStore.noop());
+    }
+
+    /**
+     * 注册本地 Web 抓取工具。
+     */
+    public static void registerWebFetchTool(ToolRuntimePort runtime, java.time.Duration timeout, WebResultStore store) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        runtime.register(new WebFetchTool(
+            new cn.lypi.tool.web.JdkWebPageFetcher(timeout),
+            new cn.lypi.tool.web.WebContentCleaner(),
+            store == null ? WebResultStore.noop() : store
+        ));
     }
 
     /**

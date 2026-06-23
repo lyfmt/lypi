@@ -7,10 +7,12 @@ import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.time.Instant;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * 抽取 URL 内容。
@@ -18,22 +20,28 @@ import java.util.Objects;
 public final class WebFetchTool extends AbstractWebTool {
     private final WebPageFetcher fetcher;
     private final WebContentCleaner cleaner;
+    private final WebResultStore store;
 
     public WebFetchTool() {
-        this(new JdkWebPageFetcher(Duration.ofSeconds(20)), new WebContentCleaner());
+        this(new JdkWebPageFetcher(Duration.ofSeconds(20)), new WebContentCleaner(), WebResultStore.noop());
     }
 
     public WebFetchTool(Duration timeout) {
-        this(new JdkWebPageFetcher(timeout), new WebContentCleaner());
+        this(new JdkWebPageFetcher(timeout), new WebContentCleaner(), WebResultStore.noop());
     }
 
     WebFetchTool(WebPageFetcher fetcher) {
-        this(fetcher, new WebContentCleaner());
+        this(fetcher, new WebContentCleaner(), WebResultStore.noop());
     }
 
     WebFetchTool(WebPageFetcher fetcher, WebContentCleaner cleaner) {
+        this(fetcher, cleaner, WebResultStore.noop());
+    }
+
+    public WebFetchTool(WebPageFetcher fetcher, WebContentCleaner cleaner, WebResultStore store) {
         this.fetcher = Objects.requireNonNull(fetcher, "fetcher must not be null");
         this.cleaner = Objects.requireNonNull(cleaner, "cleaner must not be null");
+        this.store = store == null ? WebResultStore.noop() : store;
     }
 
     @Override
@@ -95,7 +103,8 @@ public final class WebFetchTool extends AbstractWebTool {
                 request.query(),
                 request.maxChars()
             );
-            return success(context, render(fetched, content, request));
+            WebStoredResult stored = store.save(storedResult(context, fetched, content, request));
+            return success(context, render(fetched, content, request, stored.responseId()));
         } catch (RuntimeException exception) {
             return error(context, "Web 抽取失败: " + exception.getMessage());
         }
@@ -109,15 +118,43 @@ public final class WebFetchTool extends AbstractWebTool {
     private String render(
         WebPageFetchResult fetched,
         WebContentCleaner.CleanedContent content,
-        WebFetchRequest request
+        WebFetchRequest request,
+        String responseId
     ) {
         StringBuilder builder = new StringBuilder();
-        builder.append("source=local");
+        builder.append("responseId=").append(responseId);
+        builder.append("\nsource=local");
         builder.append("\nurl=").append(request.url());
         builder.append("\nfinalUrl=").append(fetched.finalUrl());
         content.title().ifPresent(title -> builder.append("\ntitle=").append(title));
         builder.append("\nformat=").append(request.format());
         builder.append("\ncontent:\n").append(content.content());
         return builder.toString();
+    }
+
+    private WebStoredResult storedResult(
+        ToolUseContext context,
+        WebPageFetchResult fetched,
+        WebContentCleaner.CleanedContent content,
+        WebFetchRequest request
+    ) {
+        return new WebStoredResult(
+            context.sessionId(),
+            context.messageId(),
+            "",
+            name(),
+            request.query(),
+            Optional.of(request.url()),
+            List.of(new WebStoredItem(
+                fetched.finalUrl(),
+                content.title(),
+                Optional.empty(),
+                content.content(),
+                Optional.of(request.format()),
+                false,
+                Optional.of("local")
+            )),
+            Instant.now()
+        );
     }
 }

@@ -26,6 +26,7 @@ import cn.lypi.tool.web.WebResultStore;
 import cn.lypi.tool.web.WebSearchProvider;
 import cn.lypi.contracts.web.WebSearchResponse;
 import cn.lypi.tool.DefaultToolRuntime;
+import cn.lypi.tool.web.WebStoredResult;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -148,6 +149,37 @@ class BuiltInToolsTest {
     }
 
     @Test
+    void registeredWebSearchUsesProvidedResultStore() {
+        DefaultToolRuntime runtime = new DefaultToolRuntime((request, context) ->
+            new PermissionDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.TOOL_SPECIFIC,
+                "allowed",
+                Optional.<PermissionUpdate>empty(),
+                Map.of()
+            )
+        );
+        RecordingWebResultStore store = new RecordingWebResultStore();
+
+        BuiltInTools.registerWebTools(
+            runtime,
+            new WebProviderRegistry("test", Map.of("test", searchProvider())),
+            store
+        );
+        @SuppressWarnings("unchecked")
+        Tool<Map<String, Object>, String> tool = (Tool<Map<String, Object>, String>) runtime.resolve("web_search").orElseThrow();
+
+        tool.execute(
+            Map.of("query", "java"),
+            new cn.lypi.contracts.tool.ToolUseContext("session", "message", java.nio.file.Path.of("."), Map.of("toolUseId", "toolu_1")),
+            progress -> {
+            }
+        );
+
+        assertTrue(store.wasSaved());
+    }
+
+    @Test
     void createsSubagentToolSetWithAgentRegistryTools() {
         List<Tool<?, ?>> subagentTools = BuiltInTools.createSubagentTools(agentCenter(), mailbox(), agentRegistry());
 
@@ -197,6 +229,39 @@ class BuiltInToolsTest {
                 return new WebSearchResponse("test", request.query(), Optional.empty(), List.of(), Optional.empty());
             }
         };
+    }
+
+    private static final class RecordingWebResultStore implements WebResultStore {
+        private WebStoredResult saved;
+
+        @Override
+        public WebStoredResult save(WebStoredResult result) {
+            saved = new WebStoredResult(
+                result.sessionId(),
+                result.messageId(),
+                "web_1",
+                result.sourceTool(),
+                result.query(),
+                result.url(),
+                result.items(),
+                result.createdAt()
+            );
+            return saved;
+        }
+
+        @Override
+        public Optional<WebStoredResult> findByResponseId(String sessionId, String responseId) {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<WebStoredResult> findLatestByQuery(String sessionId, String query) {
+            return Optional.empty();
+        }
+
+        private boolean wasSaved() {
+            return saved != null;
+        }
     }
 
     private AgentCenterPort agentCenter() {

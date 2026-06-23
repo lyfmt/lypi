@@ -136,14 +136,39 @@ final class WebSearchToolTest {
     }
 
     @Test
+    void storesSearchResultAndRendersResponseId() {
+        RecordingWebResultStore store = new RecordingWebResultStore("web_1");
+        WebSearchTool tool = new WebSearchTool(registry(successProvider()), store);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("query", "java", "maxResults", 1),
+            context(PermissionMode.BYPASS),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("responseId=web_1"));
+        assertEquals("session", store.saved().sessionId());
+        assertEquals("message", store.saved().messageId());
+        assertEquals("web_search", store.saved().sourceTool());
+        assertEquals(Optional.of("java"), store.saved().query());
+        assertEquals("https://example.com", store.saved().items().getFirst().url());
+        assertEquals(Optional.of("Example"), store.saved().items().getFirst().title());
+        assertEquals("snippet", store.saved().items().getFirst().content());
+    }
+
+    @Test
     void providerFailureReturnsToolError() {
-        WebSearchTool tool = new WebSearchTool(registry(new FailingSearchProvider()));
+        RecordingWebResultStore store = new RecordingWebResultStore("web_1");
+        WebSearchTool tool = new WebSearchTool(registry(new FailingSearchProvider()), store);
 
         ToolResult<String> result = tool.execute(Map.of("query", "java"), context(PermissionMode.BYPASS), progress -> {
         });
 
         assertTrue(result.isError());
         assertTrue(result.output().contains("provider down"));
+        assertFalse(store.wasSaved());
     }
 
     private WebProviderRegistry registry(WebSearchProvider provider) {
@@ -244,5 +269,38 @@ final class WebSearchToolTest {
                 )
             )
         );
+    }
+
+    private static final class RecordingWebResultStore implements WebResultStore {
+        private final String responseId;
+        private WebStoredResult saved;
+
+        private RecordingWebResultStore(String responseId) {
+            this.responseId = responseId;
+        }
+
+        @Override
+        public WebStoredResult save(WebStoredResult result) {
+            saved = result.withResponseId(responseId);
+            return saved;
+        }
+
+        @Override
+        public Optional<WebStoredResult> findByResponseId(String sessionId, String responseId) {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<WebStoredResult> findLatestByQuery(String sessionId, String query) {
+            return Optional.empty();
+        }
+
+        private boolean wasSaved() {
+            return saved != null;
+        }
+
+        private WebStoredResult saved() {
+            return saved;
+        }
     }
 }

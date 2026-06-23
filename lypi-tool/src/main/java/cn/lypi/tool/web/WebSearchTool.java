@@ -9,8 +9,11 @@ import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.web.WebSearchResponse;
 import cn.lypi.contracts.web.WebSearchResult;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * 执行商业 Web 搜索。
@@ -20,19 +23,34 @@ public final class WebSearchTool extends AbstractWebTool {
     private static final int DEFAULT_MAX_RESULTS_LIMIT = 10;
 
     private final WebProviderRegistry providers;
+    private final WebResultStore store;
     private final int defaultMaxResults;
     private final int maxResultsLimit;
 
     public WebSearchTool(WebProviderRegistry providers) {
-        this(providers, DEFAULT_MAX_RESULTS, DEFAULT_MAX_RESULTS_LIMIT);
+        this(providers, WebResultStore.noop(), DEFAULT_MAX_RESULTS, DEFAULT_MAX_RESULTS_LIMIT);
+    }
+
+    public WebSearchTool(WebProviderRegistry providers, WebResultStore store) {
+        this(providers, store, DEFAULT_MAX_RESULTS, DEFAULT_MAX_RESULTS_LIMIT);
     }
 
     public WebSearchTool(WebProviderRegistry providers, int maxResultsLimit) {
-        this(providers, maxResultsLimit, maxResultsLimit);
+        this(providers, WebResultStore.noop(), maxResultsLimit, maxResultsLimit);
     }
 
     public WebSearchTool(WebProviderRegistry providers, int defaultMaxResults, int maxResultsLimit) {
-        this.providers = providers;
+        this(providers, WebResultStore.noop(), defaultMaxResults, maxResultsLimit);
+    }
+
+    public WebSearchTool(
+        WebProviderRegistry providers,
+        WebResultStore store,
+        int defaultMaxResults,
+        int maxResultsLimit
+    ) {
+        this.providers = Objects.requireNonNull(providers, "providers must not be null");
+        this.store = store == null ? WebResultStore.noop() : store;
         this.maxResultsLimit = Math.max(1, maxResultsLimit);
         this.defaultMaxResults = Math.max(1, Math.min(this.maxResultsLimit, defaultMaxResults));
     }
@@ -87,7 +105,8 @@ public final class WebSearchTool extends AbstractWebTool {
             WebSearchRequest request = WebToolInputs.search(input, providers.searchProviderNames(), defaultMaxResults, maxResultsLimit);
             progress.progress(ToolProgress.phase("searching", "搜索 Web"));
             WebSearchResponse response = providers.searchProvider(request.provider()).search(request);
-            return success(context, render(response));
+            WebStoredResult stored = store.save(storedResult(context, response));
+            return success(context, render(response, stored.responseId()));
         } catch (RuntimeException exception) {
             return error(context, "Web 搜索失败: " + exception.getMessage());
         }
@@ -98,9 +117,40 @@ public final class WebSearchTool extends AbstractWebTool {
         return "web_search query=" + input.getOrDefault("query", "");
     }
 
-    private String render(WebSearchResponse response) {
+    private WebStoredResult storedResult(ToolUseContext context, WebSearchResponse response) {
+        return new WebStoredResult(
+            context.sessionId(),
+            context.messageId(),
+            "",
+            name(),
+            Optional.ofNullable(response.query()).filter(query -> !query.isBlank()),
+            Optional.empty(),
+            response.results().stream()
+                .map(this::storedItem)
+                .toList(),
+            Instant.now()
+        );
+    }
+
+    private WebStoredItem storedItem(WebSearchResult result) {
+        String content = result.content()
+            .or(() -> result.snippet())
+            .orElse("");
+        return new WebStoredItem(
+            result.url(),
+            Optional.ofNullable(result.title()).filter(title -> !title.isBlank()),
+            result.snippet(),
+            content,
+            Optional.of("markdown"),
+            false,
+            Optional.of("search")
+        );
+    }
+
+    private String render(WebSearchResponse response, String responseId) {
         StringBuilder builder = new StringBuilder();
-        builder.append("provider=").append(response.provider());
+        builder.append("responseId=").append(responseId);
+        builder.append("\nprovider=").append(response.provider());
         builder.append("\nquery=").append(response.query());
         response.answer().ifPresent(answer -> builder.append("\nanswer=").append(answer));
         builder.append("\nresults:");
