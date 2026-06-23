@@ -173,12 +173,12 @@ final class JsonlSessionStore {
     }
 
     private SessionHeader readHeaderFile(Path file) {
-        try {
-            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            if (lines.isEmpty()) {
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String line = reader.readLine();
+            if (line == null) {
                 throw new SessionEngineException("Session file is empty: " + file);
             }
-            SessionHeader header = readHeaderLine(file, lines.getFirst());
+            SessionHeader header = readHeaderLine(file, line);
             validateHeader(header);
             return header;
         } catch (IOException e) {
