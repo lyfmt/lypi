@@ -1,18 +1,35 @@
 package cn.lypi.transport.tui;
 
+import java.util.Collection;
 import java.util.List;
 
-record TuiRenderFrame(List<String> lines, int chromeLineCount) {
+record TuiRenderFrame(List<TerminalLine> terminalLines, int chromeLineCount) {
     TuiRenderFrame {
-        lines = List.copyOf(lines);
-        chromeLineCount = Math.max(0, Math.min(chromeLineCount, lines.size()));
+        terminalLines = List.copyOf(terminalLines);
+        chromeLineCount = Math.max(0, Math.min(chromeLineCount, terminalLines.size()));
+    }
+
+    TuiRenderFrame(Collection<String> lines, int chromeLineCount) {
+        this(toTerminalLines(lines), chromeLineCount);
+    }
+
+    static TuiRenderFrame fromTextLines(List<String> lines, int chromeLineCount) {
+        return new TuiRenderFrame(toTerminalLines(lines), chromeLineCount);
     }
 
     static TuiRenderFrame transcriptOnly(List<String> lines) {
-        return new TuiRenderFrame(lines, 0);
+        return fromTextLines(lines, 0);
+    }
+
+    List<String> lines() {
+        return terminalLines.stream().map(TerminalLine::text).toList();
     }
 
     int transcriptLineCount() {
-        return lines.size() - chromeLineCount;
+        return terminalLines.size() - chromeLineCount;
+    }
+
+    private static List<TerminalLine> toTerminalLines(Collection<String> lines) {
+        return lines.stream().map(TerminalLine::new).toList();
     }
 }
