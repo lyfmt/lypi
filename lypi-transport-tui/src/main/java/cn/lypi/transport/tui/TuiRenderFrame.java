@@ -1,16 +1,11 @@
 package cn.lypi.transport.tui;
 
-import java.util.Collection;
 import java.util.List;
 
 record TuiRenderFrame(List<TerminalLine> terminalLines, int chromeLineCount) {
     TuiRenderFrame {
         terminalLines = List.copyOf(terminalLines);
         chromeLineCount = Math.max(0, Math.min(chromeLineCount, terminalLines.size()));
-    }
-
-    TuiRenderFrame(Collection<String> lines, int chromeLineCount) {
-        this(toTerminalLines(lines), chromeLineCount);
     }
 
     static TuiRenderFrame fromTextLines(List<String> lines, int chromeLineCount) {
@@ -29,7 +24,7 @@ record TuiRenderFrame(List<TerminalLine> terminalLines, int chromeLineCount) {
         return terminalLines.size() - chromeLineCount;
     }
 
-    private static List<TerminalLine> toTerminalLines(Collection<String> lines) {
+    private static List<TerminalLine> toTerminalLines(List<String> lines) {
         return lines.stream().map(TerminalLine::new).toList();
     }
 }

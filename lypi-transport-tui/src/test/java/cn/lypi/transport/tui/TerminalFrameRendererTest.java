@@ -170,9 +170,9 @@ class TerminalFrameRendererTest {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
-        renderer.render(new TuiRenderFrame(List.of("tool one", "tool two", "status-old"), 0));
+        renderer.render(TuiRenderFrame.fromTextLines(List.of("tool one", "tool two", "status-old"), 0));
         io.output.setLength(0);
-        renderer.render(new TuiRenderFrame(List.of(
+        renderer.render(TuiRenderFrame.fromTextLines(List.of(
             "tool one",
             "tool two",
             "status-updated",
@@ -218,9 +218,9 @@ class TerminalFrameRendererTest {
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
-        renderer.render(new TuiRenderFrame(List.of("one", "two", "> |CURSOR|", "status"), 2));
+        renderer.render(TuiRenderFrame.fromTextLines(List.of("one", "two", "> |CURSOR|", "status"), 2));
         io.output.setLength(0);
-        renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "> |CURSOR|", "status"), 2));
+        renderer.render(TuiRenderFrame.fromTextLines(List.of("one", "two", "three", "> |CURSOR|", "status"), 2));
 
         String output = io.output.toString();
         assertTrue(output.contains("\r\n"));
@@ -237,7 +237,7 @@ class TerminalFrameRendererTest {
         io.height = 8;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
-        renderer.render(new TuiRenderFrame(List.of(
+        renderer.render(TuiRenderFrame.fromTextLines(List.of(
             "assistant old",
             "──",
             "> draft|CURSOR|",
@@ -245,7 +245,7 @@ class TerminalFrameRendererTest {
             "session PLAN"
         ), 3));
         io.output.setLength(0);
-        renderer.render(new TuiRenderFrame(List.of(
+        renderer.render(TuiRenderFrame.fromTextLines(List.of(
             "assistant old",
             "tool running read",
             "──",
@@ -269,9 +269,9 @@ class TerminalFrameRendererTest {
         io.height = 4;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
-        renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "> |CURSOR|", "status"), 2));
+        renderer.render(TuiRenderFrame.fromTextLines(List.of("one", "two", "three", "> |CURSOR|", "status"), 2));
         io.output.setLength(0);
-        renderer.render(new TuiRenderFrame(List.of("one", "two", "three", "four", "> |CURSOR|", "status"), 2));
+        renderer.render(TuiRenderFrame.fromTextLines(List.of("one", "two", "three", "four", "> |CURSOR|", "status"), 2));
 
         String output = io.output.toString();
         assertTrue(output.contains("\r\n"));
@@ -288,7 +288,7 @@ class TerminalFrameRendererTest {
         io.height = 6;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
-        renderer.render(new TuiRenderFrame(List.of(
+        renderer.render(TuiRenderFrame.fromTextLines(List.of(
             "assistant old",
             "tools: read x1 (Ctrl+O details)",
             "──",
@@ -297,7 +297,7 @@ class TerminalFrameRendererTest {
             "session PLAN"
         ), 3));
         io.output.setLength(0);
-        renderer.render(new TuiRenderFrame(List.of(
+        renderer.render(TuiRenderFrame.fromTextLines(List.of(
             "assistant old",
             "tools: read x1 (Ctrl+O details)",
             "done write write {content=问题：50米洗车店我该开车去还是走路去",
@@ -324,7 +324,7 @@ class TerminalFrameRendererTest {
         io.height = 5;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
-        renderer.render(new TuiRenderFrame(List.of(
+        renderer.render(TuiRenderFrame.fromTextLines(List.of(
             "tool running bash: test",
             "  old detail",
             "──",
@@ -332,7 +332,7 @@ class TerminalFrameRendererTest {
             "status"
         ), 3));
         io.output.setLength(0);
-        renderer.render(new TuiRenderFrame(List.of(
+        renderer.render(TuiRenderFrame.fromTextLines(List.of(
             "tool running bash: test",
             "  old detail",
             "  new detail",
@@ -388,7 +388,7 @@ class TerminalFrameRendererTest {
         io.height = 5;
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
 
-        renderer.render(new TuiRenderFrame(List.of(
+        renderer.render(TuiRenderFrame.fromTextLines(List.of(
             "line1",
             "line2",
             "line3",
@@ -397,7 +397,7 @@ class TerminalFrameRendererTest {
             "status"
         ), 2));
         io.output.setLength(0);
-        renderer.render(new TuiRenderFrame(List.of(
+        renderer.render(TuiRenderFrame.fromTextLines(List.of(
             "line1",
             "line2",
             "line3",

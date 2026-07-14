@@ -697,6 +697,23 @@ class TuiRendererTest {
     }
 
     @Test
+    void narrowToolStatusFallbackAlsoNormalizesLogicalLineBreaks() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("session-long", "model-long", "execute", "tool:\nrunning"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        TuiRenderFrame frame = renderer.renderFrame(view, screen, new TuiLayout(20, 8), "", 0);
+
+        assertEquals("tool tool: running", frame.lines().getLast());
+    }
+
+    @Test
     void bashToolCollapsedShowsCommandStatusSummaryAndTailPreview() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(20);

@@ -10,6 +10,7 @@ import cn.lypi.contracts.tui.TuiThinkingBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,7 +75,7 @@ final class TuiRenderer {
             : layoutInput(input, cursor, layout);
         List<String> permissionOverlay = permissionOverlayLines(view, layout.width());
         List<String> externalOverlay = overlayLines == null ? List.of() : overlayLines.stream()
-            .map(line -> AnsiWidth.truncate(line, layout.width()))
+            .flatMap(line -> wrap(line, layout.width()).stream())
             .toList();
         List<String> overlay = new ArrayList<>(permissionOverlay.size() + externalOverlay.size());
         overlay.addAll(permissionOverlay);
@@ -90,7 +91,7 @@ final class TuiRenderer {
         lines.addAll(inputBlock.lines());
         lines.addAll(overlay);
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
-        return new TuiRenderFrame(lines, chromeLineCount);
+        return TuiRenderFrame.fromTextLines(lines, chromeLineCount);
     }
 
     private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded) {
@@ -276,6 +277,12 @@ final class TuiRenderer {
     }
 
     private List<String> wrap(String text, int width) {
+        return Arrays.stream(nullToEmpty(text).split("\\R", -1))
+            .flatMap(line -> wrapLogicalLine(line, width).stream())
+            .toList();
+    }
+
+    private List<String> wrapLogicalLine(String text, int width) {
         List<String> lines = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int currentWidth = 0;
@@ -296,24 +303,32 @@ final class TuiRenderer {
     }
 
     private String statusLine(StatusBarState status, TuiScreen screen, int width) {
+        String permissionMode = singleLine(status.permissionMode());
         String full = String.join(
             " ",
             List.of(
-                nullToEmpty(status.sessionId()),
-                nullToEmpty(status.model()),
-                nullToEmpty(status.mode()),
-                nullToEmpty(status.permissionMode()),
-                nullToEmpty(status.approvalMode()),
-                nullToEmpty(status.activePermissionProfileId())
+                singleLine(status.sessionId()),
+                singleLine(status.model()),
+                singleLine(status.mode()),
+                permissionMode,
+                singleLine(status.approvalMode()),
+                singleLine(status.activePermissionProfileId())
             )
         ).trim();
         if (AnsiWidth.displayWidth(full) <= width) {
             return full;
         }
-        if (status.permissionMode() != null && status.permissionMode().contains("tool")) {
-            return AnsiWidth.truncate("tool " + status.permissionMode(), width);
+        if (permissionMode.contains("tool")) {
+            return AnsiWidth.truncate("tool " + permissionMode, width);
         }
         return AnsiWidth.truncate(full, width);
+    }
+
+    private String singleLine(String value) {
+        return nullToEmpty(value)
+            .replaceAll("\\R", " ")
+            .replaceAll("[\\t\\f ]+", " ")
+            .trim();
     }
 
     private InputBlock layoutInput(String input, int cursor, TuiLayout layout) {
