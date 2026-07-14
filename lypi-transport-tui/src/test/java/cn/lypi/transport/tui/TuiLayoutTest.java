@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -27,5 +28,13 @@ class TuiLayoutTest {
                 }
             }
         }
+    }
+
+    @Test
+    void regionLayoutRejectsNegativeHeights() {
+        assertThrows(IllegalArgumentException.class, () -> new TuiRegionLayout(-1, 1, 0, 1));
+        assertThrows(IllegalArgumentException.class, () -> new TuiRegionLayout(1, -1, 0, 1));
+        assertThrows(IllegalArgumentException.class, () -> new TuiRegionLayout(1, 1, -1, 1));
+        assertThrows(IllegalArgumentException.class, () -> new TuiRegionLayout(1, 1, 0, -1));
     }
 }
