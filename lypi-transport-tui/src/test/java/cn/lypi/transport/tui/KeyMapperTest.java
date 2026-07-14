@@ -29,6 +29,8 @@ class KeyMapperTest {
         assertEquals(TerminalKey.RIGHT, mapper.map("\033[C").orElseThrow());
         assertEquals(TerminalKey.UP, mapper.map("\033[A").orElseThrow());
         assertEquals(TerminalKey.DOWN, mapper.map("\033OB").orElseThrow());
+        assertEquals(TerminalKey.PAGE_UP, mapper.map("\033[5~").orElseThrow());
+        assertEquals(TerminalKey.PAGE_DOWN, mapper.map("\033[6~").orElseThrow());
     }
 
     @Test

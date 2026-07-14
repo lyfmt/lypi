@@ -291,6 +291,16 @@ final class TuiInputLoop {
             case MOVE_WORD_RIGHT -> editor.moveWordRight();
             case PREVIOUS_HISTORY -> editor.previousHistory();
             case NEXT_HISTORY -> editor.nextHistory();
+            case SCROLL_TRANSCRIPT_UP -> {
+                if (transcriptScrollEnabled(prompt)) {
+                    screen.scrollPageUp();
+                }
+            }
+            case SCROLL_TRANSCRIPT_DOWN -> {
+                if (transcriptScrollEnabled(prompt)) {
+                    screen.scrollPageDown();
+                }
+            }
             case TOGGLE_TOOL_OUTPUT_EXPANDED, EXPAND_TOOLS -> toolOutputExpanded = !toolOutputExpanded;
             default -> {
             }
@@ -375,6 +385,10 @@ final class TuiInputLoop {
             "editor",
             prompt.map(PermissionPromptView::cancelOptionId).orElse("")
         );
+    }
+
+    private boolean transcriptScrollEnabled(Optional<PermissionPromptView> prompt) {
+        return prompt.isEmpty() && !resumeOverlayOpen() && !slashOverlayOpen() && !skillOverlayOpen();
     }
 
     private void submitPermissionOption(PermissionPromptView prompt, String optionId) {

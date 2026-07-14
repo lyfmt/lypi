@@ -36,4 +36,20 @@ class TuiScreenTest {
         assertEquals(List.of("d", "e"), screen.visibleTranscript());
         assertEquals(0, screen.linesBelow());
     }
+
+    @Test
+    void pageScrollUsesViewportHeightMinusOne() {
+        TuiScreen screen = new TuiScreen(4);
+        screen.setTranscript(List.of("a", "b", "c", "d", "e", "f", "g", "h"));
+
+        screen.scrollPageUp();
+
+        assertEquals(List.of("b", "c", "d", "e"), screen.visibleTranscript());
+        assertEquals(3, screen.linesBelow());
+
+        screen.scrollPageDown();
+
+        assertEquals(List.of("e", "f", "g", "h"), screen.visibleTranscript());
+        assertEquals(0, screen.linesBelow());
+    }
 }

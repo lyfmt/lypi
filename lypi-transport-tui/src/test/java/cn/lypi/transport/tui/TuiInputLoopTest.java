@@ -14,6 +14,8 @@ import cn.lypi.contracts.tui.SessionResumeInfo;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SessionTreeNodeView;
 import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.TuiBlock;
+import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
@@ -129,6 +131,53 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.LEFT);
 
         assertEquals(inputContent("> alpha be|CURSOR|" + INPUT_CURSOR + "ta"), inputLine(frames.getLast()));
+    }
+
+    @Test
+    void pageKeysScrollTranscriptWithoutChangingDraftOrCursor() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<List<String>> frames = new ArrayList<>();
+        List<TuiBlock> blocks = java.util.stream.IntStream.rangeClosed(1, 10)
+            .mapToObj(index -> (TuiBlock) new TuiMessageBlock(
+                "b" + index,
+                "m" + index,
+                "assistant",
+                "line" + index,
+                false
+            ))
+            .toList();
+        TuiViewModel view = new TuiViewModel(
+            blocks,
+            new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(List.copyOf(lines)),
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 6),
+            () -> view
+        );
+        loop.acceptText("draft");
+        int cursor = loop.cursor();
+
+        loop.acceptKey(TerminalKey.PAGE_UP);
+
+        assertEquals("draft", loop.draft());
+        assertEquals(cursor, loop.cursor());
+        assertTrue(frames.getLast().contains("line8"));
+        assertTrue(frames.getLast().contains("line9"));
+        assertFalse(frames.getLast().contains("line10"));
+
+        loop.acceptKey(TerminalKey.PAGE_DOWN);
+
+        assertEquals("draft", loop.draft());
+        assertEquals(cursor, loop.cursor());
+        assertTrue(frames.getLast().contains("line9"));
+        assertTrue(frames.getLast().contains("line10"));
     }
 
     @Test

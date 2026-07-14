@@ -41,6 +41,14 @@ final class TuiScreen {
         linesBelow = Math.max(0, linesBelow - Math.max(0, lines));
     }
 
+    void scrollPageUp() {
+        scrollUp(pageSize());
+    }
+
+    void scrollPageDown() {
+        scrollDown(pageSize());
+    }
+
     List<String> visibleTranscript() {
         if (transcript.isEmpty() || viewportHeight == 0) {
             return List.of();
@@ -56,5 +64,9 @@ final class TuiScreen {
 
     private int maxLinesBelow() {
         return Math.max(0, transcript.size() - viewportHeight);
+    }
+
+    private int pageSize() {
+        return Math.max(1, viewportHeight - 1);
     }
 }
