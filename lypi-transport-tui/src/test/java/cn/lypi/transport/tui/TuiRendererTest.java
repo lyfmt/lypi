@@ -331,7 +331,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void longInputSoftWrapsInsideBottomInputBlockWithFullTranscript() {
+    void longInputIsWindowedWithoutRemovingLatestTranscriptLine() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -349,16 +349,12 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(8, 6), "abcdefghij", 10);
 
-        assertEquals(9, lines.size());
-        assertEquals("line1", lines.get(0));
-        assertEquals("line2", lines.get(1));
-        assertEquals("line3", lines.get(2));
-        assertEquals("line4", lines.get(3));
-        assertInputBorder(lines.get(lines.size() - 5), 8);
-        assertEquals("\033[48;5;236m> abcde\033[0m", lines.get(lines.size() - 4));
-        assertEquals("\033[48;5;236mfghij|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 3));
-        assertInputBorder(lines.get(lines.size() - 2), 8);
-        assertTrue(lines.getLast().contains("ses_1"));
+        assertTrue(lines.size() <= 6);
+        assertTrue(lines.contains("line4"));
+        assertFalse(lines.contains("line1"));
+        assertFalse(lines.contains("line2"));
+        assertFalse(lines.contains("line3"));
+        assertTrue(lines.stream().anyMatch(line -> line.contains(TerminalFrameRenderer.CURSOR_MARKER)));
     }
 
     @Test
@@ -384,7 +380,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void inputViewportShowsLatestRowsWhileKeepingFullTranscript() {
+    void inputViewportShowsCursorRowsWhileKeepingOneTranscriptLine() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -397,17 +393,16 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 6), "one\ntwo\nthree\nfour", 18);
 
-        assertEquals(7, lines.size());
+        assertTrue(lines.size() <= 6);
         assertTrue(lines.contains("history"));
-        assertInputBorder(lines.get(lines.size() - 6), 10);
-        assertEquals("\033[48;5;236mtwo\033[0m", lines.get(lines.size() - 5));
-        assertEquals("\033[48;5;236mthree\033[0m", lines.get(lines.size() - 4));
-        assertEquals("\033[48;5;236mfour|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 3));
-        assertInputBorder(lines.get(lines.size() - 2), 10);
+        assertFalse(lines.stream().anyMatch(line -> line.contains("two")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("three")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("four")
+            && line.contains(TerminalFrameRenderer.CURSOR_MARKER)));
     }
 
     @Test
-    void inputBlockCanUseFullTerminalHeightAfterFullTranscript() {
+    void minimumInputAndTranscriptFitInThreeLineTerminal() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
@@ -420,10 +415,10 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "one\ntwo\nthree\nfour", 18);
 
-        assertEquals(4, lines.size());
+        assertTrue(lines.size() <= 3);
         assertTrue(lines.contains("history"));
-        assertInputBorder(lines.get(lines.size() - 3), 10);
-        assertEquals("\033[48;5;236mfour|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(lines.size() - 2));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("four")
+            && line.contains(TerminalFrameRenderer.CURSOR_MARKER)));
         assertTrue(lines.getLast().contains("ses_1"));
     }
 
@@ -511,6 +506,47 @@ class TuiRendererTest {
         assertTrue(lines.stream().anyMatch(line -> line.contains("permission toolu_1")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("> 允许一次")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("working (12s)")));
+    }
+
+    @Test
+    void tallPermissionPromptKeepsSelectedOptionInputCursorAndStatusVisible() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(2);
+        List<PermissionOption> options = java.util.stream.IntStream.rangeClosed(1, 8)
+            .mapToObj(index -> new PermissionOption(
+                "option_" + index,
+                PermissionOptionKind.ALLOW_ONCE,
+                "Option " + index,
+                "Description " + index,
+                Optional.empty(),
+                Map.of()
+            ))
+            .toList();
+        PermissionPromptView prompt = new PermissionPromptView(
+            "perm_toolu_1",
+            "toolu_1",
+            "Need approval\nwith a long reason\nthat occupies several rows",
+            "bash:long-running-command",
+            "option_6",
+            "option_8",
+            options,
+            "option_6"
+        );
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiMessageBlock("b1", "m1", "assistant", "latest message", false)),
+            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            List.of(),
+            Optional.of(prompt),
+            Optional.empty()
+        );
+
+        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 6), "draft", 5);
+
+        assertTrue(lines.size() <= 6);
+        assertTrue(lines.stream().anyMatch(line -> line.contains("> Option 6")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains(TerminalFrameRenderer.CURSOR_MARKER)));
+        assertTrue(lines.getLast().contains("ses_1"));
+        assertFalse(lines.stream().anyMatch(line -> line.contains("Option 1")));
     }
 
     @Test
