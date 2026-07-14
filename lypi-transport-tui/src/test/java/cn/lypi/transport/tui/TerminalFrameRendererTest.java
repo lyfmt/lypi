@@ -166,6 +166,28 @@ class TerminalFrameRendererTest {
     }
 
     @Test
+    void sequentialFramePatchAddressesEachPhysicalRowAndReturnsCursorToInput() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);
+
+        renderer.render(new TuiRenderFrame(List.of("tool one", "tool two", "status-old"), 0));
+        io.output.setLength(0);
+        renderer.render(new TuiRenderFrame(List.of(
+            "tool one",
+            "tool two",
+            "status-updated",
+            "> input|CURSOR|",
+            "status"
+        ), 2));
+
+        String output = io.output.toString();
+        assertTrue(output.contains("\033[3;1H\033[2Kstatus-updated"));
+        assertTrue(output.contains("\033[4;1H\033[2K> input"));
+        assertTrue(output.contains("\033[5;1H\033[2Kstatus"));
+        assertTrue(output.endsWith("\033[4;8H\033[?2026l"));
+    }
+
+    @Test
     void tailChangePatchesLastLineWithoutAppendingDuplicateTranscript() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         TerminalFrameRenderer renderer = new TerminalFrameRenderer(io);

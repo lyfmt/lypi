@@ -638,6 +638,65 @@ class TuiRendererTest {
     }
 
     @Test
+    void splitsToolRuntimeAndOverlayLogicalLinesIntoPhysicalFrameLines() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(20);
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:1",
+                "msg_1",
+                "toolu_1",
+                "bash",
+                TuiToolState.RUNNING,
+                "first\nsecond",
+                "stdout: third\r\nstdout: fourth",
+                true
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            "phase one\rphase two",
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        TuiRenderFrame frame = renderer.renderFrame(
+            view,
+            screen,
+            new TuiLayout(40, 20),
+            "",
+            0,
+            List.of("overlay one\noverlay two")
+        );
+
+        assertTrue(frame.lines().stream().noneMatch(line -> line.contains("\n") || line.contains("\r")));
+        assertTrue(frame.lines().contains("running $ first"));
+        assertTrue(frame.lines().contains("second"));
+        assertTrue(frame.lines().contains("· phase one"));
+        assertTrue(frame.lines().contains("phase two"));
+        assertTrue(frame.lines().contains("overlay one"));
+        assertTrue(frame.lines().contains("overlay two"));
+    }
+
+    @Test
+    void statusBarNormalizesLogicalLineBreaksWithoutGrowingChrome() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(1);
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4\r\nmini", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        TuiRenderFrame frame = renderer.renderFrame(view, screen, new TuiLayout(40, 8), "", 0);
+
+        assertFalse(frame.lines().getLast().contains("\r"));
+        assertFalse(frame.lines().getLast().contains("\n"));
+        assertTrue(frame.lines().getLast().contains("gpt-5.4 mini"));
+    }
+
+    @Test
     void bashToolCollapsedShowsCommandStatusSummaryAndTailPreview() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(20);
