@@ -15,13 +15,14 @@ final class TerminalFrameRenderer {
     private static final String WELCOME_ACCENT = "\033[38;5;213m";
     private static final String WELCOME_DIM = "\033[38;5;244m";
     private static final String WELCOME_BOLD = "\033[1m";
+    private static final TerminalLine EMPTY_LINE = new TerminalLine("");
     private static final IntConsumer NOOP_RENDERED_ROWS = rows -> {
     };
 
     private final TerminalIo io;
     private final IntConsumer renderedRows;
     private final boolean startupPaddingEnabled;
-    private List<String> previousLines = List.of();
+    private List<TerminalLine> previousLines = List.of();
     private int previousWidth;
     private int previousHeight;
     private int maxLinesRendered;
@@ -55,12 +56,12 @@ final class TerminalFrameRenderer {
     void render(TuiRenderFrame renderFrame) throws IOException {
         int width = io.width();
         int height = io.height();
-        List<String> rawLines = renderFrame.lines();
+        List<TerminalLine> rawLines = renderFrame.terminalLines();
         if (startupPaddingEnabled && startupPaddingLineCount < 0) {
             startupPaddingLineCount = Math.max(0, height - rawLines.size());
         }
         CursorFrame frame = stripCursor(withStartupPadding(rawLines));
-        List<String> newLines = frame.lines();
+        List<TerminalLine> newLines = frame.lines();
         int chromeLineCount = renderFrame.chromeLineCount();
         boolean widthChanged = previousWidth != 0 && previousWidth != width;
         boolean heightChanged = previousHeight != 0 && previousHeight != height;
@@ -138,7 +139,7 @@ final class TerminalFrameRenderer {
     }
 
     private void writeFullFrame(
-        List<String> lines,
+        List<TerminalLine> lines,
         java.util.Optional<CursorPosition> cursor,
         boolean clear,
         int viewportTop,
@@ -158,7 +159,7 @@ final class TerminalFrameRenderer {
     }
 
     private void writePatch(
-        List<String> lines,
+        List<TerminalLine> lines,
         java.util.Optional<CursorPosition> cursor,
         int firstChanged,
         int lastChanged,
@@ -181,13 +182,13 @@ final class TerminalFrameRenderer {
     }
 
     private void writeShrinkPatch(
-        List<String> lines,
+        List<TerminalLine> lines,
         java.util.Optional<CursorPosition> cursor,
         int viewportTop,
         int height
     ) throws IOException {
         io.write(SYNC_START);
-        List<String> visible = visibleLines(lines, viewportTop, height);
+        List<TerminalLine> visible = visibleLines(lines, viewportTop, height);
         for (int row = 0; row < Math.max(previousHeight, height); row++) {
             int physicalRow = row + 1;
             if (physicalRow > Math.max(1, height)) {
@@ -205,7 +206,7 @@ final class TerminalFrameRenderer {
     }
 
     private void writeFlowingTail(
-        List<String> lines,
+        List<TerminalLine> lines,
         java.util.Optional<CursorPosition> cursor,
         int firstChanged,
         int previousViewportTop,
@@ -264,11 +265,11 @@ final class TerminalFrameRenderer {
         io.write(SYNC_END);
     }
 
-    private int firstChangedLine(List<String> newLines) {
+    private int firstChangedLine(List<TerminalLine> newLines) {
         int max = Math.max(previousLines.size(), newLines.size());
         for (int i = 0; i < max; i++) {
-            String previous = i < previousLines.size() ? previousLines.get(i) : "";
-            String current = i < newLines.size() ? newLines.get(i) : "";
+            TerminalLine previous = i < previousLines.size() ? previousLines.get(i) : EMPTY_LINE;
+            TerminalLine current = i < newLines.size() ? newLines.get(i) : EMPTY_LINE;
             if (!previous.equals(current)) {
                 return i;
             }
@@ -276,11 +277,11 @@ final class TerminalFrameRenderer {
         return -1;
     }
 
-    private int lastChangedLine(List<String> newLines) {
+    private int lastChangedLine(List<TerminalLine> newLines) {
         int max = Math.max(previousLines.size(), newLines.size());
         for (int i = max - 1; i >= 0; i--) {
-            String previous = i < previousLines.size() ? previousLines.get(i) : "";
-            String current = i < newLines.size() ? newLines.get(i) : "";
+            TerminalLine previous = i < previousLines.size() ? previousLines.get(i) : EMPTY_LINE;
+            TerminalLine current = i < newLines.size() ? newLines.get(i) : EMPTY_LINE;
             if (!previous.equals(current)) {
                 return i;
             }
@@ -299,7 +300,7 @@ final class TerminalFrameRenderer {
     }
 
     private void updateState(
-        List<String> lines,
+        List<TerminalLine> lines,
         int width,
         int height,
         int viewportTop,
@@ -316,11 +317,11 @@ final class TerminalFrameRenderer {
         renderedRows.accept(physicalBottomRow(lines, previousViewportTop, height));
     }
 
-    private int viewportTopFor(List<String> lines, int height) {
+    private int viewportTopFor(List<TerminalLine> lines, int height) {
         return Math.max(0, lines.size() - height);
     }
 
-    private int physicalBottomRow(List<String> lines, int viewportTop, int height) {
+    private int physicalBottomRow(List<TerminalLine> lines, int viewportTop, int height) {
         return physicalRow(Math.max(1, lines.size()), viewportTop, height);
     }
 
@@ -334,7 +335,7 @@ final class TerminalFrameRenderer {
         return physicalRow >= 1 && physicalRow <= Math.max(1, height);
     }
 
-    private List<String> visibleLines(List<String> lines, int viewportTop, int height) {
+    private List<TerminalLine> visibleLines(List<TerminalLine> lines, int viewportTop, int height) {
         if (lines.isEmpty()) {
             return List.of();
         }
@@ -346,39 +347,39 @@ final class TerminalFrameRenderer {
         return lines.subList(start, end);
     }
 
-    private List<String> withStartupPadding(List<String> lines) {
+    private List<TerminalLine> withStartupPadding(List<TerminalLine> lines) {
         if (startupPaddingLineCount <= 0) {
             return lines;
         }
-        List<String> padded = new ArrayList<>(startupPaddingLineCount + lines.size());
+        List<TerminalLine> padded = new ArrayList<>(startupPaddingLineCount + lines.size());
         padded.addAll(startupWelcomeLines(startupPaddingLineCount, io.width()));
         padded.addAll(lines);
         return padded;
     }
 
-    private List<String> startupWelcomeLines(int lineCount, int width) {
+    private List<TerminalLine> startupWelcomeLines(int lineCount, int width) {
         if (lineCount <= 0) {
             return List.of();
         }
-        List<String> content = width >= 46 ? fullWelcomeLines(width) : compactWelcomeLines(width);
-        List<String> result = new ArrayList<>(lineCount);
+        List<TerminalLine> content = width >= 46 ? fullWelcomeLines(width) : compactWelcomeLines(width);
+        List<TerminalLine> result = new ArrayList<>(lineCount);
         int topPadding = Math.max(0, (lineCount - content.size()) / 2);
         for (int i = 0; i < topPadding && result.size() < lineCount; i++) {
-            result.add("");
+            result.add(EMPTY_LINE);
         }
-        for (String line : content) {
+        for (TerminalLine line : content) {
             if (result.size() >= lineCount) {
                 break;
             }
             result.add(line);
         }
         while (result.size() < lineCount) {
-            result.add("");
+            result.add(EMPTY_LINE);
         }
         return result;
     }
 
-    private List<String> fullWelcomeLines(int width) {
+    private List<TerminalLine> fullWelcomeLines(int width) {
         return List.of(
             center(WELCOME_DIM + "╭────────────────────────────────────────────────────────╮" + ANSI_RESET, width),
             center(WELCOME_PRIMARY + WELCOME_BOLD + "██╗      ██╗   ██╗      ██████╗  ██╗" + ANSI_RESET, width),
@@ -391,22 +392,22 @@ final class TerminalFrameRenderer {
         );
     }
 
-    private List<String> compactWelcomeLines(int width) {
+    private List<TerminalLine> compactWelcomeLines(int width) {
         return List.of(
             center(WELCOME_PRIMARY + WELCOME_BOLD + "LY-PI" + ANSI_RESET, width),
             center(WELCOME_ACCENT + "coding agent" + ANSI_RESET, width)
         );
     }
 
-    private String center(String line, int width) {
+    private TerminalLine center(String line, int width) {
         int lineWidth = AnsiWidth.displayWidth(line);
         if (lineWidth >= width) {
-            return line;
+            return new TerminalLine(line);
         }
-        return " ".repeat((width - lineWidth) / 2) + line;
+        return new TerminalLine(" ".repeat((width - lineWidth) / 2) + line);
     }
 
-    private void writeLines(List<String> lines) throws IOException {
+    private void writeLines(List<TerminalLine> lines) throws IOException {
         for (int index = 0; index < lines.size(); index++) {
             if (index > 0) {
                 io.write("\n");
@@ -415,8 +416,8 @@ final class TerminalFrameRenderer {
         }
     }
 
-    private void writeLine(String line) throws IOException {
-        io.write(AnsiWidth.truncate(line, io.width()));
+    private void writeLine(TerminalLine line) throws IOException {
+        io.write(AnsiWidth.truncate(line.text(), io.width()));
     }
 
     private void logFullRedraw(String reason) {
@@ -429,16 +430,17 @@ final class TerminalFrameRenderer {
             + " previousViewportTop=" + previousViewportTop);
     }
 
-    private CursorFrame stripCursor(List<String> lines) {
-        List<String> stripped = new ArrayList<>();
+    private CursorFrame stripCursor(List<TerminalLine> lines) {
+        List<TerminalLine> stripped = new ArrayList<>();
         CursorPosition cursor = null;
         for (int row = 0; row < lines.size(); row++) {
-            String line = lines.get(row);
-            int marker = line.indexOf(CURSOR_MARKER);
+            TerminalLine line = lines.get(row);
+            String text = line.text();
+            int marker = text.indexOf(CURSOR_MARKER);
             if (marker >= 0) {
-                String before = line.substring(0, marker);
-                String after = line.substring(marker + CURSOR_MARKER.length());
-                stripped.add(before + after);
+                String before = text.substring(0, marker);
+                String after = text.substring(marker + CURSOR_MARKER.length());
+                stripped.add(new TerminalLine(before + after));
                 cursor = new CursorPosition(row + 1, AnsiWidth.displayWidth(before) + 1);
             } else {
                 stripped.add(line);
@@ -447,7 +449,7 @@ final class TerminalFrameRenderer {
         return new CursorFrame(stripped, java.util.Optional.ofNullable(cursor));
     }
 
-    private record CursorFrame(List<String> lines, java.util.Optional<CursorPosition> cursor) {
+    private record CursorFrame(List<TerminalLine> lines, java.util.Optional<CursorPosition> cursor) {
     }
 
     private record CursorPosition(int row, int column) {

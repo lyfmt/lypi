@@ -56,4 +56,6 @@ do
   fi
 done
 
+bash "$ROOT/lypi-transport-tui/src/test/resources/run-tui-frame-pty.sh"
+
 echo "tui smoke passed"
