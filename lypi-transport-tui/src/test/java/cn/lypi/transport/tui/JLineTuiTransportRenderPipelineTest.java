@@ -62,7 +62,7 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void rendererFrameKeepsInputBlockAfterFullTranscriptForTerminalScrollback() {
+    void eventRenderingUsesTranscriptViewportInsteadOfReturningAnOversizedFrame() {
         RecordingEventBus events = new RecordingEventBus();
         List<List<String>> frames = new ArrayList<>();
         JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 40, 7);
@@ -84,9 +84,10 @@ class JLineTuiTransportRenderPipelineTest {
         }
 
         List<String> latest = frames.getLast();
-        assertEquals(10, latest.size());
-        assertTrue(latest.contains("line 0"));
-        assertTrue(latest.contains("line 2"));
+        assertTrue(latest.size() <= 7);
+        assertFalse(latest.contains("line 0"));
+        assertFalse(latest.contains("line 2"));
+        assertTrue(latest.contains("line 3"));
         assertTrue(latest.contains("line 5"));
         assertEquals(inputContent("> "), inputLine(latest));
         assertTrue(latest.getLast().contains("ses_1"));
@@ -227,6 +228,53 @@ class JLineTuiTransportRenderPipelineTest {
         assertEquals(2, frames.size());
         frames.getLast().forEach(line -> assertEquals(line, AnsiWidth.truncate(line, 8)));
         assertEquals(2, transport.uiLockEntryCountForTest());
+    }
+
+    @Test
+    void resizePreservesScrolledTranscriptUntilPageDownReturnsToTail() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        QueueInputSource input = new QueueInputSource();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            40,
+            6,
+            input,
+            new RecordingSubmitHandler()
+        );
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        for (int index = 1; index <= 10; index++) {
+            events.emit(new MessageDeltaEvent(
+                "ses_1",
+                "msg_" + index,
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                "block_" + index,
+                ContentBlockKind.TEXT,
+                "line " + index,
+                true,
+                java.util.Map.of(),
+                Instant.parse("2026-06-09T00:00:00Z")
+            ));
+        }
+
+        input.add("\033[5~");
+        transport.drainInputForTest();
+        long rowsBeforeResize = transcriptRows(frames.getLast());
+        assertTrue(frames.getLast().contains("line 9"));
+        assertFalse(frames.getLast().contains("line 10"));
+
+        transport.resizeForTest(40, 8);
+
+        assertTrue(transcriptRows(frames.getLast()) > rowsBeforeResize);
+        assertTrue(frames.getLast().contains("line 9"));
+        assertFalse(frames.getLast().contains("line 10"));
+
+        input.add("\033[6~");
+        transport.drainInputForTest();
+
+        assertTrue(frames.getLast().contains("line 10"));
     }
 
     @Test
@@ -680,6 +728,10 @@ class JLineTuiTransportRenderPipelineTest {
             this.chunks = new ArrayDeque<>(List.of(chunks));
         }
 
+        private void add(String chunk) {
+            chunks.addLast(chunk);
+        }
+
         @Override
         public Optional<String> read() {
             return Optional.ofNullable(chunks.pollFirst());
@@ -717,6 +769,10 @@ class JLineTuiTransportRenderPipelineTest {
 
     private static String inputContent(String content) {
         return INPUT_BACKGROUND + content + ANSI_RESET;
+    }
+
+    private static long transcriptRows(List<String> frame) {
+        return frame.stream().filter(line -> line.startsWith("line ")).count();
     }
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {

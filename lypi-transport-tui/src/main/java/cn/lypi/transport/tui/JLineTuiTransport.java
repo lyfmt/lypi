@@ -910,8 +910,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             }
             int safeWidth = safeWidth(width);
             int safeHeight = safeHeight(height);
-            screen = new TuiScreen(Math.max(1, safeHeight - 2));
             layout = new TuiLayout(safeWidth, safeHeight);
+            screen.updateViewportHeight(Math.max(0, safeHeight - 2));
             if (inputLoop != null) {
                 inputLoop.updateViewport(screen, layout);
             }
