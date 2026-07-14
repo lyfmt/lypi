@@ -101,10 +101,11 @@ class TuiRendererTest {
     }
 
     @Test
-    void statusBarDoesNotRenderApplicationScrollbackCounter() {
+    void statusBarKeepsUnreadLineCountWhenOrdinaryFieldsAreTruncated() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(1);
         screen.setTranscript(List.of("old", "current"));
+        screen.scrollUp(1);
         TuiViewModel view = new TuiViewModel(
             List.of(
                 new TuiMessageBlock("b1", "m1", "assistant", "old", false),
@@ -116,9 +117,10 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(80, 3), "");
+        List<String> lines = renderer.render(view, screen, new TuiLayout(12, 3), "");
 
-        assertFalse(lines.getLast().contains("scroll +"));
+        assertTrue(lines.getLast().endsWith("↑ 1 lines"));
+        assertTrue(AnsiWidth.displayWidth(lines.getLast()) <= 12);
     }
 
     @Test

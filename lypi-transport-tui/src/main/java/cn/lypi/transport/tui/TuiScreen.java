@@ -22,12 +22,15 @@ final class TuiScreen {
     }
 
     void setTranscript(List<String> transcript) {
-        int previousMaxLinesBelow = maxLinesBelow();
+        int previousTranscriptSize = this.transcript.size();
+        boolean followingTail = linesBelow == 0;
         this.transcript = List.copyOf(transcript);
-        linesBelow = Math.min(linesBelow, maxLinesBelow());
-        if (linesBelow == 0 && previousMaxLinesBelow == 0) {
+        if (followingTail) {
             linesBelow = 0;
+            return;
         }
+        int appendedLines = Math.max(0, this.transcript.size() - previousTranscriptSize);
+        linesBelow = Math.min(maxLinesBelow(), linesBelow + appendedLines);
     }
 
     void scrollUp(int lines) {

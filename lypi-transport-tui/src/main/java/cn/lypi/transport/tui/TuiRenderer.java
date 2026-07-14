@@ -70,21 +70,37 @@ final class TuiRenderer {
         List<String> overlayLines,
         boolean toolOutputExpanded
     ) {
-        InputBlock inputBlock = compactRunning(view)
-            ? readonlyRuntimeInputBlock("compact 正在进行...", layout)
-            : layoutInput(input, cursor, layout);
-        List<String> permissionOverlay = permissionOverlayLines(view, layout.width());
-        List<String> externalOverlay = overlayLines == null ? List.of() : overlayLines.stream()
-            .flatMap(line -> wrap(line, layout.width()).stream())
-            .toList();
-        List<String> overlay = new ArrayList<>(permissionOverlay.size() + externalOverlay.size());
-        overlay.addAll(permissionOverlay);
-        overlay.addAll(externalOverlay);
-        int chromeLineCount = inputBlock.lines().size() + overlay.size() + 1;
-        int transcriptLineBudget = Math.max(0, layout.height() - chromeLineCount);
-        int effectiveTranscriptBudget = toolOutputExpanded ? transcriptLineBudget : Integer.MAX_VALUE;
-        List<String> transcript = transcriptLines(view, layout.width(), toolOutputExpanded, effectiveTranscriptBudget);
-        screen.setTranscript(transcript);
+        List<String> fullTranscript = transcriptLines(view, layout.width(), toolOutputExpanded, Integer.MAX_VALUE);
+        InputCandidate inputCandidate = compactRunning(view)
+            ? readonlyRuntimeInputCandidate("compact 正在进行...", layout.width())
+            : measureInput(input, cursor, layout.width());
+        OverlayBlock fullOverlay = combineOverlays(
+            permissionOverlay(view, layout.width()),
+            externalOverlay(overlayLines, layout.width())
+        );
+        TuiRegionLayout regions = layout.allocate(
+            inputCandidate.desiredHeight(),
+            fullOverlay.lines().size(),
+            !fullTranscript.isEmpty()
+        );
+        if (toolOutputExpanded) {
+            fullTranscript = transcriptLines(
+                view,
+                layout.width(),
+                true,
+                regions.transcriptHeight()
+            );
+        }
+        InputBlock inputBlock = inputCandidate.render(regions.inputHeight());
+        List<String> overlay = windowOverlay(
+            fullOverlay.lines(),
+            regions.overlayHeight(),
+            fullOverlay.selectedRow()
+        );
+        screen.updateViewportHeight(regions.transcriptHeight());
+        screen.setTranscript(fullTranscript);
+        List<String> transcript = screen.visibleTranscript();
+        int chromeLineCount = inputBlock.lines().size() + overlay.size() + regions.statusHeight();
 
         List<String> lines = new ArrayList<>();
         lines.addAll(transcript);
@@ -170,11 +186,12 @@ final class TuiRenderer {
         return lines;
     }
 
-    private List<String> permissionOverlayLines(TuiViewModel view, int width) {
+    private OverlayBlock permissionOverlay(TuiViewModel view, int width) {
         if (view.permissionPrompt().isEmpty()) {
-            return List.of();
+            return OverlayBlock.empty();
         }
         List<String> lines = new ArrayList<>();
+        int selectedRow = -1;
         PermissionPromptView prompt = view.permissionPrompt().orElseThrow();
         appendPrefixedMultiline(lines, "permission " + prompt.toolUseId() + ": ", prompt.reason(), width, Integer.MAX_VALUE);
         if (!prompt.rule().isBlank()) {
@@ -182,9 +199,55 @@ final class TuiRenderer {
         }
         for (PermissionOption option : prompt.options()) {
             String prefix = option.optionId().equals(prompt.selectedOptionId()) ? "> " : "  ";
+            if (option.optionId().equals(prompt.selectedOptionId())) {
+                selectedRow = lines.size();
+            }
             appendWithinBudget(lines, wrap(prefix + optionLabel(option), width), Integer.MAX_VALUE);
         }
-        return lines;
+        return new OverlayBlock(lines, selectedRow);
+    }
+
+    private OverlayBlock externalOverlay(List<String> overlayLines, int width) {
+        if (overlayLines == null || overlayLines.isEmpty()) {
+            return OverlayBlock.empty();
+        }
+        List<String> lines = new ArrayList<>();
+        int selectedRow = -1;
+        for (String line : overlayLines) {
+            int row = lines.size();
+            if (selectedRow < 0 && nullToEmpty(line).startsWith("> ")) {
+                selectedRow = row;
+            }
+            lines.addAll(wrap(line, width));
+        }
+        return new OverlayBlock(lines, selectedRow);
+    }
+
+    private OverlayBlock combineOverlays(OverlayBlock first, OverlayBlock second) {
+        List<String> lines = new ArrayList<>(first.lines().size() + second.lines().size());
+        lines.addAll(first.lines());
+        lines.addAll(second.lines());
+        int selectedRow = first.selectedRow() >= 0
+            ? first.selectedRow()
+            : shiftedRow(second.selectedRow(), first.lines().size());
+        return new OverlayBlock(lines, selectedRow);
+    }
+
+    private int shiftedRow(int row, int offset) {
+        return row < 0 ? -1 : row + offset;
+    }
+
+    private List<String> windowOverlay(List<String> lines, int height, int selectedRow) {
+        if (height <= 0 || lines.isEmpty()) {
+            return List.of();
+        }
+        if (lines.size() <= height) {
+            return List.copyOf(lines);
+        }
+        int boundedSelectedRow = Math.max(0, Math.min(selectedRow, lines.size() - 1));
+        int start = selectedRow < 0 ? 0 : Math.max(0, boundedSelectedRow - height + 1);
+        start = Math.min(start, lines.size() - height);
+        return List.copyOf(lines.subList(start, start + height));
     }
 
     private void appendPrefixedMultiline(
@@ -303,6 +366,19 @@ final class TuiRenderer {
     }
 
     private String statusLine(StatusBarState status, TuiScreen screen, int width) {
+        if (screen.linesBelow() <= 0) {
+            return ordinaryStatusLine(status, width);
+        }
+        String unread = "↑ " + screen.linesBelow() + " lines";
+        int unreadWidth = AnsiWidth.displayWidth(unread);
+        if (unreadWidth >= width) {
+            return AnsiWidth.truncate(unread, width);
+        }
+        String ordinary = ordinaryStatusLine(status, width - unreadWidth - 1);
+        return ordinary.isBlank() ? unread : ordinary + " " + unread;
+    }
+
+    private String ordinaryStatusLine(StatusBarState status, int width) {
         String permissionMode = singleLine(status.permissionMode());
         String full = String.join(
             " ",
@@ -331,16 +407,23 @@ final class TuiRenderer {
             .trim();
     }
 
-    private InputBlock layoutInput(String input, int cursor, TuiLayout layout) {
+    private InputCandidate measureInput(String input, int cursor, int width) {
         String value = input == null ? "" : input;
-        int width = layout.width();
         int boundedCursor = Math.max(0, Math.min(cursor, value.length()));
         boolean showCursor = cursor >= 0;
         List<InputVisualLine> visualLines = visualInputLines(value, boundedCursor, showCursor, width);
-        int maxBlockRows = layout.maxInputBlockHeight();
-        int maxContentRows = Math.min(maxVisibleInputContentRows(layout), visualLines.size());
+        return new InputCandidate(visualLines, width, null);
+    }
+
+    private InputCandidate readonlyRuntimeInputCandidate(String text, int width) {
+        String content = AnsiWidth.truncate(text == null ? "" : text, width);
+        return new InputCandidate(List.of(), width, INPUT_BACKGROUND + content + ANSI_RESET);
+    }
+
+    private InputBlock renderInput(List<InputVisualLine> visualLines, int width, int maxBlockRows) {
+        int maxContentRows = Math.min(maxVisibleInputContentRows(maxBlockRows), visualLines.size());
         int start = Math.max(0, visualLines.size() - maxContentRows);
-        if (showCursor) {
+        if (visualLines.stream().anyMatch(InputVisualLine::hasCursor)) {
             int cursorLine = cursorLine(visualLines);
             if (cursorLine < start) {
                 start = cursorLine;
@@ -371,12 +454,6 @@ final class TuiRenderer {
 
     private boolean compactRunning(TuiViewModel view) {
         return view != null && view.runtimeLine() != null && view.runtimeLine().startsWith("compacting");
-    }
-
-    private InputBlock readonlyRuntimeInputBlock(String text, TuiLayout layout) {
-        int width = layout.width();
-        String content = AnsiWidth.truncate(text == null ? "" : text, width);
-        return new InputBlock(List.of(INPUT_BACKGROUND + content + ANSI_RESET));
     }
 
     private List<InputVisualLine> visualInputLines(String value, int cursor, boolean showCursor, int width) {
@@ -442,12 +519,11 @@ final class TuiRenderer {
         return lines;
     }
 
-    private int maxVisibleInputContentRows(TuiLayout layout) {
-        int maxContentRows = layout.maxInputContentHeight();
-        if (layout.maxInputBlockHeight() <= 2) {
-            return Math.max(1, layout.maxInputBlockHeight() - 1);
+    private int maxVisibleInputContentRows(int inputHeight) {
+        if (inputHeight <= 2) {
+            return 1;
         }
-        return maxContentRows;
+        return inputHeight - 2;
     }
 
     private int cursorLine(List<InputVisualLine> lines) {
@@ -508,6 +584,39 @@ final class TuiRenderer {
     private record InputBlock(List<String> lines) {
         int height() {
             return lines.size();
+        }
+    }
+
+    private record OverlayBlock(List<String> lines, int selectedRow) {
+        private OverlayBlock {
+            lines = List.copyOf(lines);
+        }
+
+        private static OverlayBlock empty() {
+            return new OverlayBlock(List.of(), -1);
+        }
+    }
+
+    private final class InputCandidate {
+        private final List<InputVisualLine> visualLines;
+        private final int width;
+        private final String readonlyLine;
+
+        private InputCandidate(List<InputVisualLine> visualLines, int width, String readonlyLine) {
+            this.visualLines = List.copyOf(visualLines);
+            this.width = width;
+            this.readonlyLine = readonlyLine;
+        }
+
+        private int desiredHeight() {
+            return readonlyLine == null ? visualLines.size() + 2 : 1;
+        }
+
+        private InputBlock render(int height) {
+            if (readonlyLine != null) {
+                return new InputBlock(List.of(readonlyLine));
+            }
+            return renderInput(visualLines, width, height);
         }
     }
 

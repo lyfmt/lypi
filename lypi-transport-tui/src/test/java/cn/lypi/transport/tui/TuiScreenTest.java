@@ -28,10 +28,10 @@ class TuiScreenTest {
 
         screen.setTranscript(List.of("a", "b", "c", "d", "e"));
 
-        assertEquals(List.of("c", "d"), screen.visibleTranscript());
-        assertEquals(1, screen.linesBelow());
+        assertEquals(List.of("b", "c"), screen.visibleTranscript());
+        assertEquals(2, screen.linesBelow());
 
-        screen.scrollDown(1);
+        screen.scrollDown(2);
 
         assertEquals(List.of("d", "e"), screen.visibleTranscript());
         assertEquals(0, screen.linesBelow());
