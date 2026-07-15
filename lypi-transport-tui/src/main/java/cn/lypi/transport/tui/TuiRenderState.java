@@ -1,10 +1,12 @@
 package cn.lypi.transport.tui;
 
-import cn.lypi.contracts.event.SessionStateEvent;
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.event.SessionStateEvent;
+import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.SessionFileView;
@@ -33,6 +35,7 @@ final class TuiRenderState {
     private final List<SessionFileView> files = new ArrayList<>();
     private final Map<String, Integer> blockIndexes = new HashMap<>();
     private final Map<String, Integer> toolIndexes = new HashMap<>();
+    private final Map<String, TuiToolProgressBuffer> toolProgressBuffers = new HashMap<>();
     private PermissionPromptView permissionPrompt;
     private DiffView diffView;
     private StatusBarState statusBar = new StatusBarState("", "", "ready", "");
@@ -123,6 +126,7 @@ final class TuiRenderState {
     }
 
     void configure(SessionRuntimeState runtimeState) {
+        toolProgressBuffers.clear();
         if (runtimeState == null) {
             statusBar = new StatusBarState("", "", "ready", "");
             agentMode = "ready";
@@ -151,6 +155,7 @@ final class TuiRenderState {
     }
 
     private void replaceBlocks(List<TuiBlock> nextBlocks) {
+        toolProgressBuffers.clear();
         blocks.clear();
         blocks.addAll(nextBlocks);
         rebuildIndexes();
@@ -218,7 +223,32 @@ final class TuiRenderState {
         statusBar = withMode(currentMode());
     }
 
+    String startToolProgress(String toolUseId, String initialDetail) {
+        TuiToolProgressBuffer buffer = new TuiToolProgressBuffer(initialDetail);
+        toolProgressBuffers.put(toolUseId, buffer);
+        return buffer.render();
+    }
+
+    String appendToolProgress(String toolUseId, String initialDetail, ToolProgress progress) {
+        TuiToolProgressBuffer buffer = toolProgressBuffers.computeIfAbsent(
+            toolUseId,
+            ignored -> new TuiToolProgressBuffer(initialDetail)
+        );
+        buffer.append(progress);
+        return buffer.render();
+    }
+
+    String completeToolProgress(String toolUseId, String initialDetail, ToolEndEvent event) {
+        TuiToolProgressBuffer buffer = toolProgressBuffers.remove(toolUseId);
+        if (buffer == null) {
+            buffer = new TuiToolProgressBuffer(initialDetail);
+        }
+        buffer.complete(event);
+        return buffer.render();
+    }
+
     void toolEnded(String toolUseId) {
+        toolProgressBuffers.remove(toolUseId);
         if (toolUseId != null && !toolUseId.isBlank()) {
             runningToolUseIds.remove(toolUseId);
         }
@@ -311,6 +341,7 @@ final class TuiRenderState {
     }
 
     void interrupted(String reason) {
+        toolProgressBuffers.clear();
         runningToolUseIds.clear();
         runtimeInterruptibleTool = false;
         retryLine = "";

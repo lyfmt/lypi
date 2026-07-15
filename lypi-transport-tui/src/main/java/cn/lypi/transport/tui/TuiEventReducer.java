@@ -2,7 +2,6 @@ package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageRole;
-import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
@@ -28,9 +27,7 @@ import cn.lypi.contracts.security.FileSystemPermissionEntry;
 import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.session.SessionView;
-import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
-import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.SessionRuntimeState;
@@ -386,6 +383,10 @@ public final class TuiEventReducer {
 
     private void reduceToolStart(ToolStartEvent event) {
         String label = firstNonBlank(event.inputSummary(), event.displayTitle(), event.toolName());
+        String details = state.startToolProgress(
+            event.toolUseId(),
+            metadataString(event.inputMetadata(), "preview", "")
+        );
         TuiToolBlock block = new TuiToolBlock(
             "tool:" + event.toolUseId(),
             event.parentMessageId(),
@@ -393,7 +394,7 @@ public final class TuiEventReducer {
             event.toolName(),
             TuiToolState.RUNNING,
             label,
-            metadataString(event.inputMetadata(), "preview", ""),
+            details,
             true
         );
         int index = state.toolIndex(event.toolUseId()).orElse(-1);
@@ -409,6 +410,11 @@ public final class TuiEventReducer {
     private void reduceToolProgress(ToolProgressEvent event) {
         state.toolIndex(event.toolUseId()).ifPresent(index -> {
             TuiToolBlock current = (TuiToolBlock) state.blocks().get(index);
+            String details = state.appendToolProgress(
+                event.toolUseId(),
+                current.details(),
+                event.progress()
+            );
             state.putBlock(index, new TuiToolBlock(
                 current.blockId(),
                 current.messageId(),
@@ -416,7 +422,7 @@ public final class TuiEventReducer {
                 current.toolName(),
                 TuiToolState.RUNNING,
                 current.label(),
-                appendDetail(current.details(), progressDetail(event.progress())),
+                details,
                 true
             ));
         });
@@ -426,6 +432,11 @@ public final class TuiEventReducer {
         state.toolIndex(event.toolUseId()).ifPresent(index -> {
             TuiToolBlock current = (TuiToolBlock) state.blocks().get(index);
             TuiToolState toolState = toolState(event.status());
+            String details = state.completeToolProgress(
+                event.toolUseId(),
+                current.details(),
+                event
+            );
             state.putBlock(index, new TuiToolBlock(
                 current.blockId(),
                 current.messageId(),
@@ -433,64 +444,11 @@ public final class TuiEventReducer {
                 current.toolName(),
                 toolState,
                 current.label(),
-                appendDetail(current.details(), endDetail(event)),
+                details,
                 false
             ));
         });
         state.toolEnded(event.toolUseId());
-    }
-
-    private String progressDetail(ToolProgress progress) {
-        if (progress == null) {
-            return "";
-        }
-        return switch (progress.kind()) {
-            case OUTPUT -> firstNonBlank(progress.stream(), "output") + ": " + firstNonBlank(progress.delta(), "");
-            case PHASE -> firstNonBlank(progress.phase(), progress.title(), progress.detail());
-            case STATUS -> firstNonBlank(progress.title(), "") + suffix(progress.detail());
-            case COUNTER -> firstNonBlank(progress.title(), "progress") + " " + progress.current() + "/" + progress.total();
-            case PERCENT -> firstNonBlank(progress.title(), "progress") + " " + percentLabel(progress.percent());
-            case CUSTOM -> firstNonBlank(progress.title(), progress.metadata().toString());
-        };
-    }
-
-    private String endDetail(ToolEndEvent event) {
-        StringBuilder detail = new StringBuilder();
-        if (event.exitCode() != null) {
-            detail.append("exit ").append(event.exitCode());
-        }
-        ToolResultSummary summary = event.resultSummary();
-        if (summary != null) {
-            appendLine(detail, firstNonBlank(summary.summary(), summary.title()));
-        }
-        String preview = preview(event.resultRef(), summary);
-        if (!preview.isBlank()) {
-            appendLine(detail, preview);
-        }
-        return detail.toString();
-    }
-
-    private String preview(ToolOutputRef resultRef, ToolResultSummary summary) {
-        String refPreview = metadataString(resultRef == null ? null : resultRef.metadata(), "preview", "");
-        if (!refPreview.isBlank()) {
-            return refPreview;
-        }
-        if (summary == null) {
-            return "";
-        }
-        return metadataString(summary.metadata(), "preview", "");
-    }
-
-    private String appendDetail(String current, String addition) {
-        String safeAddition = addition == null ? "" : addition.strip();
-        if (safeAddition.isBlank()) {
-            return current == null ? "" : current;
-        }
-        String safeCurrent = current == null ? "" : current.strip();
-        if (safeCurrent.isBlank()) {
-            return safeAddition;
-        }
-        return safeCurrent + "\n" + safeAddition;
     }
 
     private void appendLine(StringBuilder builder, String line) {
@@ -641,17 +599,4 @@ public final class TuiEventReducer {
         return text.isBlank() ? fallback : text;
     }
 
-    private String suffix(String value) {
-        return value == null || value.isBlank() ? "" : " " + value;
-    }
-
-    private String percentLabel(Double percent) {
-        if (percent == null) {
-            return "";
-        }
-        if (percent % 1 == 0) {
-            return percent.intValue() + "%";
-        }
-        return String.format(java.util.Locale.ROOT, "%.1f%%", percent);
-    }
 }
