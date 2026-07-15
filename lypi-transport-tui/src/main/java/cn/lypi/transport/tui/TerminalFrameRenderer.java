@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Optional;
 
 final class TerminalFrameRenderer {
-    static final String CURSOR_MARKER = "|CURSOR|";
     private static final String SYNC_START = "\033[?2026h";
     private static final String SYNC_END = "\033[?2026l";
     private static final String FULL_CLEAR = "\033[2J\033[H";
@@ -134,13 +133,13 @@ final class TerminalFrameRenderer {
         for (int row = 0; row < lines.size(); row++) {
             TerminalLine line = lines.get(row);
             String text = line.text();
-            int marker = text.indexOf(CURSOR_MARKER);
+            int marker = text.indexOf(TuiRenderFrame.CURSOR_MARKER);
             if (marker < 0) {
                 stripped.add(line);
                 continue;
             }
             String before = text.substring(0, marker);
-            String after = text.substring(marker + CURSOR_MARKER.length());
+            String after = text.substring(marker + TuiRenderFrame.CURSOR_MARKER.length());
             stripped.add(new TerminalLine(before + after));
             cursor = new CursorPosition(row + 1, AnsiWidth.displayWidth(before) + 1);
         }

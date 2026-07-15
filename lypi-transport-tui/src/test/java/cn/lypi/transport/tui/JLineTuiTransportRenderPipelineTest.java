@@ -747,8 +747,8 @@ class JLineTuiTransportRenderPipelineTest {
         transport.drainInputForTest();
 
         frames.getLast().forEach(line -> assertEquals(
-            line.replace(TerminalFrameRenderer.CURSOR_MARKER, ""),
-            AnsiWidth.truncate(line.replace(TerminalFrameRenderer.CURSOR_MARKER, ""), 8)
+            line.replace(TuiRenderFrame.CURSOR_MARKER, ""),
+            AnsiWidth.truncate(line.replace(TuiRenderFrame.CURSOR_MARKER, ""), 8)
         ));
     }
 

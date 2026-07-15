@@ -3,6 +3,8 @@ package cn.lypi.transport.tui;
 import java.util.List;
 
 record TuiRenderFrame(List<TerminalLine> terminalLines) {
+    static final String CURSOR_MARKER = "|CURSOR|";
+
     TuiRenderFrame {
         terminalLines = List.copyOf(terminalLines);
     }

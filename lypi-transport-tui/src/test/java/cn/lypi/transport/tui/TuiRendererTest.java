@@ -34,6 +34,108 @@ class TuiRendererTest {
     private static final String ANSI_RESET = "\033[0m";
 
     @Test
+    void rendersCommittedBlocksAsStandaloneHistoryLines() {
+        TuiRenderer renderer = new TuiRenderer();
+
+        List<String> history = renderer.renderCommittedBlocks(
+            List.of(new TuiMessageBlock("a1", "m1", "assistant", "final", false)),
+            80
+        ).stream().map(TerminalLine::text).toList();
+
+        assertEquals(List.of("final"), history);
+    }
+
+    @Test
+    void mutableSurfaceExcludesStableHistoryAndFitsBoundedHeight() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiMessageBlock stable = new TuiMessageBlock(
+            "stable", "m1", "assistant", "stable history", false
+        );
+        TuiMessageBlock streaming = new TuiMessageBlock(
+            "streaming", "m2", "assistant", "streaming", true
+        );
+        TuiViewModel view = new TuiViewModel(
+            List.of(stable, streaming),
+            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        TuiRenderFrame surface = renderer.renderSurface(
+            view,
+            List.of(streaming),
+            new TuiLayout(80, 12),
+            "draft",
+            5,
+            List.of(),
+            false
+        );
+
+        assertFalse(surface.lines().stream().anyMatch(line -> line.contains("stable history")));
+        assertTrue(surface.lines().stream().anyMatch(line -> line.contains("streaming")));
+        assertTrue(surface.lines().stream().anyMatch(line -> line.contains("> draft")));
+        assertTrue(surface.lines().getLast().contains("ses_1"));
+        assertTrue(surface.lines().size() <= 11);
+    }
+
+    @Test
+    void mutableSurfaceKeepsOverlaysDiffAndSingleStatusLineVisible() {
+        PermissionPromptView prompt = new PermissionPromptView(
+            "perm_1",
+            "toolu_1",
+            "Need approval",
+            "bash:mvn test",
+            "allow_once",
+            "cancel",
+            List.of(
+                new PermissionOption(
+                    "allow_once", PermissionOptionKind.ALLOW_ONCE, "Allow", "", Optional.empty(), Map.of()
+                ),
+                new PermissionOption(
+                    "cancel", PermissionOptionKind.CANCEL, "Cancel", "", Optional.empty(), Map.of()
+                )
+            ),
+            "cancel"
+        );
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.of(prompt),
+            Optional.of(new DiffView(
+                "1 file changed",
+                List.of(new GitDiffFileView(
+                    Path.of("src/App.java"), GitDiffStatus.MODIFIED, "Modified", Map.of()
+                )),
+                "+new line",
+                false,
+                Map.of()
+            ))
+        );
+
+        TuiRenderFrame surface = new TuiRenderer().renderSurface(
+            view,
+            List.of(),
+            new TuiLayout(80, 24),
+            "/",
+            1,
+            List.of("  slash: /model", "  skill: @review", "> resume: ses_2"),
+            false
+        );
+        String rendered = String.join("\n", surface.lines());
+
+        assertTrue(rendered.contains("permission toolu_1: Need approval"));
+        assertTrue(rendered.contains("> Cancel"));
+        assertTrue(rendered.contains("slash: /model"));
+        assertTrue(rendered.contains("skill: @review"));
+        assertTrue(rendered.contains("> resume: ses_2"));
+        assertTrue(rendered.contains("diff: 1 file changed"));
+        assertEquals(1, surface.lines().stream().filter(line -> line.contains("ses_1")).count());
+        assertTrue(surface.lines().getLast().contains("ses_1"));
+    }
+
+    @Test
     void rendersFixedHeightHistoryAndLiveRegions() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(6);
@@ -439,7 +541,7 @@ class TuiRendererTest {
         List<String> lines = renderer.render(view, screen, new TuiLayout(8, 4), "abcdef", 6);
 
         for (String line : lines) {
-            assertTrue(AnsiWidth.displayWidth(line.replace(TerminalFrameRenderer.CURSOR_MARKER, "")) <= 8);
+            assertTrue(AnsiWidth.displayWidth(line.replace(TuiRenderFrame.CURSOR_MARKER, "")) <= 8);
         }
     }
 
@@ -467,7 +569,7 @@ class TuiRendererTest {
         assertFalse(lines.contains("line1"));
         assertFalse(lines.contains("line2"));
         assertFalse(lines.contains("line3"));
-        assertTrue(lines.stream().anyMatch(line -> line.contains(TerminalFrameRenderer.CURSOR_MARKER)));
+        assertTrue(lines.stream().anyMatch(line -> line.contains(TuiRenderFrame.CURSOR_MARKER)));
     }
 
     @Test
@@ -511,7 +613,7 @@ class TuiRendererTest {
         assertFalse(lines.stream().anyMatch(line -> line.contains("two")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("three")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("four")
-            && line.contains(TerminalFrameRenderer.CURSOR_MARKER)));
+            && line.contains(TuiRenderFrame.CURSOR_MARKER)));
     }
 
     @Test
@@ -531,7 +633,7 @@ class TuiRendererTest {
         assertTrue(lines.size() <= 3);
         assertTrue(lines.contains("history"));
         assertTrue(lines.stream().anyMatch(line -> line.contains("four")
-            && line.contains(TerminalFrameRenderer.CURSOR_MARKER)));
+            && line.contains(TuiRenderFrame.CURSOR_MARKER)));
         assertTrue(lines.getLast().contains("ses_1"));
     }
 
@@ -657,7 +759,7 @@ class TuiRendererTest {
 
         assertTrue(lines.size() <= 6);
         assertTrue(lines.stream().anyMatch(line -> line.contains("> Option 6")));
-        assertTrue(lines.stream().anyMatch(line -> line.contains(TerminalFrameRenderer.CURSOR_MARKER)));
+        assertTrue(lines.stream().anyMatch(line -> line.contains(TuiRenderFrame.CURSOR_MARKER)));
         assertTrue(lines.getLast().contains("ses_1"));
         assertFalse(lines.stream().anyMatch(line -> line.contains("Option 1")));
     }

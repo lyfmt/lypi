@@ -8,6 +8,17 @@ import org.junit.jupiter.api.Test;
 
 class TuiLayoutTest {
     @Test
+    void allocatesOnlyTheBoundedSurfaceRowsThatAreNeeded() {
+        TuiLayout layout = new TuiLayout(80, 12);
+
+        TuiRegionLayout regions = layout.allocateSurface(1, 3, 2);
+
+        assertEquals(11, layout.maxSurfaceHeight());
+        assertEquals(new TuiRegionLayout(1, 3, 2, 1), regions);
+        assertEquals(7, regions.totalHeight());
+    }
+
+    @Test
     void allocatesAllRegionsWithinTerminalHeight() {
         for (int height : new int[] {2, 3, 6, 24}) {
             for (int desiredInputHeight : new int[] {1, 4, 100}) {
