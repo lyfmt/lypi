@@ -144,6 +144,26 @@ final class GetSearchContentToolTest {
         assertTrue(result.output().contains("未找到"));
     }
 
+    @Test
+    void renderForUserUsesFiniteGenericInputShapes() {
+        GetSearchContentTool tool = new GetSearchContentTool(storeWith(sampleResult()));
+        String query = "SENSITIVE" + "x".repeat(4_096 - "SENSITIVE".length());
+
+        String rendered = tool.renderForUser(Map.of(
+            "url", "https://example.com/a",
+            "responseId", "web_1",
+            "query", query,
+            "maxChars", 1_000
+        ));
+
+        assertEquals(
+            "get_search_content maxChars=1000 query=<4096 chars> responseId=web_1",
+            rendered
+        );
+        assertFalse(rendered.contains("SENSITIVE"));
+        assertFalse(rendered.contains("{"));
+    }
+
     private WebStoredResult sampleResult() {
         return new WebStoredResult(
             "session",

@@ -43,6 +43,26 @@ import org.junit.jupiter.api.Test;
 
 class SubagentToolsTest {
     @Test
+    void renderForUserDoesNotExposeLongSubagentPrompt() {
+        SpawnAgentTool tool = new SpawnAgentTool(new RecordingAgentCenter());
+        String prompt = "SENSITIVE" + "x".repeat(4_096 - "SENSITIVE".length());
+
+        String rendered = tool.renderForUser(Map.of(
+            "tools", List.of("read", "grep"),
+            "timeoutSeconds", 90,
+            "prompt", prompt,
+            "agentName", "reviewer"
+        ));
+
+        assertEquals(
+            "spawn_agent agentName=reviewer prompt=<4096 chars> timeoutSeconds=90",
+            rendered
+        );
+        assertFalse(rendered.contains("SENSITIVE"));
+        assertFalse(rendered.contains("{"));
+    }
+
+    @Test
     void spawnAgentStartsSubagentAndReturnsOnlyStartupStatus() {
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
         SpawnAgentTool tool = new SpawnAgentTool(agentCenter);

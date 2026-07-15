@@ -9,6 +9,7 @@ import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import cn.lypi.tool.ToolEventSummaryFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -99,7 +100,7 @@ public final class GetSearchContentTool extends AbstractWebTool {
 
     @Override
     public String renderForUser(Map<String, Object> input) {
-        return "get_search_content " + input;
+        return ToolEventSummaryFormatter.genericInputSummary(name(), input);
     }
 
     private Optional<WebStoredResult> resolveResult(Map<String, Object> input, ToolUseContext context) {
