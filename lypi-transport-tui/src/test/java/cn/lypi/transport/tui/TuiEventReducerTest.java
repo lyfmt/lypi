@@ -282,6 +282,54 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void toolProgressRetainsBoundedTailAndFinalSummary() {
+        TuiEventReducer reducer = new TuiEventReducer();
+        reducer.reduce(new ToolStartEvent(
+            "ses_1",
+            "toolu_1",
+            "msg_1",
+            "turn_1",
+            "bash",
+            "Bash",
+            "large output",
+            Map.of(),
+            NOW,
+            NOW
+        ));
+        for (int index = 0; index < 300; index++) {
+            String line = "line-%03d %s\n".formatted(index, "x".repeat(1014));
+            reducer.reduce(new ToolProgressEvent(
+                "ses_1",
+                "toolu_1",
+                ToolProgress.output("stdout", line),
+                NOW.plusMillis(index)
+            ));
+        }
+        reducer.reduce(new ToolEndEvent(
+            "ses_1",
+            "toolu_1",
+            ToolExecutionStatus.SUCCEEDED,
+            0,
+            new ToolResultSummary("bash succeeded", "all output captured", false, 0, false, 307_200L, Map.of()),
+            null,
+            NOW,
+            NOW.plusSeconds(1),
+            1_000L,
+            Map.of(),
+            NOW.plusSeconds(1)
+        ));
+
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().getFirst());
+        assertTrue(tool.details().length() <= 17 * 1024);
+        assertTrue(tool.details().contains("line-299"));
+        assertFalse(tool.details().contains("line-000"));
+        assertTrue(tool.details().contains("earlier output omitted"));
+        assertTrue(tool.details().contains("exit 0"));
+        assertTrue(tool.details().contains("all output captured"));
+        assertFalse(tool.active());
+    }
+
+    @Test
     void toolLifecyclePreservesInputSummaryMetadataPreviewAndResultSummary() {
         TuiEventReducer reducer = new TuiEventReducer();
 
