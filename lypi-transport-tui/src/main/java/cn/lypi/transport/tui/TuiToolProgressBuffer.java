@@ -77,7 +77,7 @@ final class TuiToolProgressBuffer {
             }
             ToolResultSummary summary = event.resultSummary();
             if (summary != null) {
-                addFinalLine(firstNonBlank(summary.summary(), summary.title()));
+                addFinalLine(TuiTranscriptProjector.resultSummary(firstNonBlank(summary.summary(), summary.title())));
             }
             addFinalLine(preview(event.resultRef(), summary));
         }

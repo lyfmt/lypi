@@ -6,10 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentReplacementRecord;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
@@ -41,6 +44,7 @@ import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiMessageBlock;
@@ -53,7 +57,11 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class TuiContractEndToEndTest {
     private static final Instant NOW = Instant.parse("2026-06-07T10:00:00Z");
@@ -156,6 +164,127 @@ class TuiContractEndToEndTest {
         assertEquals(end.toolUseId(), replacement.toolUseId());
         assertEquals("bash", replacement.toolName());
         assertEquals(Path.of(".lypi/tool-output/toolu_bash.txt"), replacement.persistedPath());
+    }
+
+    @ParameterizedTest
+    @MethodSource("terminalToolStates")
+    void liveAndResumedToolUseHaveEquivalentFinalProjection(
+        ToolExecutionStatus status,
+        boolean error,
+        TuiToolState expectedState
+    ) {
+        String resultText = "command output\nsecond line";
+        String resultSummary = "command output second line (+1 lines)";
+        TuiEventReducer liveReducer = new TuiEventReducer();
+        liveReducer.reduce(new ToolStartEvent(
+            "ses_1",
+            "toolu_bash",
+            "msg_tool",
+            "turn_1",
+            "bash",
+            "Run shell",
+            "printf output",
+            Map.of("command", "printf output"),
+            NOW,
+            NOW
+        ));
+        liveReducer.reduce(new ToolProgressEvent(
+            "ses_1",
+            "toolu_bash",
+            ToolProgress.output("stdout", "transient progress\n"),
+            NOW.plusMillis(1)
+        ));
+        liveReducer.reduce(new ToolEndEvent(
+            "ses_1",
+            "toolu_bash",
+            status,
+            status == ToolExecutionStatus.SUCCEEDED ? 0 : 1,
+            new ToolResultSummary(
+                "bash " + status.name().toLowerCase(),
+                resultSummary,
+                error,
+                status == ToolExecutionStatus.SUCCEEDED ? 0 : 1,
+                false,
+                resultText.length(),
+                Map.of()
+            ),
+            null,
+            NOW,
+            NOW.plusMillis(2),
+            2L,
+            Map.of(),
+            NOW.plusMillis(2)
+        ));
+
+        SessionRuntimeState base = TestRuntimeStates.basic("ses_1");
+        SessionRuntimeState resumedState = new SessionRuntimeState(
+            base.sessionId(),
+            base.cwd(),
+            base.currentBranchLeafId(),
+            base.model(),
+            base.thinkingLevel(),
+            base.agentMode(),
+            base.permissionRuntimeState(),
+            base.budget(),
+            List.of(
+                new AgentMessage(
+                    "msg_tool",
+                    MessageRole.ASSISTANT,
+                    MessageKind.TOOL_CALL,
+                    List.of(new ToolCallContentBlock(
+                        "toolu_bash",
+                        "bash",
+                        "",
+                        Map.of("inputSummary", "printf output")
+                    )),
+                    NOW,
+                    Optional.empty(),
+                    Optional.of("tool_calls")
+                ),
+                new AgentMessage(
+                    "msg_result",
+                    MessageRole.TOOL_RESULT,
+                    MessageKind.TOOL_RESULT,
+                    List.of(new ToolResultContentBlock(
+                        "toolu_bash",
+                        resultText,
+                        error,
+                        Map.of("status", status.name())
+                    )),
+                    NOW.plusMillis(2),
+                    Optional.empty(),
+                    Optional.empty()
+                )
+            ),
+            false,
+            false,
+            false,
+            false
+        );
+        TuiViewModel liveView = liveReducer.view();
+        TuiViewModel resumedView = TuiEventReducer.fromRuntimeState(resumedState).view();
+        TuiToolBlock liveTool = assertInstanceOf(TuiToolBlock.class, liveView.blocks().getFirst());
+        TuiToolBlock resumedTool = assertInstanceOf(TuiToolBlock.class, resumedView.blocks().getFirst());
+
+        assertEquals(liveTool.toolUseId(), resumedTool.toolUseId());
+        assertEquals(liveTool.toolName(), resumedTool.toolName());
+        assertEquals(expectedState, liveTool.state());
+        assertEquals(liveTool.state(), resumedTool.state());
+        assertEquals(liveTool.label(), resumedTool.label());
+        assertEquals(liveTool.active(), resumedTool.active());
+
+        List<String> liveLines = renderedTranscript(liveView);
+        List<String> resumedLines = renderedTranscript(resumedView);
+        assertEquals(liveLines.getFirst(), resumedLines.getFirst());
+        assertEquals("  " + resultSummary, liveLines.getLast());
+        assertEquals(liveLines.getLast(), resumedLines.getLast());
+    }
+
+    private static Stream<Arguments> terminalToolStates() {
+        return Stream.of(
+            Arguments.of(ToolExecutionStatus.SUCCEEDED, false, TuiToolState.DONE),
+            Arguments.of(ToolExecutionStatus.FAILED, true, TuiToolState.FAILED)
+        );
     }
 
     @Test
@@ -362,6 +491,21 @@ class TuiContractEndToEndTest {
             Map.of("turnId", "turn_1"),
             NOW
         );
+    }
+
+    private static List<String> renderedTranscript(TuiViewModel view) {
+        TuiRenderFrame frame = new TuiRenderer().renderFrame(
+            view,
+            new TuiScreen(20),
+            new TuiLayout(80, 20),
+            "",
+            -1,
+            List.of(),
+            false
+        );
+        return frame.lines().subList(0, frame.transcriptLineCount()).stream()
+            .map(line -> line.replaceAll("\\u001B\\[[;\\d]*m", ""))
+            .toList();
     }
 
     private static PermissionDecision decision(

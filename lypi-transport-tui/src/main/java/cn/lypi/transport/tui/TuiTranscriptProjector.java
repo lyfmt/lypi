@@ -5,6 +5,7 @@ import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
+import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiErrorBlock;
 import cn.lypi.contracts.tui.TuiMessageBlock;
@@ -182,13 +183,24 @@ final class TuiTranscriptProjector {
 
     private static TuiToolState stateFor(boolean error, Map<String, Object> metadata) {
         String status = metadataString(metadata, "status").trim().toUpperCase(Locale.ROOT);
-        if ("CANCELLED".equals(status)) {
+        if (!status.isBlank()) {
+            try {
+                return stateFor(ToolExecutionStatus.valueOf(status));
+            } catch (IllegalArgumentException ignored) {
+                // Fall through to the durable error flag for unknown legacy values.
+            }
+        }
+        return stateFor(error ? ToolExecutionStatus.FAILED : ToolExecutionStatus.SUCCEEDED);
+    }
+
+    static TuiToolState stateFor(ToolExecutionStatus status) {
+        if (status == ToolExecutionStatus.CANCELLED) {
             return TuiToolState.CANCELLED;
         }
-        if ("FAILED".equals(status) || "TIMED_OUT".equals(status)) {
+        if (status == ToolExecutionStatus.FAILED || status == ToolExecutionStatus.TIMED_OUT) {
             return TuiToolState.FAILED;
         }
-        return error ? TuiToolState.FAILED : TuiToolState.DONE;
+        return TuiToolState.DONE;
     }
 
     static String resultDetails(ToolResultContentBlock result) {

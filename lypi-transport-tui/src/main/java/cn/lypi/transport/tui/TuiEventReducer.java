@@ -29,7 +29,6 @@ import cn.lypi.contracts.security.FileSystemPermissionEntry;
 import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.session.SessionView;
-import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.SessionRuntimeState;
@@ -439,7 +438,7 @@ public final class TuiEventReducer {
     private void reduceToolEnd(ToolEndEvent event) {
         state.toolIndex(event.toolUseId()).ifPresent(index -> {
             TuiToolBlock current = (TuiToolBlock) state.blocks().get(index);
-            TuiToolState toolState = toolState(event.status());
+            TuiToolState toolState = TuiTranscriptProjector.stateFor(event.status());
             String details = state.completeToolProgress(
                 event.toolUseId(),
                 current.details(),
@@ -544,16 +543,6 @@ public final class TuiEventReducer {
             event.errorId(),
             event.message()
         ));
-    }
-
-    private TuiToolState toolState(ToolExecutionStatus status) {
-        if (status == ToolExecutionStatus.CANCELLED) {
-            return TuiToolState.CANCELLED;
-        }
-        if (status == ToolExecutionStatus.FAILED || status == ToolExecutionStatus.TIMED_OUT) {
-            return TuiToolState.FAILED;
-        }
-        return TuiToolState.DONE;
     }
 
     private String roleName(MessageRole role) {
