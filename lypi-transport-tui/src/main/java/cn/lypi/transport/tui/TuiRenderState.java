@@ -47,6 +47,7 @@ final class TuiRenderState {
     private Instant lastTurnObservedAt;
     private String lastTurnDurationLine;
     private String retryLine;
+    private String fallbackLine;
     private String compactLine;
     private String interruptLine;
 
@@ -312,6 +313,7 @@ final class TuiRenderState {
         activeTurnStartedAt = null;
         lastTurnObservedAt = null;
         retryLine = "";
+        fallbackLine = "";
         compactLine = "";
         interruptLine = "";
         lastTurnDurationLine = "worked " + formatTurnDuration(durationMillis);
@@ -326,6 +328,23 @@ final class TuiRenderState {
 
     void retryEnded() {
         retryLine = "";
+        statusBar = withMode(currentMode());
+    }
+
+    void providerFallbackStarted(String fromMode, String toMode, String reason) {
+        fallbackLine = "fallback " + valueOrEmpty(fromMode) + " -> " + valueOrEmpty(toMode) + suffix(reason);
+        retryLine = "";
+        interruptLine = "";
+        statusBar = withMode("running");
+    }
+
+    void providerFallbackEnded(String toMode, boolean success) {
+        fallbackLine = success ? "" : "fallback failed" + suffix(toMode);
+        statusBar = withMode(currentMode());
+    }
+
+    void providerErrorObserved() {
+        fallbackLine = "";
         statusBar = withMode(currentMode());
     }
 
@@ -345,6 +364,7 @@ final class TuiRenderState {
         runningToolUseIds.clear();
         runtimeInterruptibleTool = false;
         retryLine = "";
+        fallbackLine = "";
         compactLine = "";
         activeTurnId = "";
         activeTurnStartedAt = null;
@@ -391,6 +411,9 @@ final class TuiRenderState {
         if (retryLine != null && !retryLine.isBlank()) {
             return retryLine;
         }
+        if (fallbackLine != null && !fallbackLine.isBlank()) {
+            return fallbackLine;
+        }
         if (interruptLine != null && !interruptLine.isBlank()) {
             return interruptLine;
         }
@@ -413,6 +436,7 @@ final class TuiRenderState {
         lastTurnObservedAt = null;
         lastTurnDurationLine = "";
         retryLine = "";
+        fallbackLine = "";
         compactLine = "";
         interruptLine = "";
     }

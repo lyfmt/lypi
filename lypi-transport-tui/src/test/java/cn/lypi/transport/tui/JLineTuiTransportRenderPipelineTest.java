@@ -16,6 +16,8 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.ProviderFallbackEndEvent;
+import cn.lypi.contracts.event.ProviderFallbackStartEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
@@ -447,6 +449,51 @@ class JLineTuiTransportRenderPipelineTest {
         assertEquals("· retrying attempt 2 rate limit", latest.get(1));
         assertEquals(inputContent("> "), inputLine(latest));
         assertTrue(latest.getLast().contains("ses_1"));
+    }
+
+    @Test
+    void providerFallbackRendersUntilSuccessfulOutputWithoutMovingStatusBar() {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 100, 6);
+        Instant timestamp = Instant.parse("2026-06-09T00:00:00Z");
+
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new ProviderFallbackStartEvent(
+            "ses_1",
+            "responses/websocket",
+            "responses/sse",
+            "provider.fallback_candidate",
+            timestamp
+        ));
+        transport.flushPendingFrameForTest();
+
+        List<String> fallbackFrame = frames.getLast();
+        assertTrue(fallbackFrame.contains(
+            "· fallback responses/websocket -> responses/sse provider.fallback_candidate"
+        ));
+        assertTrue(fallbackFrame.getLast().contains("ses_1"));
+
+        events.emit(new ProviderFallbackEndEvent("ses_1", "responses/sse", true, timestamp.plusMillis(1)));
+        events.emit(new MessageDeltaEvent(
+            "ses_1",
+            "msg_1",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_1",
+            ContentBlockKind.TEXT,
+            "fallback ok",
+            true,
+            java.util.Map.of(),
+            timestamp.plusMillis(2)
+        ));
+        transport.flushPendingFrameForTest();
+
+        List<String> outputFrame = frames.getLast();
+        assertTrue(outputFrame.contains("fallback ok"));
+        assertFalse(outputFrame.stream().anyMatch(line -> line.contains("· fallback")));
+        assertEquals(fallbackFrame.size(), outputFrame.size());
+        assertTrue(outputFrame.getLast().contains("ses_1"));
     }
 
     @Test

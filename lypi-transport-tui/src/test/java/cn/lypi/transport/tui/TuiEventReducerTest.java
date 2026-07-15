@@ -25,6 +25,8 @@ import cn.lypi.contracts.event.MemoryWriteEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.ProviderFallbackEndEvent;
+import cn.lypi.contracts.event.ProviderFallbackStartEvent;
 import cn.lypi.contracts.event.RetryEndEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.SessionStartEvent;
@@ -447,6 +449,76 @@ class TuiEventReducerTest {
         assertEquals("worked 0s", reducer.view().runtimeLine());
         assertEquals("EXECUTE", reducer.view().statusBar().mode());
         assertEquals(0, reducer.view().blocks().size());
+    }
+
+    @Test
+    void providerFallbackEventsUpdateEphemeralRuntimeLineWithExistingPriorities() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+        reducer.reduce(new TurnStartEvent("ses_1", "turn_1", NOW));
+
+        reducer.reduce(new ProviderFallbackStartEvent(
+            "ses_1",
+            "responses/websocket",
+            "responses/sse",
+            "provider.fallback_candidate",
+            NOW
+        ));
+        assertEquals(
+            "fallback responses/websocket -> responses/sse provider.fallback_candidate",
+            reducer.view().runtimeLine()
+        );
+        assertEquals(0, reducer.view().blocks().size());
+
+        reducer.reduce(new CompactStartEvent("ses_1", "session", NOW));
+        assertEquals("compacting session", reducer.view().runtimeLine());
+        reducer.reduce(new CompactEndEvent("ses_1", "compact_1", NOW));
+        assertEquals(
+            "fallback responses/websocket -> responses/sse provider.fallback_candidate",
+            reducer.view().runtimeLine()
+        );
+
+        reducer.reduce(new RetryStartEvent("ses_1", 2, "rate limit", NOW));
+        assertEquals("retrying attempt 2 rate limit", reducer.view().runtimeLine());
+        reducer.reduce(new RetryEndEvent("ses_1", 2, true, NOW));
+        assertEquals(
+            "fallback responses/websocket -> responses/sse provider.fallback_candidate",
+            reducer.view().runtimeLine()
+        );
+
+        reducer.reduce(new ProviderFallbackEndEvent("ses_1", "responses/sse", true, NOW));
+        assertEquals("working (0s)", reducer.view().runtimeLine());
+    }
+
+    @Test
+    void failedProviderFallbackLineIsReplacedByErrorAndClearedByRuntimeBoundaries() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+        reducer.reduce(new TurnStartEvent("ses_1", "turn_1", NOW));
+        ProviderFallbackStartEvent start = new ProviderFallbackStartEvent(
+            "ses_1",
+            "responses/websocket",
+            "responses/sse",
+            "provider.fallback_candidate",
+            NOW
+        );
+
+        reducer.reduce(start);
+        reducer.reduce(new ProviderFallbackEndEvent("ses_1", "responses/sse", false, NOW));
+        assertEquals("fallback failed responses/sse", reducer.view().runtimeLine());
+
+        reducer.reduce(new ErrorEvent("ses_1", "provider.request_failed", "request failed", NOW));
+        assertEquals("working (0s)", reducer.view().runtimeLine());
+
+        reducer.reduce(start);
+        reducer.reduce(new InterruptEvent("ses_1", "esc", NOW));
+        assertEquals("interrupted esc", reducer.view().runtimeLine());
+
+        reducer.reduce(start);
+        reducer.reduce(new TurnEndEvent("ses_1", "turn_1", "FAILED", NOW));
+        assertEquals("worked 0s", reducer.view().runtimeLine());
+
+        reducer.reduce(start);
+        reducer.configureRuntimeState(TestRuntimeStates.basic("ses_2"));
+        assertEquals("", reducer.view().runtimeLine());
     }
 
     @Test

@@ -13,6 +13,8 @@ import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
+import cn.lypi.contracts.event.ProviderFallbackEndEvent;
+import cn.lypi.contracts.event.ProviderFallbackStartEvent;
 import cn.lypi.contracts.event.RetryEndEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.SessionStartEvent;
@@ -103,6 +105,12 @@ public final class TuiEventReducer {
             case TurnEndEvent end -> state.turnEnded(end.durationMillis());
             case RetryStartEvent start -> state.retryStarted(start.attempt(), start.reason());
             case RetryEndEvent ignored -> state.retryEnded();
+            case ProviderFallbackStartEvent start -> state.providerFallbackStarted(
+                start.fromMode(),
+                start.toMode(),
+                start.reason()
+            );
+            case ProviderFallbackEndEvent end -> state.providerFallbackEnded(end.toMode(), end.success());
             case CompactStartEvent start -> state.compactStarted(start.kind());
             case CompactEndEvent ignored -> state.compactEnded();
             case InterruptEvent interrupt -> {
@@ -531,6 +539,7 @@ public final class TuiEventReducer {
     }
 
     private void reduceError(ErrorEvent event) {
+        state.providerErrorObserved();
         state.addBlock(new TuiErrorBlock(
             event.errorId(),
             event.message()
