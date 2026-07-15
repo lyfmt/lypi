@@ -5,9 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
+import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventConsumer;
@@ -32,6 +36,7 @@ import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -42,6 +47,106 @@ class JLineTuiTransportRenderPipelineTest {
     private static final String INPUT_BACKGROUND = "\033[48;5;236m";
     private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
     private static final String ANSI_RESET = "\033[0m";
+
+    @Test
+    void completedRuntimeTranscriptRendersFinalToolStatesOnFirstFrame() {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 100, 12);
+
+        transport.attach(events, completedRuntimeState("ses_resumed", 0));
+        transport.renderCurrentFrameUnderUiLock();
+
+        TuiToolBlock read = tool(transport, "read-1");
+        TuiToolBlock bash = tool(transport, "bash-1");
+        assertEquals(TuiToolState.DONE, read.state());
+        assertFalse(read.active());
+        assertTrue(read.details().contains("read result summary"));
+        assertEquals(TuiToolState.FAILED, bash.state());
+        assertFalse(bash.active());
+        assertTrue(bash.details().contains("command failed"));
+
+        String firstFrame = String.join("\n", frames.getFirst());
+        assertTrue(firstFrame.contains("tools: read x1 (Ctrl+O details)"), firstFrame);
+        assertTrue(firstFrame.contains("failed $ exit 1"), firstFrame);
+        assertTrue(firstFrame.contains("command failed"), firstFrame);
+        assertTrue(firstFrame.contains("resume complete"), firstFrame);
+        assertFalse(firstFrame.contains("pending read"), firstFrame);
+        assertFalse(firstFrame.contains("pending $"), firstFrame);
+    }
+
+    @Test
+    void reattachToResumedStateClearsOldProgressAndScrollsOnlyNewTranscript() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        QueueInputSource input = new QueueInputSource();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            80,
+            8,
+            input,
+            new RecordingSubmitHandler()
+        );
+        transport.attach(events, TestRuntimeStates.basic("ses_old"));
+        events.emit(new ToolStartEvent("ses_old", "old-tool", "bash", Instant.parse("2026-06-09T00:00:00Z")));
+        events.emit(new ToolProgressEvent(
+            "ses_old",
+            "old-tool",
+            ToolProgress.output("stdout", "old-progress\n"),
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+        assertEquals(TuiToolState.RUNNING, tool(transport, "old-tool").state());
+        assertTrue(tool(transport, "old-tool").details().contains("old-progress"));
+
+        SessionRuntimeState resumed = completedRuntimeState("ses_new", 12);
+        transport.attach(events, resumed);
+        transport.renderCurrentFrameUnderUiLock();
+
+        assertFalse(transport.viewForTest().blocks().stream()
+            .filter(TuiToolBlock.class::isInstance)
+            .map(TuiToolBlock.class::cast)
+            .anyMatch(block -> "old-tool".equals(block.toolUseId())));
+        assertFalse(transport.viewForTest().blocks().stream()
+            .filter(TuiToolBlock.class::isInstance)
+            .map(TuiToolBlock.class::cast)
+            .anyMatch(block -> block.details().contains("old-progress")));
+        assertEquals(TuiToolState.DONE, tool(transport, "read-1").state());
+        assertEquals(TuiToolState.FAILED, tool(transport, "bash-1").state());
+
+        events.emit(new ToolProgressEvent(
+            "ses_new",
+            "bash-1",
+            ToolProgress.output("stderr", "new-index-progress\n"),
+            Instant.parse("2026-06-09T00:00:02Z")
+        ));
+        assertEquals(TuiToolState.DONE, tool(transport, "read-1").state());
+        assertEquals(TuiToolState.RUNNING, tool(transport, "bash-1").state());
+        assertTrue(tool(transport, "bash-1").details().contains("new-index-progress"));
+
+        transport.attach(events, resumed);
+        transport.renderCurrentFrameUnderUiLock();
+        for (int index = 0; index < 10; index++) {
+            input.add("\033[6~");
+        }
+        transport.drainInputForTest();
+        assertTrue(String.join("\n", frames.getLast()).contains("resume complete"));
+
+        for (int index = 0; index < 10; index++) {
+            input.add("\033[5~");
+        }
+        transport.drainInputForTest();
+        String pageUpFrame = String.join("\n", frames.getLast());
+        assertTrue(pageUpFrame.contains("new history 0"), pageUpFrame);
+        assertFalse(pageUpFrame.contains("old-progress"), pageUpFrame);
+
+        for (int index = 0; index < 10; index++) {
+            input.add("\033[6~");
+        }
+        transport.drainInputForTest();
+        String pageDownFrame = String.join("\n", frames.getLast());
+        assertTrue(pageDownFrame.contains("resume complete"), pageDownFrame);
+        assertFalse(pageDownFrame.contains("old-progress"), pageDownFrame);
+    }
 
     @Test
     void toolProgressBurstReducesImmediatelyAndCoalescesTerminalFrames() {
@@ -820,6 +925,90 @@ class JLineTuiTransportRenderPipelineTest {
         void emit(AgentEvent event) {
             consumer.accept(new EventEnvelope("evt_1", "ses_1", 1, event));
         }
+    }
+
+    private static SessionRuntimeState completedRuntimeState(String sessionId, int historyMessages) {
+        SessionRuntimeState base = TestRuntimeStates.basic(sessionId);
+        List<AgentMessage> transcript = new ArrayList<>();
+        for (int index = 0; index < historyMessages; index++) {
+            transcript.add(message(
+                "history-" + index,
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                new TextContentBlock("new history " + index)
+            ));
+        }
+        transcript.add(message(
+            "read-call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            new ToolCallContentBlock("read-1", "read", "", Map.of("inputSummary", "read AGENTS.md"))
+        ));
+        transcript.add(message(
+            "read-result",
+            MessageRole.TOOL_RESULT,
+            MessageKind.TOOL_RESULT,
+            new ToolResultContentBlock("read-1", "read result summary", false)
+        ));
+        transcript.add(message(
+            "bash-call",
+            MessageRole.ASSISTANT,
+            MessageKind.TOOL_CALL,
+            new ToolCallContentBlock("bash-1", "bash", "", Map.of("inputSummary", "exit 1"))
+        ));
+        transcript.add(message(
+            "bash-result",
+            MessageRole.TOOL_RESULT,
+            MessageKind.TOOL_RESULT,
+            new ToolResultContentBlock("bash-1", "command failed", true, Map.of("status", "FAILED"))
+        ));
+        transcript.add(message(
+            "final-answer",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            new TextContentBlock("resume complete")
+        ));
+        return new SessionRuntimeState(
+            base.sessionId(),
+            base.cwd(),
+            base.currentBranchLeafId(),
+            base.model(),
+            base.thinkingLevel(),
+            base.agentMode(),
+            base.permissionRuntimeState(),
+            base.budget(),
+            transcript,
+            false,
+            false,
+            false,
+            false
+        );
+    }
+
+    private static AgentMessage message(
+        String id,
+        MessageRole role,
+        MessageKind kind,
+        cn.lypi.contracts.context.ContentBlock block
+    ) {
+        return new AgentMessage(
+            id,
+            role,
+            kind,
+            List.of(block),
+            Instant.parse("2026-06-09T00:00:00Z"),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private static TuiToolBlock tool(JLineTuiTransport transport, String toolUseId) {
+        return transport.viewForTest().blocks().stream()
+            .filter(TuiToolBlock.class::isInstance)
+            .map(TuiToolBlock.class::cast)
+            .filter(block -> toolUseId.equals(block.toolUseId()))
+            .findFirst()
+            .orElseThrow();
     }
 
     private static final class QueueInputSource implements TerminalInputSource {
