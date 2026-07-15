@@ -17,7 +17,7 @@ class TerminalSessionTest {
 
         assertTrue(io.rawModeEntered);
         assertEquals(
-            "\033[?1049h\033[?2004h\033[?25l\033[>4;2m",
+            "\033[?1049h\033[?1000h\033[?1006h\033[?2004h\033[?25l\033[>4;2m",
             io.output.toString()
         );
 
@@ -25,8 +25,8 @@ class TerminalSessionTest {
 
         assertTrue(io.rawModeRestored);
         assertEquals(
-            "\033[?1049h\033[?2004h\033[?25l\033[>4;2m"
-                + "\033[>4m\033[?2004l\033[?1049l\033[?25h",
+            "\033[?1049h\033[?1000h\033[?1006h\033[?2004h\033[?25l\033[>4;2m"
+                + "\033[>4m\033[?2004l\033[?1006l\033[?1000l\033[?1049l\033[?25h",
             io.output.toString()
         );
     }
@@ -74,7 +74,10 @@ class TerminalSessionTest {
 
         assertThrows(IOException.class, () -> TerminalSession.open(io));
 
-        assertEquals("\033[?1049h\033[>4m\033[?2004l\033[?1049l\033[?25h", io.output.toString());
+        assertEquals(
+            "\033[?1049h\033[>4m\033[?2004l\033[?1006l\033[?1000l\033[?1049l\033[?25h",
+            io.output.toString()
+        );
         assertTrue(io.rawModeRestored);
         assertTrue(io.resizeHandlerRestored);
         assertTrue(io.interruptHandlerRestored);

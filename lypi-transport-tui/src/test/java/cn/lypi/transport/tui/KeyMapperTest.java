@@ -44,6 +44,17 @@ class KeyMapperTest {
     }
 
     @Test
+    void mapsSgrWheelPressesAndIgnoresOtherMouseEvents() {
+        KeyMapper mapper = new KeyMapper();
+
+        assertEquals(TerminalKey.MOUSE_WHEEL_UP, mapper.map("\033[<64;40;12M").orElseThrow());
+        assertEquals(TerminalKey.MOUSE_WHEEL_DOWN, mapper.map("\033[<65;40;12M").orElseThrow());
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[<0;40;12M").orElseThrow());
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[<0;40;12m").orElseThrow());
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[<32;40;12M").orElseThrow());
+    }
+
+    @Test
     void filtersTerminalProtocolResponsesAndReleaseRepeatEvents() {
         KeyMapper mapper = new KeyMapper();
 

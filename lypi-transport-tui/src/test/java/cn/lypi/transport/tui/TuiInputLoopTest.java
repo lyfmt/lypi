@@ -181,6 +181,56 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void mouseWheelScrollsTranscriptWhileArrowUpStillBrowsesInputHistory() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<List<String>> frames = new ArrayList<>();
+        List<TuiBlock> blocks = java.util.stream.IntStream.rangeClosed(1, 30)
+            .mapToObj(index -> (TuiBlock) new TuiMessageBlock(
+                "b" + index,
+                "m" + index,
+                "assistant",
+                "history-" + index,
+                false
+            ))
+            .toList();
+        TuiViewModel view = new TuiViewModel(
+            blocks,
+            new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = new TuiInputLoop(
+            submit,
+            lines -> frames.add(List.copyOf(lines)),
+            new TuiRenderer(),
+            new TuiScreen(2),
+            new TuiLayout(40, 6),
+            () -> view
+        );
+        loop.acceptText("previous prompt");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("draft");
+        int cursor = loop.cursor();
+
+        loop.acceptKey(TerminalKey.MOUSE_WHEEL_UP);
+
+        assertEquals("draft", loop.draft());
+        assertEquals(cursor, loop.cursor());
+        assertTrue(frames.getLast().contains("history-28"));
+        assertTrue(frames.getLast().contains("history-29"));
+        assertFalse(frames.getLast().contains("history-30"));
+
+        loop.acceptKey(TerminalKey.CTRL_U);
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("previous prompt", loop.draft());
+        assertTrue(frames.getLast().contains("history-28"));
+        assertTrue(frames.getLast().contains("history-29"));
+        assertFalse(frames.getLast().contains("history-30"));
+    }
+
+    @Test
     void backspaceDeletesPreviousCharacterAndRerendersInput() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();

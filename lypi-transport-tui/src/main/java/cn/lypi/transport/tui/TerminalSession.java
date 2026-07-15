@@ -7,6 +7,10 @@ import org.jline.terminal.TerminalBuilder;
 public final class TerminalSession implements AutoCloseable {
     static final String ENTER_ALTERNATE_SCREEN = "\033[?1049h";
     static final String LEAVE_ALTERNATE_SCREEN = "\033[?1049l";
+    static final String ENABLE_MOUSE_TRACKING = "\033[?1000h";
+    static final String DISABLE_MOUSE_TRACKING = "\033[?1000l";
+    static final String ENABLE_SGR_MOUSE = "\033[?1006h";
+    static final String DISABLE_SGR_MOUSE = "\033[?1006l";
     static final String ENABLE_BRACKETED_PASTE = "\033[?2004h";
     static final String DISABLE_BRACKETED_PASTE = "\033[?2004l";
     static final String HIDE_CURSOR = "\033[?25l";
@@ -66,6 +70,8 @@ public final class TerminalSession implements AutoCloseable {
             interruptHandler = io.onInterrupt(interruptCallback);
             io.write(ENTER_ALTERNATE_SCREEN);
             alternateScreenEntered = true;
+            io.write(ENABLE_MOUSE_TRACKING);
+            io.write(ENABLE_SGR_MOUSE);
             io.write(ENABLE_BRACKETED_PASTE);
             io.write(HIDE_CURSOR);
             io.write(ENABLE_MODIFY_OTHER_KEYS);
@@ -86,6 +92,8 @@ public final class TerminalSession implements AutoCloseable {
         try {
             io.write(DISABLE_MODIFY_OTHER_KEYS);
             io.write(DISABLE_BRACKETED_PASTE);
+            io.write(DISABLE_SGR_MOUSE);
+            io.write(DISABLE_MOUSE_TRACKING);
             io.write(LEAVE_ALTERNATE_SCREEN);
             io.write(SHOW_CURSOR);
             io.flush();
@@ -114,6 +122,8 @@ public final class TerminalSession implements AutoCloseable {
         if (alternateScreenEntered) {
             writeStaticQuietly(io, DISABLE_MODIFY_OTHER_KEYS);
             writeStaticQuietly(io, DISABLE_BRACKETED_PASTE);
+            writeStaticQuietly(io, DISABLE_SGR_MOUSE);
+            writeStaticQuietly(io, DISABLE_MOUSE_TRACKING);
             writeStaticQuietly(io, LEAVE_ALTERNATE_SCREEN);
             writeStaticQuietly(io, SHOW_CURSOR);
             flushStaticQuietly(io);
