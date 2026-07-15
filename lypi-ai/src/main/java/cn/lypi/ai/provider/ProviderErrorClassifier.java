@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
 public final class ProviderErrorClassifier {
     private static final Pattern RETRY_AFTER_PATTERN = Pattern.compile("retry-after[:= ]+(\\d+)", Pattern.CASE_INSENSITIVE);
 
-    public ProviderErrorClassification classify(RuntimeException error, boolean outputStarted) {
+    public ProviderErrorClassification classify(RuntimeException error, boolean visibleOutputStarted) {
         String message = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
         String normalized = message.toLowerCase(Locale.ROOT);
         if (containsAny(normalized, "aborted", "abort")) {
@@ -37,7 +37,7 @@ public final class ProviderErrorClassifier {
                 "provider.fallback_candidate",
                 "fallback_candidate",
                 true,
-                !outputStarted,
+                !visibleOutputStarted,
                 retryAfter(message)
             );
         }

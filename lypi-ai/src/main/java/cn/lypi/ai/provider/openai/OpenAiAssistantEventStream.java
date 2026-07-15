@@ -14,7 +14,10 @@ import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.ProviderConversationState;
+import cn.lypi.contracts.model.TextDelta;
+import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.TokenUsage;
+import cn.lypi.contracts.model.ToolCallDelta;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -40,7 +43,7 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
     private boolean closed;
     private boolean completed;
     private boolean aborted;
-    private boolean outputStarted;
+    private boolean visibleOutputStarted;
     private boolean retryNoticeAwaitingConsumption;
     private AssistantError error;
     private RuntimeException failure;
@@ -181,10 +184,10 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
         }
         AssistantStreamEvent event = pendingEvents.removeFirst();
         emittedEvents.add(event);
-        if (!(event instanceof ProviderRetryNotice)) {
-            outputStarted = true;
-        } else {
+        if (event instanceof ProviderRetryNotice) {
             retryNoticeAwaitingConsumption = false;
+        } else if (startsVisibleOutput(event)) {
+            visibleOutputStarted = true;
         }
         applyResult(event);
         return event;
@@ -238,7 +241,7 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
         Optional<ProviderRetryNotice> retryNotice = retryCoordinator.planRetry(
             exception,
             signal,
-            outputStarted,
+            visibleOutputStarted,
             nextRetryIndex
         );
         if (retryNotice.isPresent()) {
@@ -250,15 +253,26 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
         }
         retryIndex = 0;
         attemptIndex++;
-        if (fallbackDecider.shouldFallback(exception, outputStarted) && !outputStarted && attemptIndex < attempts.size()) {
+        if (fallbackDecider.shouldFallback(exception, visibleOutputStarted)
+            && !visibleOutputStarted
+            && attemptIndex < attempts.size()) {
             return;
         }
         error = new AssistantError("provider.request_failed", exception.getMessage());
-        if (outputStarted) {
+        if (visibleOutputStarted) {
             failure = exception;
             return;
         }
         pendingEvents.add(error);
+    }
+
+    private boolean startsVisibleOutput(AssistantStreamEvent event) {
+        return switch (event) {
+            case TextDelta delta -> delta.text() != null && !delta.text().isEmpty();
+            case ThinkingDelta delta -> delta.text() != null && !delta.text().isEmpty();
+            case ToolCallDelta ignored -> true;
+            default -> false;
+        };
     }
 
     private void sleepBeforeRetry() {
