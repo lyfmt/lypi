@@ -44,10 +44,14 @@ timeout 15 script -q -e -c "$PTY_COMMAND" "$PTY_OUTPUT" >/dev/null
 
 expected_sequences=(
   $'\033[?1049h'
+  $'\033[?1000h'
+  $'\033[?1006h'
   $'\033[?2004h'
   $'\033[?25l'
   "LYPI_TUI_PTY_OPEN"
   $'\033[?2004l'
+  $'\033[?1006l'
+  $'\033[?1000l'
   $'\033[?1049l'
   $'\033[?25h'
   "LYPI_TUI_PTY_CLOSED"
@@ -68,5 +72,6 @@ for expected in "${expected_sequences[@]}"; do
 done
 
 bash "$ROOT/lypi-transport-tui/src/test/resources/run-tui-frame-pty.sh"
+bash "$ROOT/lypi-transport-tui/src/test/resources/run-tui-interaction-pty.sh"
 
 echo "tui smoke passed"

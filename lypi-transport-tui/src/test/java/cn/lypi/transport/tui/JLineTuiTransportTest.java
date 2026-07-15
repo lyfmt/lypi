@@ -262,7 +262,9 @@ class JLineTuiTransportTest {
 
         transport.close();
 
-        assertTrue(io.output.toString().endsWith("\033[>4m\033[?2004l\033[?1049l\033[?25h"));
+        assertTrue(io.output.toString().endsWith(
+            "\033[>4m\033[?2004l\033[?1006l\033[?1000l\033[?1049l\033[?25h"
+        ));
         assertFalse(io.output.toString().endsWith("\n"));
     }
 
@@ -902,7 +904,7 @@ class JLineTuiTransportTest {
     private static final class FailingInitialFrameTerminalIo implements TerminalIo {
         private final StringBuilder output = new StringBuilder();
         private boolean rawModeRestored;
-        private int writesUntilFailure = 4;
+        private int writesUntilFailure = 6;
 
         @Override
         public AutoCloseable enterRawMode() {
