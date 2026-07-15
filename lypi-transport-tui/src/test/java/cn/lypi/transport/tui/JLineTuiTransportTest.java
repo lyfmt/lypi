@@ -360,6 +360,33 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void renderReconcilesTerminalSizeWhenResizeSignalIsDelayed() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 6;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            40,
+            6
+        );
+        io.output.setLength(0);
+
+        io.height = 3;
+        events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
+
+        assertDoesNotThrow(transport::flushPendingFrameForTest);
+        assertTrue(io.output.toString().contains("\033[3;1H"));
+        assertFalse(io.output.toString().contains("\033[4;1H"));
+
+        transport.close();
+    }
+
+    @Test
     void openWithSlashCommandsExecutesSlashInputWithoutStartingTurn() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         RecordingEventBus events = new RecordingEventBus();

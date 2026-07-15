@@ -44,6 +44,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private final TerminalInputPump inputPump;
     private final TuiInputLoop inputLoop;
     private final TerminalSession terminalSession;
+    private final TerminalIo terminalIo;
     private final DiffViewProvider diffViewProvider;
     private final Clock clock;
     private final TuiRuntimeTicker runtimeTicker;
@@ -65,6 +66,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputPump = null;
         this.inputLoop = null;
         this.terminalSession = null;
+        this.terminalIo = null;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.clock = Clock.systemUTC();
         this.runtimeTicker = new TuiRuntimeTicker(RUNTIME_TICK_INTERVAL_MILLIS, MAX_DIFF_PATCH_BYTES);
@@ -98,6 +100,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.inputPump = null;
         this.inputLoop = null;
         this.terminalSession = terminalSession;
+        this.terminalIo = null;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.clock = Clock.systemUTC();
         this.runtimeTicker = new TuiRuntimeTicker(RUNTIME_TICK_INTERVAL_MILLIS, MAX_DIFF_PATCH_BYTES);
@@ -113,6 +116,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler,
         TerminalSession terminalSession,
+        TerminalIo terminalIo,
         Supplier<SlashCommandPicker> slashPickerSupplier,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
@@ -126,6 +130,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             inputSource,
             submitHandler,
             terminalSession,
+            terminalIo,
             slashPickerSupplier,
             diffViewProvider,
             resumeController,
@@ -142,6 +147,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TerminalInputSource inputSource,
         TuiSubmitHandler submitHandler,
         TerminalSession terminalSession,
+        TerminalIo terminalIo,
         Supplier<SlashCommandPicker> slashPickerSupplier,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
@@ -172,6 +178,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         );
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
         this.terminalSession = terminalSession;
+        this.terminalIo = terminalIo;
         this.diffViewProvider = diffViewProvider == null ? NOOP_DIFF_VIEW_PROVIDER : diffViewProvider;
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.runtimeTicker = new TuiRuntimeTicker(RUNTIME_TICK_INTERVAL_MILLIS, MAX_DIFF_PATCH_BYTES);
@@ -599,6 +606,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             submitHandler,
             null,
             null,
+            null,
             NOOP_DIFF_VIEW_PROVIDER,
             null,
             null
@@ -620,6 +628,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             null,
             inputSource,
             submitHandler,
+            null,
             null,
             null,
             NOOP_DIFF_VIEW_PROVIDER,
@@ -730,6 +739,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             inputSource,
             submitHandler,
             session,
+            io,
             slashPickerSupplier,
             diffViewProvider,
             resumeController,
@@ -1001,14 +1011,31 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             if (reducer == null) {
                 return;
             }
-            int safeWidth = safeWidth(width);
-            int safeHeight = safeHeight(height);
-            layout = new TuiLayout(safeWidth, safeHeight);
-            screen.updateViewportHeight(Math.max(0, safeHeight - 2));
-            if (inputLoop != null) {
-                inputLoop.updateViewport(screen, layout);
-            }
+            updateViewport(width, height);
             redrawScheduler.renderNow(this::renderCurrentFrame);
+        }
+    }
+
+    private void updateViewport(int width, int height) {
+        int safeWidth = safeWidth(width);
+        int safeHeight = safeHeight(height);
+        layout = new TuiLayout(safeWidth, safeHeight);
+        screen.updateViewportHeight(Math.max(0, safeHeight - 2));
+        if (inputLoop != null) {
+            inputLoop.updateViewport(screen, layout);
+        }
+    }
+
+    private void reconcileTerminalSize() {
+        if (terminalIo == null || layout == null) {
+            return;
+        }
+        int currentWidth = terminalIo.width();
+        int currentHeight = terminalIo.height();
+        int resolvedWidth = currentWidth > 0 ? currentWidth : layout.width();
+        int resolvedHeight = currentHeight > 1 ? currentHeight : layout.height();
+        if (layout.width() != resolvedWidth || layout.height() != resolvedHeight) {
+            updateViewport(resolvedWidth, resolvedHeight);
         }
     }
 
@@ -1025,6 +1052,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private void renderCurrentFrame() {
         lastRenderHeldUiLock = Thread.holdsLock(uiMonitor);
         try {
+            reconcileTerminalSize();
             if (renderer != null) {
                 renderer.run();
                 return;
