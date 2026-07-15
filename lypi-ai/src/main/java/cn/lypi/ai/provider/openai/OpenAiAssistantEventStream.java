@@ -1,6 +1,8 @@
 package cn.lypi.ai.provider.openai;
 
 import cn.lypi.ai.provider.ProviderEventStream;
+import cn.lypi.ai.provider.ProviderErrorClassification;
+import cn.lypi.ai.provider.ProviderErrorClassifier;
 import cn.lypi.ai.provider.ProviderFallbackDecider;
 import cn.lypi.ai.provider.ProviderRawEvent;
 import cn.lypi.ai.provider.ProviderRetryCoordinator;
@@ -12,6 +14,7 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.AssistantStreamResult;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.ProviderConversationState;
 import cn.lypi.contracts.model.TextDelta;
@@ -32,6 +35,7 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
     private final List<OpenAiStreamAttempt> attempts;
     private final AbortSignal signal;
     private final ProviderFallbackDecider fallbackDecider;
+    private final ProviderErrorClassifier errorClassifier = new ProviderErrorClassifier();
     private final ProviderRetryCoordinator retryCoordinator;
     private final Deque<AssistantStreamEvent> pendingEvents = new ArrayDeque<>();
     private final List<AssistantStreamEvent> emittedEvents = new ArrayList<>();
@@ -252,10 +256,22 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
             return;
         }
         retryIndex = 0;
+        int failedAttemptIndex = attemptIndex;
         attemptIndex++;
         if (fallbackDecider.shouldFallback(exception, visibleOutputStarted)
             && !visibleOutputStarted
             && attemptIndex < attempts.size()) {
+            ProviderErrorClassification classification = errorClassifier.classify(exception, visibleOutputStarted);
+            pendingEvents.add(new ProviderFallbackNotice(
+                "openai",
+                failedAttemptIndex + 1,
+                attemptIndex + 1,
+                attempts.get(failedAttemptIndex).mode(),
+                attempts.get(attemptIndex).mode(),
+                classification.reason(),
+                classification.errorId(),
+                exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage()
+            ));
             return;
         }
         error = new AssistantError("provider.request_failed", exception.getMessage());

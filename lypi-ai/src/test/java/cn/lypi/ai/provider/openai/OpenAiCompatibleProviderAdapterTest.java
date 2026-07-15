@@ -25,6 +25,7 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
@@ -388,6 +389,48 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(sse.requests).hasSize(1);
         assertThat(events).contains(new TextDelta("fallback ok"));
         assertThat(events).noneMatch(cn.lypi.contracts.model.AssistantError.class::isInstance);
+    }
+
+    @Test
+    void emitsFallbackNoticeBeforeOpeningNextProviderAttempt() {
+        RecordingTransport websocket = RecordingTransport.eventsThenFail(
+            "WebSocket handshake failed after response.created",
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-first\"}}"
+        );
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-fallback\"}}",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"fallback ok\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-fallback\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            RecordingTransport.events()
+        );
+
+        try (AssistantEventStream stream = adapter.stream(context(), descriptor(), () -> false)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.next()).isInstanceOf(cn.lypi.contracts.model.AssistantStart.class);
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(sse.requests).isEmpty();
+            assertThat(iterator.next()).isEqualTo(new ProviderFallbackNotice(
+                "openai",
+                1,
+                2,
+                "responses/websocket",
+                "responses/sse",
+                "fallback_candidate",
+                "provider.fallback_candidate",
+                "WebSocket handshake failed after response.created"
+            ));
+            assertThat(sse.requests).isEmpty();
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(sse.requests).hasSize(1);
+            assertThat(iterator.next()).isInstanceOf(cn.lypi.contracts.model.AssistantStart.class);
+        }
     }
 
     @Test
