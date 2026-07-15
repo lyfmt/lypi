@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
@@ -17,9 +18,12 @@ import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
+import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.tui.SessionRuntimeState;
+import cn.lypi.contracts.tui.TuiToolBlock;
+import cn.lypi.contracts.tui.TuiToolState;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -29,6 +33,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportRenderPipelineTest {
@@ -37,7 +42,45 @@ class JLineTuiTransportRenderPipelineTest {
     private static final String ANSI_RESET = "\033[0m";
 
     @Test
-    void eventCallbackReducesAndRendersViewModelUnderUiLock() {
+    void toolProgressBurstReducesImmediatelyAndCoalescesTerminalFrames() {
+        RecordingEventBus events = new RecordingEventBus();
+        AtomicLong now = new AtomicLong();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(
+            frames::add,
+            80,
+            8,
+            now::get,
+            TuiRedrawScheduler.DEFAULT_FRAME_INTERVAL_NANOS
+        );
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+
+        events.emit(new ToolStartEvent("ses_1", "toolu_1", "bash", Instant.parse("2026-06-09T00:00:00Z")));
+        for (int index = 0; index < 256; index++) {
+            events.emit(new ToolProgressEvent(
+                "ses_1",
+                "toolu_1",
+                ToolProgress.output("stdout", "chunk-" + index + "\n"),
+                Instant.parse("2026-06-09T00:00:00Z")
+            ));
+        }
+        events.emit(new ToolEndEvent("ses_1", "toolu_1", false, Instant.parse("2026-06-09T00:00:01Z")));
+
+        TuiToolBlock tool = (TuiToolBlock) transport.viewForTest().blocks().getFirst();
+        assertEquals(TuiToolState.DONE, tool.state());
+        assertFalse(tool.active());
+        assertTrue(frames.isEmpty());
+
+        now.addAndGet(TuiRedrawScheduler.DEFAULT_FRAME_INTERVAL_NANOS);
+        assertTrue(transport.renderPendingFrameIfDueForTest());
+
+        assertEquals(1, frames.size());
+        String finalFrame = String.join("\n", frames.getFirst());
+        assertTrue(finalFrame.contains("status succeeded"), finalFrame);
+    }
+
+    @Test
+    void eventCallbackReducesBeforeUiLoopRendersUnderUiLock() {
         RecordingEventBus events = new RecordingEventBus();
         List<String> frames = new ArrayList<>();
         JLineTuiTransport transport = JLineTuiTransport.withRenderer(lines -> frames.add(String.join("\n", lines)), 40, 5);
@@ -55,10 +98,12 @@ class JLineTuiTransportRenderPipelineTest {
             java.util.Map.of(),
             Instant.parse("2026-06-09T00:00:00Z")
         ));
+        assertTrue(frames.isEmpty());
+        transport.flushPendingFrameForTest();
 
         assertEquals(1, frames.size());
         assertEquals("Done", frames.getFirst().lines().findFirst().orElseThrow());
-        assertEquals(1, transport.uiLockEntryCountForTest());
+        assertEquals(2, transport.uiLockEntryCountForTest());
     }
 
     @Test
@@ -82,6 +127,7 @@ class JLineTuiTransportRenderPipelineTest {
                 Instant.parse("2026-06-09T00:00:00Z")
             ));
         }
+        transport.flushPendingFrameForTest();
 
         List<String> latest = frames.getLast();
         assertTrue(latest.size() <= 7);
@@ -112,6 +158,7 @@ class JLineTuiTransportRenderPipelineTest {
             java.util.Map.of(),
             Instant.parse("2026-06-09T00:00:00Z")
         ));
+        transport.flushPendingFrameForTest();
 
         assertEquals(
             "ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE ON_REQUEST :workspace",
@@ -162,6 +209,7 @@ class JLineTuiTransportRenderPipelineTest {
             java.util.Map.of(),
             Instant.parse("2026-06-09T00:00:02Z")
         ));
+        transport.flushPendingFrameForTest();
 
         List<String> latest = frames.getLast();
         assertTrue(latest.contains("\033[38;5;81muser: 请修复 TUI\033[0m"));
@@ -222,12 +270,13 @@ class JLineTuiTransportRenderPipelineTest {
             java.util.Map.of(),
             Instant.parse("2026-06-09T00:00:00Z")
         ));
+        transport.flushPendingFrameForTest();
 
         transport.resizeForTest(8, 4);
 
         assertEquals(2, frames.size());
         frames.getLast().forEach(line -> assertEquals(line, AnsiWidth.truncate(line, 8)));
-        assertEquals(2, transport.uiLockEntryCountForTest());
+        assertEquals(3, transport.uiLockEntryCountForTest());
     }
 
     @Test
@@ -334,6 +383,7 @@ class JLineTuiTransportRenderPipelineTest {
             java.util.Map.of(),
             Instant.parse("2026-06-09T00:00:00Z")
         ));
+        transport.flushPendingFrameForTest();
 
         assertEquals("Done", frames.getLast().getFirst());
         assertEquals(inputContent("> draft|CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));
@@ -365,6 +415,7 @@ class JLineTuiTransportRenderPipelineTest {
             java.util.Map.of(),
             Instant.parse("2026-06-09T00:00:00Z")
         ));
+        transport.flushPendingFrameForTest();
 
         assertEquals(inputContent("> dra|CURSOR|" + INPUT_CURSOR + "ft"), inputLine(frames.getLast()));
     }
@@ -389,6 +440,7 @@ class JLineTuiTransportRenderPipelineTest {
             Instant.parse("2026-06-09T00:00:00Z")
         ));
         events.emit(new RetryStartEvent("ses_1", 2, "rate limit", Instant.parse("2026-06-09T00:00:01Z")));
+        transport.flushPendingFrameForTest();
 
         List<String> latest = frames.getLast();
         assertEquals("hello", latest.get(0));
@@ -572,6 +624,7 @@ class JLineTuiTransportRenderPipelineTest {
 
         transport.attach(events, TestRuntimeStates.basic("ses_1"));
         events.emit(new TurnStartEvent("ses_1", "turn_1", clock.instant()));
+        transport.flushPendingFrameForTest();
 
         assertTrue(frames.getLast().contains("· working (0s)"));
 
@@ -601,6 +654,7 @@ class JLineTuiTransportRenderPipelineTest {
             "Need approval",
             Instant.parse("2026-06-09T00:00:01Z")
         ));
+        transport.flushPendingFrameForTest();
 
         List<String> latest = frames.getLast();
         assertTrue(latest.stream().anyMatch(line -> line.contains("permission toolu_1: Need approval")));

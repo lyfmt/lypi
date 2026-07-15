@@ -63,13 +63,14 @@ class JLineTuiTransportTest {
     private static final DiffViewProvider NOOP_DIFF_PROVIDER = (cwd, maxPatchBytes) -> Optional.empty();
 
     @Test
-    void attachSubscribesToSessionEventsAndRendersUnderUiLock() {
+    void attachSubscribesToSessionEventsAndUiFlushRendersUnderUiLock() {
         RecordingScreen screen = new RecordingScreen();
         RecordingEventBus events = new RecordingEventBus();
         JLineTuiTransport transport = new JLineTuiTransport(screen::render);
 
         transport.attach(events, runtimeState());
         events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
+        transport.flushPendingFrameForTest();
 
         assertTrue(events.subscribed);
         assertEquals(1, screen.renderCount);
@@ -105,6 +106,7 @@ class JLineTuiTransportTest {
         );
 
         events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
+        transport.flushPendingFrameForTest();
 
         assertTrue(io.rawModeEntered);
         assertFalse(io.output.toString().contains("\033[?1049h"));
@@ -171,6 +173,7 @@ class JLineTuiTransportTest {
                 Map.of(),
                 Instant.parse("2026-06-09T00:00:00Z")
             ));
+            transport.flushPendingFrameForTest();
         }
 
         String output = io.output.toString();
@@ -214,6 +217,7 @@ class JLineTuiTransportTest {
                 Instant.parse("2026-06-09T00:00:00Z")
             ));
         }
+        transport.flushPendingFrameForTest();
 
         String output = io.output.toString();
         assertFalse(output.contains("\r\n"));
@@ -291,6 +295,7 @@ class JLineTuiTransportTest {
             false,
             Instant.parse("2026-06-09T00:00:00Z")
         ));
+        transport.flushPendingFrameForTest();
 
         assertEquals(1, diffProvider.calls);
         assertEquals(Path.of("."), diffProvider.cwd);

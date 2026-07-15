@@ -25,6 +25,7 @@ final class TuiInputLoop {
     private final TerminalInputPolicy inputPolicy = new TerminalInputPolicy();
     private final Supplier<SlashCommandPicker> slashPickerSupplier;
     private final Supplier<SkillIndex> skillIndexSupplier;
+    private final Runnable immediateRender;
     private final ResumeSessionController resumeController;
     private final ResumeOverlayController resumeOverlayController;
     private SlashCommandPicker slashPicker;
@@ -111,6 +112,34 @@ final class TuiInputLoop {
         Consumer<SessionRuntimeState> resumeStateConsumer,
         Supplier<SkillIndex> skillIndexSupplier
     ) {
+        this(
+            submitHandler,
+            frameSink,
+            renderer,
+            screen,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            skillIndexSupplier,
+            null
+        );
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        FrameSink frameSink,
+        TuiRenderer renderer,
+        TuiScreen screen,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier,
+        Runnable immediateRender
+    ) {
         this.submitHandler = submitHandler;
         this.frameSink = frameSink;
         this.renderer = renderer;
@@ -121,6 +150,7 @@ final class TuiInputLoop {
             ? () -> SlashCommandPicker.withTemplates(List.of())
             : slashPickerSupplier;
         this.skillIndexSupplier = skillIndexSupplier == null ? () -> new SkillIndex(List.of(), List.of()) : skillIndexSupplier;
+        this.immediateRender = immediateRender;
         this.resumeController = resumeController;
         this.resumeOverlayController = resumeController == null ? null : new ResumeOverlayController(
             resumeController,
@@ -397,10 +427,18 @@ final class TuiInputLoop {
     }
 
     void renderCurrentFrame() {
-        render();
+        renderFrame();
     }
 
     private void render() {
+        if (immediateRender != null) {
+            immediateRender.run();
+            return;
+        }
+        renderFrame();
+    }
+
+    private void renderFrame() {
         frameSink.render(renderer.renderFrame(
             currentView(),
             screen,
