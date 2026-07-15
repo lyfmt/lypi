@@ -23,9 +23,11 @@ final class TuiRenderer {
     private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
     private static final String ANSI_RESET = "\033[0m";
     private static final String INPUT_PREFIX = "> ";
+    private static final String CONTENT_SEPARATOR_CHARACTER = "┄";
     private static final int THINKING_VISIBLE_LINE_LIMIT = 3;
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
     private final ToolDisplayRendererRegistry toolDisplayRenderers = ToolDisplayRendererRegistry.defaults();
+    private final TuiTranscriptPartitioner transcriptPartitioner = new TuiTranscriptPartitioner();
 
     List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input) {
         return renderFrame(view, screen, layout, input, -1).lines();
@@ -70,7 +72,20 @@ final class TuiRenderer {
         List<String> overlayLines,
         boolean toolOutputExpanded
     ) {
-        List<String> fullTranscript = transcriptLines(view, layout.width(), toolOutputExpanded, Integer.MAX_VALUE);
+        TuiTranscriptPartition partition = transcriptPartitioner.partition(view.blocks());
+        List<String> fullHistory = renderTranscriptBlocks(
+            partition.history(),
+            layout.width(),
+            false,
+            Integer.MAX_VALUE
+        );
+        List<String> fullLive = renderLiveLines(
+            view,
+            partition.live(),
+            layout.width(),
+            toolOutputExpanded,
+            Integer.MAX_VALUE
+        );
         InputCandidate inputCandidate = compactRunning(view)
             ? readonlyRuntimeInputCandidate("compact 正在进行...", layout.width())
             : measureInput(input, cursor, layout.width());
@@ -81,40 +96,46 @@ final class TuiRenderer {
         TuiRegionLayout regions = layout.allocate(
             inputCandidate.desiredHeight(),
             fullOverlay.lines().size(),
-            !fullTranscript.isEmpty()
+            !fullHistory.isEmpty() || !fullLive.isEmpty()
         );
-        if (toolOutputExpanded) {
-            fullTranscript = transcriptLines(
-                view,
-                layout.width(),
-                true,
-                regions.transcriptHeight()
-            );
-        }
+        TuiContentLayout content = TuiContentLayout.allocate(
+            regions.transcriptHeight(),
+            !fullHistory.isEmpty(),
+            fullLive.size()
+        );
         InputBlock inputBlock = inputCandidate.render(regions.inputHeight());
         List<String> overlay = windowOverlay(
             fullOverlay.lines(),
             regions.overlayHeight(),
             fullOverlay.selectedRow()
         );
-        screen.updateViewportHeight(regions.transcriptHeight());
-        screen.setTranscript(fullTranscript);
-        List<String> transcript = screen.visibleTranscript();
+        screen.updateViewportHeight(content.historyHeight());
+        screen.setTranscript(fullHistory);
+        List<String> history = topPaddedTail(screen.visibleTranscript(), content.historyHeight());
+        List<String> live = topPaddedTail(fullLive, content.liveHeight());
         int chromeLineCount = inputBlock.lines().size() + overlay.size() + regions.statusHeight();
 
         List<String> lines = new ArrayList<>();
-        lines.addAll(transcript);
+        lines.addAll(history);
+        if (content.separatorHeight() > 0) {
+            lines.add(contentSeparator(layout.width()));
+        }
+        lines.addAll(live);
         lines.addAll(inputBlock.lines());
         lines.addAll(overlay);
         lines.add(statusLine(view.statusBar(), screen, layout.width()));
+        if (lines.size() != layout.height()) {
+            throw new IllegalStateException("rendered frame must match terminal height");
+        }
         return TuiRenderFrame.fromTextLines(lines, chromeLineCount);
     }
 
-    private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded) {
-        return transcriptLines(blocks, width, toolOutputExpanded, Integer.MAX_VALUE);
-    }
-
-    private List<String> transcriptLines(List<TuiBlock> blocks, int width, boolean toolOutputExpanded, int lineBudget) {
+    List<String> renderTranscriptBlocks(
+        List<TuiBlock> blocks,
+        int width,
+        boolean toolOutputExpanded,
+        int lineBudget
+    ) {
         List<String> lines = new ArrayList<>();
         for (int index = 0; index < blocks.size(); index++) {
             if (lines.size() >= lineBudget) {
@@ -175,8 +196,14 @@ final class TuiRenderer {
         return wrap("tools: " + summary + " (Ctrl+O details)", width);
     }
 
-    private List<String> transcriptLines(TuiViewModel view, int width, boolean toolOutputExpanded, int lineBudget) {
-        List<String> lines = transcriptLines(view.blocks(), width, toolOutputExpanded, lineBudget);
+    private List<String> renderLiveLines(
+        TuiViewModel view,
+        List<TuiBlock> blocks,
+        int width,
+        boolean toolOutputExpanded,
+        int lineBudget
+    ) {
+        List<String> lines = renderTranscriptBlocks(blocks, width, toolOutputExpanded, lineBudget);
         view.diffView().ifPresent(diff -> new DiffOverlay(diff)
             .lines()
             .forEach(line -> appendWithinBudget(lines, wrap(line, width), lineBudget)));
@@ -603,6 +630,22 @@ final class TuiRenderer {
 
     private String inputBorder(int width) {
         return INPUT_BORDER + "─".repeat(width) + ANSI_RESET;
+    }
+
+    private String contentSeparator(int width) {
+        return INPUT_BORDER + CONTENT_SEPARATOR_CHARACTER.repeat(width) + ANSI_RESET;
+    }
+
+    private List<String> topPaddedTail(List<String> lines, int height) {
+        if (height <= 0) {
+            return List.of();
+        }
+        int start = Math.max(0, lines.size() - height);
+        List<String> visible = lines.subList(start, lines.size());
+        List<String> padded = new ArrayList<>(height);
+        padded.addAll(blankLines(height - visible.size()));
+        padded.addAll(visible);
+        return List.copyOf(padded);
     }
 
     private List<String> blankLines(int count) {

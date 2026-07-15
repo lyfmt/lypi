@@ -34,6 +34,115 @@ class TuiRendererTest {
     private static final String ANSI_RESET = "\033[0m";
 
     @Test
+    void rendersFixedHeightHistoryAndLiveRegions() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(6);
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiMessageBlock("history", "m1", "assistant", "old answer", false),
+                new TuiMessageBlock("live", "m2", "assistant", "streaming answer", true)
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        TuiRenderFrame frame = renderer.renderFrame(view, screen, new TuiLayout(40, 10), "draft", 5);
+
+        assertEquals(10, frame.lines().size());
+        int historyIndex = frame.lines().indexOf("old answer");
+        int separatorIndex = indexOfContentSeparator(frame.lines());
+        int liveIndex = frame.lines().indexOf("streaming answer");
+        int inputIndex = indexOfLineContaining(frame.lines(), "> draft");
+        assertTrue(historyIndex >= 0);
+        assertTrue(historyIndex < separatorIndex);
+        assertTrue(separatorIndex < liveIndex);
+        assertTrue(liveIndex < inputIndex);
+        assertEquals(1, frame.lines().stream().filter(this::isContentSeparator).count());
+    }
+
+    @Test
+    void retainsOnlyLatestFiveHundredRenderedHistoryLines() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiScreen screen = new TuiScreen(16);
+        List<TuiBlock> history = java.util.stream.IntStream.rangeClosed(1, 510)
+            .mapToObj(index -> (TuiBlock) new TuiMessageBlock(
+                "history-" + index,
+                "message-" + index,
+                "assistant",
+                "history-" + index,
+                false
+            ))
+            .toList();
+        TuiViewModel view = new TuiViewModel(
+            history,
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        renderer.renderFrame(view, screen, new TuiLayout(40, 20), "", 0);
+        screen.scrollUp(1_000);
+        List<String> lines = renderer.renderFrame(view, screen, new TuiLayout(40, 20), "", 0).lines();
+
+        assertFalse(lines.stream().anyMatch(line -> line.matches("history-(?:[1-9]|10)")));
+        assertTrue(lines.contains("history-11"));
+        assertEquals(500, screen.retainedLineCount());
+    }
+
+    @Test
+    void toolExpansionChangesOnlyLiveRegion() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiToolBlock(
+                    "history-tool",
+                    "message-history",
+                    "use-history",
+                    "custom_tool",
+                    TuiToolState.DONE,
+                    "completed",
+                    "history detail 1\nhistory detail 2\nhistory detail 3\nhistory detail 4\nhistory detail 5",
+                    false
+                ),
+                new TuiToolBlock(
+                    "live-tool",
+                    "message-live",
+                    "use-live",
+                    "custom_tool",
+                    TuiToolState.RUNNING,
+                    "active",
+                    String.join("\n", java.util.stream.IntStream.rangeClosed(1, 20)
+                        .mapToObj(index -> "live detail " + index)
+                        .toList()),
+                    true
+                )
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        List<String> collapsed = renderer.renderFrame(
+            view, new TuiScreen(10), new TuiLayout(60, 14), "", -1, List.of(), false
+        ).lines();
+        List<String> expanded = renderer.renderFrame(
+            view, new TuiScreen(10), new TuiLayout(60, 14), "", -1, List.of(), true
+        ).lines();
+
+        int collapsedSeparator = indexOfContentSeparator(collapsed);
+        int expandedSeparator = indexOfContentSeparator(expanded);
+        assertEquals(collapsed.subList(0, collapsedSeparator), expanded.subList(0, expandedSeparator));
+        assertFalse(
+            collapsed.subList(collapsedSeparator + 1, indexOfInputBorder(collapsed))
+                .equals(expanded.subList(expandedSeparator + 1, indexOfInputBorder(expanded)))
+        );
+    }
+
+    @Test
     void rendersLinearTranscriptStatusAndInput() {
         TuiRenderer renderer = new TuiRenderer();
         TuiScreen screen = new TuiScreen(2);
@@ -267,11 +376,12 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(20, 6), "", 0);
 
-        assertEquals(4, lines.size());
-        assertInputBorder(lines.get(0), 20);
-        assertInputContent(lines.get(1), "> |CURSOR|" + INPUT_CURSOR);
+        assertEquals(6, lines.size());
+        assertEquals(List.of("", ""), lines.subList(0, 2));
         assertInputBorder(lines.get(2), 20);
-        assertTrue(lines.get(3).contains("ses_1"));
+        assertInputContent(lines.get(3), "> |CURSOR|" + INPUT_CURSOR);
+        assertInputBorder(lines.get(4), 20);
+        assertTrue(lines.get(5).contains("ses_1"));
     }
 
     @Test
@@ -633,9 +743,9 @@ class TuiRendererTest {
 
         List<String> lines = renderer.render(view, screen, new TuiLayout(40, 8), "");
 
-        assertEquals("line1", lines.get(0));
-        assertEquals("line2", lines.get(1));
-        assertEquals("line3", lines.get(2));
+        assertEquals("line2", lines.get(0));
+        assertEquals("line3", lines.get(1));
+        assertTrue(isContentSeparator(lines.get(2)));
         assertEquals("· retrying attempt 2 rate limit", lines.get(3));
         assertInputBorder(lines.get(4), 40);
         assertInputContent(lines.get(5), "> ");
@@ -652,9 +762,8 @@ class TuiRendererTest {
         );
         List<String> withoutRuntimeLines = renderer.render(withoutRuntime, screenWithoutRuntime, new TuiLayout(40, 8), "");
 
-        assertEquals("line1", withoutRuntimeLines.get(0));
-        assertEquals("line2", withoutRuntimeLines.get(1));
-        assertEquals("line3", withoutRuntimeLines.get(2));
+        assertEquals("", withoutRuntimeLines.get(0));
+        assertEquals(List.of("line1", "line2", "line3"), withoutRuntimeLines.subList(1, 4));
     }
 
     @Test
@@ -833,7 +942,7 @@ class TuiRendererTest {
         assertFalse(collapsed.contains("  1 | line 1"));
         assertFalse(collapsed.contains("  11 | line 11"));
         assertTrue(collapsed.contains("tools: read x1 (Ctrl+O details)"));
-        assertTrue(expanded.contains("done read src/Large.java:1-20"));
+        assertEquals(collapsed, expanded);
         assertFalse(expanded.contains("  1 | line 1"));
         assertFalse(expanded.contains("  11 | line 11"));
     }
@@ -911,11 +1020,13 @@ class TuiRendererTest {
         List<String> collapsed = renderer.renderFrame(view, screen, new TuiLayout(80, 20), "", -1, List.of(), false).lines();
         List<String> expanded = renderer.renderFrame(view, screen, new TuiLayout(80, 20), "", -1, List.of(), true).lines();
 
-        assertTrue(collapsed.contains("tools: glob x1, read x1, grep x1 (Ctrl+O details)"));
+        assertTrue(collapsed.contains("tools: glob x1, read x1 (Ctrl+O details)"));
+        assertTrue(collapsed.contains("tools: grep x1 (Ctrl+O details)"));
         assertFalse(collapsed.contains("  matched AGENTS.md"));
         assertFalse(collapsed.contains("File: AGENTS.md"));
-        assertTrue(expanded.contains("done glob {path=., pattern=**/*}"));
-        assertTrue(expanded.contains("done read AGENTS.md:1-200"));
+        assertTrue(expanded.contains("tools: glob x1, read x1 (Ctrl+O details)"));
+        assertFalse(expanded.contains("done glob {path=., pattern=**/*}"));
+        assertFalse(expanded.contains("done read AGENTS.md:1-200"));
         assertTrue(expanded.contains("running grep {pattern=apiKey, path=.}"));
         assertFalse(expanded.contains("  matched AGENTS.md"));
         assertFalse(expanded.contains("File: AGENTS.md"));
@@ -1032,9 +1143,10 @@ class TuiRendererTest {
             Optional.empty()
         );
 
+        TuiScreen screen = new TuiScreen(20);
         TuiRenderFrame frame = new TuiRenderer().renderFrame(
             view,
-            new TuiScreen(20),
+            screen,
             new TuiLayout(20, 20),
             "",
             -1,
@@ -1042,7 +1154,8 @@ class TuiRendererTest {
             false
         );
 
-        assertTrue(frame.transcriptLineCount() <= 5);
+        assertEquals(20, frame.lines().size());
+        assertTrue(screen.retainedLineCount() <= 5);
         assertTrue(frame.lines().stream().anyMatch(line -> line.contains("more lines")));
     }
 
@@ -1108,7 +1221,8 @@ class TuiRendererTest {
             view, screen, new TuiLayout(40, 10), "/", 1
         );
 
-        assertEquals(withoutOverlay.size() + 3, withOverlay.size());
+        assertEquals(10, withOverlay.size());
+        assertEquals(10, withoutOverlay.size());
         int overlayIndex = -1;
         int inputBorderIndex = -1;
         for (int i = 0; i < withOverlay.size(); i++) {
@@ -1154,5 +1268,31 @@ class TuiRendererTest {
 
     private void assertInputContent(String line, String content) {
         assertEquals(INPUT_BACKGROUND + content + ANSI_RESET, line);
+    }
+
+    private int indexOfContentSeparator(List<String> lines) {
+        for (int index = 0; index < lines.size(); index++) {
+            if (isContentSeparator(lines.get(index))) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private int indexOfLineContaining(List<String> lines, String content) {
+        for (int index = 0; index < lines.size(); index++) {
+            if (lines.get(index).contains(content)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private int indexOfInputBorder(List<String> lines) {
+        return indexOfLineContaining(lines, "─");
+    }
+
+    private boolean isContentSeparator(String line) {
+        return line.contains("┄");
     }
 }
