@@ -39,8 +39,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportRenderPipelineTest {
@@ -289,7 +292,33 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void eventCallbackReducesBeforeUiLoopRendersUnderUiLock() {
+    void providerBurstRendersLeadingTextDeltaBeforeFinalFrame() {
+        RecordingEventBus events = new RecordingEventBus();
+        AtomicLong now = new AtomicLong();
+        List<List<String>> frames = new ArrayList<>();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(
+            frames::add,
+            80,
+            8,
+            now::get,
+            TuiRedrawScheduler.DEFAULT_FRAME_INTERVAL_NANOS
+        );
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+
+        events.emit(textDelta("first", false));
+        assertTrue(String.join("\n", frames.getLast()).contains("first"));
+        assertFalse(String.join("\n", frames.getLast()).contains("first-final"));
+
+        events.emit(textDelta("-final", true));
+        assertEquals(1, frames.size());
+
+        now.addAndGet(TuiRedrawScheduler.DEFAULT_FRAME_INTERVAL_NANOS);
+        assertTrue(transport.renderPendingFrameIfDueForTest());
+        assertTrue(String.join("\n", frames.getLast()).contains("first-final"));
+    }
+
+    @Test
+    void visibleDeltaReducesAndRendersUnderOneUiLockEntry() {
         RecordingEventBus events = new RecordingEventBus();
         List<String> frames = new ArrayList<>();
         JLineTuiTransport transport = JLineTuiTransport.withRenderer(lines -> frames.add(String.join("\n", lines)), 40, 5);
@@ -307,12 +336,9 @@ class JLineTuiTransportRenderPipelineTest {
             java.util.Map.of(),
             Instant.parse("2026-06-09T00:00:00Z")
         ));
-        assertTrue(frames.isEmpty());
-        transport.flushPendingFrameForTest();
-
         assertEquals(1, frames.size());
         assertEquals("Done", frames.getFirst().lines().findFirst().orElseThrow());
-        assertEquals(2, transport.uiLockEntryCountForTest());
+        assertEquals(1, transport.uiLockEntryCountForTest());
     }
 
     @Test
@@ -485,7 +511,7 @@ class JLineTuiTransportRenderPipelineTest {
 
         assertEquals(2, frames.size());
         frames.getLast().forEach(line -> assertEquals(line, AnsiWidth.truncate(line, 8)));
-        assertEquals(3, transport.uiLockEntryCountForTest());
+        assertEquals(2, transport.uiLockEntryCountForTest());
     }
 
     @Test
@@ -740,6 +766,118 @@ class JLineTuiTransportRenderPipelineTest {
         transport.runUntilExit();
 
         assertEquals(true, transport.exitRequestedForTest());
+    }
+
+    @Test
+    void runLoopRendersIntermediateMessageDeltaBeforeFinalDelta() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new CopyOnWriteArrayList<>();
+        QueueInputSource input = new QueueInputSource();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frame -> frames.add(List.copyOf(frame)),
+            80,
+            8,
+            input,
+            new RecordingSubmitHandler()
+        );
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        AtomicReference<Throwable> loopFailure = new AtomicReference<>();
+        Thread runner = Thread.ofVirtual().start(() -> {
+            try {
+                transport.runUntilExit();
+            } catch (Throwable failure) {
+                loopFailure.set(failure);
+            }
+        });
+
+        try {
+            events.emit(new MessageDeltaEvent(
+                "ses_1",
+                "msg_stream",
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                "block_stream",
+                ContentBlockKind.TEXT,
+                "stream-first",
+                false,
+                Map.of(),
+                Instant.parse("2026-06-09T00:00:00Z")
+            ));
+
+            assertTrue(awaitFrame(frames, frame -> String.join("\n", frame).contains("stream-first")));
+
+            events.emit(new MessageDeltaEvent(
+                "ses_1",
+                "msg_stream",
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                "block_stream",
+                ContentBlockKind.TEXT,
+                "-final",
+                true,
+                Map.of(),
+                Instant.parse("2026-06-09T00:00:01Z")
+            ));
+
+            assertTrue(awaitFrame(frames, frame -> String.join("\n", frame).contains("stream-first-final")));
+        } finally {
+            input.add("\u0003");
+            runner.join(1_000L);
+        }
+
+        assertFalse(runner.isAlive());
+        assertEquals(null, loopFailure.get());
+    }
+
+    @Test
+    void runLoopPageUpScrollsHistoryBuiltFromCurrentSessionEvents() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new CopyOnWriteArrayList<>();
+        QueueInputSource input = new QueueInputSource();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frame -> frames.add(List.copyOf(frame)),
+            80,
+            8,
+            input,
+            new RecordingSubmitHandler()
+        );
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        for (int index = 1; index <= 30; index++) {
+            events.emit(new MessageDeltaEvent(
+                "ses_1",
+                "msg_" + index,
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                "block_" + index,
+                ContentBlockKind.TEXT,
+                "event-history-" + index,
+                true,
+                Map.of(),
+                Instant.parse("2026-06-09T00:00:00Z")
+            ));
+        }
+        transport.renderCurrentFrameUnderUiLock();
+        assertTrue(String.join("\n", frames.getLast()).contains("event-history-30"));
+
+        AtomicReference<Throwable> loopFailure = new AtomicReference<>();
+        Thread runner = Thread.ofVirtual().start(() -> {
+            try {
+                transport.runUntilExit();
+            } catch (Throwable failure) {
+                loopFailure.set(failure);
+            }
+        });
+
+        try {
+            input.add("\033[5~");
+            assertTrue(awaitFrame(frames, frame -> !String.join("\n", frame).contains("event-history-30")));
+        } finally {
+            input.add("\u0003");
+            runner.join(1_000L);
+        }
+
+        assertFalse(runner.isAlive());
+        assertEquals(null, loopFailure.get());
     }
 
     @Test
@@ -1131,6 +1269,21 @@ class JLineTuiTransportRenderPipelineTest {
         );
     }
 
+    private static MessageDeltaEvent textDelta(String delta, boolean isFinal) {
+        return new MessageDeltaEvent(
+            "ses_1",
+            "msg_stream",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            "block_stream",
+            ContentBlockKind.TEXT,
+            delta,
+            isFinal,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        );
+    }
+
     private static TuiToolBlock tool(JLineTuiTransport transport, String toolUseId) {
         return transport.viewForTest().blocks().stream()
             .filter(TuiToolBlock.class::isInstance)
@@ -1147,12 +1300,12 @@ class JLineTuiTransportRenderPipelineTest {
             this.chunks = new ArrayDeque<>(List.of(chunks));
         }
 
-        private void add(String chunk) {
+        private synchronized void add(String chunk) {
             chunks.addLast(chunk);
         }
 
         @Override
-        public Optional<String> read() {
+        public synchronized Optional<String> read() {
             return Optional.ofNullable(chunks.pollFirst());
         }
     }
@@ -1188,6 +1341,18 @@ class JLineTuiTransportRenderPipelineTest {
 
     private static String inputContent(String content) {
         return INPUT_BACKGROUND + content + ANSI_RESET;
+    }
+
+    private static boolean awaitFrame(List<List<String>> frames, Predicate<List<String>> predicate)
+        throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        while (System.nanoTime() < deadline) {
+            if (frames.stream().anyMatch(predicate)) {
+                return true;
+            }
+            Thread.sleep(5L);
+        }
+        return frames.stream().anyMatch(predicate);
     }
 
     private static long transcriptRows(List<String> frame) {

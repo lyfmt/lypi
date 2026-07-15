@@ -1,9 +1,12 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.context.ContentBlockKind;
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
@@ -844,7 +847,20 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             runtimeTicker.refreshDiffAfterToolEnd(event, runtimeState, reducer, diffViewProvider);
             syncInputLoopToolState(reducer.view());
             redrawScheduler.request();
+            if (visibleStreamingDelta(event)) {
+                redrawScheduler.renderIfDue(this::renderCurrentFrame);
+            }
         }
+    }
+
+    private static boolean visibleStreamingDelta(AgentEvent event) {
+        if (!(event instanceof MessageDeltaEvent delta)
+            || delta.role() != MessageRole.ASSISTANT
+            || delta.delta().isEmpty()) {
+            return false;
+        }
+        return delta.blockKind() == ContentBlockKind.TEXT
+            || delta.blockKind() == ContentBlockKind.THINKING;
     }
 
     private void requestRenderUnderUiLock() {
