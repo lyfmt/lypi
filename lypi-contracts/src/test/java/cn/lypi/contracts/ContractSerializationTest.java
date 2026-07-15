@@ -29,6 +29,8 @@ import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.ProviderFallbackEndEvent;
+import cn.lypi.contracts.event.ProviderFallbackStartEvent;
 import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
@@ -37,6 +39,7 @@ import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.memory.MemoryScope;
@@ -910,6 +913,76 @@ class ContractSerializationTest {
         assertEquals(2, notice.attempt());
         assertEquals(java.time.Duration.ofMillis(1_000), notice.delay());
         assertEquals("provider.rate_limit", notice.retryableErrorId());
+    }
+
+    @Test
+    void providerFallbackNoticeRoundTripUsesTypeDiscriminator() throws Exception {
+        AssistantStreamEvent event = new ProviderFallbackNotice(
+            "openai",
+            1,
+            2,
+            "responses/websocket",
+            "responses/sse",
+            "fallback_candidate",
+            "provider.fallback_candidate",
+            "WebSocket handshake failed"
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AssistantStreamEvent restored = mapper.readValue(json, AssistantStreamEvent.class);
+
+        assertTrue(json.contains("\"type\":\"provider_fallback\""));
+        ProviderFallbackNotice notice = assertInstanceOf(ProviderFallbackNotice.class, restored);
+        assertEquals("openai", notice.provider());
+        assertEquals(1, notice.fromAttempt());
+        assertEquals(2, notice.toAttempt());
+        assertEquals("responses/websocket", notice.fromMode());
+        assertEquals("responses/sse", notice.toMode());
+        assertEquals("provider.fallback_candidate", notice.errorId());
+    }
+
+    @Test
+    void providerFallbackStartEventRoundTripUsesTypeDiscriminator() throws Exception {
+        Instant timestamp = Instant.parse("2026-06-01T12:00:00Z");
+        AgentEvent event = new ProviderFallbackStartEvent(
+            "ses_01",
+            "responses/websocket",
+            "responses/sse",
+            "fallback_candidate",
+            timestamp
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"provider_fallback_start\""));
+        ProviderFallbackStartEvent start = assertInstanceOf(ProviderFallbackStartEvent.class, restored);
+        assertEquals("ses_01", start.sessionId());
+        assertEquals("responses/websocket", start.fromMode());
+        assertEquals("responses/sse", start.toMode());
+        assertEquals("fallback_candidate", start.reason());
+        assertEquals(timestamp, start.timestamp());
+    }
+
+    @Test
+    void providerFallbackEndEventRoundTripUsesTypeDiscriminator() throws Exception {
+        Instant timestamp = Instant.parse("2026-06-01T12:00:00Z");
+        AgentEvent event = new ProviderFallbackEndEvent(
+            "ses_01",
+            "responses/sse",
+            true,
+            timestamp
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"provider_fallback_end\""));
+        ProviderFallbackEndEvent end = assertInstanceOf(ProviderFallbackEndEvent.class, restored);
+        assertEquals("ses_01", end.sessionId());
+        assertEquals("responses/sse", end.toMode());
+        assertTrue(end.success());
+        assertEquals(timestamp, end.timestamp());
     }
 
     @Test
