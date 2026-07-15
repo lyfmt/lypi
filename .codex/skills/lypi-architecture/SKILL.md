@@ -47,7 +47,8 @@ The root `pom.xml` defines these Maven modules:
 - Transports adapt input/output and display. They should not own durable session or tool state.
 - Session history is append-only JSONL; branch movement changes the leaf, not old entries.
 - Permission runtime changes are represented by session entries and replayed into `SessionContext`; do not mutate historical entries to change permission state.
-- Tool calls, permission decisions, retry, compaction and UI updates flow through contract events where possible.
+- Tool calls, permission decisions, retry, provider fallback, compaction and UI updates flow through contract events where possible.
+- Provider retry and fallback notices are stream control events: agent core maps them to lifecycle events, TUI projects transient state, and neither enters the durable transcript.
 - Permission request/decision events expose approval kind, available decisions and additional permission metadata for TUI/headless rendering.
 - Memory consolidation is driven by `TurnEndEvent` after the main turn completes; `DefaultTurnExecutor` must not synchronously call legacy `MemoryExtractionWorker` on the user-facing path.
 - `TurnEndEvent.leafEntryId` is the stable fork point for background consolidation. Runtime listeners must use this event field instead of the mutable `SessionManagerPort.currentView().leafId()`.
