@@ -5,6 +5,7 @@ import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantStart;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.TokenUsage;
@@ -117,5 +118,33 @@ class AssistantStreamAccumulatorTest {
         assertThat(message.id()).isEqualTo("msg-a");
         assertThat(message.content().getFirst().text()).isEqualTo("partial");
         assertThat(message.stopReason()).contains("aborted");
+    }
+
+    @Test
+    void ignoresProviderFallbackNoticeWhenBuildingAssistantMessage() {
+        AssistantStreamAccumulator accumulator = new AssistantStreamAccumulator(clock);
+
+        accumulator.accept(new AssistantStart("msg-a"));
+        accumulator.accept(new ProviderFallbackNotice(
+            "openai",
+            1,
+            2,
+            "responses/websocket",
+            "responses/sse",
+            "fallback_candidate",
+            "provider.fallback_candidate",
+            "WebSocket handshake failed"
+        ));
+        accumulator.accept(new TextDelta("fallback ok"));
+        accumulator.accept(new AssistantDone(Optional.empty(), Optional.of("end_turn")));
+
+        AgentMessage message = accumulator.toMessage("fallback", false);
+
+        assertThat(message.id()).isEqualTo("msg-a");
+        assertThat(message.content()).singleElement().satisfies(block -> {
+            assertThat(block.kind()).isEqualTo(ContentBlockKind.TEXT);
+            assertThat(block.text()).isEqualTo("fallback ok");
+        });
+        assertThat(message.stopReason()).contains("end_turn");
     }
 }

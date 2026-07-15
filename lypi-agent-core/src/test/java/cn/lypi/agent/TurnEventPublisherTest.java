@@ -8,7 +8,10 @@ import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
+import cn.lypi.contracts.event.ProviderFallbackEndEvent;
+import cn.lypi.contracts.event.ProviderFallbackStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -63,5 +66,35 @@ class TurnEventPublisherTest {
             .containsEntry("toolName", "read")
             .containsEntry("complete", true)
             .containsEntry("inputSummary", "read {path=pom.xml}");
+    }
+
+    @Test
+    void mapsProviderFallbackNoticeToLifecycleEvents() {
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        TurnEventPublisher publisher = new TurnEventPublisher(eventBus, Clock.fixed(NOW, ZoneOffset.UTC));
+        ProviderFallbackNotice notice = new ProviderFallbackNotice(
+            "openai",
+            1,
+            2,
+            "responses/websocket",
+            "responses/sse",
+            "fallback_candidate",
+            "provider.fallback_candidate",
+            "WebSocket handshake failed"
+        );
+
+        publisher.publishProviderFallbackStart("session-1", notice);
+        publisher.publishProviderFallbackEnd("session-1", notice, true);
+
+        assertThat(eventBus.events).containsExactly(
+            new ProviderFallbackStartEvent(
+                "session-1",
+                "responses/websocket",
+                "responses/sse",
+                "fallback_candidate",
+                NOW
+            ),
+            new ProviderFallbackEndEvent("session-1", "responses/sse", true, NOW)
+        );
     }
 }
