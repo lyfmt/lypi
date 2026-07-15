@@ -149,6 +149,108 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
+    void changingSessionClearsHistoryScrollOffsetBeforeFirstFrame() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        QueueInputSource input = new QueueInputSource();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            80,
+            8,
+            input,
+            new RecordingSubmitHandler()
+        );
+        transport.attach(events, completedRuntimeState("ses_old", 40));
+        transport.renderCurrentFrameUnderUiLock();
+        for (int index = 0; index < 20; index++) {
+            input.add("\033[5~");
+        }
+        transport.drainInputForTest();
+        assertTrue(frames.getLast().getLast().contains("↑"));
+
+        transport.attach(events, completedRuntimeState("ses_new", 5));
+        transport.renderCurrentFrameUnderUiLock();
+
+        String firstNewFrame = String.join("\n", frames.getLast());
+        assertTrue(firstNewFrame.contains("resume complete"), firstNewFrame);
+        assertFalse(firstNewFrame.contains("new history"), firstNewFrame);
+        assertFalse(frames.getLast().getLast().contains("↑"));
+    }
+
+    @Test
+    void pageUpChangesRestoredHistoryWithoutMovingLiveToolOrBottomChrome() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        QueueInputSource input = new QueueInputSource();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            80,
+            10,
+            input,
+            new RecordingSubmitHandler()
+        );
+        transport.attach(events, historyRuntimeState("ses_1", 30));
+        events.emit(new ToolStartEvent(
+            "ses_1",
+            "live-tool",
+            "bash",
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        transport.flushPendingFrameForTest();
+        List<String> tailFrame = frames.getLast();
+
+        input.add("\033[5~");
+        transport.drainInputForTest();
+        List<String> pageUpFrame = frames.getLast();
+
+        assertTrue(tailFrame.contains("history-line-30"));
+        assertFalse(pageUpFrame.contains("history-line-30"));
+        assertTrue(pageUpFrame.stream().anyMatch(line -> line.startsWith("running $")));
+        assertEquals(
+            tailFrame.stream().filter(line -> line.startsWith("running $")).findFirst(),
+            pageUpFrame.stream().filter(line -> line.startsWith("running $")).findFirst()
+        );
+        assertEquals(
+            tailFrame.stream().filter(line -> line.contains(INPUT_BACKGROUND)).findFirst(),
+            pageUpFrame.stream().filter(line -> line.contains(INPUT_BACKGROUND)).findFirst()
+        );
+        assertEquals(10, tailFrame.size());
+        assertEquals(10, pageUpFrame.size());
+        assertTrue(tailFrame.stream().anyMatch(line -> line.contains("┄")));
+        assertTrue(pageUpFrame.stream().anyMatch(line -> line.contains("┄")));
+        assertTrue(tailFrame.getLast().contains("ses_1"));
+        assertTrue(pageUpFrame.getLast().contains("ses_1"));
+    }
+
+    @Test
+    void restoredHistoryCanScrollBackOnlyThroughLatestFiveHundredPhysicalLines() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        List<List<String>> frames = new ArrayList<>();
+        QueueInputSource input = new QueueInputSource();
+        JLineTuiTransport transport = JLineTuiTransport.withInput(
+            frames::add,
+            80,
+            8,
+            input,
+            new RecordingSubmitHandler()
+        );
+        transport.attach(events, historyRuntimeState("ses_1", 510));
+        transport.renderCurrentFrameUnderUiLock();
+        for (int index = 0; index < 200; index++) {
+            input.add("\033[5~");
+        }
+        for (int batch = 0; batch < 7; batch++) {
+            transport.drainInputForTest();
+        }
+
+        List<String> topFrame = frames.getLast();
+        assertTrue(topFrame.contains("history-line-11"), String.join("\n", topFrame));
+        for (int index = 1; index <= 10; index++) {
+            assertFalse(topFrame.contains("history-line-" + index));
+        }
+    }
+
+    @Test
     void toolProgressBurstReducesImmediatelyAndCoalescesTerminalFrames() {
         RecordingEventBus events = new RecordingEventBus();
         AtomicLong now = new AtomicLong();
@@ -968,6 +1070,33 @@ class JLineTuiTransportRenderPipelineTest {
             MessageKind.TEXT,
             new TextContentBlock("resume complete")
         ));
+        return new SessionRuntimeState(
+            base.sessionId(),
+            base.cwd(),
+            base.currentBranchLeafId(),
+            base.model(),
+            base.thinkingLevel(),
+            base.agentMode(),
+            base.permissionRuntimeState(),
+            base.budget(),
+            transcript,
+            false,
+            false,
+            false,
+            false
+        );
+    }
+
+    private static SessionRuntimeState historyRuntimeState(String sessionId, int historyMessages) {
+        SessionRuntimeState base = TestRuntimeStates.basic(sessionId);
+        List<AgentMessage> transcript = java.util.stream.IntStream.rangeClosed(1, historyMessages)
+            .mapToObj(index -> message(
+                "history-line-" + index,
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                new TextContentBlock("history-line-" + index)
+            ))
+            .toList();
         return new SessionRuntimeState(
             base.sessionId(),
             base.cwd(),

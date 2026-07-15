@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Clock;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -719,10 +720,12 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 }
             }
         };
+        int initialWidth = safeWidth(width > 0 ? width : io.width());
+        int initialHeight = safeHeight(height > 1 ? height : io.height());
         JLineTuiTransport transport = new JLineTuiTransport(
             frameSink,
-            width,
-            height,
+            initialWidth,
+            initialHeight,
             state,
             inputSource,
             submitHandler,
@@ -795,6 +798,11 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             closeSubscription();
             attachedEvents = events;
+            String previousSessionId = runtimeState == null ? null : runtimeState.sessionId();
+            String nextSessionId = state == null ? null : state.sessionId();
+            if (screen != null && !Objects.equals(previousSessionId, nextSessionId)) {
+                screen.reset();
+            }
             runtimeState = state;
             if (reducer != null) {
                 reducer.configureRuntimeState(state);

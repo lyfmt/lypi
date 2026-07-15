@@ -109,7 +109,7 @@ class JLineTuiTransportTest {
         transport.flushPendingFrameForTest();
 
         assertTrue(io.rawModeEntered);
-        assertFalse(io.output.toString().contains("\033[?1049h"));
+        assertTrue(io.output.toString().contains("\033[?1049h"));
         assertTrue(io.output.toString().contains("\033[?2026h\033[2J\033[H"));
         assertTrue(io.output.toString().contains("error: boom"));
         assertTrue(io.output.toString().contains("> "));
@@ -118,7 +118,7 @@ class JLineTuiTransportTest {
         transport.close();
 
         assertTrue(io.rawModeRestored);
-        assertFalse(io.output.toString().contains("\033[?1049l"));
+        assertTrue(io.output.toString().contains("\033[?1049l"));
     }
 
     @Test
@@ -145,7 +145,7 @@ class JLineTuiTransportTest {
     }
 
     @Test
-    void openPipelineKeepsLongTranscriptInOutputStreamWithoutAlternateScreenOrRepeatedHomeClear() throws Exception {
+    void openPipelineKeepsLongTranscriptInFixedAlternateScreenFrames() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 5;
         RecordingEventBus events = new RecordingEventBus();
@@ -179,11 +179,12 @@ class JLineTuiTransportTest {
         String output = io.output.toString();
         assertTrue(output.contains("line 0"));
         assertTrue(output.contains("line 7"));
-        assertFalse(output.contains("\033[?1049h"));
+        assertTrue(output.contains("\033[?1049h"));
         assertFalse(output.contains("\033[?1049l"));
         assertFalse(output.contains("\033[H\033[J"));
 
         transport.close();
+        assertTrue(io.output.toString().contains("\033[?1049l"));
     }
 
     @Test
@@ -228,7 +229,7 @@ class JLineTuiTransportTest {
     }
 
     @Test
-    void closeAfterOverflowMovesPromptBelowPhysicalViewport() throws Exception {
+    void closeAfterOverflowRestoresOriginalScreenWithoutWritingPromptNewline() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 3;
         RecordingEventBus events = new RecordingEventBus();
@@ -261,7 +262,8 @@ class JLineTuiTransportTest {
 
         transport.close();
 
-        assertTrue(io.output.toString().endsWith("\033[3;1H\n"));
+        assertTrue(io.output.toString().endsWith("\033[>4m\033[?2004l\033[?1049l\033[?25h"));
+        assertFalse(io.output.toString().endsWith("\n"));
     }
 
     @Test
@@ -322,7 +324,7 @@ class JLineTuiTransportTest {
         ));
 
         assertTrue(io.rawModeRestored);
-        assertFalse(io.output.toString().contains("\033[?1049l"));
+        assertTrue(io.output.toString().contains("\033[?1049l"));
     }
 
     @Test
@@ -348,7 +350,10 @@ class JLineTuiTransportTest {
         String frame = io.output.toString();
         String fullClear = "\033[2J\033[H";
         String rendered = frame.substring(frame.indexOf(fullClear) + fullClear.length(), frame.indexOf("\033[?2026l"));
-        assertEquals(4, rendered.split("\n", -1).length);
+        for (int row = 1; row <= 6; row++) {
+            assertTrue(rendered.contains("\033[" + row + ";1H"));
+        }
+        assertFalse(rendered.contains("\n"));
         assertTrue(rendered.contains("> "));
 
         transport.close();
