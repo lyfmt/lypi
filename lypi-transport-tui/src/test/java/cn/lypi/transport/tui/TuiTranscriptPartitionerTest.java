@@ -51,6 +51,24 @@ class TuiTranscriptPartitionerTest {
         assertLive(tool("active-done", TuiToolState.DONE, true));
     }
 
+    @Test
+    void stablePrefixCanRegressWhenAPreviouslyStableBlockBecomesLive() {
+        TuiTranscriptPartitioner partitioner = new TuiTranscriptPartitioner();
+
+        TuiTranscriptPartition stable = partitioner.partition(List.of(
+            message("user", false),
+            message("assistant", false)
+        ));
+        TuiTranscriptPartition regressed = partitioner.partition(List.of(
+            message("user", false),
+            message("assistant", true)
+        ));
+
+        assertEquals(List.of("user", "assistant"), blockIds(stable.history()));
+        assertEquals(List.of("user"), blockIds(regressed.history()));
+        assertEquals(List.of("assistant"), blockIds(regressed.live()));
+    }
+
     private TuiMessageBlock message(String blockId, boolean streaming) {
         return new TuiMessageBlock(blockId, "message-" + blockId, "assistant", blockId, streaming);
     }
