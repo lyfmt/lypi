@@ -1010,6 +1010,42 @@ class TuiRendererTest {
         assertFrameFitsHeightWithOmissionMarker(expanded, 12);
     }
 
+    @Test
+    void narrowWrappedToolTitleStillLeavesAnOmissionMarkerWithinFiveRows() {
+        String details = String.join("\n", java.util.stream.IntStream.rangeClosed(1, 100)
+            .mapToObj(index -> "detail line " + index)
+            .toList());
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:custom",
+                "msg_1",
+                "toolu_custom",
+                "custom_tool",
+                TuiToolState.DONE,
+                "x".repeat(120),
+                details,
+                false
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        TuiRenderFrame frame = new TuiRenderer().renderFrame(
+            view,
+            new TuiScreen(20),
+            new TuiLayout(20, 20),
+            "",
+            -1,
+            List.of(),
+            false
+        );
+
+        assertTrue(frame.transcriptLineCount() <= 5);
+        assertTrue(frame.lines().stream().anyMatch(line -> line.contains("more lines")));
+    }
+
     private void assertFrameFitsHeightWithOmissionMarker(TuiRenderFrame frame, int height) {
         assertTrue(frame.lines().size() <= height);
         assertTrue(frame.transcriptLineCount() <= height - frame.chromeLineCount());

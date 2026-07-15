@@ -301,7 +301,33 @@ final class TuiRenderer {
         for (String detailLine : model.previewLines()) {
             appendWithinBudget(lines, wrap("  " + detailLine, width), budget.totalLines());
         }
+        preserveToolOmissionMarker(lines, model, width, budget.totalLines());
         return lines;
+    }
+
+    private void preserveToolOmissionMarker(
+        List<String> lines,
+        ToolDisplayModel model,
+        int width,
+        int lineBudget
+    ) {
+        String marker = model.previewLines().stream()
+            .filter(this::isToolOmissionMarker)
+            .findFirst()
+            .orElse(null);
+        if (marker == null || lines.stream().anyMatch(this::isToolOmissionMarker)) {
+            return;
+        }
+        String renderedMarker = AnsiWidth.truncate("  " + marker, width);
+        if (lines.size() < lineBudget) {
+            lines.add(renderedMarker);
+        } else if (!lines.isEmpty()) {
+            lines.set(lines.size() - 1, renderedMarker);
+        }
+    }
+
+    private boolean isToolOmissionMarker(String line) {
+        return line != null && (line.contains("more lines") || line.contains("earlier lines"));
     }
 
     private int remainingBudget(List<String> lines, int lineBudget) {
