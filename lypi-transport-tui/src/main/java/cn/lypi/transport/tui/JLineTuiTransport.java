@@ -703,11 +703,11 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 holder[0].handleInterruptSignal();
             }
         });
-        TerminalFrameRenderer frameRenderer = TerminalFrameRenderer.withStartupPadding(io, session::updateRenderedRows);
+        TerminalFrameRenderer frameRenderer = new TerminalFrameRenderer(io);
         FrameSink frameSink = new FrameSink() {
             @Override
             public void render(List<String> lines) {
-                render(TuiRenderFrame.transcriptOnly(lines));
+                render(TuiRenderFrame.fromTextLines(lines));
             }
 
             @Override

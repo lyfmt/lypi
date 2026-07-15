@@ -113,8 +113,6 @@ final class TuiRenderer {
         screen.setTranscript(fullHistory);
         List<String> history = topPaddedTail(screen.visibleTranscript(), content.historyHeight());
         List<String> live = topPaddedTail(fullLive, content.liveHeight());
-        int chromeLineCount = inputBlock.lines().size() + overlay.size() + regions.statusHeight();
-
         List<String> lines = new ArrayList<>();
         lines.addAll(history);
         if (content.separatorHeight() > 0) {
@@ -127,7 +125,7 @@ final class TuiRenderer {
         if (lines.size() != layout.height()) {
             throw new IllegalStateException("rendered frame must match terminal height");
         }
-        return TuiRenderFrame.fromTextLines(lines, chromeLineCount);
+        return TuiRenderFrame.fromTextLines(lines);
     }
 
     List<String> renderTranscriptBlocks(

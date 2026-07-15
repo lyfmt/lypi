@@ -466,8 +466,8 @@ class TuiContractEndToEndTest {
             true
         );
 
-        assertTrue(collapsed.transcriptLineCount() <= 5);
-        assertTrue(expanded.transcriptLineCount() <= 40);
+        assertTrue(renderedContentLines(collapsed).size() <= 5);
+        assertTrue(renderedContentLines(expanded).size() <= 40);
         assertTrue(collapsed.lines().stream().anyMatch(line -> line.contains("earlier lines")));
         assertTrue(expanded.lines().stream().anyMatch(line -> line.contains("earlier lines")));
     }
@@ -503,8 +503,19 @@ class TuiContractEndToEndTest {
             List.of(),
             false
         );
-        return frame.lines().subList(0, frame.transcriptLineCount()).stream()
+        return renderedContentLines(frame).stream()
             .map(line -> line.replaceAll("\\u001B\\[[;\\d]*m", ""))
+            .toList();
+    }
+
+    private static List<String> renderedContentLines(TuiRenderFrame frame) {
+        int inputStart = java.util.stream.IntStream.range(0, frame.lines().size())
+            .filter(index -> frame.lines().get(index).contains("─".repeat(10)))
+            .findFirst()
+            .orElse(frame.lines().size() - 1);
+        return frame.lines().subList(0, inputStart).stream()
+            .filter(line -> !line.isBlank())
+            .filter(line -> !line.contains("┄"))
             .toList();
     }
 

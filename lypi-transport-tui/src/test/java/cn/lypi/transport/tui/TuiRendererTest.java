@@ -1160,8 +1160,7 @@ class TuiRendererTest {
     }
 
     private void assertFrameFitsHeightWithOmissionMarker(TuiRenderFrame frame, int height) {
-        assertTrue(frame.lines().size() <= height);
-        assertTrue(frame.transcriptLineCount() <= height - frame.chromeLineCount());
+        assertEquals(height, frame.lines().size());
         assertTrue(frame.lines().stream()
             .anyMatch(line -> line.contains("more lines") || line.contains("earlier lines")));
     }

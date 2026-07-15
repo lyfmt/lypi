@@ -19,7 +19,6 @@ public final class TerminalSession implements AutoCloseable {
     private final AutoCloseable resizeHandler;
     private final AutoCloseable interruptHandler;
     private boolean closed;
-    private int renderedRows;
 
     private TerminalSession(TerminalIo io, AutoCloseable rawMode, AutoCloseable resizeHandler, AutoCloseable interruptHandler) {
         this.io = io;
@@ -76,10 +75,6 @@ public final class TerminalSession implements AutoCloseable {
             restoreAfterOpenFailure(io, alternateScreenEntered, interruptHandler, resizeHandler, rawMode);
             throw exception;
         }
-    }
-
-    void updateRenderedRows(int renderedRows) {
-        this.renderedRows = Math.max(0, renderedRows);
     }
 
     @Override
