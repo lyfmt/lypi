@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,16 +18,19 @@ class TerminalSessionTest {
 
         assertTrue(io.rawModeEntered);
         assertEquals(
-            "\033[?1049h\033[?1000h\033[?1006h\033[?2004h\033[?25l\033[>4;2m",
+            "\033[?2004h\033[?25l\033[>4;2m",
             io.output.toString()
         );
+        assertFalse(io.output.toString().contains("\033[?1049"));
+        assertFalse(io.output.toString().contains("\033[?1000"));
+        assertFalse(io.output.toString().contains("\033[?1006"));
 
         session.close();
 
         assertTrue(io.rawModeRestored);
         assertEquals(
-            "\033[?1049h\033[?1000h\033[?1006h\033[?2004h\033[?25l\033[>4;2m"
-                + "\033[>4m\033[?2004l\033[?1006l\033[?1000l\033[?1049l\033[?25h",
+            "\033[?2004h\033[?25l\033[>4;2m"
+                + "\033[r\033[>4m\033[?2004l\033[?25h",
             io.output.toString()
         );
     }
@@ -69,15 +73,18 @@ class TerminalSessionTest {
     }
 
     @Test
-    void openFailureLeavesAlternateScreenAndRestoresTerminalResources() {
+    void openFailureRestoresTerminalResourcesWithoutAlternateScreenModes() {
         FailingTerminalIo io = new FailingTerminalIo(2);
 
         assertThrows(IOException.class, () -> TerminalSession.open(io));
 
         assertEquals(
-            "\033[?1049h\033[>4m\033[?2004l\033[?1006l\033[?1000l\033[?1049l\033[?25h",
+            "\033[?2004h\033[r\033[>4m\033[?2004l\033[?25h",
             io.output.toString()
         );
+        assertFalse(io.output.toString().contains("\033[?1049"));
+        assertFalse(io.output.toString().contains("\033[?1000"));
+        assertFalse(io.output.toString().contains("\033[?1006"));
         assertTrue(io.rawModeRestored);
         assertTrue(io.resizeHandlerRestored);
         assertTrue(io.interruptHandlerRestored);

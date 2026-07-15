@@ -5,12 +5,7 @@ import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 public final class TerminalSession implements AutoCloseable {
-    static final String ENTER_ALTERNATE_SCREEN = "\033[?1049h";
-    static final String LEAVE_ALTERNATE_SCREEN = "\033[?1049l";
-    static final String ENABLE_MOUSE_TRACKING = "\033[?1000h";
-    static final String DISABLE_MOUSE_TRACKING = "\033[?1000l";
-    static final String ENABLE_SGR_MOUSE = "\033[?1006h";
-    static final String DISABLE_SGR_MOUSE = "\033[?1006l";
+    static final String RESET_SCROLL_REGION = "\033[r";
     static final String ENABLE_BRACKETED_PASTE = "\033[?2004h";
     static final String DISABLE_BRACKETED_PASTE = "\033[?2004l";
     static final String HIDE_CURSOR = "\033[?25l";
@@ -63,22 +58,17 @@ public final class TerminalSession implements AutoCloseable {
         AutoCloseable rawMode = null;
         AutoCloseable resizeHandler = null;
         AutoCloseable interruptHandler = null;
-        boolean alternateScreenEntered = false;
         try {
             rawMode = io.enterRawMode();
             resizeHandler = io.onResize(resizeCallback);
             interruptHandler = io.onInterrupt(interruptCallback);
-            io.write(ENTER_ALTERNATE_SCREEN);
-            alternateScreenEntered = true;
-            io.write(ENABLE_MOUSE_TRACKING);
-            io.write(ENABLE_SGR_MOUSE);
             io.write(ENABLE_BRACKETED_PASTE);
             io.write(HIDE_CURSOR);
             io.write(ENABLE_MODIFY_OTHER_KEYS);
             io.flush();
             return new TerminalSession(io, rawMode, resizeHandler, interruptHandler);
         } catch (IOException | RuntimeException exception) {
-            restoreAfterOpenFailure(io, alternateScreenEntered, interruptHandler, resizeHandler, rawMode);
+            restoreAfterOpenFailure(io, interruptHandler, resizeHandler, rawMode);
             throw exception;
         }
     }
@@ -90,11 +80,9 @@ public final class TerminalSession implements AutoCloseable {
         }
         closed = true;
         try {
+            io.write(RESET_SCROLL_REGION);
             io.write(DISABLE_MODIFY_OTHER_KEYS);
             io.write(DISABLE_BRACKETED_PASTE);
-            io.write(DISABLE_SGR_MOUSE);
-            io.write(DISABLE_MOUSE_TRACKING);
-            io.write(LEAVE_ALTERNATE_SCREEN);
             io.write(SHOW_CURSOR);
             io.flush();
         } finally {
@@ -114,20 +102,15 @@ public final class TerminalSession implements AutoCloseable {
 
     private static void restoreAfterOpenFailure(
         TerminalIo io,
-        boolean alternateScreenEntered,
         AutoCloseable interruptHandler,
         AutoCloseable resizeHandler,
         AutoCloseable rawMode
     ) {
-        if (alternateScreenEntered) {
-            writeStaticQuietly(io, DISABLE_MODIFY_OTHER_KEYS);
-            writeStaticQuietly(io, DISABLE_BRACKETED_PASTE);
-            writeStaticQuietly(io, DISABLE_SGR_MOUSE);
-            writeStaticQuietly(io, DISABLE_MOUSE_TRACKING);
-            writeStaticQuietly(io, LEAVE_ALTERNATE_SCREEN);
-            writeStaticQuietly(io, SHOW_CURSOR);
-            flushStaticQuietly(io);
-        }
+        writeStaticQuietly(io, RESET_SCROLL_REGION);
+        writeStaticQuietly(io, DISABLE_MODIFY_OTHER_KEYS);
+        writeStaticQuietly(io, DISABLE_BRACKETED_PASTE);
+        writeStaticQuietly(io, SHOW_CURSOR);
+        flushStaticQuietly(io);
         closeStaticQuietly(interruptHandler);
         closeStaticQuietly(resizeHandler);
         closeStaticQuietly(rawMode);
@@ -137,7 +120,7 @@ public final class TerminalSession implements AutoCloseable {
         try {
             io.write(value);
         } catch (IOException | RuntimeException ignored) {
-            // NOTE: 打开失败时每个恢复序列都独立尝试，避免一次写失败阻断退出 alternate screen。
+            // NOTE: 打开失败时每个恢复序列都独立尝试，避免一次写失败阻断终端恢复。
         }
     }
 
