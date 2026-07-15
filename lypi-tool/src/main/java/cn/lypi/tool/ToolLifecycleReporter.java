@@ -26,12 +26,13 @@ import java.util.Objects;
 final class ToolLifecycleReporter {
     private static final String METADATA_ORIGINAL_TOOL_NAME = "originalToolName";
     private static final String METADATA_TURN_ID = "turnId";
-    private static final int OUTPUT_REF_PREVIEW_CHARS = 12;
 
     private final ToolExecutionEventPublisher eventPublisher;
+    private final ToolEventSummaryFormatter summaryFormatter;
 
     ToolLifecycleReporter(ToolExecutionEventPublisher eventPublisher) {
         this.eventPublisher = eventPublisher == null ? ToolExecutionEventPublisher.noop() : eventPublisher;
+        this.summaryFormatter = new ToolEventSummaryFormatter();
     }
 
     ToolExecutionEventPublisher.StartedToolExecution start(
@@ -39,6 +40,7 @@ final class ToolLifecycleReporter {
         ToolUseContext context,
         String toolName,
         String originalToolName,
+        String renderedForUser,
         Map<String, Object> input
     ) {
         return eventPublisher.start(
@@ -48,7 +50,7 @@ final class ToolLifecycleReporter {
             stringMetadata(context, METADATA_TURN_ID),
             toolName,
             displayTitle(toolName),
-            inputSummary(toolName, input),
+            summaryFormatter.inputSummary(toolName, renderedForUser, input),
             inputMetadata(input, toolName, originalToolName)
         );
     }
@@ -97,7 +99,7 @@ final class ToolLifecycleReporter {
         boolean error = status != ToolExecutionStatus.SUCCEEDED || result == null || result.isError();
         return new ToolResultSummary(
             toolName + " " + status.name().toLowerCase(),
-            summarize(outputText),
+            summaryFormatter.resultSummary(outputText),
             error,
             exitCode(result),
             status == ToolExecutionStatus.TIMED_OUT,
@@ -122,7 +124,7 @@ final class ToolLifecycleReporter {
         }
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("toolName", toolName);
-        metadata.put("preview", preview(outputText));
+        metadata.put("preview", summaryFormatter.preview(outputText));
         if (budgeted) {
             metadata.put("truncated", true);
             metadata.put("truncationReason", "budgeted");
@@ -191,24 +193,6 @@ final class ToolLifecycleReporter {
             return "Tool";
         }
         return Character.toUpperCase(toolName.charAt(0)) + toolName.substring(1);
-    }
-
-    private String inputSummary(String toolName, Map<String, Object> input) {
-        return toolName + " " + input;
-    }
-
-    private String summarize(String outputText) {
-        if (outputText == null || outputText.isBlank()) {
-            return "";
-        }
-        return outputText.length() <= 200 ? outputText : outputText.substring(0, 200);
-    }
-
-    private String preview(String outputText) {
-        if (outputText == null || outputText.isEmpty()) {
-            return "";
-        }
-        return outputText.substring(0, Math.min(OUTPUT_REF_PREVIEW_CHARS, outputText.length()));
     }
 
     private long byteLength(String outputText) {
