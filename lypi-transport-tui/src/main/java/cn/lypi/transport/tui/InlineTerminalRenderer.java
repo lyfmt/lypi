@@ -118,8 +118,12 @@ final class InlineTerminalRenderer {
                 scrollCommittedRowsForUpwardViewport(renderedViewport, nextViewport);
                 clearSurfaceUnion(renderedViewport, nextViewport);
             }
+            boolean linearHistoryInsertion = requiresLinearHistoryInsertion(history, nextViewport);
             finalViewport = insertHistory(history, nextViewport);
-            if (geometryChanged || renderedViewport == null || !sameGeometry(nextViewport, finalViewport)) {
+            if (geometryChanged
+                || renderedViewport == null
+                || linearHistoryInsertion
+                || !sameGeometry(nextViewport, finalViewport)) {
                 drawFullSurface(surface.lines(), finalViewport);
             } else {
                 drawSurfaceDiff(surface.lines(), finalViewport);
@@ -199,6 +203,15 @@ final class InlineTerminalRenderer {
         }
         io.write(RESET_SCROLL_REGION);
         return shifted;
+    }
+
+    private boolean requiresLinearHistoryInsertion(List<TerminalLine> history, InlineViewport current) {
+        if (history.isEmpty()) {
+            return false;
+        }
+        int spaceBelow = current.terminalHeight() - current.top() - current.surfaceHeight();
+        int scrollAmount = Math.min(history.size(), Math.max(0, spaceBelow));
+        return current.top() + scrollAmount < 2;
     }
 
     private InlineViewport insertHistoryLinearly(List<TerminalLine> history, InlineViewport current) throws IOException {

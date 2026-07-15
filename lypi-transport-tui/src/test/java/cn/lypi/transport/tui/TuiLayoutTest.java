@@ -19,25 +19,30 @@ class TuiLayoutTest {
     }
 
     @Test
-    void allocatesAllRegionsWithinTerminalHeight() {
+    void allocatesAllSurfaceRegionsWithinReservedTerminalBudget() {
         for (int height : new int[] {2, 3, 6, 24}) {
+            for (int desiredLiveHeight : new int[] {0, 3, 100}) {
             for (int desiredInputHeight : new int[] {1, 4, 100}) {
                 for (int desiredOverlayHeight : new int[] {0, 3, 100}) {
                     TuiLayout layout = new TuiLayout(80, height);
 
-                    var regions = layout.allocate(desiredInputHeight, desiredOverlayHeight, true);
+                    var regions = layout.allocateSurface(
+                        desiredLiveHeight,
+                        desiredInputHeight,
+                        desiredOverlayHeight
+                    );
 
                     String scenario = "height=" + height
+                        + ", live=" + desiredLiveHeight
                         + ", input=" + desiredInputHeight
                         + ", overlay=" + desiredOverlayHeight;
-                    assertTrue(regions.totalHeight() <= height, scenario);
-                    assertEquals(1, regions.statusHeight(), scenario);
+                    assertTrue(regions.totalHeight() <= height - 1, scenario);
+                    assertEquals(height > 2 ? 1 : 0, regions.statusHeight(), scenario);
                     assertTrue(regions.inputHeight() >= 1, scenario);
-                    if (height >= 3) {
-                        assertTrue(regions.transcriptHeight() >= 1, scenario);
-                    }
+                    assertTrue(regions.transcriptHeight() <= desiredLiveHeight, scenario);
                 }
             }
+        }
         }
     }
 

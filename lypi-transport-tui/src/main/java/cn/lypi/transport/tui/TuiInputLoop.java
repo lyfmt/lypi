@@ -15,9 +15,6 @@ import java.util.function.Supplier;
 
 final class TuiInputLoop {
     private final TuiSubmitHandler submitHandler;
-    private final FrameSink frameSink;
-    private final TuiRenderer renderer;
-    private TuiScreen screen;
     private TuiLayout layout;
     private final Supplier<TuiViewModel> viewSupplier;
     private final InputEditor editor = new InputEditor();
@@ -25,7 +22,7 @@ final class TuiInputLoop {
     private final TerminalInputPolicy inputPolicy = new TerminalInputPolicy();
     private final Supplier<SlashCommandPicker> slashPickerSupplier;
     private final Supplier<SkillIndex> skillIndexSupplier;
-    private final Runnable immediateRender;
+    private final Runnable renderRequest;
     private final ResumeSessionController resumeController;
     private final ResumeOverlayController resumeOverlayController;
     private SlashCommandPicker slashPicker;
@@ -42,69 +39,57 @@ final class TuiInputLoop {
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, null);
+        this(submitHandler, renderRequest, layout, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, null);
+        this(submitHandler, renderRequest, layout, viewSupplier, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier,
         Supplier<SlashCommandPicker> slashPickerSupplier
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, null);
+        this(submitHandler, renderRequest, layout, viewSupplier, slashPickerSupplier, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier,
         Supplier<SlashCommandPicker> slashPickerSupplier,
         ResumeSessionController resumeController
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, resumeController, null);
+        this(submitHandler, renderRequest, layout, viewSupplier, slashPickerSupplier, resumeController, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier,
         Supplier<SlashCommandPicker> slashPickerSupplier,
         ResumeSessionController resumeController,
         Consumer<SessionRuntimeState> resumeStateConsumer
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, resumeController, resumeStateConsumer, null);
+        this(submitHandler, renderRequest, layout, viewSupplier, slashPickerSupplier, resumeController, resumeStateConsumer, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier,
         Supplier<SlashCommandPicker> slashPickerSupplier,
@@ -112,45 +97,15 @@ final class TuiInputLoop {
         Consumer<SessionRuntimeState> resumeStateConsumer,
         Supplier<SkillIndex> skillIndexSupplier
     ) {
-        this(
-            submitHandler,
-            frameSink,
-            renderer,
-            screen,
-            layout,
-            viewSupplier,
-            slashPickerSupplier,
-            resumeController,
-            resumeStateConsumer,
-            skillIndexSupplier,
-            null
-        );
-    }
-
-    TuiInputLoop(
-        TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
-        TuiLayout layout,
-        Supplier<TuiViewModel> viewSupplier,
-        Supplier<SlashCommandPicker> slashPickerSupplier,
-        ResumeSessionController resumeController,
-        Consumer<SessionRuntimeState> resumeStateConsumer,
-        Supplier<SkillIndex> skillIndexSupplier,
-        Runnable immediateRender
-    ) {
         this.submitHandler = submitHandler;
-        this.frameSink = frameSink;
-        this.renderer = renderer;
-        this.screen = screen;
         this.layout = layout;
         this.viewSupplier = viewSupplier == null ? this::emptyView : viewSupplier;
         this.slashPickerSupplier = slashPickerSupplier == null
             ? () -> SlashCommandPicker.withTemplates(List.of())
             : slashPickerSupplier;
         this.skillIndexSupplier = skillIndexSupplier == null ? () -> new SkillIndex(List.of(), List.of()) : skillIndexSupplier;
-        this.immediateRender = immediateRender;
+        this.renderRequest = renderRequest == null ? () -> {
+        } : renderRequest;
         this.resumeController = resumeController;
         this.resumeOverlayController = resumeController == null ? null : new ResumeOverlayController(
             resumeController,
@@ -321,15 +276,7 @@ final class TuiInputLoop {
             case MOVE_WORD_RIGHT -> editor.moveWordRight();
             case PREVIOUS_HISTORY -> editor.previousHistory();
             case NEXT_HISTORY -> editor.nextHistory();
-            case SCROLL_TRANSCRIPT_UP -> {
-                if (transcriptScrollEnabled(prompt)) {
-                    screen.scrollPageUp();
-                }
-            }
-            case SCROLL_TRANSCRIPT_DOWN -> {
-                if (transcriptScrollEnabled(prompt)) {
-                    screen.scrollPageDown();
-                }
+            case SCROLL_TRANSCRIPT_UP, SCROLL_TRANSCRIPT_DOWN -> {
             }
             case TOGGLE_TOOL_OUTPUT_EXPANDED, EXPAND_TOOLS -> toolOutputExpanded = !toolOutputExpanded;
             default -> {
@@ -350,8 +297,7 @@ final class TuiInputLoop {
         return exitRequested;
     }
 
-    void updateViewport(TuiScreen screen, TuiLayout layout) {
-        this.screen = screen;
+    void updateLayout(TuiLayout layout) {
         this.layout = layout;
     }
 
@@ -417,37 +363,17 @@ final class TuiInputLoop {
         );
     }
 
-    private boolean transcriptScrollEnabled(Optional<PermissionPromptView> prompt) {
-        return prompt.isEmpty() && !resumeOverlayOpen() && !slashOverlayOpen() && !skillOverlayOpen();
-    }
-
     private void submitPermissionOption(PermissionPromptView prompt, String optionId) {
         submitHandler.submitPermissionOption(prompt.requestId(), prompt.toolUseId(), optionId);
         render();
     }
 
-    void renderCurrentFrame() {
-        renderFrame();
-    }
-
     private void render() {
-        if (immediateRender != null) {
-            immediateRender.run();
-            return;
-        }
-        renderFrame();
+        renderRequest.run();
     }
 
-    private void renderFrame() {
-        frameSink.render(renderer.renderFrame(
-            currentView(),
-            screen,
-            layout,
-            editor.text(),
-            editor.cursor(),
-            overlayLines(),
-            toolOutputExpanded
-        ));
+    TuiViewModel viewForRender() {
+        return currentView();
     }
 
     private TuiViewModel currentView() {
@@ -587,7 +513,7 @@ final class TuiInputLoop {
         return lines;
     }
 
-    private List<String> overlayLines() {
+    List<String> overlayLines() {
         if (resumeOverlayController != null) {
             List<String> resumeLines = resumeOverlayController.overlayLines(layout.width());
             if (!resumeLines.isEmpty()) {
@@ -638,6 +564,10 @@ final class TuiInputLoop {
             return List.of();
         }
         return new SkillMentionParser(skillIndexSupplier.get().skills()).matches(skillToken.prefix());
+    }
+
+    boolean toolOutputExpanded() {
+        return toolOutputExpanded;
     }
 
     private List<String> skillOverlayLines() {

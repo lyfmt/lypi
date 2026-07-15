@@ -18,10 +18,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(20, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -41,10 +39,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -63,10 +59,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4),
             TerminalInputPumpTest::permissionView
         );
@@ -87,10 +81,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -109,10 +101,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -131,10 +121,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -153,10 +141,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -175,10 +161,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -198,10 +182,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(

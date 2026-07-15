@@ -136,65 +136,6 @@ class TuiRendererTest {
     }
 
     @Test
-    void rendersFixedHeightHistoryAndLiveRegions() {
-        TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(6);
-        TuiViewModel view = new TuiViewModel(
-            List.of(
-                new TuiMessageBlock("history", "m1", "assistant", "old answer", false),
-                new TuiMessageBlock("live", "m2", "assistant", "streaming answer", true)
-            ),
-            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
-            List.of(),
-            Optional.empty(),
-            Optional.empty()
-        );
-
-        TuiRenderFrame frame = renderer.renderFrame(view, screen, new TuiLayout(40, 10), "draft", 5);
-
-        assertEquals(10, frame.lines().size());
-        int historyIndex = frame.lines().indexOf("old answer");
-        int separatorIndex = indexOfContentSeparator(frame.lines());
-        int liveIndex = frame.lines().indexOf("streaming answer");
-        int inputIndex = indexOfLineContaining(frame.lines(), "> draft");
-        assertTrue(historyIndex >= 0);
-        assertTrue(historyIndex < separatorIndex);
-        assertTrue(separatorIndex < liveIndex);
-        assertTrue(liveIndex < inputIndex);
-        assertEquals(1, frame.lines().stream().filter(this::isContentSeparator).count());
-    }
-
-    @Test
-    void retainsOnlyLatestFiveHundredRenderedHistoryLines() {
-        TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(16);
-        List<TuiBlock> history = java.util.stream.IntStream.rangeClosed(1, 510)
-            .mapToObj(index -> (TuiBlock) new TuiMessageBlock(
-                "history-" + index,
-                "message-" + index,
-                "assistant",
-                "history-" + index,
-                false
-            ))
-            .toList();
-        TuiViewModel view = new TuiViewModel(
-            history,
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
-            List.of(),
-            Optional.empty(),
-            Optional.empty()
-        );
-
-        renderer.renderFrame(view, screen, new TuiLayout(40, 20), "", 0);
-        screen.scrollUp(1_000);
-        List<String> lines = renderer.renderFrame(view, screen, new TuiLayout(40, 20), "", 0).lines();
-
-        assertFalse(lines.stream().anyMatch(line -> line.matches("history-(?:[1-9]|10)")));
-        assertTrue(lines.contains("history-11"));
-        assertEquals(500, screen.retainedLineCount());
-    }
-
-    @Test
     void toolExpansionChangesOnlyLiveRegion() {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
@@ -228,26 +169,22 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> collapsed = renderer.renderFrame(
-            view, new TuiScreen(10), new TuiLayout(60, 14), "", -1, List.of(), false
+        TuiTranscriptPartition partition = new TuiTranscriptPartitioner().partition(view.blocks());
+        List<TerminalLine> history = renderer.renderCommittedBlocks(partition.history(), 60);
+        List<String> collapsed = renderer.renderSurface(
+            view, partition.live(), new TuiLayout(60, 14), "", -1, List.of(), false
         ).lines();
-        List<String> expanded = renderer.renderFrame(
-            view, new TuiScreen(10), new TuiLayout(60, 14), "", -1, List.of(), true
+        List<String> expanded = renderer.renderSurface(
+            view, partition.live(), new TuiLayout(60, 14), "", -1, List.of(), true
         ).lines();
 
-        int collapsedSeparator = indexOfContentSeparator(collapsed);
-        int expandedSeparator = indexOfContentSeparator(expanded);
-        assertEquals(collapsed.subList(0, collapsedSeparator), expanded.subList(0, expandedSeparator));
-        assertFalse(
-            collapsed.subList(collapsedSeparator + 1, indexOfInputBorder(collapsed))
-                .equals(expanded.subList(expandedSeparator + 1, indexOfInputBorder(expanded)))
-        );
+        assertTrue(history.stream().anyMatch(line -> line.text().contains("history detail")));
+        assertFalse(collapsed.equals(expanded));
     }
 
     @Test
     void rendersLinearTranscriptStatusAndInput() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(2);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "hello world", false)),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "tool:running"),
@@ -256,7 +193,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(12, 5), "draft");
+        List<String> lines = render(renderer, view, new TuiLayout(12, 5), "draft");
 
         assertEquals(5, lines.size());
         assertEquals("hello world", lines.get(0));
@@ -269,7 +206,6 @@ class TuiRendererTest {
     @Test
     void statusBarPreservesToolOnNarrowWidth() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("session-long", "very-long-model", "execute", "tool:running"),
@@ -278,7 +214,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "");
+        List<String> lines = render(renderer, view, new TuiLayout(10, 3), "");
 
         assertTrue(lines.getLast().contains("tool"));
     }
@@ -286,7 +222,6 @@ class TuiRendererTest {
     @Test
     void statusBarWithApprovalProjectionTruncatesOnNarrowWidth() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState(
@@ -306,39 +241,15 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(20, 3), "");
+        List<String> lines = render(renderer, view, new TuiLayout(20, 3), "");
 
         assertTrue(AnsiWidth.displayWidth(lines.getLast()) <= 20);
         assertFalse(lines.getLast().contains("\n"));
     }
 
     @Test
-    void statusBarKeepsUnreadLineCountWhenOrdinaryFieldsAreTruncated() {
-        TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
-        screen.setTranscript(List.of("old", "current"));
-        screen.scrollUp(1);
-        TuiViewModel view = new TuiViewModel(
-            List.of(
-                new TuiMessageBlock("b1", "m1", "assistant", "old", false),
-                new TuiMessageBlock("b2", "m2", "assistant", "current", false)
-            ),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
-            List.of(),
-            Optional.empty(),
-            Optional.empty()
-        );
-
-        List<String> lines = renderer.render(view, screen, new TuiLayout(12, 3), "");
-
-        assertTrue(lines.getLast().endsWith("↑ 1 lines"));
-        assertTrue(AnsiWidth.displayWidth(lines.getLast()) <= 12);
-    }
-
-    @Test
     void statusBarDoesNotRenderInternalRuntimeFields() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState(
@@ -356,7 +267,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(120, 3), "");
+        List<String> lines = render(renderer, view, new TuiLayout(120, 3), "");
 
         assertEquals("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE", lines.getLast());
         assertFalse(lines.getLast().contains("cwd:"));
@@ -368,7 +279,6 @@ class TuiRendererTest {
     @Test
     void messageBlocksUseMarkdownRenderer() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(2);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "## Done ##\n- [x] task", false)),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -377,7 +287,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(20, 6), "");
+        List<String> lines = render(renderer, view, new TuiLayout(20, 6), "");
 
         assertEquals("Done", lines.get(0));
         assertEquals("[x] task", lines.get(1));
@@ -386,7 +296,6 @@ class TuiRendererTest {
     @Test
     void rendersUserAndThinkingBlocksWithRoleStyles() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(3);
         TuiViewModel view = new TuiViewModel(
             List.of(
                 new TuiMessageBlock("u1", "m1", "user", "请修复 TUI", false),
@@ -399,7 +308,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 7), "");
+        List<String> lines = render(renderer, view, new TuiLayout(40, 7), "");
 
         assertEquals("\033[38;5;81muser: 请修复 TUI\033[0m", lines.get(0));
         assertEquals("\033[38;5;244mthinking: 分析路径\033[0m", lines.get(1));
@@ -409,7 +318,6 @@ class TuiRendererTest {
     @Test
     void rendersMultilineThinkingWithoutEmbeddedNewlines() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(2);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiThinkingBlock("t1", "m1", "第一行\n第二行", false, false)),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -418,7 +326,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 6), "");
+        List<String> lines = render(renderer, view, new TuiLayout(40, 6), "");
 
         assertEquals("\033[38;5;244mthinking: 第一行\033[0m", lines.get(0));
         assertEquals("\033[38;5;244m          第二行\033[0m", lines.get(1));
@@ -427,7 +335,6 @@ class TuiRendererTest {
     @Test
     void compressesThinkingDisplayAndShowsHiddenLineCount() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(4);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiThinkingBlock("t1", "m1", "第一行\n第二行\n第三行\n第四行\n第五行", false, false)),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -436,7 +343,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 8), "");
+        List<String> lines = render(renderer, view, new TuiLayout(40, 8), "");
 
         assertEquals("\033[38;5;244mthinking: 第一行\033[0m", lines.get(0));
         assertEquals("\033[38;5;244m          第二行\033[0m", lines.get(1));
@@ -449,7 +356,6 @@ class TuiRendererTest {
     @Test
     void inputLineMarksHardwareCursorAtEditorCursor() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -458,7 +364,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(30, 3), "alpha beta", 6);
+        List<String> lines = render(renderer, view, new TuiLayout(30, 4), "alpha beta", 6);
 
         assertInputBorder(lines.get(0), 30);
         assertInputContent(lines.get(lines.size() - 2), "> alpha |CURSOR|" + INPUT_CURSOR + "beta");
@@ -467,7 +373,6 @@ class TuiRendererTest {
     @Test
     void emptyTranscriptRendersInputBlockAndStatusOnly() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -476,20 +381,18 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(20, 6), "", 0);
+        List<String> lines = render(renderer, view, new TuiLayout(20, 6), "", 0);
 
-        assertEquals(6, lines.size());
-        assertEquals(List.of("", ""), lines.subList(0, 2));
+        assertEquals(4, lines.size());
+        assertInputBorder(lines.get(0), 20);
+        assertInputContent(lines.get(1), "> |CURSOR|" + INPUT_CURSOR);
         assertInputBorder(lines.get(2), 20);
-        assertInputContent(lines.get(3), "> |CURSOR|" + INPUT_CURSOR);
-        assertInputBorder(lines.get(4), 20);
-        assertTrue(lines.get(5).contains("ses_1"));
+        assertTrue(lines.get(3).contains("ses_1"));
     }
 
     @Test
     void compactRuntimeUsesSingleReadonlyInputLineWithoutCursorBackgroundBlock() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4-mini", "running", "DEFAULT_EXECUTE"),
@@ -499,7 +402,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 8), "draft", 5);
+        List<String> lines = render(renderer, view, new TuiLayout(40, 8), "draft", 5);
         String frame = String.join("\n", lines);
 
         assertTrue(frame.contains("compact"));
@@ -510,7 +413,6 @@ class TuiRendererTest {
     @Test
     void inputLineKeepsCursorMarkerAfterNarrowWrapping() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -519,17 +421,16 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(8, 3), "abcdefgh", 8);
+        List<String> lines = render(renderer, view, new TuiLayout(8, 3), "abcdefgh", 8);
 
-        assertEquals(3, lines.size());
-        assertInputBorder(lines.get(0), 8);
-        assertInputContent(lines.get(lines.size() - 2), "fgh|CURSOR|" + INPUT_CURSOR);
+        assertEquals(2, lines.size());
+        assertInputContent(lines.getFirst(), "fgh|CURSOR|" + INPUT_CURSOR);
+        assertTrue(lines.getLast().contains("ses_1"));
     }
 
     @Test
     void visibleCursorDoesNotPushInputContentPastLayoutWidth() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -538,7 +439,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(8, 4), "abcdef", 6);
+        List<String> lines = render(renderer, view, new TuiLayout(8, 4), "abcdef", 6);
 
         for (String line : lines) {
             assertTrue(AnsiWidth.displayWidth(line.replace(TuiRenderFrame.CURSOR_MARKER, "")) <= 8);
@@ -546,9 +447,8 @@ class TuiRendererTest {
     }
 
     @Test
-    void longInputIsWindowedWithoutRemovingLatestTranscriptLine() {
+    void longInputIsWindowedWithoutChangingCommittedHistory() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(
                 new TuiMessageBlock("b1", "m1", "assistant", "line1", false),
@@ -562,20 +462,22 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(8, 6), "abcdefghij", 10);
+        TuiTranscriptPartition partition = new TuiTranscriptPartitioner().partition(view.blocks());
+        List<String> history = renderer.renderCommittedBlocks(partition.history(), 8).stream()
+            .map(TerminalLine::text)
+            .toList();
+        TuiRenderFrame surface = renderer.renderSurface(
+            view, partition.live(), new TuiLayout(8, 6), "abcdefghij", 10, List.of(), false
+        );
 
-        assertTrue(lines.size() <= 6);
-        assertTrue(lines.contains("line4"));
-        assertFalse(lines.contains("line1"));
-        assertFalse(lines.contains("line2"));
-        assertFalse(lines.contains("line3"));
-        assertTrue(lines.stream().anyMatch(line -> line.contains(TuiRenderFrame.CURSOR_MARKER)));
+        assertEquals(List.of("line1", "line2", "line3", "line4"), history);
+        assertTrue(surface.lines().size() <= 5);
+        assertTrue(surface.lines().stream().anyMatch(line -> line.contains(TuiRenderFrame.CURSOR_MARKER)));
     }
 
     @Test
     void explicitNewlineStartsNewInputRowWithoutSplittingDraftSemantics() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -584,7 +486,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(12, 5), "hello\nworld", 11);
+        List<String> lines = render(renderer, view, new TuiLayout(12, 6), "hello\nworld", 11);
 
         assertEquals(5, lines.size());
         assertInputBorder(lines.get(0), 12);
@@ -597,7 +499,6 @@ class TuiRendererTest {
     @Test
     void inputViewportShowsCursorRowsWhileKeepingOneTranscriptLine() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "history", false)),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -606,7 +507,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(10, 6), "one\ntwo\nthree\nfour", 18);
+        List<String> lines = render(renderer, view, new TuiLayout(10, 6), "one\ntwo\nthree\nfour", 18);
 
         assertTrue(lines.size() <= 6);
         assertTrue(lines.contains("history"));
@@ -617,9 +518,8 @@ class TuiRendererTest {
     }
 
     @Test
-    void minimumInputAndTranscriptFitInThreeLineTerminal() {
+    void minimumInputSurfaceFitsBesideCommittedHistoryInThreeLineTerminal() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "history", false)),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -628,19 +528,22 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(10, 3), "one\ntwo\nthree\nfour", 18);
+        TuiTranscriptPartition partition = new TuiTranscriptPartitioner().partition(view.blocks());
+        List<TerminalLine> history = renderer.renderCommittedBlocks(partition.history(), 10);
+        TuiRenderFrame surface = renderer.renderSurface(
+            view, partition.live(), new TuiLayout(10, 3), "one\ntwo\nthree\nfour", 18, List.of(), false
+        );
 
-        assertTrue(lines.size() <= 3);
-        assertTrue(lines.contains("history"));
-        assertTrue(lines.stream().anyMatch(line -> line.contains("four")
+        assertEquals(List.of(new TerminalLine("history")), history);
+        assertTrue(surface.lines().size() <= 2);
+        assertTrue(surface.lines().stream().anyMatch(line -> line.contains("four")
             && line.contains(TuiRenderFrame.CURSOR_MARKER)));
-        assertTrue(lines.getLast().contains("ses_1"));
+        assertTrue(surface.lines().getLast().contains("ses_1"));
     }
 
     @Test
     void permissionPromptRendersAsBottomOverlay() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(5);
         PermissionUpdate rememberUpdate = new PermissionUpdate(
             PermissionRuleSource.SESSION,
             new PermissionRule(
@@ -678,22 +581,20 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 9), "");
+        List<String> lines = render(renderer, view, new TuiLayout(40, 9), "");
 
         assertInputBorder(lines.get(0), 40);
         assertInputContent(lines.get(1), "> ");
-        assertInputBorder(lines.get(2), 40);
-        assertEquals("permission toolu_1: Need approval", lines.get(3));
-        assertEquals("rule: bash:npm test", lines.get(4));
-        assertEquals("> 允许一次", lines.get(5));
-        assertEquals("  允许并记住", lines.get(6));
+        assertEquals("permission toolu_1: Need approval", lines.get(2));
+        assertEquals("rule: bash:npm test", lines.get(3));
+        assertEquals("> 允许一次", lines.get(4));
+        assertEquals("  允许并记住", lines.get(5));
         assertTrue(lines.getLast().contains("ses_1"));
     }
 
     @Test
-    void permissionPromptStaysVisibleWhenWorkingLineIsActiveInShortViewport() {
+    void permissionPromptTakesPriorityOverWorkingLineInShortViewport() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(2);
         PermissionPromptView prompt = new PermissionPromptView(
             "perm_toolu_1",
             "toolu_1",
@@ -716,17 +617,16 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 6), "");
+        List<String> lines = render(renderer, view, new TuiLayout(40, 6), "");
 
         assertTrue(lines.stream().anyMatch(line -> line.contains("permission toolu_1")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("> 允许一次")));
-        assertTrue(lines.stream().anyMatch(line -> line.contains("working (12s)")));
+        assertFalse(lines.stream().anyMatch(line -> line.contains("working (12s)")));
     }
 
     @Test
     void tallPermissionPromptKeepsSelectedOptionInputCursorAndStatusVisible() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(2);
         List<PermissionOption> options = java.util.stream.IntStream.rangeClosed(1, 8)
             .mapToObj(index -> new PermissionOption(
                 "option_" + index,
@@ -755,7 +655,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 6), "draft", 5);
+        List<String> lines = render(renderer, view, new TuiLayout(40, 6), "draft", 5);
 
         assertTrue(lines.size() <= 6);
         assertTrue(lines.stream().anyMatch(line -> line.contains("> Option 6")));
@@ -767,7 +667,6 @@ class TuiRendererTest {
     @Test
     void multilinePermissionPromptIsSplitIntoFrameLines() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(8);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -788,7 +687,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(80, 12), "");
+        List<String> lines = render(renderer, view, new TuiLayout(80, 12), "");
 
         assertTrue(lines.stream().noneMatch(line -> line.contains("\n")));
         int promptStart = lines.indexOf("permission toolu_1: REQUEST_PERMISSIONS");
@@ -803,7 +702,6 @@ class TuiRendererTest {
     @Test
     void diffViewIsRenderedInTranscriptArea() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(4);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -818,7 +716,7 @@ class TuiRendererTest {
             ))
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 8), "");
+        List<String> lines = render(renderer, view, new TuiLayout(40, 9), "");
 
         assertEquals("diff: 1 file changed", lines.get(0));
         assertEquals("M src/App.java", lines.get(1));
@@ -827,9 +725,8 @@ class TuiRendererTest {
     }
 
     @Test
-    void runtimeLineUsesTranscriptSpaceOnlyWhenActive() {
+    void runtimeLineAppearsOnlyInMutableSurface() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(3);
         TuiViewModel view = new TuiViewModel(
             List.of(
                 new TuiMessageBlock("b1", "m1", "assistant", "line1", false),
@@ -843,18 +740,14 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 8), "");
+        List<String> lines = render(renderer, view, new TuiLayout(40, 8), "");
 
-        assertEquals("line2", lines.get(0));
-        assertEquals("line3", lines.get(1));
-        assertTrue(isContentSeparator(lines.get(2)));
+        assertEquals(List.of("line1", "line2", "line3"), lines.subList(0, 3));
         assertEquals("· retrying attempt 2 rate limit", lines.get(3));
         assertInputBorder(lines.get(4), 40);
         assertInputContent(lines.get(5), "> ");
         assertInputBorder(lines.get(6), 40);
         assertTrue(lines.getLast().contains("ses_1"));
-
-        TuiScreen screenWithoutRuntime = new TuiScreen(3);
         TuiViewModel withoutRuntime = new TuiViewModel(
             view.blocks(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -862,16 +755,14 @@ class TuiRendererTest {
             Optional.empty(),
             Optional.empty()
         );
-        List<String> withoutRuntimeLines = renderer.render(withoutRuntime, screenWithoutRuntime, new TuiLayout(40, 8), "");
+        List<String> withoutRuntimeLines = render(renderer, withoutRuntime, new TuiLayout(40, 8), "");
 
-        assertEquals("", withoutRuntimeLines.get(0));
-        assertEquals(List.of("line1", "line2", "line3"), withoutRuntimeLines.subList(1, 4));
+        assertEquals(List.of("line1", "line2", "line3"), withoutRuntimeLines.subList(0, 3));
     }
 
     @Test
     void toolDetailsRenderBelowToolHeader() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(3);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiToolBlock("tool:1", "msg_1", "toolu_1", "bash", TuiToolState.DONE, "Bash", "stdout: ok\nexit 0", false)),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -880,7 +771,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(view, screen, new TuiLayout(40, 7), "");
+        List<String> lines = render(renderer, view, new TuiLayout(40, 7), "");
 
         assertEquals("done $ Bash", lines.get(0));
         assertEquals("  stdout: ok", lines.get(1));
@@ -890,7 +781,6 @@ class TuiRendererTest {
     @Test
     void splitsToolRuntimeAndOverlayLogicalLinesIntoPhysicalFrameLines() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(20);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiToolBlock(
                 "tool:1",
@@ -909,9 +799,9 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        TuiRenderFrame frame = renderer.renderFrame(
+        TuiRenderFrame frame = renderFrame(
+            renderer,
             view,
-            screen,
             new TuiLayout(40, 20),
             "",
             0,
@@ -930,7 +820,6 @@ class TuiRendererTest {
     @Test
     void statusBarNormalizesLogicalLineBreaksWithoutGrowingChrome() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4\r\nmini", "execute", "default"),
@@ -939,7 +828,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        TuiRenderFrame frame = renderer.renderFrame(view, screen, new TuiLayout(40, 8), "", 0);
+        TuiRenderFrame frame = renderFrame(renderer, view, new TuiLayout(40, 8), "", 0);
 
         assertFalse(frame.lines().getLast().contains("\r"));
         assertFalse(frame.lines().getLast().contains("\n"));
@@ -949,7 +838,6 @@ class TuiRendererTest {
     @Test
     void narrowToolStatusFallbackAlsoNormalizesLogicalLineBreaks() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(1);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("session-long", "model-long", "execute", "tool:\nrunning"),
@@ -958,7 +846,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        TuiRenderFrame frame = renderer.renderFrame(view, screen, new TuiLayout(20, 8), "", 0);
+        TuiRenderFrame frame = renderFrame(renderer, view, new TuiLayout(20, 8), "", 0);
 
         assertEquals("tool tool: running", frame.lines().getLast());
     }
@@ -966,7 +854,6 @@ class TuiRendererTest {
     @Test
     void bashToolCollapsedShowsCommandStatusSummaryAndTailPreview() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(20);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiToolBlock(
                 "tool:1",
@@ -984,7 +871,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
+        List<String> lines = renderFrame(renderer, view, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
 
         assertTrue(lines.contains("failed $ mvn test"));
         assertTrue(lines.contains("  exit 1"));
@@ -995,7 +882,6 @@ class TuiRendererTest {
     @Test
     void readEditAndUnknownToolsUseStructuredTitles() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(20);
         TuiViewModel view = new TuiViewModel(
             List.of(
                 new TuiToolBlock("tool:read", "msg_1", "toolu_read", "read", TuiToolState.DONE, "src/App.java:1-80", "1 | class App {}\n2 |", false),
@@ -1008,7 +894,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
+        List<String> lines = renderFrame(renderer, view, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
 
         assertTrue(lines.contains("tools: read x1 (Ctrl+O details)"));
         assertTrue(lines.contains("done edit src/App.java +1 -1"));
@@ -1018,7 +904,6 @@ class TuiRendererTest {
     @Test
     void readToolOutputNeverShowsFileContentAndExpandsToInvocationOnly() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(30);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiToolBlock(
                 "tool:1",
@@ -1038,8 +923,8 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> collapsed = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
-        List<String> expanded = renderer.renderFrame(view, screen, new TuiLayout(80, 30), "", -1, List.of(), true).lines();
+        List<String> collapsed = renderFrame(renderer, view, new TuiLayout(80, 30), "", -1, List.of(), false).lines();
+        List<String> expanded = renderFrame(renderer, view, new TuiLayout(80, 30), "", -1, List.of(), true).lines();
 
         assertFalse(collapsed.contains("  1 | line 1"));
         assertFalse(collapsed.contains("  11 | line 11"));
@@ -1052,7 +937,6 @@ class TuiRendererTest {
     @Test
     void writeToolStillShowsContentPreview() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(20);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiToolBlock(
                 "tool:write",
@@ -1070,7 +954,7 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.renderFrame(view, screen, new TuiLayout(80, 20), "", -1, List.of(), false).lines();
+        List<String> lines = renderFrame(renderer, view, new TuiLayout(80, 20), "", -1, List.of(), false).lines();
 
         assertTrue(lines.contains("done write src/App.java"));
         assertTrue(lines.contains("  class App {}"));
@@ -1079,7 +963,6 @@ class TuiRendererTest {
     @Test
     void searchToolsCollapseToCountsAndExpandToInvocationOnly() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(20);
         TuiViewModel view = new TuiViewModel(
             List.of(
                 new TuiToolBlock(
@@ -1119,8 +1002,8 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> collapsed = renderer.renderFrame(view, screen, new TuiLayout(80, 20), "", -1, List.of(), false).lines();
-        List<String> expanded = renderer.renderFrame(view, screen, new TuiLayout(80, 20), "", -1, List.of(), true).lines();
+        List<String> collapsed = renderFrame(renderer, view, new TuiLayout(80, 20), "", -1, List.of(), false).lines();
+        List<String> expanded = renderFrame(renderer, view, new TuiLayout(80, 20), "", -1, List.of(), true).lines();
 
         assertTrue(collapsed.contains("tools: glob x1, read x1 (Ctrl+O details)"));
         assertTrue(collapsed.contains("tools: grep x1 (Ctrl+O details)"));
@@ -1137,19 +1020,18 @@ class TuiRendererTest {
     @Test
     void expandedToolOutputIsBoundedByAvailableTerminalRows() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(12);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiToolBlock(
                 "tool:bash",
                 "msg_1",
                 "toolu_bash",
                 "bash",
-                TuiToolState.DONE,
+                TuiToolState.RUNNING,
                 "mvn test",
                 String.join("\n", java.util.stream.IntStream.rangeClosed(1, 60)
                     .mapToObj(index -> "stdout: line " + index)
                     .toList()),
-                false
+                true
             )),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
@@ -1157,9 +1039,9 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.renderFrame(
+        List<String> lines = renderFrame(
+            renderer,
             view,
-            screen,
             new TuiLayout(80, 12),
             "draft",
             5,
@@ -1167,7 +1049,7 @@ class TuiRendererTest {
             true
         ).lines();
 
-        assertTrue(lines.size() <= 12, "expanded tool output should not exceed terminal height");
+        assertTrue(lines.size() <= 11, "expanded tool output should not exceed surface height");
         assertTrue(lines.stream().anyMatch(line -> line.contains("more lines") || line.contains("earlier lines")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("> draft")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("> /model")));
@@ -1175,7 +1057,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void collapsedAndExpandedToolFramesShareGlobalTranscriptBudget() {
+    void collapsedAndExpandedActiveToolFramesShareSurfaceBudget() {
         String details = String.join("\n", java.util.stream.IntStream.rangeClosed(1, 100)
             .mapToObj(index -> "detail line " + index)
             .toList());
@@ -1185,10 +1067,10 @@ class TuiRendererTest {
                 "msg_1",
                 "toolu_" + index,
                 "custom_tool",
-                TuiToolState.DONE,
+                TuiToolState.RUNNING,
                 "call " + index,
                 details,
-                false
+                true
             ))
             .toList();
         TuiViewModel view = new TuiViewModel(
@@ -1200,18 +1082,18 @@ class TuiRendererTest {
         );
         TuiRenderer renderer = new TuiRenderer();
 
-        TuiRenderFrame collapsed = renderer.renderFrame(
+        TuiRenderFrame collapsed = renderFrame(
+            renderer,
             view,
-            new TuiScreen(12),
             new TuiLayout(80, 12),
             "",
             -1,
             List.of(),
             false
         );
-        TuiRenderFrame expanded = renderer.renderFrame(
+        TuiRenderFrame expanded = renderFrame(
+            renderer,
             view,
-            new TuiScreen(12),
             new TuiLayout(80, 12),
             "",
             -1,
@@ -1244,11 +1126,9 @@ class TuiRendererTest {
             Optional.empty(),
             Optional.empty()
         );
-
-        TuiScreen screen = new TuiScreen(20);
-        TuiRenderFrame frame = new TuiRenderer().renderFrame(
+        TuiRenderFrame frame = renderFrame(
+            new TuiRenderer(),
             view,
-            screen,
             new TuiLayout(20, 20),
             "",
             -1,
@@ -1256,13 +1136,12 @@ class TuiRendererTest {
             false
         );
 
-        assertEquals(20, frame.lines().size());
-        assertTrue(screen.retainedLineCount() <= 5);
+        assertTrue(frame.lines().size() <= 19);
         assertTrue(frame.lines().stream().anyMatch(line -> line.contains("more lines")));
     }
 
     private void assertFrameFitsHeightWithOmissionMarker(TuiRenderFrame frame, int height) {
-        assertEquals(height, frame.lines().size());
+        assertTrue(frame.lines().size() <= height - 1);
         assertTrue(frame.lines().stream()
             .anyMatch(line -> line.contains("more lines") || line.contains("earlier lines")));
     }
@@ -1270,7 +1149,6 @@ class TuiRendererTest {
     @Test
     void slashOverlayRendersBelowInputBlock() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(2);
         TuiViewModel view = new TuiViewModel(
             List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
@@ -1279,29 +1157,27 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = renderer.render(
+        List<String> lines = render(
+            renderer,
             view,
-            screen,
             new TuiLayout(40, 7),
             "/",
             1,
             List.of("> /model", "  /thinking", "  /compact")
         );
 
-        assertEquals(7, lines.size());
+        assertEquals(6, lines.size());
         assertInputBorder(lines.get(0), 40);
         assertInputContent(lines.get(1), "> /|CURSOR|" + INPUT_CURSOR);
-        assertInputBorder(lines.get(2), 40);
-        assertTrue(lines.get(3).startsWith("> /model"));
-        assertTrue(lines.get(4).contains("  /thinking"));
-        assertTrue(lines.get(5).contains("  /compact"));
-        assertTrue(lines.get(6).contains("ses_1"));
+        assertTrue(lines.get(2).startsWith("> /model"));
+        assertTrue(lines.get(3).contains("  /thinking"));
+        assertTrue(lines.get(4).contains("  /compact"));
+        assertTrue(lines.get(5).contains("ses_1"));
     }
 
     @Test
     void overlayRendersBelowInputWithTranscriptContent() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen = new TuiScreen(10);
         TuiViewModel view = new TuiViewModel(
             List.of(
                 new TuiMessageBlock("b1", "m1", "assistant", "hello", false),
@@ -1313,17 +1189,20 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> withOverlay = renderer.render(
-            view, screen, new TuiLayout(40, 10), "/", 1,
+        List<String> withOverlay = render(
+            renderer, view, new TuiLayout(40, 10), "/", 1,
             List.of("> /model", "  /thinking", "  /compact")
         );
 
-        List<String> withoutOverlay = renderer.render(
-            view, screen, new TuiLayout(40, 10), "/", 1
+        List<String> withoutOverlay = render(
+            renderer, view, new TuiLayout(40, 10), "/", 1
         );
 
-        assertEquals(10, withOverlay.size());
-        assertEquals(10, withoutOverlay.size());
+        assertTrue(withOverlay.size() <= 9);
+        assertTrue(withoutOverlay.size() <= 9);
+        assertTrue(withOverlay.size() > withoutOverlay.size());
+        assertEquals(List.of("hello", "world"), withOverlay.subList(0, 2));
+        assertEquals(List.of("hello", "world"), withoutOverlay.subList(0, 2));
         int overlayIndex = -1;
         int inputBorderIndex = -1;
         for (int i = 0; i < withOverlay.size(); i++) {
@@ -1342,8 +1221,6 @@ class TuiRendererTest {
     @Test
     void emptyOverlayProducesSameOutputAsNoOverlay() {
         TuiRenderer renderer = new TuiRenderer();
-        TuiScreen screen1 = new TuiScreen(5);
-        TuiScreen screen2 = new TuiScreen(5);
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "test", false)),
             new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
@@ -1352,14 +1229,91 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> withEmptyOverlay = renderer.render(
-            view, screen1, new TuiLayout(40, 8), "hello", 5, List.of()
+        List<String> withEmptyOverlay = render(
+            renderer, view, new TuiLayout(40, 8), "hello", 5, List.of()
         );
-        List<String> withoutOverlay = renderer.render(
-            view, screen2, new TuiLayout(40, 8), "hello", 5
+        List<String> withoutOverlay = render(
+            renderer, view, new TuiLayout(40, 8), "hello", 5
         );
 
         assertEquals(withoutOverlay, withEmptyOverlay);
+    }
+
+    private List<String> render(
+        TuiRenderer renderer,
+        TuiViewModel view,
+        TuiLayout layout,
+        String input
+    ) {
+        return renderFrame(renderer, view, layout, input, -1).lines();
+    }
+
+    private List<String> render(
+        TuiRenderer renderer,
+        TuiViewModel view,
+        TuiLayout layout,
+        String input,
+        int cursor
+    ) {
+        return renderFrame(renderer, view, layout, input, cursor).lines();
+    }
+
+    private List<String> render(
+        TuiRenderer renderer,
+        TuiViewModel view,
+        TuiLayout layout,
+        String input,
+        int cursor,
+        List<String> overlayLines
+    ) {
+        return renderFrame(renderer, view, layout, input, cursor, overlayLines).lines();
+    }
+
+    private TuiRenderFrame renderFrame(
+        TuiRenderer renderer,
+        TuiViewModel view,
+        TuiLayout layout,
+        String input,
+        int cursor
+    ) {
+        return renderFrame(renderer, view, layout, input, cursor, List.of());
+    }
+
+    private TuiRenderFrame renderFrame(
+        TuiRenderer renderer,
+        TuiViewModel view,
+        TuiLayout layout,
+        String input,
+        int cursor,
+        List<String> overlayLines
+    ) {
+        return renderFrame(renderer, view, layout, input, cursor, overlayLines, false);
+    }
+
+    private TuiRenderFrame renderFrame(
+        TuiRenderer renderer,
+        TuiViewModel view,
+        TuiLayout layout,
+        String input,
+        int cursor,
+        List<String> overlayLines,
+        boolean toolOutputExpanded
+    ) {
+        TuiTranscriptPartition partition = new TuiTranscriptPartitioner().partition(view.blocks());
+        List<String> lines = new java.util.ArrayList<>();
+        renderer.renderCommittedBlocks(partition.history(), layout.width()).stream()
+            .map(TerminalLine::text)
+            .forEach(lines::add);
+        lines.addAll(renderer.renderSurface(
+            view,
+            partition.live(),
+            layout,
+            input,
+            cursor,
+            overlayLines,
+            toolOutputExpanded
+        ).lines());
+        return TuiRenderFrame.fromTextLines(lines);
     }
 
     private void assertInputBorder(String line, int width) {

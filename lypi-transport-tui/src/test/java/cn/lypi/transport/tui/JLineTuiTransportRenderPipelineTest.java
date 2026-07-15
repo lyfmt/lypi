@@ -54,8 +54,8 @@ class JLineTuiTransportRenderPipelineTest {
     @Test
     void completedRuntimeTranscriptRendersFinalToolStatesOnFirstFrame() {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
-        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 100, 12);
+        RecordingFrameSink sink = new RecordingFrameSink();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchRenderer(sink, 100, 12);
 
         transport.attach(events, completedRuntimeState("ses_resumed", 0));
         transport.renderCurrentFrameUnderUiLock();
@@ -69,7 +69,14 @@ class JLineTuiTransportRenderPipelineTest {
         assertFalse(bash.active());
         assertTrue(bash.details().contains("command failed"));
 
-        String firstFrame = String.join("\n", frames.getFirst());
+        TuiRenderBatch first = sink.batches.getFirst();
+        String firstFrame = String.join(
+            "\n",
+            java.util.stream.Stream.concat(
+                first.historyLines().stream().map(TerminalLine::text),
+                first.surface().lines().stream()
+            ).toList()
+        );
         assertTrue(firstFrame.contains("tools: read x1 (Ctrl+O details)"), firstFrame);
         assertTrue(firstFrame.contains("failed $ exit 1"), firstFrame);
         assertTrue(firstFrame.contains("command failed"), firstFrame);
@@ -79,17 +86,10 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void reattachToResumedStateClearsOldProgressAndScrollsOnlyNewTranscript() throws Exception {
+    void reattachToResumedStateClearsOldProgressAndDoesNotRecommitSameProjection() {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
-        QueueInputSource input = new QueueInputSource();
-        JLineTuiTransport transport = JLineTuiTransport.withInput(
-            frames::add,
-            80,
-            8,
-            input,
-            new RecordingSubmitHandler()
-        );
+        RecordingFrameSink sink = new RecordingFrameSink();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchRenderer(sink, 80, 8);
         transport.attach(events, TestRuntimeStates.basic("ses_old"));
         events.emit(new ToolStartEvent("ses_old", "old-tool", "bash", Instant.parse("2026-06-09T00:00:00Z")));
         events.emit(new ToolProgressEvent(
@@ -104,6 +104,7 @@ class JLineTuiTransportRenderPipelineTest {
         SessionRuntimeState resumed = completedRuntimeState("ses_new", 12);
         transport.attach(events, resumed);
         transport.renderCurrentFrameUnderUiLock();
+        TuiRenderBatch resumedBatch = sink.batches.getLast();
 
         assertFalse(transport.viewForTest().blocks().stream()
             .filter(TuiToolBlock.class::isInstance)
@@ -115,6 +116,9 @@ class JLineTuiTransportRenderPipelineTest {
             .anyMatch(block -> block.details().contains("old-progress")));
         assertEquals(TuiToolState.DONE, tool(transport, "read-1").state());
         assertEquals(TuiToolState.FAILED, tool(transport, "bash-1").state());
+        assertTrue(historyText(resumedBatch).contains("new history 0"));
+        assertTrue(historyText(resumedBatch).contains("resume complete"));
+        assertFalse(surfaceText(resumedBatch).contains("old-progress"));
 
         events.emit(new ToolProgressEvent(
             "ses_new",
@@ -128,65 +132,36 @@ class JLineTuiTransportRenderPipelineTest {
 
         transport.attach(events, resumed);
         transport.renderCurrentFrameUnderUiLock();
-        for (int index = 0; index < 10; index++) {
-            input.add("\033[6~");
-        }
-        transport.drainInputForTest();
-        assertTrue(String.join("\n", frames.getLast()).contains("resume complete"));
-
-        for (int index = 0; index < 10; index++) {
-            input.add("\033[5~");
-        }
-        transport.drainInputForTest();
-        String pageUpFrame = String.join("\n", frames.getLast());
-        assertTrue(pageUpFrame.contains("new history 0"), pageUpFrame);
-        assertFalse(pageUpFrame.contains("old-progress"), pageUpFrame);
-
-        for (int index = 0; index < 10; index++) {
-            input.add("\033[6~");
-        }
-        transport.drainInputForTest();
-        String pageDownFrame = String.join("\n", frames.getLast());
-        assertTrue(pageDownFrame.contains("resume complete"), pageDownFrame);
-        assertFalse(pageDownFrame.contains("old-progress"), pageDownFrame);
+        TuiRenderBatch sameProjectionBatch = sink.batches.getLast();
+        assertTrue(sameProjectionBatch.historyLines().isEmpty());
+        assertFalse(surfaceText(sameProjectionBatch).contains("old-progress"));
     }
 
     @Test
-    void changingSessionClearsHistoryScrollOffsetBeforeFirstFrame() throws Exception {
+    void changingSessionStartsNewTranscriptCommitEpoch() {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
-        QueueInputSource input = new QueueInputSource();
-        JLineTuiTransport transport = JLineTuiTransport.withInput(
-            frames::add,
-            80,
-            8,
-            input,
-            new RecordingSubmitHandler()
-        );
+        RecordingFrameSink sink = new RecordingFrameSink();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchRenderer(sink, 80, 8);
         transport.attach(events, completedRuntimeState("ses_old", 40));
         transport.renderCurrentFrameUnderUiLock();
-        for (int index = 0; index < 20; index++) {
-            input.add("\033[5~");
-        }
-        transport.drainInputForTest();
-        assertTrue(frames.getLast().getLast().contains("↑"));
+        assertTrue(historyText(sink.batches.getLast()).contains("new history 0"));
 
         transport.attach(events, completedRuntimeState("ses_new", 5));
         transport.renderCurrentFrameUnderUiLock();
 
-        String firstNewFrame = String.join("\n", frames.getLast());
-        assertTrue(firstNewFrame.contains("resume complete"), firstNewFrame);
-        assertFalse(firstNewFrame.contains("new history"), firstNewFrame);
-        assertFalse(frames.getLast().getLast().contains("↑"));
+        TuiRenderBatch firstNewBatch = sink.batches.getLast();
+        assertTrue(historyText(firstNewBatch).contains("new history 0"));
+        assertTrue(historyText(firstNewBatch).contains("resume complete"));
+        assertFalse(surfaceText(firstNewBatch).contains("new history"));
     }
 
     @Test
-    void pageUpChangesRestoredHistoryWithoutMovingLiveToolOrBottomChrome() throws Exception {
+    void pageUpDoesNotRecommitHistoryOrMoveLiveSurface() throws Exception {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
+        RecordingFrameSink sink = new RecordingFrameSink();
         QueueInputSource input = new QueueInputSource();
-        JLineTuiTransport transport = JLineTuiTransport.withInput(
-            frames::add,
+        JLineTuiTransport transport = JLineTuiTransport.withBatchInput(
+            sink,
             80,
             10,
             input,
@@ -200,57 +175,32 @@ class JLineTuiTransportRenderPipelineTest {
             Instant.parse("2026-06-09T00:00:00Z")
         ));
         transport.flushPendingFrameForTest();
-        List<String> tailFrame = frames.getLast();
+        TuiRenderBatch initialBatch = sink.batches.getLast();
 
         input.add("\033[5~");
         transport.drainInputForTest();
-        List<String> pageUpFrame = frames.getLast();
+        TuiRenderBatch pageUpBatch = sink.batches.getLast();
 
-        assertTrue(tailFrame.contains("history-line-30"));
-        assertFalse(pageUpFrame.contains("history-line-30"));
-        assertTrue(pageUpFrame.stream().anyMatch(line -> line.startsWith("running $")));
-        assertEquals(
-            tailFrame.stream().filter(line -> line.startsWith("running $")).findFirst(),
-            pageUpFrame.stream().filter(line -> line.startsWith("running $")).findFirst()
-        );
-        assertEquals(
-            tailFrame.stream().filter(line -> line.contains(INPUT_BACKGROUND)).findFirst(),
-            pageUpFrame.stream().filter(line -> line.contains(INPUT_BACKGROUND)).findFirst()
-        );
-        assertEquals(10, tailFrame.size());
-        assertEquals(10, pageUpFrame.size());
-        assertTrue(tailFrame.stream().anyMatch(line -> line.contains("┄")));
-        assertTrue(pageUpFrame.stream().anyMatch(line -> line.contains("┄")));
-        assertTrue(tailFrame.getLast().contains("ses_1"));
-        assertTrue(pageUpFrame.getLast().contains("ses_1"));
+        assertTrue(historyText(initialBatch).contains("history-line-30"));
+        assertTrue(pageUpBatch.historyLines().isEmpty());
+        assertTrue(surfaceText(pageUpBatch).contains("running $"));
+        assertEquals(initialBatch.surface().lines(), pageUpBatch.surface().lines());
+        assertTrue(pageUpBatch.surface().lines().size() <= 9);
     }
 
     @Test
-    void restoredHistoryCanScrollBackOnlyThroughLatestFiveHundredPhysicalLines() throws Exception {
+    void restoredHistoryCommitsAllPhysicalLinesWithoutApplicationTruncation() {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
-        QueueInputSource input = new QueueInputSource();
-        JLineTuiTransport transport = JLineTuiTransport.withInput(
-            frames::add,
-            80,
-            8,
-            input,
-            new RecordingSubmitHandler()
-        );
+        RecordingFrameSink sink = new RecordingFrameSink();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchRenderer(sink, 80, 8);
         transport.attach(events, historyRuntimeState("ses_1", 510));
         transport.renderCurrentFrameUnderUiLock();
-        for (int index = 0; index < 200; index++) {
-            input.add("\033[5~");
-        }
-        for (int batch = 0; batch < 7; batch++) {
-            transport.drainInputForTest();
-        }
 
-        List<String> topFrame = frames.getLast();
-        assertTrue(topFrame.contains("history-line-11"), String.join("\n", topFrame));
-        for (int index = 1; index <= 10; index++) {
-            assertFalse(topFrame.contains("history-line-" + index));
-        }
+        TuiRenderBatch first = sink.batches.getLast();
+        assertEquals(510, first.historyLines().size());
+        assertTrue(historyText(first).contains("history-line-1"));
+        assertTrue(historyText(first).contains("history-line-510"));
+        assertFalse(surfaceText(first).contains("history-line-"));
     }
 
     @Test
@@ -342,10 +292,10 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void eventRenderingUsesTranscriptViewportInsteadOfReturningAnOversizedFrame() {
+    void eventRenderingCommitsStableLinesOutsideBoundedSurface() {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
-        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 40, 7);
+        RecordingFrameSink sink = new RecordingFrameSink();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchRenderer(sink, 40, 7);
 
         transport.attach(events, TestRuntimeStates.basic("ses_1"));
         for (int i = 0; i < 6; i++) {
@@ -364,14 +314,15 @@ class JLineTuiTransportRenderPipelineTest {
         }
         transport.flushPendingFrameForTest();
 
-        List<String> latest = frames.getLast();
-        assertTrue(latest.size() <= 7);
-        assertFalse(latest.contains("line 0"));
-        assertFalse(latest.contains("line 2"));
-        assertTrue(latest.contains("line 3"));
-        assertTrue(latest.contains("line 5"));
-        assertEquals(inputContent("> "), inputLine(latest));
-        assertTrue(latest.getLast().contains("ses_1"));
+        String committed = allHistoryText(sink);
+        TuiRenderBatch latest = sink.batches.getLast();
+        assertTrue(committed.contains("line 0"));
+        assertTrue(committed.contains("line 5"));
+        assertTrue(latest.surface().lines().size() <= 6);
+        assertFalse(surfaceText(latest).contains("line 0"));
+        assertFalse(surfaceText(latest).contains("line 5"));
+        assertEquals(inputContent("> "), inputLine(latest.surface().lines()));
+        assertTrue(latest.surface().lines().getLast().contains("ses_1"));
     }
 
     @Test
@@ -404,8 +355,8 @@ class JLineTuiTransportRenderPipelineTest {
     @Test
     void eventPipelineRendersUserAndThinkingAsDistinctLines() {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
-        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 80, 7);
+        RecordingFrameSink sink = new RecordingFrameSink();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchRenderer(sink, 80, 7);
 
         transport.attach(events, TestRuntimeStates.basic("ses_1"));
         events.emit(new MessageDeltaEvent(
@@ -446,10 +397,10 @@ class JLineTuiTransportRenderPipelineTest {
         ));
         transport.flushPendingFrameForTest();
 
-        List<String> latest = frames.getLast();
-        assertTrue(latest.contains("\033[38;5;81muser: 请修复 TUI\033[0m"));
-        assertTrue(latest.contains("\033[38;5;244mthinking: 分析路径\033[0m"));
-        assertTrue(latest.contains("已处理"));
+        String committed = allHistoryText(sink);
+        assertTrue(committed.contains("\033[38;5;81muser: 请修复 TUI\033[0m"));
+        assertTrue(committed.contains("\033[38;5;244mthinking: 分析路径\033[0m"));
+        assertTrue(committed.contains("已处理"));
     }
 
     @Test
@@ -515,12 +466,12 @@ class JLineTuiTransportRenderPipelineTest {
     }
 
     @Test
-    void resizePreservesScrolledTranscriptUntilPageDownReturnsToTail() throws Exception {
+    void resizeAndPageKeysDoNotReplayCommittedTranscript() throws Exception {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
+        RecordingFrameSink sink = new RecordingFrameSink();
         QueueInputSource input = new QueueInputSource();
-        JLineTuiTransport transport = JLineTuiTransport.withInput(
-            frames::add,
+        JLineTuiTransport transport = JLineTuiTransport.withBatchInput(
+            sink,
             40,
             6,
             input,
@@ -542,31 +493,31 @@ class JLineTuiTransportRenderPipelineTest {
                 Instant.parse("2026-06-09T00:00:00Z")
             ));
         }
+        transport.flushPendingFrameForTest();
+        assertTrue(allHistoryText(sink).contains("line 1"));
+        assertTrue(allHistoryText(sink).contains("line 10"));
 
         input.add("\033[5~");
         transport.drainInputForTest();
-        long rowsBeforeResize = transcriptRows(frames.getLast());
-        assertTrue(frames.getLast().contains("line 9"));
-        assertFalse(frames.getLast().contains("line 10"));
+        assertTrue(sink.batches.getLast().historyLines().isEmpty());
 
         transport.resizeForTest(40, 8);
 
-        assertTrue(transcriptRows(frames.getLast()) > rowsBeforeResize);
-        assertTrue(frames.getLast().contains("line 9"));
-        assertFalse(frames.getLast().contains("line 10"));
+        TuiRenderBatch resized = sink.batches.getLast();
+        assertTrue(resized.historyLines().isEmpty());
+        assertTrue(resized.surface().lines().size() <= 7);
 
         input.add("\033[6~");
         transport.drainInputForTest();
-
-        assertTrue(frames.getLast().contains("line 10"));
+        assertTrue(sink.batches.getLast().historyLines().isEmpty());
     }
 
     @Test
-    void inputRerenderPreservesCurrentTranscriptView() throws Exception {
+    void inputRerenderPreservesCommittedTranscriptWithoutReplayingIt() throws Exception {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
-        JLineTuiTransport transport = JLineTuiTransport.withInput(
-            frames::add,
+        RecordingFrameSink sink = new RecordingFrameSink();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchInput(
+            sink,
             40,
             5,
             new QueueInputSource("draft"),
@@ -588,8 +539,12 @@ class JLineTuiTransportRenderPipelineTest {
         ));
         transport.drainInputForTest();
 
-        assertEquals("Done", frames.getLast().getFirst());
-        assertEquals(inputContent("> draft|CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));
+        assertEquals(1, occurrences(allHistoryText(sink), "Done"));
+        assertTrue(sink.batches.getLast().historyLines().isEmpty());
+        assertEquals(
+            inputContent("> draft|CURSOR|" + INPUT_CURSOR),
+            inputLine(sink.batches.getLast().surface().lines())
+        );
     }
 
     @Test
@@ -658,8 +613,8 @@ class JLineTuiTransportRenderPipelineTest {
     @Test
     void retryStatusRendersAsTransientTranscriptLineWithoutMovingStatusBar() {
         RecordingEventBus events = new RecordingEventBus();
-        List<List<String>> frames = new ArrayList<>();
-        JLineTuiTransport transport = JLineTuiTransport.withRenderer(frames::add, 80, 6);
+        RecordingFrameSink sink = new RecordingFrameSink();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchRenderer(sink, 80, 6);
 
         transport.attach(events, TestRuntimeStates.basic("ses_1"));
         events.emit(new MessageDeltaEvent(
@@ -677,11 +632,12 @@ class JLineTuiTransportRenderPipelineTest {
         events.emit(new RetryStartEvent("ses_1", 2, "rate limit", Instant.parse("2026-06-09T00:00:01Z")));
         transport.flushPendingFrameForTest();
 
-        List<String> latest = frames.getLast();
-        assertEquals("hello", latest.get(0));
-        assertEquals("· retrying attempt 2 rate limit", latest.get(1));
-        assertEquals(inputContent("> "), inputLine(latest));
-        assertTrue(latest.getLast().contains("ses_1"));
+        TuiRenderBatch latest = sink.batches.getLast();
+        assertEquals(1, occurrences(allHistoryText(sink), "hello"));
+        assertTrue(latest.historyLines().isEmpty());
+        assertTrue(latest.surface().lines().contains("· retrying attempt 2 rate limit"));
+        assertEquals(inputContent("> "), inputLine(latest.surface().lines()));
+        assertTrue(latest.surface().lines().getLast().contains("ses_1"));
     }
 
     @Test
@@ -1008,7 +964,7 @@ class JLineTuiTransportRenderPipelineTest {
         JLineTuiTransport transport = JLineTuiTransport.withInput(
             frames::add,
             80,
-            5,
+            8,
             new QueueInputSource(),
             new RecordingSubmitHandler(),
             clock
@@ -1293,6 +1249,15 @@ class JLineTuiTransportRenderPipelineTest {
             .orElseThrow();
     }
 
+    private static final class RecordingFrameSink implements FrameSink {
+        private final List<TuiRenderBatch> batches = new ArrayList<>();
+
+        @Override
+        public void render(TuiRenderBatch batch) {
+            batches.add(batch);
+        }
+    }
+
     private static final class QueueInputSource implements TerminalInputSource {
         private final ArrayDeque<String> chunks;
 
@@ -1343,6 +1308,27 @@ class JLineTuiTransportRenderPipelineTest {
         return INPUT_BACKGROUND + content + ANSI_RESET;
     }
 
+    private static String historyText(TuiRenderBatch batch) {
+        return batch.historyLines().stream()
+            .map(TerminalLine::text)
+            .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private static String surfaceText(TuiRenderBatch batch) {
+        return String.join("\n", batch.surface().lines());
+    }
+
+    private static String allHistoryText(RecordingFrameSink sink) {
+        return sink.batches.stream()
+            .flatMap(batch -> batch.historyLines().stream())
+            .map(TerminalLine::text)
+            .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private static int occurrences(String value, String token) {
+        return value.split(java.util.regex.Pattern.quote(token), -1).length - 1;
+    }
+
     private static boolean awaitFrame(List<List<String>> frames, Predicate<List<String>> predicate)
         throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
@@ -1353,10 +1339,6 @@ class JLineTuiTransportRenderPipelineTest {
             Thread.sleep(5L);
         }
         return frames.stream().anyMatch(predicate);
-    }
-
-    private static long transcriptRows(List<String> frame) {
-        return frame.stream().filter(line -> line.startsWith("line ")).count();
     }
 
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {

@@ -447,18 +447,18 @@ class TuiContractEndToEndTest {
         );
         TuiRenderer renderer = new TuiRenderer();
 
-        TuiRenderFrame collapsed = renderer.renderFrame(
+        TuiRenderFrame collapsed = renderer.renderSurface(
             view,
-            new TuiScreen(120),
+            view.blocks(),
             new TuiLayout(80, 120),
             "",
             -1,
             List.of(),
             false
         );
-        TuiRenderFrame expanded = renderer.renderFrame(
+        TuiRenderFrame expanded = renderer.renderSurface(
             view,
-            new TuiScreen(120),
+            view.blocks(),
             new TuiLayout(80, 120),
             "",
             -1,
@@ -494,9 +494,9 @@ class TuiContractEndToEndTest {
     }
 
     private static List<String> renderedTranscript(TuiViewModel view) {
-        TuiRenderFrame frame = new TuiRenderer().renderFrame(
+        TuiRenderFrame frame = new TuiRenderer().renderSurface(
             view,
-            new TuiScreen(20),
+            view.blocks(),
             new TuiLayout(80, 20),
             "",
             -1,

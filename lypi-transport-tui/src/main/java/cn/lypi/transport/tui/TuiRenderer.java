@@ -23,11 +23,9 @@ final class TuiRenderer {
     private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
     private static final String ANSI_RESET = "\033[0m";
     private static final String INPUT_PREFIX = "> ";
-    private static final String CONTENT_SEPARATOR_CHARACTER = "┄";
     private static final int THINKING_VISIBLE_LINE_LIMIT = 3;
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
     private final ToolDisplayRendererRegistry toolDisplayRenderers = ToolDisplayRendererRegistry.defaults();
-    private final TuiTranscriptPartitioner transcriptPartitioner = new TuiTranscriptPartitioner();
 
     List<TerminalLine> renderCommittedBlocks(List<TuiBlock> blocks, int width) {
         return renderTranscriptBlocks(blocks, width, false, Integer.MAX_VALUE).stream()
@@ -64,7 +62,7 @@ final class TuiRenderer {
             fullOverlay.lines().size()
         );
         List<String> lines = new ArrayList<>();
-        lines.addAll(tail(fullLive, regions.transcriptHeight()));
+        lines.addAll(tailPreservingOmissionMarker(fullLive, regions.transcriptHeight()));
         lines.addAll(inputCandidate.render(regions.inputHeight()).lines());
         lines.addAll(windowOverlay(
             fullOverlay.lines(),
@@ -76,105 +74,6 @@ final class TuiRenderer {
         }
         if (lines.size() > layout.maxSurfaceHeight()) {
             throw new IllegalStateException("rendered surface exceeds terminal budget");
-        }
-        return TuiRenderFrame.fromTextLines(lines);
-    }
-
-    List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input) {
-        return renderFrame(view, screen, layout, input, -1).lines();
-    }
-
-    List<String> render(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input, int cursor) {
-        return renderFrame(view, screen, layout, input, cursor, List.of()).lines();
-    }
-
-    List<String> render(
-        TuiViewModel view,
-        TuiScreen screen,
-        TuiLayout layout,
-        String input,
-        int cursor,
-        List<String> overlayLines
-    ) {
-        return renderFrame(view, screen, layout, input, cursor, overlayLines).lines();
-    }
-
-    TuiRenderFrame renderFrame(TuiViewModel view, TuiScreen screen, TuiLayout layout, String input, int cursor) {
-        return renderFrame(view, screen, layout, input, cursor, List.of());
-    }
-
-    TuiRenderFrame renderFrame(
-        TuiViewModel view,
-        TuiScreen screen,
-        TuiLayout layout,
-        String input,
-        int cursor,
-        List<String> overlayLines
-    ) {
-        return renderFrame(view, screen, layout, input, cursor, overlayLines, false);
-    }
-
-    TuiRenderFrame renderFrame(
-        TuiViewModel view,
-        TuiScreen screen,
-        TuiLayout layout,
-        String input,
-        int cursor,
-        List<String> overlayLines,
-        boolean toolOutputExpanded
-    ) {
-        TuiTranscriptPartition partition = transcriptPartitioner.partition(view.blocks());
-        List<String> fullHistory = renderTranscriptBlocks(
-            partition.history(),
-            layout.width(),
-            false,
-            Integer.MAX_VALUE
-        );
-        List<String> fullLive = renderLiveLines(
-            view,
-            partition.live(),
-            layout.width(),
-            toolOutputExpanded,
-            Integer.MAX_VALUE
-        );
-        InputCandidate inputCandidate = compactRunning(view)
-            ? readonlyRuntimeInputCandidate("compact 正在进行...", layout.width())
-            : measureInput(input, cursor, layout.width());
-        OverlayBlock fullOverlay = combineOverlays(
-            permissionOverlay(view, layout.width()),
-            externalOverlay(overlayLines, layout.width())
-        );
-        TuiRegionLayout regions = layout.allocate(
-            inputCandidate.desiredHeight(),
-            fullOverlay.lines().size(),
-            !fullHistory.isEmpty() || !fullLive.isEmpty()
-        );
-        TuiContentLayout content = TuiContentLayout.allocate(
-            regions.transcriptHeight(),
-            !fullHistory.isEmpty(),
-            fullLive.size()
-        );
-        InputBlock inputBlock = inputCandidate.render(regions.inputHeight());
-        List<String> overlay = windowOverlay(
-            fullOverlay.lines(),
-            regions.overlayHeight(),
-            fullOverlay.selectedRow()
-        );
-        screen.updateViewportHeight(content.historyHeight());
-        screen.setTranscript(fullHistory);
-        List<String> history = topPaddedTail(screen.visibleTranscript(), content.historyHeight());
-        List<String> live = topPaddedTail(fullLive, content.liveHeight());
-        List<String> lines = new ArrayList<>();
-        lines.addAll(history);
-        if (content.separatorHeight() > 0) {
-            lines.add(contentSeparator(layout.width()));
-        }
-        lines.addAll(live);
-        lines.addAll(inputBlock.lines());
-        lines.addAll(overlay);
-        lines.add(statusLine(view.statusBar(), screen, layout.width()));
-        if (lines.size() != layout.height()) {
-            throw new IllegalStateException("rendered frame must match terminal height");
         }
         return TuiRenderFrame.fromTextLines(lines);
     }
@@ -476,19 +375,6 @@ final class TuiRenderer {
         return lines;
     }
 
-    private String statusLine(StatusBarState status, TuiScreen screen, int width) {
-        if (screen.linesBelow() <= 0) {
-            return ordinaryStatusLine(status, width);
-        }
-        String unread = "↑ " + screen.linesBelow() + " lines";
-        int unreadWidth = AnsiWidth.displayWidth(unread);
-        if (unreadWidth >= width) {
-            return AnsiWidth.truncate(unread, width);
-        }
-        String ordinary = ordinaryStatusLine(status, width - unreadWidth - 1);
-        return ordinary.isBlank() ? unread : ordinary + " " + unread;
-    }
-
     private String ordinaryStatusLine(StatusBarState status, int width) {
         String permissionMode = singleLine(status.permissionMode());
         String full = String.join(
@@ -681,22 +567,6 @@ final class TuiRenderer {
         return INPUT_BORDER + "─".repeat(width) + ANSI_RESET;
     }
 
-    private String contentSeparator(int width) {
-        return INPUT_BORDER + CONTENT_SEPARATOR_CHARACTER.repeat(width) + ANSI_RESET;
-    }
-
-    private List<String> topPaddedTail(List<String> lines, int height) {
-        if (height <= 0) {
-            return List.of();
-        }
-        int start = Math.max(0, lines.size() - height);
-        List<String> visible = lines.subList(start, lines.size());
-        List<String> padded = new ArrayList<>(height);
-        padded.addAll(blankLines(height - visible.size()));
-        padded.addAll(visible);
-        return List.copyOf(padded);
-    }
-
     private List<String> tail(List<String> lines, int height) {
         if (height <= 0 || lines.isEmpty()) {
             return List.of();
@@ -705,11 +575,19 @@ final class TuiRenderer {
         return List.copyOf(lines.subList(start, lines.size()));
     }
 
-    private List<String> blankLines(int count) {
-        if (count <= 0) {
-            return List.of();
+    private List<String> tailPreservingOmissionMarker(List<String> lines, int height) {
+        List<String> visible = new ArrayList<>(tail(lines, height));
+        if (visible.isEmpty() || visible.stream().anyMatch(this::isToolOmissionMarker)) {
+            return List.copyOf(visible);
         }
-        return java.util.Collections.nCopies(count, "");
+        String marker = lines.stream()
+            .filter(this::isToolOmissionMarker)
+            .findFirst()
+            .orElse(null);
+        if (marker != null) {
+            visible.set(0, marker);
+        }
+        return List.copyOf(visible);
     }
 
     private String nullToEmpty(String value) {

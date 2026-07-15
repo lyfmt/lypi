@@ -17,14 +17,16 @@ import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
+import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import org.jline.terminal.Terminal;
@@ -35,19 +37,22 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private static final int MAX_INPUT_CHUNKS_PER_DRAIN = 32;
     private static final int MAX_DIFF_PATCH_BYTES = 64 * 1024;
     private static final long RUNTIME_TICK_INTERVAL_MILLIS = 1_000L;
+    private static final Duration CURSOR_PROBE_TIMEOUT = Duration.ofMillis(100);
     private static final DiffViewProvider NOOP_DIFF_VIEW_PROVIDER = (cwd, maxPatchBytes) -> Optional.empty();
 
     private final Object uiMonitor = new Object();
     private final Runnable renderer;
     private final TuiEventReducer reducer;
     private final TuiRenderer tuiRenderer;
-    private TuiScreen screen;
+    private final TuiTranscriptPartitioner transcriptPartitioner;
+    private final TuiTranscriptCommitLedger commitLedger;
     private TuiLayout layout;
     private final FrameSink frameSink;
     private final TerminalInputPump inputPump;
     private final TuiInputLoop inputLoop;
     private final TerminalSession terminalSession;
     private final TerminalIo terminalIo;
+    private final InlineTerminalRenderer inlineTerminalRenderer;
     private final DiffViewProvider diffViewProvider;
     private final Clock clock;
     private final TuiRuntimeTicker runtimeTicker;
@@ -63,13 +68,15 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.renderer = renderer;
         this.reducer = null;
         this.tuiRenderer = null;
-        this.screen = null;
+        this.transcriptPartitioner = null;
+        this.commitLedger = null;
         this.layout = null;
         this.frameSink = null;
         this.inputPump = null;
         this.inputLoop = null;
         this.terminalSession = null;
         this.terminalIo = null;
+        this.inlineTerminalRenderer = null;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.clock = Clock.systemUTC();
         this.runtimeTicker = new TuiRuntimeTicker(RUNTIME_TICK_INTERVAL_MILLIS, MAX_DIFF_PATCH_BYTES);
@@ -95,15 +102,17 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.renderer = null;
         this.reducer = new TuiEventReducer();
         this.tuiRenderer = new TuiRenderer();
+        this.transcriptPartitioner = new TuiTranscriptPartitioner();
+        this.commitLedger = new TuiTranscriptCommitLedger();
         int safeWidth = safeWidth(width);
         int safeHeight = safeHeight(height);
-        this.screen = new TuiScreen(Math.max(1, safeHeight - 2));
         this.layout = new TuiLayout(safeWidth, safeHeight);
         this.frameSink = frameSink;
         this.inputPump = null;
         this.inputLoop = null;
         this.terminalSession = terminalSession;
         this.terminalIo = null;
+        this.inlineTerminalRenderer = null;
         this.diffViewProvider = NOOP_DIFF_VIEW_PROVIDER;
         this.clock = Clock.systemUTC();
         this.runtimeTicker = new TuiRuntimeTicker(RUNTIME_TICK_INTERVAL_MILLIS, MAX_DIFF_PATCH_BYTES);
@@ -120,6 +129,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TuiSubmitHandler submitHandler,
         TerminalSession terminalSession,
         TerminalIo terminalIo,
+        InlineTerminalRenderer inlineTerminalRenderer,
         Supplier<SlashCommandPicker> slashPickerSupplier,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
@@ -134,6 +144,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             submitHandler,
             terminalSession,
             terminalIo,
+            inlineTerminalRenderer,
             slashPickerSupplier,
             diffViewProvider,
             resumeController,
@@ -151,6 +162,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         TuiSubmitHandler submitHandler,
         TerminalSession terminalSession,
         TerminalIo terminalIo,
+        InlineTerminalRenderer inlineTerminalRenderer,
         Supplier<SlashCommandPicker> slashPickerSupplier,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
@@ -161,27 +173,26 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         this.redrawScheduler = new TuiRedrawScheduler();
         this.reducer = TuiEventReducer.fromRuntimeState(state);
         this.tuiRenderer = new TuiRenderer();
+        this.transcriptPartitioner = new TuiTranscriptPartitioner();
+        this.commitLedger = new TuiTranscriptCommitLedger();
         int safeWidth = safeWidth(width);
         int safeHeight = safeHeight(height);
-        this.screen = new TuiScreen(Math.max(1, safeHeight - 2));
         this.layout = new TuiLayout(safeWidth, safeHeight);
         this.frameSink = frameSink;
         this.inputLoop = new TuiInputLoop(
             submitHandler,
-            frameSink,
-            tuiRenderer,
-            screen,
+            this::renderImmediateFrame,
             layout,
             reducer::view,
             slashPickerSupplier,
             resumeController,
             this::resumeRuntimeState,
-            skillIndexSupplier,
-            this::renderImmediateFrame
+            skillIndexSupplier
         );
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
         this.terminalSession = terminalSession;
         this.terminalIo = terminalIo;
+        this.inlineTerminalRenderer = inlineTerminalRenderer;
         this.diffViewProvider = diffViewProvider == null ? NOOP_DIFF_VIEW_PROVIDER : diffViewProvider;
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.runtimeTicker = new TuiRuntimeTicker(RUNTIME_TICK_INTERVAL_MILLIS, MAX_DIFF_PATCH_BYTES);
@@ -239,19 +250,22 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         ResumeSessionController resumeController,
         List<SlashCommand> slashCommands
     ) throws IOException {
-        JLineTerminalIo io = new JLineTerminalIo(terminal);
-        return open(
-            state,
+        RuntimeTuiSubmitHandler submitHandler = new RuntimeTuiSubmitHandler(
+            state.sessionId(),
             core,
             events,
-            io,
-            new JLineTerminalInputSource(terminal),
             command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command),
-            slashCommands,
+            slashCommands
+        );
+        return openTerminal(
+            state,
+            events,
+            terminal,
+            submitHandler,
+            null,
             diffViewProvider,
             resumeController,
-            terminal.getWidth(),
-            terminal.getHeight()
+            null
         );
     }
 
@@ -411,23 +425,40 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) throws IOException {
-        JLineTerminalIo io = new JLineTerminalIo(terminal);
-        return open(
-            state,
-            core,
-            events,
-            io,
-            new JLineTerminalInputSource(terminal),
-            slashCommands,
+        SlashCommandRouter router = new SlashCommandRouter(
+            state.sessionId(),
+            state.cwd(),
             sessionManager,
             resourceRuntime,
             compactionRuntime,
+            newSessionController,
+            slashCommands
+        );
+        JLineTuiTransport[] holder = new JLineTuiTransport[1];
+        RuntimeTuiSubmitHandler submitHandler = new RuntimeTuiSubmitHandler(
+            state.sessionId(),
+            core,
+            events,
+            command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command),
+            router,
+            runtimeState -> {
+                if (holder[0] != null) {
+                    holder[0].resumeRuntimeState(runtimeState);
+                }
+            }
+        );
+        JLineTuiTransport transport = openTerminal(
+            state,
+            events,
+            terminal,
+            submitHandler,
+            () -> new SlashCommandPicker(router.commandNames()),
             diffViewProvider,
             resumeController,
-            newSessionController,
-            terminal.getWidth(),
-            terminal.getHeight()
+            () -> resourceRuntime.load(state.cwd()).skillIndex()
         );
+        holder[0] = transport;
+        return transport;
     }
 
     public static JLineTuiTransport open(
@@ -573,19 +604,27 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         return open(state, core, events, io, inputSource, List.of(), sessionManager, resourceRuntime, null, width, height);
     }
 
-    static JLineTuiTransport withRenderer(FrameSink frameSink, int width, int height) {
+    static JLineTuiTransport withBatchRenderer(FrameSink frameSink, int width, int height) {
         return new JLineTuiTransport(frameSink, width, height);
     }
 
     static JLineTuiTransport withRenderer(
-        FrameSink frameSink,
+        Consumer<List<String>> frameConsumer,
+        int width,
+        int height
+    ) {
+        return withBatchRenderer(legacyFrameSink(frameConsumer), width, height);
+    }
+
+    static JLineTuiTransport withRenderer(
+        Consumer<List<String>> frameConsumer,
         int width,
         int height,
         LongSupplier nanoTime,
         long frameIntervalNanos
     ) {
         return new JLineTuiTransport(
-            frameSink,
+            legacyFrameSink(frameConsumer),
             width,
             height,
             null,
@@ -594,6 +633,22 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     }
 
     static JLineTuiTransport withInput(
+        Consumer<List<String>> frameConsumer,
+        int width,
+        int height,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler
+    ) {
+        return withBatchInput(
+            legacyFrameSink(frameConsumer),
+            width,
+            height,
+            inputSource,
+            submitHandler
+        );
+    }
+
+    static JLineTuiTransport withBatchInput(
         FrameSink frameSink,
         int width,
         int height,
@@ -610,6 +665,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             null,
             null,
             null,
+            null,
             NOOP_DIFF_VIEW_PROVIDER,
             null,
             null
@@ -617,6 +673,24 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     }
 
     static JLineTuiTransport withInput(
+        Consumer<List<String>> frameConsumer,
+        int width,
+        int height,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        Clock clock
+    ) {
+        return withBatchInput(
+            legacyFrameSink(frameConsumer),
+            width,
+            height,
+            inputSource,
+            submitHandler,
+            clock
+        );
+    }
+
+    static JLineTuiTransport withBatchInput(
         FrameSink frameSink,
         int width,
         int height,
@@ -634,11 +708,91 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             null,
             null,
             null,
+            null,
             NOOP_DIFF_VIEW_PROVIDER,
             null,
             null,
             clock
         );
+    }
+
+    private static FrameSink legacyFrameSink(Consumer<List<String>> frameConsumer) {
+        return batch -> {
+            List<String> lines = new java.util.ArrayList<>(
+                batch.historyLines().size() + batch.surface().lines().size()
+            );
+            batch.historyLines().stream().map(TerminalLine::text).forEach(lines::add);
+            lines.addAll(batch.surface().lines());
+            frameConsumer.accept(List.copyOf(lines));
+        };
+    }
+
+    private static JLineTuiTransport openTerminal(
+        SessionRuntimeState state,
+        EventBus events,
+        Terminal terminal,
+        TuiSubmitHandler submitHandler,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
+        Supplier<SkillIndex> skillIndexSupplier
+    ) throws IOException {
+        JLineTerminalIo io = new JLineTerminalIo(terminal);
+        JLineTuiTransport[] holder = new JLineTuiTransport[1];
+        TerminalSession session = null;
+        InlineTerminalRenderer terminalRenderer = null;
+        JLineTuiTransport transport = null;
+        try {
+            session = TerminalSession.open(io, () -> {
+                if (holder[0] != null) {
+                    holder[0].resize(io.width(), io.height());
+                }
+            }, () -> {
+                if (holder[0] != null) {
+                    holder[0].handleInterruptSignal();
+                }
+            });
+            CursorProbeResult probe = TerminalCursorProbe.query(terminal, CURSOR_PROBE_TIMEOUT);
+            int initialWidth = safeWidth(io.width());
+            int initialHeight = safeHeight(io.height());
+            InlineViewport viewport;
+            if (probe.position().isPresent()) {
+                viewport = InlineViewport.at(probe.position().orElseThrow(), initialWidth, initialHeight);
+            } else {
+                io.write("\r\n");
+                io.flush();
+                viewport = initialViewport(initialWidth, initialHeight);
+            }
+            TerminalInputSource inputSource = new JLineTerminalInputSource(terminal, probe.replayInput());
+            InlineTerminalRenderer nextRenderer = new InlineTerminalRenderer(io, viewport);
+            terminalRenderer = nextRenderer;
+            transport = new JLineTuiTransport(
+                terminalFrameSink(nextRenderer),
+                initialWidth,
+                initialHeight,
+                state,
+                inputSource,
+                submitHandler,
+                session,
+                io,
+                nextRenderer,
+                slashPickerSupplier,
+                diffViewProvider,
+                resumeController,
+                skillIndexSupplier
+            );
+            holder[0] = transport;
+            transport.attach(events, state);
+            transport.renderCurrentFrameUnderUiLock();
+            return transport;
+        } catch (IOException | RuntimeException exception) {
+            if (transport != null) {
+                closeAfterOpenFailure(transport, exception);
+            } else {
+                closeAfterOpenFailure(terminalRenderer, session, exception);
+            }
+            throw exception;
+        }
     }
 
     static JLineTuiTransport open(
@@ -716,47 +870,53 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 holder[0].handleInterruptSignal();
             }
         });
-        TerminalFrameRenderer frameRenderer = new TerminalFrameRenderer(io);
-        FrameSink frameSink = new FrameSink() {
-            @Override
-            public void render(List<String> lines) {
-                render(TuiRenderFrame.fromTextLines(lines));
-            }
-
-            @Override
-            public void render(TuiRenderFrame frame) {
-                try {
-                    frameRenderer.render(frame);
-                } catch (IOException exception) {
-                    throw new UncheckedIOException(exception);
-                }
-            }
-        };
-        int initialWidth = safeWidth(width > 0 ? width : io.width());
-        int initialHeight = safeHeight(height > 1 ? height : io.height());
-        JLineTuiTransport transport = new JLineTuiTransport(
-            frameSink,
-            initialWidth,
-            initialHeight,
-            state,
-            inputSource,
-            submitHandler,
-            session,
-            io,
-            slashPickerSupplier,
-            diffViewProvider,
-            resumeController,
-            skillIndexSupplier
-        );
-        holder[0] = transport;
+        InlineTerminalRenderer terminalRenderer = null;
+        JLineTuiTransport transport = null;
         try {
+            int initialWidth = safeWidth(width > 0 ? width : io.width());
+            int initialHeight = safeHeight(height > 1 ? height : io.height());
+            InlineTerminalRenderer nextRenderer = new InlineTerminalRenderer(
+                io,
+                initialViewport(initialWidth, initialHeight)
+            );
+            terminalRenderer = nextRenderer;
+            transport = new JLineTuiTransport(
+                terminalFrameSink(nextRenderer),
+                initialWidth,
+                initialHeight,
+                state,
+                inputSource,
+                submitHandler,
+                session,
+                io,
+                nextRenderer,
+                slashPickerSupplier,
+                diffViewProvider,
+                resumeController,
+                skillIndexSupplier
+            );
+            holder[0] = transport;
             transport.attach(events, state);
             transport.renderCurrentFrameUnderUiLock();
             return transport;
         } catch (RuntimeException exception) {
-            closeAfterOpenFailure(transport, exception);
+            if (transport != null) {
+                closeAfterOpenFailure(transport, exception);
+            } else {
+                closeAfterOpenFailure(terminalRenderer, session, exception);
+            }
             throw exception;
         }
+    }
+
+    private static FrameSink terminalFrameSink(InlineTerminalRenderer terminalRenderer) {
+        return batch -> {
+            try {
+                terminalRenderer.render(batch);
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+        };
     }
 
     static JLineTuiTransport open(
@@ -811,11 +971,6 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         synchronized (uiMonitor) {
             closeSubscription();
             attachedEvents = events;
-            String previousSessionId = runtimeState == null ? null : runtimeState.sessionId();
-            String nextSessionId = state == null ? null : state.sessionId();
-            if (screen != null && !Objects.equals(previousSessionId, nextSessionId)) {
-                screen.reset();
-            }
             runtimeState = state;
             if (reducer != null) {
                 reducer.configureRuntimeState(state);
@@ -952,6 +1107,17 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                     failure = exception;
                 }
             }
+            if (inlineTerminalRenderer != null) {
+                try {
+                    inlineTerminalRenderer.finish();
+                } catch (Exception exception) {
+                    if (failure == null) {
+                        failure = exception;
+                    } else {
+                        failure.addSuppressed(exception);
+                    }
+                }
+            }
             if (terminalSession != null) {
                 try {
                     terminalSession.close();
@@ -982,11 +1148,32 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         }
     }
 
-    private static void closeAfterOpenFailure(JLineTuiTransport transport, RuntimeException original) {
+    private static void closeAfterOpenFailure(JLineTuiTransport transport, Throwable original) {
         try {
             transport.close();
         } catch (Exception closeFailure) {
             original.addSuppressed(closeFailure);
+        }
+    }
+
+    private static void closeAfterOpenFailure(
+        InlineTerminalRenderer terminalRenderer,
+        TerminalSession session,
+        Throwable original
+    ) {
+        if (terminalRenderer != null) {
+            try {
+                terminalRenderer.finish();
+            } catch (Exception closeFailure) {
+                original.addSuppressed(closeFailure);
+            }
+        }
+        if (session != null) {
+            try {
+                session.close();
+            } catch (Exception closeFailure) {
+                original.addSuppressed(closeFailure);
+            }
         }
     }
 
@@ -1036,9 +1223,11 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int safeWidth = safeWidth(width);
         int safeHeight = safeHeight(height);
         layout = new TuiLayout(safeWidth, safeHeight);
-        screen.updateViewportHeight(Math.max(0, safeHeight - 2));
+        if (inlineTerminalRenderer != null) {
+            inlineTerminalRenderer.resize(safeWidth, safeHeight);
+        }
         if (inputLoop != null) {
-            inputLoop.updateViewport(screen, layout);
+            inputLoop.updateLayout(layout);
         }
     }
 
@@ -1079,11 +1268,20 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             reducer.observeRuntimeAt(clock.instant());
             TuiViewModel view = reducer.view();
             syncInputLoopToolState(view);
-            if (inputLoop != null) {
-                inputLoop.renderCurrentFrame();
-                return;
-            }
-            frameSink.render(tuiRenderer.renderFrame(view, screen, layout, currentDraft(), currentCursor()));
+            TuiViewModel renderView = inputLoop == null ? view : inputLoop.viewForRender();
+            TuiTranscriptPartition partition = transcriptPartitioner.partition(renderView.blocks());
+            List<TuiBlock> newlyCommitted = commitLedger.advance(projectionKey(), partition.history());
+            List<TerminalLine> historyLines = tuiRenderer.renderCommittedBlocks(newlyCommitted, layout.width());
+            TuiRenderFrame surface = tuiRenderer.renderSurface(
+                renderView,
+                partition.live(),
+                layout,
+                currentDraft(),
+                currentCursor(),
+                inputLoop == null ? List.of() : inputLoop.overlayLines(),
+                inputLoop != null && inputLoop.toolOutputExpanded()
+            );
+            frameSink.render(new TuiRenderBatch(historyLines, surface));
         } catch (UncheckedIOException exception) {
             terminalIoFailed = true;
             throw exception;
@@ -1136,6 +1334,13 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         return inputLoop == null ? -1 : inputLoop.cursor();
     }
 
+    private TuiProjectionKey projectionKey() {
+        if (runtimeState == null) {
+            return new TuiProjectionKey("", "");
+        }
+        return new TuiProjectionKey(runtimeState.sessionId(), runtimeState.currentBranchLeafId());
+    }
+
     private void syncInputLoopToolState(TuiViewModel view) {
         if (inputLoop == null) {
             return;
@@ -1165,5 +1370,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
 
     private static int safeHeight(int height) {
         return height > 1 ? height : DEFAULT_TERMINAL_HEIGHT;
+    }
+
+    private static InlineViewport initialViewport(int width, int height) {
+        return new InlineViewport(Math.max(0, height - 1), 1, width, height);
     }
 }

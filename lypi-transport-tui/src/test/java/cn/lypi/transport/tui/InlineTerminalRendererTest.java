@@ -138,6 +138,24 @@ class InlineTerminalRendererTest {
     }
 
     @Test
+    void linearFallbackRedrawsUnchangedSurfaceAfterClearingIt() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo(20, 5);
+        InlineTerminalRenderer renderer = new InlineTerminalRenderer(
+            io,
+            new InlineViewport(0, 2, 20, 5)
+        );
+        TuiRenderFrame surface = TuiRenderFrame.fromTextLines(List.of("> draft|CURSOR|", "status"));
+        renderer.render(new TuiRenderBatch(List.of(), surface));
+        io.resetOutput();
+
+        renderer.render(new TuiRenderBatch(List.of(new TerminalLine("history")), surface));
+
+        String output = io.output.toString();
+        assertTrue(output.contains("\033[2;1H\033[2K> draft"));
+        assertTrue(output.contains("\033[3;1H\033[2Kstatus"));
+    }
+
+    @Test
     void standardHistoryScrollRegionEndsAboveShiftedSurface() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo(80, 8);
         InlineTerminalRenderer renderer = new InlineTerminalRenderer(

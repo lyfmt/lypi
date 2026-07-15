@@ -25,22 +25,57 @@ public final class TuiFramePtyProbe {
         Terminal terminal = TerminalBuilder.builder().system(true).build();
         TerminalIo io = new JLineTerminalIo(terminal);
         try (TerminalSession session = TerminalSession.open(io)) {
-            TerminalFrameRenderer frameRenderer = new TerminalFrameRenderer(io);
+            InlineTerminalRenderer terminalRenderer = new InlineTerminalRenderer(
+                io,
+                new InlineViewport(Math.max(0, io.height() - 1), 1, io.width(), io.height())
+            );
             TuiRenderer renderer = new TuiRenderer();
-            TuiScreen screen = new TuiScreen(Math.max(1, io.height() - 4));
+            TuiTranscriptPartitioner partitioner = new TuiTranscriptPartitioner();
+            TuiTranscriptCommitLedger ledger = new TuiTranscriptCommitLedger();
             TuiLayout layout = new TuiLayout(io.width(), io.height());
 
-            frameRenderer.render(renderer.renderFrame(view("status-old"), screen, layout, "", 0));
-            frameRenderer.render(renderer.renderFrame(view("status-updated"), screen, layout, "input", 5));
-            Files.writeString(readyFile, "ready");
-            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
-            while (!Files.exists(exitFile)) {
-                if (System.nanoTime() >= deadline) {
-                    throw new IllegalStateException("timed out waiting for PTY exit signal");
+            try {
+                render(terminalRenderer, renderer, partitioner, ledger, layout, view("status-old"), "", 0);
+                render(terminalRenderer, renderer, partitioner, ledger, layout, view("status-updated"), "input", 5);
+                Files.writeString(readyFile, "ready");
+                long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+                while (!Files.exists(exitFile)) {
+                    if (System.nanoTime() >= deadline) {
+                        throw new IllegalStateException("timed out waiting for PTY exit signal");
+                    }
+                    Thread.sleep(25);
                 }
-                Thread.sleep(25);
+            } finally {
+                terminalRenderer.finish();
             }
         }
+    }
+
+    private static void render(
+        InlineTerminalRenderer terminalRenderer,
+        TuiRenderer renderer,
+        TuiTranscriptPartitioner partitioner,
+        TuiTranscriptCommitLedger ledger,
+        TuiLayout layout,
+        TuiViewModel view,
+        String input,
+        int cursor
+    ) throws Exception {
+        TuiTranscriptPartition partition = partitioner.partition(view.blocks());
+        List<TerminalLine> history = renderer.renderCommittedBlocks(
+            ledger.advance(new TuiProjectionKey("pty", "leaf"), partition.history()),
+            layout.width()
+        );
+        TuiRenderFrame surface = renderer.renderSurface(
+            view,
+            partition.live(),
+            layout,
+            input,
+            cursor,
+            List.of(),
+            false
+        );
+        terminalRenderer.render(new TuiRenderBatch(history, surface));
     }
 
     private static TuiViewModel view(String runtimeLine) {
