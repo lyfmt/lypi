@@ -257,20 +257,11 @@ class TuiInputLoopTest {
     }
 
     @Test
-    void pageKeysDoNotChangeInputOrRenderedProjection() {
+    void otherKeyDoesNotChangeInputOrRenderedProjection() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<List<String>> frames = new ArrayList<>();
-        List<TuiBlock> blocks = java.util.stream.IntStream.rangeClosed(1, 10)
-            .mapToObj(index -> (TuiBlock) new TuiMessageBlock(
-                "b" + index,
-                "m" + index,
-                "assistant",
-                "line" + index,
-                false
-            ))
-            .toList();
         TuiViewModel view = new TuiViewModel(
-            blocks,
+            List.of(),
             new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
             List.of(),
             Optional.empty(),
@@ -284,63 +275,13 @@ class TuiInputLoopTest {
         );
         loop.acceptText("draft");
         int cursor = loop.cursor();
-        List<String> beforePageKey = frames.getLast();
+        List<String> beforeOtherKey = frames.getLast();
 
-        loop.acceptKey(TerminalKey.PAGE_UP);
-
-        assertEquals("draft", loop.draft());
-        assertEquals(cursor, loop.cursor());
-        assertEquals(beforePageKey, frames.getLast());
-
-        loop.acceptKey(TerminalKey.PAGE_DOWN);
+        loop.acceptKey(TerminalKey.OTHER);
 
         assertEquals("draft", loop.draft());
         assertEquals(cursor, loop.cursor());
-        assertEquals(beforePageKey, frames.getLast());
-    }
-
-    @Test
-    void mouseWheelDoesNotChangeInputWhileArrowUpStillBrowsesInputHistory() {
-        RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        List<List<String>> frames = new ArrayList<>();
-        List<TuiBlock> blocks = java.util.stream.IntStream.rangeClosed(1, 30)
-            .mapToObj(index -> (TuiBlock) new TuiMessageBlock(
-                "b" + index,
-                "m" + index,
-                "assistant",
-                "history-" + index,
-                false
-            ))
-            .toList();
-        TuiViewModel view = new TuiViewModel(
-            blocks,
-            new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
-            List.of(),
-            Optional.empty(),
-            Optional.empty()
-        );
-        TuiInputLoop loop = testLoop(
-            submit,
-            lines -> frames.add(List.copyOf(lines)),
-            new TuiLayout(40, 6),
-            () -> view
-        );
-        loop.acceptText("previous prompt");
-        loop.acceptKey(TerminalKey.ENTER);
-        loop.acceptText("draft");
-        int cursor = loop.cursor();
-        List<String> beforeWheel = frames.getLast();
-
-        loop.acceptKey(TerminalKey.MOUSE_WHEEL_UP);
-
-        assertEquals("draft", loop.draft());
-        assertEquals(cursor, loop.cursor());
-        assertEquals(beforeWheel, frames.getLast());
-
-        loop.acceptKey(TerminalKey.CTRL_U);
-        loop.acceptKey(TerminalKey.UP);
-
-        assertEquals("previous prompt", loop.draft());
+        assertEquals(beforeOtherKey, frames.getLast());
     }
 
     @Test

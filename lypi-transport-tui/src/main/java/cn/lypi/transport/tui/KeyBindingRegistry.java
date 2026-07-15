@@ -26,10 +26,6 @@ final class KeyBindingRegistry {
         bindings.put(TerminalKey.WORD_RIGHT, TerminalInputAction.MOVE_WORD_RIGHT);
         bindings.put(TerminalKey.UP, TerminalInputAction.PREVIOUS_HISTORY);
         bindings.put(TerminalKey.DOWN, TerminalInputAction.NEXT_HISTORY);
-        bindings.put(TerminalKey.MOUSE_WHEEL_UP, TerminalInputAction.SCROLL_TRANSCRIPT_UP);
-        bindings.put(TerminalKey.MOUSE_WHEEL_DOWN, TerminalInputAction.SCROLL_TRANSCRIPT_DOWN);
-        bindings.put(TerminalKey.PAGE_UP, TerminalInputAction.SCROLL_TRANSCRIPT_UP);
-        bindings.put(TerminalKey.PAGE_DOWN, TerminalInputAction.SCROLL_TRANSCRIPT_DOWN);
         bindings.put(TerminalKey.CTRL_O, TerminalInputAction.TOGGLE_TOOL_OUTPUT_EXPANDED);
         bindings.put(TerminalKey.EXPAND_TOOLS, TerminalInputAction.EXPAND_TOOLS);
         return new KeyBindingRegistry(bindings);

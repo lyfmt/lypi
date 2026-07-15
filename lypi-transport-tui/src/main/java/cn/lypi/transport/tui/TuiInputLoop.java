@@ -276,8 +276,6 @@ final class TuiInputLoop {
             case MOVE_WORD_RIGHT -> editor.moveWordRight();
             case PREVIOUS_HISTORY -> editor.previousHistory();
             case NEXT_HISTORY -> editor.nextHistory();
-            case SCROLL_TRANSCRIPT_UP, SCROLL_TRANSCRIPT_DOWN -> {
-            }
             case TOGGLE_TOOL_OUTPUT_EXPANDED, EXPAND_TOOLS -> toolOutputExpanded = !toolOutputExpanded;
             default -> {
             }

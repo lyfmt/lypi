@@ -1,12 +1,8 @@
 package cn.lypi.transport.tui;
 
 import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 final class KeyMapper {
-    private static final Pattern SGR_MOUSE = Pattern.compile("\\033\\[<(\\d+);\\d+;\\d+([Mm])");
-
     Optional<TerminalKey> map(String sequence) {
         return switch (sequence) {
             case "\u0003" -> Optional.of(TerminalKey.CTRL_C);
@@ -28,32 +24,9 @@ final class KeyMapper {
             case "\033[1;5C" -> Optional.of(TerminalKey.WORD_RIGHT);
             case "\033[A", "\033OA" -> Optional.of(TerminalKey.UP);
             case "\033[B", "\033OB" -> Optional.of(TerminalKey.DOWN);
-            case "\033[5~" -> Optional.of(TerminalKey.PAGE_UP);
-            case "\033[6~" -> Optional.of(TerminalKey.PAGE_DOWN);
             case "\033[?u", "\033[65;129u", "\033[27;7;65u" -> Optional.empty();
-            default -> mapSgrMouse(sequence).or(() -> filterKittyReleaseOrRepeat(sequence));
+            default -> filterKittyReleaseOrRepeat(sequence);
         };
-    }
-
-    private Optional<TerminalKey> mapSgrMouse(String sequence) {
-        Matcher matcher = SGR_MOUSE.matcher(sequence);
-        if (!matcher.matches()) {
-            return Optional.empty();
-        }
-        if (!"M".equals(matcher.group(2))) {
-            return Optional.of(TerminalKey.OTHER);
-        }
-        try {
-            int button = Integer.parseInt(matcher.group(1));
-            if ((button & 64) == 0) {
-                return Optional.of(TerminalKey.OTHER);
-            }
-            return Optional.of((button & 1) == 0
-                ? TerminalKey.MOUSE_WHEEL_UP
-                : TerminalKey.MOUSE_WHEEL_DOWN);
-        } catch (NumberFormatException ignored) {
-            return Optional.of(TerminalKey.OTHER);
-        }
     }
 
     private Optional<TerminalKey> filterKittyReleaseOrRepeat(String sequence) {

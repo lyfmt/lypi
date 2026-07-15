@@ -21,10 +21,6 @@ public enum TerminalKey {
     WORD_RIGHT,
     UP,
     DOWN,
-    MOUSE_WHEEL_UP,
-    MOUSE_WHEEL_DOWN,
-    PAGE_UP,
-    PAGE_DOWN,
     EXPAND_TOOLS,
     OTHER
 }
