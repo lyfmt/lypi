@@ -8,6 +8,7 @@ import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.GitDiffFileView;
 import cn.lypi.contracts.tui.GitDiffStatus;
 import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
 import cn.lypi.contracts.security.PermissionBehavior;
@@ -958,6 +959,62 @@ class TuiRendererTest {
         assertTrue(lines.stream().anyMatch(line -> line.contains("> draft")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("> /model")));
         assertTrue(lines.getLast().contains("ses_1"));
+    }
+
+    @Test
+    void collapsedAndExpandedToolFramesShareGlobalTranscriptBudget() {
+        String details = String.join("\n", java.util.stream.IntStream.rangeClosed(1, 100)
+            .mapToObj(index -> "detail line " + index)
+            .toList());
+        List<TuiBlock> tools = java.util.stream.IntStream.range(0, 10)
+            .mapToObj(index -> (TuiBlock) new TuiToolBlock(
+                "tool:" + index,
+                "msg_1",
+                "toolu_" + index,
+                "custom_tool",
+                TuiToolState.DONE,
+                "call " + index,
+                details,
+                false
+            ))
+            .toList();
+        TuiViewModel view = new TuiViewModel(
+            tools,
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiRenderer renderer = new TuiRenderer();
+
+        TuiRenderFrame collapsed = renderer.renderFrame(
+            view,
+            new TuiScreen(12),
+            new TuiLayout(80, 12),
+            "",
+            -1,
+            List.of(),
+            false
+        );
+        TuiRenderFrame expanded = renderer.renderFrame(
+            view,
+            new TuiScreen(12),
+            new TuiLayout(80, 12),
+            "",
+            -1,
+            List.of(),
+            true
+        );
+
+        assertFrameFitsHeightWithOmissionMarker(collapsed, 12);
+        assertFrameFitsHeightWithOmissionMarker(expanded, 12);
+    }
+
+    private void assertFrameFitsHeightWithOmissionMarker(TuiRenderFrame frame, int height) {
+        assertTrue(frame.lines().size() <= height);
+        assertTrue(frame.transcriptLineCount() <= height - frame.chromeLineCount());
+        assertTrue(frame.lines().stream()
+            .anyMatch(line -> line.contains("more lines") || line.contains("earlier lines")));
     }
 
     @Test

@@ -41,6 +41,7 @@ import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
 import cn.lypi.contracts.tool.ToolResultSummary;
 import cn.lypi.contracts.tui.PermissionPromptView;
+import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.TuiThinkingBlock;
@@ -282,6 +283,64 @@ class TuiContractEndToEndTest {
         assertTrue(view.files().isEmpty());
         assertTrue(view.permissionPrompt().isEmpty());
         assertTrue(view.diffView().isEmpty());
+    }
+
+    @Test
+    void toolLifecycleDetailsRespectCollapsedAndExpandedDisplayBudgets() {
+        TuiEventReducer reducer = new TuiEventReducer();
+        reducer.reduce(new ToolStartEvent(
+            "ses_1",
+            "toolu_bash",
+            "msg_1",
+            "turn_1",
+            "bash",
+            "Run shell",
+            "bash mvn test",
+            Map.of("command", "mvn test"),
+            NOW,
+            NOW
+        ));
+        String output = String.join("\n", java.util.stream.IntStream.rangeClosed(1, 100)
+            .mapToObj(index -> "line " + index)
+            .toList());
+        reducer.reduce(new ToolProgressEvent(
+            "ses_1",
+            "toolu_bash",
+            ToolProgress.output("stdout", output),
+            NOW.plusMillis(1)
+        ));
+        TuiViewModel view = new TuiViewModel(
+            reducer.view().blocks(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiRenderer renderer = new TuiRenderer();
+
+        TuiRenderFrame collapsed = renderer.renderFrame(
+            view,
+            new TuiScreen(120),
+            new TuiLayout(80, 120),
+            "",
+            -1,
+            List.of(),
+            false
+        );
+        TuiRenderFrame expanded = renderer.renderFrame(
+            view,
+            new TuiScreen(120),
+            new TuiLayout(80, 120),
+            "",
+            -1,
+            List.of(),
+            true
+        );
+
+        assertTrue(collapsed.transcriptLineCount() <= 5);
+        assertTrue(expanded.transcriptLineCount() <= 40);
+        assertTrue(collapsed.lines().stream().anyMatch(line -> line.contains("earlier lines")));
+        assertTrue(expanded.lines().stream().anyMatch(line -> line.contains("earlier lines")));
     }
 
     private static MessageDeltaEvent delta(
