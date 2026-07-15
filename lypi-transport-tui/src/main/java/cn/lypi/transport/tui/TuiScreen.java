@@ -3,6 +3,8 @@ package cn.lypi.transport.tui;
 import java.util.List;
 
 final class TuiScreen {
+    static final int MAX_RETAINED_HISTORY_LINES = 500;
+
     private int viewportHeight;
     private List<String> transcript = List.of();
     private int linesBelow;
@@ -22,14 +24,15 @@ final class TuiScreen {
     }
 
     void setTranscript(List<String> transcript) {
-        int previousTranscriptSize = this.transcript.size();
+        List<String> previousTranscript = this.transcript;
         boolean followingTail = linesBelow == 0;
-        this.transcript = List.copyOf(transcript);
+        this.transcript = retainTail(transcript);
         if (followingTail) {
             linesBelow = 0;
             return;
         }
-        int appendedLines = Math.max(0, this.transcript.size() - previousTranscriptSize);
+        int overlap = maximumSuffixPrefixOverlap(previousTranscript, this.transcript);
+        int appendedLines = this.transcript.size() - overlap;
         linesBelow = Math.min(maxLinesBelow(), linesBelow + appendedLines);
     }
 
@@ -60,6 +63,30 @@ final class TuiScreen {
 
     int linesBelow() {
         return linesBelow;
+    }
+
+    int retainedLineCount() {
+        return transcript.size();
+    }
+
+    void reset() {
+        transcript = List.of();
+        linesBelow = 0;
+    }
+
+    private List<String> retainTail(List<String> lines) {
+        int from = Math.max(0, lines.size() - MAX_RETAINED_HISTORY_LINES);
+        return List.copyOf(lines.subList(from, lines.size()));
+    }
+
+    private int maximumSuffixPrefixOverlap(List<String> previous, List<String> current) {
+        int maximum = Math.min(previous.size(), current.size());
+        for (int overlap = maximum; overlap > 0; overlap--) {
+            if (previous.subList(previous.size() - overlap, previous.size()).equals(current.subList(0, overlap))) {
+                return overlap;
+            }
+        }
+        return 0;
     }
 
     private int maxLinesBelow() {
