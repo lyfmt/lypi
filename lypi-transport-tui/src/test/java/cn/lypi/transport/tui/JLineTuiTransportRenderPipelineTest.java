@@ -18,7 +18,10 @@ import cn.lypi.contracts.event.EventConsumer;
 import cn.lypi.contracts.event.EventEnvelope;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.MessageEndEvent;
+import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.ProviderFallbackEndEvent;
 import cn.lypi.contracts.event.ProviderFallbackStartEvent;
@@ -201,6 +204,114 @@ class JLineTuiTransportRenderPipelineTest {
         assertTrue(historyText(first).contains("history-line-1"));
         assertTrue(historyText(first).contains("history-line-510"));
         assertFalse(surfaceText(first).contains("history-line-"));
+    }
+
+    @Test
+    void streamingFinalizationCommitsFinalTextOnceAndInputEditsDoNotReplayIt() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingFrameSink sink = new RecordingFrameSink();
+        QueueInputSource input = new QueueInputSource();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchInput(
+            sink,
+            80,
+            10,
+            input,
+            new RecordingSubmitHandler()
+        );
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+
+        events.emit(new MessageStartEvent(
+            "ses_1",
+            "msg_stream",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        events.emit(textDelta("stream-first", false));
+        transport.renderCurrentFrameUnderUiLock();
+
+        TuiRenderBatch intermediate = sink.batches.getLast();
+        assertTrue(intermediate.historyLines().isEmpty());
+        assertTrue(surfaceText(intermediate).contains("stream-first"));
+
+        int finalPhaseStart = sink.batches.size();
+        events.emit(textDelta("-final", true));
+        events.emit(new MessageEndEvent(
+            "ses_1",
+            "msg_stream",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot(
+                "block_stream",
+                ContentBlockKind.TEXT,
+                "stream-first-final",
+                Map.of()
+            )),
+            Optional.empty(),
+            Optional.of("stop"),
+            Map.of(),
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+        transport.renderCurrentFrameUnderUiLock();
+
+        long finalCommits = sink.batches.subList(finalPhaseStart, sink.batches.size()).stream()
+            .flatMap(batch -> batch.historyLines().stream())
+            .map(TerminalLine::text)
+            .filter("stream-first-final"::equals)
+            .count();
+        assertEquals(1, finalCommits);
+        assertFalse(surfaceText(sink.batches.getLast()).contains("stream-first"));
+
+        input.add("draft");
+        transport.drainInputForTest();
+
+        TuiRenderBatch inputBatch = sink.batches.getLast();
+        assertTrue(inputBatch.historyLines().isEmpty());
+        assertTrue(surfaceText(inputBatch).contains("> draft"));
+    }
+
+    @Test
+    void transientRuntimeToolAndPermissionUpdatesNeverCommitHistory() {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingFrameSink sink = new RecordingFrameSink();
+        JLineTuiTransport transport = JLineTuiTransport.withBatchRenderer(sink, 80, 12);
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+
+        events.emit(new TurnStartEvent(
+            "ses_1",
+            "turn_1",
+            Instant.parse("2026-06-09T00:00:00Z")
+        ));
+        transport.renderCurrentFrameUnderUiLock();
+        assertTrue(sink.batches.getLast().historyLines().isEmpty());
+        assertTrue(surfaceText(sink.batches.getLast()).contains("working ("));
+
+        events.emit(new ToolStartEvent(
+            "ses_1",
+            "toolu_1",
+            "bash",
+            Instant.parse("2026-06-09T00:00:01Z")
+        ));
+        events.emit(new ToolProgressEvent(
+            "ses_1",
+            "toolu_1",
+            ToolProgress.output("stdout", "progress-only\n"),
+            Instant.parse("2026-06-09T00:00:02Z")
+        ));
+        transport.renderCurrentFrameUnderUiLock();
+        assertTrue(sink.batches.getLast().historyLines().isEmpty());
+        assertTrue(surfaceText(sink.batches.getLast()).contains("progress-only"));
+
+        events.emit(new PermissionRequestEvent(
+            "ses_1",
+            "toolu_1",
+            "Need approval",
+            Instant.parse("2026-06-09T00:00:03Z")
+        ));
+        transport.renderCurrentFrameUnderUiLock();
+        assertTrue(sink.batches.getLast().historyLines().isEmpty());
+        assertTrue(surfaceText(sink.batches.getLast()).contains("permission toolu_1: Need approval"));
     }
 
     @Test
@@ -510,6 +621,44 @@ class JLineTuiTransportRenderPipelineTest {
         input.add("\033[6~");
         transport.drainInputForTest();
         assertTrue(sink.batches.getLast().historyLines().isEmpty());
+    }
+
+    @Test
+    void resizeRoundTripPreservesDraftCursorAndDoesNotReplayHistory() throws Exception {
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingFrameSink sink = new RecordingFrameSink();
+        QueueInputSource input = new QueueInputSource("draft", "\033[D", "\033[D");
+        JLineTuiTransport transport = JLineTuiTransport.withBatchInput(
+            sink,
+            80,
+            12,
+            input,
+            new RecordingSubmitHandler()
+        );
+        transport.attach(events, historyRuntimeState("ses_1", 3));
+        transport.renderCurrentFrameUnderUiLock();
+        assertEquals(3, sink.batches.getLast().historyLines().size());
+        transport.drainInputForTest();
+
+        transport.resizeForTest(60, 8);
+        TuiRenderBatch narrow = sink.batches.getLast();
+        assertTrue(narrow.historyLines().isEmpty());
+        assertEquals(
+            inputContent("> dra|CURSOR|" + INPUT_CURSOR + "ft"),
+            inputLine(narrow.surface().lines())
+        );
+        narrow.surface().lines().forEach(line -> assertEquals(
+            line.replace(TuiRenderFrame.CURSOR_MARKER, ""),
+            AnsiWidth.truncate(line.replace(TuiRenderFrame.CURSOR_MARKER, ""), 60)
+        ));
+
+        transport.resizeForTest(80, 12);
+        TuiRenderBatch restored = sink.batches.getLast();
+        assertTrue(restored.historyLines().isEmpty());
+        assertEquals(
+            inputContent("> dra|CURSOR|" + INPUT_CURSOR + "ft"),
+            inputLine(restored.surface().lines())
+        );
     }
 
     @Test

@@ -67,6 +67,47 @@ class TuiContractEndToEndTest {
     private static final Instant NOW = Instant.parse("2026-06-07T10:00:00Z");
 
     @Test
+    void messageLifecycleBecomesCommitEligibleOnlyAfterMessageEnd() {
+        TuiEventReducer reducer = new TuiEventReducer();
+        TuiTranscriptPartitioner partitioner = new TuiTranscriptPartitioner();
+        TuiTranscriptCommitLedger ledger = new TuiTranscriptCommitLedger();
+        TuiProjectionKey key = new TuiProjectionKey("ses_1", "leaf_1");
+
+        reducer.reduce(new MessageStartEvent(
+            "ses_1",
+            "msg_stream",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            Map.of(),
+            NOW
+        ));
+        reducer.reduce(delta("msg_stream", "block_stream", ContentBlockKind.TEXT, "stream-final", false));
+
+        TuiTranscriptPartition streaming = partitioner.partition(reducer.view().blocks());
+        assertTrue(streaming.history().isEmpty());
+        assertTrue(ledger.advance(key, streaming.history()).isEmpty());
+
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_stream",
+            MessageRole.ASSISTANT,
+            MessageKind.TEXT,
+            List.of(),
+            Optional.empty(),
+            Optional.of("stop"),
+            Map.of(),
+            NOW.plusMillis(1)
+        ));
+
+        TuiTranscriptPartition completed = partitioner.partition(reducer.view().blocks());
+        List<TuiBlock> committed = ledger.advance(key, completed.history());
+        assertEquals(1, committed.size());
+        TuiMessageBlock message = assertInstanceOf(TuiMessageBlock.class, committed.getFirst());
+        assertEquals("stream-final", message.content());
+        assertTrue(ledger.advance(key, completed.history()).isEmpty());
+    }
+
+    @Test
     void assistantThinkingToolLifecycleAndWindowedOutputRenderFromSemanticEvents() {
         TuiEventReducer reducer = new TuiEventReducer();
 
