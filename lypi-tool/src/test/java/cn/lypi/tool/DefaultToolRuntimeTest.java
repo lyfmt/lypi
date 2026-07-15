@@ -240,7 +240,7 @@ class DefaultToolRuntimeTest {
 
         ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, lifecycleEvents(events).getFirst());
         assertSingleLineInputSummary(start);
-        assertTrue(start.inputSummary().startsWith("mcp__filesystem__read_file "));
+        assertTrue(start.inputSummary().startsWith("mcp read_file "));
         assertEquals(nested, start.inputMetadata().get("nested"));
     }
 

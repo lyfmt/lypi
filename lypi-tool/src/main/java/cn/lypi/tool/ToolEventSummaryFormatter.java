@@ -8,7 +8,7 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-final class ToolEventSummaryFormatter {
+public final class ToolEventSummaryFormatter {
     static final int INPUT_MAX_CODE_POINTS = 160;
     static final int RESULT_MAX_CODE_POINTS = 200;
     static final int PREVIEW_MAX_CODE_POINTS = 80;
@@ -17,9 +17,16 @@ final class ToolEventSummaryFormatter {
     private static final int MAX_SCALAR_CODE_POINTS = 64;
     private static final Pattern LINE_BREAK = Pattern.compile("\\R");
 
+    ToolEventSummaryFormatter() {
+    }
+
+    public static String genericInputSummary(String toolName, Map<String, Object> input) {
+        return new ToolEventSummaryFormatter().inputSummary(toolName, null, input);
+    }
+
     String inputSummary(String toolName, String renderedForUser, Map<String, Object> input) {
         String rendered = normalizeSingleLine(renderedForUser);
-        String candidate = rendered.isEmpty() ? genericInputSummary(toolName, input) : rendered;
+        String candidate = rendered.isEmpty() ? buildGenericInputSummary(toolName, input) : rendered;
         return truncate(candidate, INPUT_MAX_CODE_POINTS);
     }
 
@@ -31,7 +38,7 @@ final class ToolEventSummaryFormatter {
         return outputSummary(outputText, PREVIEW_MAX_CODE_POINTS);
     }
 
-    private String genericInputSummary(String toolName, Map<String, Object> input) {
+    private String buildGenericInputSummary(String toolName, Map<String, Object> input) {
         String normalizedToolName = normalizeSingleLine(toolName);
         StringBuilder summary = new StringBuilder(normalizedToolName.isEmpty() ? "tool" : normalizedToolName);
         if (input == null || input.isEmpty()) {

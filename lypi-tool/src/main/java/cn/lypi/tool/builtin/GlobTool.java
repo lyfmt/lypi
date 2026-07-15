@@ -106,7 +106,19 @@ public final class GlobTool extends AbstractFileTool {
 
     @Override
     public String renderForUser(Map<String, Object> input) {
-        return "glob " + input;
+        if (input == null) {
+            return "glob";
+        }
+        StringBuilder summary = new StringBuilder("glob");
+        Object pattern = input.get("pattern");
+        if (pattern != null && !pattern.toString().isBlank()) {
+            summary.append(' ').append(pattern);
+        }
+        Object path = input.get("path");
+        if (path != null && !path.toString().isBlank()) {
+            summary.append(" in ").append(path);
+        }
+        return summary.toString();
     }
 
     private boolean ignored(Path path) {

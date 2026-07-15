@@ -164,6 +164,25 @@ public final class ReadTool extends AbstractFileTool {
 
     @Override
     public String renderForUser(Map<String, Object> input) {
-        return "read " + input;
+        if (input == null) {
+            return "read";
+        }
+        StringBuilder summary = new StringBuilder("read");
+        Object path = input.get("path");
+        if (path != null && !path.toString().isBlank()) {
+            summary.append(' ').append(path);
+        }
+        Object offsetValue = input.get("offset");
+        Object limitValue = input.get("limit");
+        if (offsetValue instanceof Number offset && limitValue instanceof Number limit) {
+            long firstLine = offset.longValue();
+            long lastLine = firstLine + limit.longValue() - 1;
+            summary.append(" lines ").append(firstLine).append('-').append(lastLine);
+        } else if (offsetValue instanceof Number offset) {
+            summary.append(" from line ").append(offset.longValue());
+        } else if (limitValue instanceof Number limit) {
+            summary.append(" first ").append(limit.longValue()).append(" lines");
+        }
+        return summary.toString();
     }
 }
