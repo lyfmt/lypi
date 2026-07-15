@@ -29,6 +29,7 @@ import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AiStreamOptions;
@@ -50,6 +51,9 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -361,6 +365,32 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     @Test
+    void fallsBackAfterAssistantStartWithoutVisibleOutput() {
+        RecordingTransport websocket = RecordingTransport.eventsThenFail(
+            "WebSocket handshake failed after response.created",
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-first\"}}"
+        );
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-fallback\"}}",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"fallback ok\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-fallback\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            RecordingTransport.events()
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
+
+        assertThat(websocket.requests).hasSize(1);
+        assertThat(sse.requests).hasSize(1);
+        assertThat(events).contains(new TextDelta("fallback ok"));
+        assertThat(events).noneMatch(cn.lypi.contracts.model.AssistantError.class::isInstance);
+    }
+
+    @Test
     void reportsErrorWhenAttemptClosesAfterOutputWithoutAssistantDone() {
         RecordingTransport websocket = RecordingTransport.events(
             "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
@@ -389,16 +419,21 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(chat.requests).isEmpty();
     }
 
-    @Test
-    void doesNotFallbackAfterAnyOutputStarted() {
+    @ParameterizedTest(name = "does not fall back after visible {0}")
+    @MethodSource("visibleOutputEvents")
+    void doesNotFallbackAfterAnyOutputStarted(
+        String ignoredName,
+        String rawEvent,
+        Class<? extends AssistantStreamEvent> eventType
+    ) {
         RecordingTransport websocket = RecordingTransport.eventsThenFail(
             "Provider stream failed after output",
-            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
+            rawEvent
         );
         RecordingTransport sse = RecordingTransport.events();
         RecordingTransport chat = RecordingTransport.events();
         OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
-            config(TransportMode.WEBSOCKET, "test-key"),
+            config(TransportMode.AUTO, "test-key"),
             websocket,
             sse,
             chat
@@ -408,17 +443,37 @@ class OpenAiCompatibleProviderAdapterTest {
             Iterator<AssistantStreamEvent> iterator = stream.iterator();
 
             assertThat(iterator.hasNext()).isTrue();
-            assertThat(iterator.next()).isEqualTo(new TextDelta("hello"));
+            assertThat(iterator.next()).isInstanceOf(eventType);
             assertThatThrownBy(iterator::hasNext)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Provider stream failed after output");
-            assertThat(stream.result().events()).containsExactly(new TextDelta("hello"));
+            assertThat(stream.result().events()).singleElement().isInstanceOf(eventType);
             assertThat(stream.result().events()).noneMatch(ProviderRetryNotice.class::isInstance);
             assertThat(stream.result().error()).isPresent();
             assertThat(stream.result().completed()).isFalse();
         }
         assertThat(sse.requests).isEmpty();
         assertThat(chat.requests).isEmpty();
+    }
+
+    private static Stream<Arguments> visibleOutputEvents() {
+        return Stream.of(
+            Arguments.of(
+                "text",
+                "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+                TextDelta.class
+            ),
+            Arguments.of(
+                "thinking",
+                "{\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thinking\"}",
+                ThinkingDelta.class
+            ),
+            Arguments.of(
+                "tool call",
+                "{\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item-1\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\\\"pom.xml\\\"}\"}",
+                ToolCallDelta.class
+            )
+        );
     }
 
     @Test
