@@ -33,6 +33,7 @@ import java.util.Optional;
 
 public final class OpenAiAssistantEventStream implements AssistantEventStream {
     private final List<OpenAiStreamAttempt> attempts;
+    private final String provider;
     private final AbortSignal signal;
     private final ProviderFallbackDecider fallbackDecider;
     private final ProviderErrorClassifier errorClassifier = new ProviderErrorClassifier();
@@ -58,14 +59,16 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
 
     public OpenAiAssistantEventStream(
         List<OpenAiStreamAttempt> attempts,
+        String provider,
         AbortSignal signal,
         ProviderFallbackDecider fallbackDecider,
         int maxRetries
     ) {
         this.attempts = List.copyOf(Objects.requireNonNull(attempts, "attempts"));
+        this.provider = Objects.requireNonNull(provider, "provider");
         this.signal = Objects.requireNonNull(signal, "signal");
         this.fallbackDecider = Objects.requireNonNull(fallbackDecider, "fallbackDecider");
-        this.retryCoordinator = ProviderRetryCoordinator.defaultSleep("openai", ProviderRetryPolicy.defaults(maxRetries));
+        this.retryCoordinator = ProviderRetryCoordinator.defaultSleep(provider, ProviderRetryPolicy.defaults(maxRetries));
     }
 
     @Override
@@ -263,13 +266,13 @@ public final class OpenAiAssistantEventStream implements AssistantEventStream {
             && attemptIndex < attempts.size()) {
             ProviderErrorClassification classification = errorClassifier.classify(exception, visibleOutputStarted);
             pendingEvents.add(new ProviderFallbackNotice(
-                "openai",
+                provider,
                 failedAttemptIndex + 1,
                 attemptIndex + 1,
                 attempts.get(failedAttemptIndex).mode(),
                 attempts.get(attemptIndex).mode(),
-                classification.reason(),
-                classification.errorId(),
+                classification.fallbackAllowed() ? classification.reason() : "fallback_candidate",
+                classification.fallbackAllowed() ? classification.errorId() : "provider.fallback_candidate",
                 exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage()
             ));
             return;

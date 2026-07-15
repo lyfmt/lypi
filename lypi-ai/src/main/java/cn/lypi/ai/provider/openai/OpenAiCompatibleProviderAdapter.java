@@ -131,7 +131,13 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         if (!options.sessionId().isBlank()) {
             request = requestWithPromptCacheKey(request, options.sessionId());
         }
-        return new OpenAiAssistantEventStream(attempts(request), signal, fallbackDecider, config.maxRetries());
+        return new OpenAiAssistantEventStream(
+            attempts(request),
+            config.provider(),
+            signal,
+            fallbackDecider,
+            config.maxRetries()
+        );
     }
 
     private LypiModelRequest requestWithPromptCacheKey(LypiModelRequest request, String promptCacheKey) {

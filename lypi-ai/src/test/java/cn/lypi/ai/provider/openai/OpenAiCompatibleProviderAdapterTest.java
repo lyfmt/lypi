@@ -434,6 +434,34 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     @Test
+    void fallbackNoticeUsesConfiguredProviderAndFallbackClassification() {
+        RecordingTransport websocket = RecordingTransport.fail(
+            "Provider HTTP 400: previous_response_id is unsupported"
+        );
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-fallback\"}}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-fallback\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config("gateway", TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            RecordingTransport.events()
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
+
+        assertThat(events)
+            .filteredOn(ProviderFallbackNotice.class::isInstance)
+            .singleElement()
+            .isInstanceOfSatisfying(ProviderFallbackNotice.class, notice -> {
+                assertThat(notice.provider()).isEqualTo("gateway");
+                assertThat(notice.reason()).isEqualTo("fallback_candidate");
+                assertThat(notice.errorId()).isEqualTo("provider.fallback_candidate");
+            });
+    }
+
+    @Test
     void reportsErrorWhenAttemptClosesAfterOutputWithoutAssistantDone() {
         RecordingTransport websocket = RecordingTransport.events(
             "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
@@ -774,6 +802,10 @@ class OpenAiCompatibleProviderAdapterTest {
         return config(transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS);
     }
 
+    private static OpenAiProviderConfig config(String provider, TransportMode transportMode, String apiKey) {
+        return config(provider, transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS, 0);
+    }
+
     private static List<AssistantStreamEvent> collect(AssistantEventStream stream) {
         try (stream) {
             return StreamSupport.stream(stream.spliterator(), false).toList();
@@ -796,8 +828,19 @@ class OpenAiCompatibleProviderAdapterTest {
         RequestStyle fallbackRequestStyle,
         int maxRetries
     ) {
+        return config("openai", transportMode, apiKey, requestStyle, fallbackRequestStyle, maxRetries);
+    }
+
+    private static OpenAiProviderConfig config(
+        String provider,
+        TransportMode transportMode,
+        String apiKey,
+        RequestStyle requestStyle,
+        RequestStyle fallbackRequestStyle,
+        int maxRetries
+    ) {
         return new OpenAiProviderConfig(
-            "openai",
+            provider,
             URI.create("https://api.openai.test/v1"),
             Optional.empty(),
             "/v1/responses",
