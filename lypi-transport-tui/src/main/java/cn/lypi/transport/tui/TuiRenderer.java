@@ -281,16 +281,25 @@ final class TuiRenderer {
 
     private List<String> toolLines(TuiToolBlock tool, int width, boolean toolOutputExpanded, int lineBudget) {
         List<String> lines = new ArrayList<>();
-        int detailLineLimit = Math.max(0, lineBudget - 1);
-        ToolDisplayModel model = toolDisplayRenderers.render(tool, toolOutputExpanded, detailLineLimit);
-        appendWithinBudget(lines, wrap(model.title(), width), lineBudget);
+        int availableLines = Math.max(0, lineBudget);
+        if (availableLines == 0) {
+            return lines;
+        }
+        ToolDisplayBudget budget = toolOutputExpanded
+            ? ToolDisplayBudget.expanded(availableLines)
+            : ToolDisplayBudget.collapsed();
+        if (availableLines < budget.totalLines()) {
+            budget = new ToolDisplayBudget(availableLines, Math.max(0, availableLines - 1));
+        }
+        ToolDisplayModel model = toolDisplayRenderers.render(tool, toolOutputExpanded, budget);
+        appendWithinBudget(lines, wrap(model.title(), width), budget.totalLines());
         for (String summaryLine : model.summaryLines()) {
             if (!summaryLine.isBlank()) {
-                appendWithinBudget(lines, wrap("  " + summaryLine, width), lineBudget);
+                appendWithinBudget(lines, wrap("  " + summaryLine, width), budget.totalLines());
             }
         }
         for (String detailLine : model.previewLines()) {
-            appendWithinBudget(lines, wrap("  " + detailLine, width), lineBudget);
+            appendWithinBudget(lines, wrap("  " + detailLine, width), budget.totalLines());
         }
         return lines;
     }
