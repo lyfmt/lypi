@@ -709,7 +709,7 @@ class TuiEventReducerTest {
                     List.of(new ToolCallContentBlock("call_1", "read", "", Map.of(
                         "input", Map.of("path", "AGENTS.md"),
                         "complete", true,
-                        "inputSummary", "read {path=AGENTS.md}"
+                        "inputSummary", "read AGENTS.md"
                     ))),
                     NOW.plusMillis(1),
                     Optional.empty(),
@@ -749,6 +749,11 @@ class TuiEventReducerTest {
             .orElseThrow();
         assertEquals("call_1", tool.toolUseId());
         assertEquals("read", tool.toolName());
+        assertEquals(TuiToolState.DONE, tool.state());
+        assertFalse(tool.active());
+        assertEquals("read AGENTS.md", tool.label());
+        assertTrue(tool.details().contains("File: AGENTS.md"));
+        assertTrue(tool.details().contains("用户名字叫末声"));
     }
 
     @Test
