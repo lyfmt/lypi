@@ -5,6 +5,8 @@ import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 public final class TerminalSession implements AutoCloseable {
+    static final String SAVE_CURSOR = "\0337";
+    static final String RESTORE_CURSOR = "\0338";
     static final String RESET_SCROLL_REGION = "\033[r";
     static final String ENABLE_BRACKETED_PASTE = "\033[?2004h";
     static final String DISABLE_BRACKETED_PASTE = "\033[?2004l";
@@ -80,9 +82,11 @@ public final class TerminalSession implements AutoCloseable {
         }
         closed = true;
         try {
+            io.write(SAVE_CURSOR);
             io.write(RESET_SCROLL_REGION);
             io.write(DISABLE_MODIFY_OTHER_KEYS);
             io.write(DISABLE_BRACKETED_PASTE);
+            io.write(RESTORE_CURSOR);
             io.write(SHOW_CURSOR);
             io.flush();
         } finally {
@@ -106,9 +110,11 @@ public final class TerminalSession implements AutoCloseable {
         AutoCloseable resizeHandler,
         AutoCloseable rawMode
     ) {
+        writeStaticQuietly(io, SAVE_CURSOR);
         writeStaticQuietly(io, RESET_SCROLL_REGION);
         writeStaticQuietly(io, DISABLE_MODIFY_OTHER_KEYS);
         writeStaticQuietly(io, DISABLE_BRACKETED_PASTE);
+        writeStaticQuietly(io, RESTORE_CURSOR);
         writeStaticQuietly(io, SHOW_CURSOR);
         flushStaticQuietly(io);
         closeStaticQuietly(interruptHandler);

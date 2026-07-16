@@ -31,21 +31,23 @@ final class JLineTerminalInputSource implements TerminalInputSource {
 
     @Override
     public Optional<String> read() throws IOException {
-        if (!replayInput.isEmpty()) {
-            String replay = replayInput;
-            replayInput = "";
-            return Optional.of(replay);
+        synchronized (reader) {
+            if (!replayInput.isEmpty()) {
+                String replay = replayInput;
+                replayInput = "";
+                return Optional.of(replay);
+            }
+            int first = reader.read(FIRST_CHARACTER_TIMEOUT_MILLIS);
+            if (first == NonBlockingReader.READ_EXPIRED || first == NonBlockingReader.EOF) {
+                return Optional.empty();
+            }
+            StringBuilder chunk = new StringBuilder();
+            chunk.append((char) first);
+            if (first == '\033') {
+                readEscapeContinuation(chunk);
+            }
+            return Optional.of(chunk.toString());
         }
-        int first = reader.read(FIRST_CHARACTER_TIMEOUT_MILLIS);
-        if (first == NonBlockingReader.READ_EXPIRED || first == NonBlockingReader.EOF) {
-            return Optional.empty();
-        }
-        StringBuilder chunk = new StringBuilder();
-        chunk.append((char) first);
-        if (first == '\033') {
-            readEscapeContinuation(chunk);
-        }
-        return Optional.of(chunk.toString());
     }
 
     private void readEscapeContinuation(StringBuilder chunk) throws IOException {

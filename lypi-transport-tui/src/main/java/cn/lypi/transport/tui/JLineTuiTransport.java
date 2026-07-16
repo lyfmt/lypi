@@ -1214,17 +1214,36 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             if (reducer == null) {
                 return;
             }
-            updateViewport(width, height);
+            updateViewportFromTerminal(width, height);
             redrawScheduler.renderNow(this::renderCurrentFrame);
         }
     }
 
-    private void updateViewport(int width, int height) {
+    private void updateViewportFromTerminal(int width, int height) {
+        CursorProbeResult probe = queryCursorAfterResize();
+        updateViewport(width, height, probe.position());
+        if (inputPump != null && !probe.replayInput().isEmpty()) {
+            inputPump.dispatchChunk(probe.replayInput());
+        }
+    }
+
+    private CursorProbeResult queryCursorAfterResize() {
+        if (terminalIo == null) {
+            return new CursorProbeResult(Optional.empty(), "");
+        }
+        try {
+            return terminalIo.queryCursor(CURSOR_PROBE_TIMEOUT);
+        } catch (IOException | RuntimeException ignored) {
+            return new CursorProbeResult(Optional.empty(), "");
+        }
+    }
+
+    private void updateViewport(int width, int height, Optional<TerminalPosition> cursorPosition) {
         int safeWidth = safeWidth(width);
         int safeHeight = safeHeight(height);
         layout = new TuiLayout(safeWidth, safeHeight);
         if (inlineTerminalRenderer != null) {
-            inlineTerminalRenderer.resize(safeWidth, safeHeight);
+            inlineTerminalRenderer.resize(safeWidth, safeHeight, cursorPosition);
         }
         if (inputLoop != null) {
             inputLoop.updateLayout(layout);
@@ -1240,7 +1259,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int resolvedWidth = currentWidth > 0 ? currentWidth : layout.width();
         int resolvedHeight = currentHeight > 1 ? currentHeight : layout.height();
         if (layout.width() != resolvedWidth || layout.height() != resolvedHeight) {
-            updateViewport(resolvedWidth, resolvedHeight);
+            updateViewportFromTerminal(resolvedWidth, resolvedHeight);
         }
     }
 

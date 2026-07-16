@@ -54,6 +54,7 @@ import java.io.StringWriter;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -127,9 +128,11 @@ class JLineTuiTransportTest {
         assertTrue(io.rawModeRestored);
         assertFalse(io.output.toString().contains("\033[?1049"));
         assertTrue(io.output.toString().endsWith(
-            TerminalSession.RESET_SCROLL_REGION
+            TerminalSession.SAVE_CURSOR
+                + TerminalSession.RESET_SCROLL_REGION
                 + TerminalSession.DISABLE_MODIFY_OTHER_KEYS
                 + TerminalSession.DISABLE_BRACKETED_PASTE
+                + TerminalSession.RESTORE_CURSOR
                 + TerminalSession.SHOW_CURSOR
         ));
     }
@@ -345,9 +348,11 @@ class JLineTuiTransportTest {
         assertTrue(io.output.toString().contains("\033[?2026h"));
         assertTrue(io.output.toString().contains("\033[2K"));
         assertTrue(io.output.toString().endsWith(
-            TerminalSession.RESET_SCROLL_REGION
+            TerminalSession.SAVE_CURSOR
+                + TerminalSession.RESET_SCROLL_REGION
                 + TerminalSession.DISABLE_MODIFY_OTHER_KEYS
                 + TerminalSession.DISABLE_BRACKETED_PASTE
+                + TerminalSession.RESTORE_CURSOR
                 + TerminalSession.SHOW_CURSOR
         ));
         assertFalse(io.output.toString().contains("\033[?1049"));
@@ -447,6 +452,34 @@ class JLineTuiTransportTest {
         assertTrue(frame.contains("> "));
         assertTrue(frame.contains("\033[6;1H"));
 
+        transport.close();
+    }
+
+    @Test
+    void resizeCursorProbeReplaysInputReadBeforePositionReport() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.cursorProbeResult = new CursorProbeResult(
+            Optional.of(new TerminalPosition(2, 4)),
+            "x"
+        );
+        RecordingEventBus events = new RecordingEventBus();
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            new QueueInputSource(),
+            new RecordingSubmitHandler(),
+            40,
+            4
+        );
+
+        io.width = 20;
+        io.height = 6;
+        io.resizeCallback.run();
+
+        assertEquals(1, io.cursorProbeQueries);
+        assertEquals(1, transport.currentDraftLengthForTest());
+        assertTrue(io.output.toString().contains("> x"));
         transport.close();
     }
 
@@ -1045,6 +1078,8 @@ class JLineTuiTransportTest {
         private boolean rawModeRestored;
         private int width = 40;
         private int height = 4;
+        private int cursorProbeQueries;
+        private CursorProbeResult cursorProbeResult = new CursorProbeResult(Optional.empty(), "");
         private Runnable resizeCallback = () -> {
         };
 
@@ -1084,6 +1119,12 @@ class JLineTuiTransportTest {
         @Override
         public int height() {
             return height;
+        }
+
+        @Override
+        public CursorProbeResult queryCursor(Duration timeout) {
+            cursorProbeQueries++;
+            return cursorProbeResult;
         }
     }
 

@@ -18,6 +18,7 @@ final class InlineTerminalRenderer {
     private InlineViewport renderedViewport;
     private List<TerminalLine> previousSurface = List.of();
     private Optional<SurfaceCursor> previousCursor = Optional.empty();
+    private Optional<TerminalPosition> resizeCursorPosition = Optional.empty();
     private boolean geometryDirty;
     private boolean finished;
 
@@ -62,11 +63,17 @@ final class InlineTerminalRenderer {
         renderedViewport = finalViewport;
         previousSurface = surface.lines();
         previousCursor = surface.cursor();
+        resizeCursorPosition = Optional.empty();
         geometryDirty = false;
     }
 
     void resize(int width, int height) {
+        resize(width, height, Optional.empty());
+    }
+
+    void resize(int width, int height, Optional<TerminalPosition> cursorPosition) {
         viewport = viewport.resize(width, height);
+        resizeCursorPosition = cursorPosition == null ? Optional.empty() : cursorPosition;
         geometryDirty = true;
     }
 
@@ -97,6 +104,7 @@ final class InlineTerminalRenderer {
         }
         previousSurface = List.of();
         previousCursor = Optional.empty();
+        resizeCursorPosition = Optional.empty();
         if (failure != null) {
             throw failure;
         }
@@ -115,8 +123,9 @@ final class InlineTerminalRenderer {
                 || geometryDirty
                 || !sameGeometry(renderedViewport, nextViewport);
             if (geometryChanged && renderedViewport != null) {
-                scrollCommittedRowsForUpwardViewport(renderedViewport, nextViewport);
-                clearSurfaceUnion(renderedViewport, nextViewport);
+                InlineViewport physicalPrevious = physicalViewportAfterResize(renderedViewport, nextViewport);
+                scrollCommittedRowsForUpwardViewport(physicalPrevious, nextViewport);
+                clearSurfaceUnion(physicalPrevious, nextViewport);
             }
             boolean linearHistoryInsertion = requiresLinearHistoryInsertion(history, nextViewport);
             finalViewport = insertHistory(history, nextViewport);
@@ -146,6 +155,47 @@ final class InlineTerminalRenderer {
             throw failure;
         }
         return finalViewport;
+    }
+
+    private InlineViewport physicalViewportAfterResize(
+        InlineViewport previous,
+        InlineViewport next
+    ) {
+        int nextHeight = next.terminalHeight();
+        int cursorRow = reflowedCursorRow(next.width());
+        int physicalTop = resizeCursorPosition
+            .map(position -> Math.max(0, position.row() - cursorRow))
+            .orElseGet(() -> {
+                int previousCursorRow = previous.top() + cursorRow;
+                int terminalScroll = Math.max(0, previousCursorRow - (nextHeight - 1));
+                return Math.max(0, previous.top() - terminalScroll);
+            });
+        physicalTop = Math.min(physicalTop, nextHeight - 1);
+        int physicalHeight = Math.min(reflowedSurfaceHeight(next.width()), nextHeight - physicalTop);
+        return new InlineViewport(physicalTop, physicalHeight, next.width(), nextHeight);
+    }
+
+    private int reflowedCursorRow(int width) {
+        SurfaceCursor cursor = previousCursor.orElseGet(() -> new SurfaceCursor(
+            previousSurface.size() - 1,
+            AnsiWidth.displayWidth(previousSurface.getLast().text())
+        ));
+        int row = 0;
+        for (int index = 0; index < cursor.row(); index++) {
+            row += reflowedLineHeight(previousSurface.get(index), width);
+        }
+        return row + cursor.column() / width;
+    }
+
+    private int reflowedSurfaceHeight(int width) {
+        return previousSurface.stream()
+            .mapToInt(line -> reflowedLineHeight(line, width))
+            .sum();
+    }
+
+    private int reflowedLineHeight(TerminalLine line, int width) {
+        int displayWidth = AnsiWidth.displayWidth(line.text());
+        return Math.max(1, (displayWidth + width - 1) / width);
     }
 
     private void scrollCommittedRowsForUpwardViewport(

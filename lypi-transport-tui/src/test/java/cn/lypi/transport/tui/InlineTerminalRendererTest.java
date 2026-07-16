@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class InlineTerminalRendererTest {
@@ -219,7 +220,7 @@ class InlineTerminalRendererTest {
     }
 
     @Test
-    void resizeRoundTripMovesViewportWithoutRewritingHistory() throws Exception {
+    void resizeRoundTripAccountsForTerminalCursorShiftWithoutRewritingHistory() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo(80, 8);
         InlineTerminalRenderer renderer = new InlineTerminalRenderer(
             io,
@@ -236,10 +237,13 @@ class InlineTerminalRendererTest {
         renderer.render(new TuiRenderBatch(List.of(), surface));
 
         String shrinkOutput = io.output.toString();
-        assertTrue(shrinkOutput.contains("\033[1;5r\033[5;1H\r\n\r\n\033[r"));
+        assertTrue(shrinkOutput.contains("\033[1;4r\033[4;1H\r\n\033[r"));
+        assertFalse(shrinkOutput.contains("\033[1;5r"));
         assertFalse(shrinkOutput.contains("committed"));
         assertFalse(shrinkOutput.contains("\033[2J"));
         assertFalse(shrinkOutput.contains("\033[3J"));
+        assertTrue(shrinkOutput.contains("\033[4;1H\033[2Klive"));
+        assertTrue(shrinkOutput.contains("\033[6;1H\033[2Kstatus"));
 
         io.resetOutput();
         io.setDimensions(80, 8);
@@ -249,8 +253,37 @@ class InlineTerminalRendererTest {
         String growOutput = io.output.toString();
         assertFalse(growOutput.contains("committed"));
         assertFalse(growOutput.contains("\r\n"));
+        assertTrue(growOutput.contains("\033[4;1H\033[2K"));
         assertTrue(growOutput.contains("\033[6;1H\033[2Klive"));
         assertTrue(growOutput.contains("\033[8;1H\033[2Kstatus"));
+    }
+
+    @Test
+    void resizeUsesReportedCursorAfterTerminalReflowsSurfaceLines() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo(80, 12);
+        InlineTerminalRenderer renderer = new InlineTerminalRenderer(
+            io,
+            new InlineViewport(7, 5, 80, 12)
+        );
+        String border = "─".repeat(80);
+        TuiRenderFrame surface = TuiRenderFrame.fromTextLines(List.of(
+            "stream-intermediate",
+            border,
+            "> draft|CURSOR|",
+            border,
+            "status"
+        ));
+        renderer.render(new TuiRenderBatch(List.of(), surface));
+        io.resetOutput();
+
+        renderer.resize(60, 9, Optional.of(new TerminalPosition(2, 8)));
+        renderer.render(new TuiRenderBatch(List.of(), surface));
+
+        String output = io.output.toString();
+        assertTrue(output.contains("\033[1;5r\033[5;1H\r\n\033[r"));
+        assertFalse(output.contains("\033[1;6r"));
+        assertFalse(output.contains("\033[2J"));
+        assertFalse(output.contains("\033[3J"));
     }
 
     @Test

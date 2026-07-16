@@ -23,31 +23,34 @@ final class TerminalCursorProbe {
             throw new IllegalArgumentException("cursor probe timeout must be non-negative");
         }
 
-        terminal.writer().write("\033[6n");
-        terminal.flush();
+        NonBlockingReader reader = terminal.reader();
+        synchronized (reader) {
+            terminal.writer().write("\033[6n");
+            terminal.flush();
 
-        long deadline = System.nanoTime() + timeout.toNanos();
-        StringBuilder response = new StringBuilder();
-        while (true) {
-            long remainingNanos = deadline - System.nanoTime();
-            if (remainingNanos <= 0) {
-                break;
+            long deadline = System.nanoTime() + timeout.toNanos();
+            StringBuilder response = new StringBuilder();
+            while (true) {
+                long remainingNanos = deadline - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    break;
+                }
+                long remainingMillis = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
+                int next = reader.read(remainingMillis);
+                if (next == NonBlockingReader.EOF) {
+                    break;
+                }
+                if (next == NonBlockingReader.READ_EXPIRED) {
+                    continue;
+                }
+                response.append((char) next);
+                CursorProbeResult parsed = parse(response.toString());
+                if (parsed.position().isPresent()) {
+                    return parsed;
+                }
             }
-            long remainingMillis = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
-            int next = terminal.reader().read(remainingMillis);
-            if (next == NonBlockingReader.EOF) {
-                break;
-            }
-            if (next == NonBlockingReader.READ_EXPIRED) {
-                continue;
-            }
-            response.append((char) next);
-            CursorProbeResult parsed = parse(response.toString());
-            if (parsed.position().isPresent()) {
-                return parsed;
-            }
+            return parse(response.toString());
         }
-        return parse(response.toString());
     }
 
     static CursorProbeResult parse(String input) {

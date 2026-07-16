@@ -30,7 +30,7 @@ class TerminalSessionTest {
         assertTrue(io.rawModeRestored);
         assertEquals(
             "\033[?2004h\033[?25l\033[>4;2m"
-                + "\033[r\033[>4m\033[?2004l\033[?25h",
+                + "\0337\033[r\033[>4m\033[?2004l\0338\033[?25h",
             io.output.toString()
         );
     }
@@ -79,7 +79,7 @@ class TerminalSessionTest {
         assertThrows(IOException.class, () -> TerminalSession.open(io));
 
         assertEquals(
-            "\033[?2004h\033[r\033[>4m\033[?2004l\033[?25h",
+            "\033[?2004h\0337\033[r\033[>4m\033[?2004l\0338\033[?25h",
             io.output.toString()
         );
         assertFalse(io.output.toString().contains("\033[?1049"));
