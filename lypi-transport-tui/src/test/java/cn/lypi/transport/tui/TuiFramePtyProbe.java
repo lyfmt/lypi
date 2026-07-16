@@ -2,8 +2,6 @@ package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.tui.StatusBarState;
 import cn.lypi.contracts.tui.TuiMessageBlock;
-import cn.lypi.contracts.tui.TuiToolBlock;
-import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,6 +20,8 @@ public final class TuiFramePtyProbe {
         }
         Path readyFile = Path.of(args[0]);
         Path exitFile = Path.of(args[1]);
+        System.out.print("SHELL_SENTINEL\n");
+        System.out.flush();
         Terminal terminal = TerminalBuilder.builder().system(true).build();
         TerminalIo io = new JLineTerminalIo(terminal);
         try (TerminalSession session = TerminalSession.open(io)) {
@@ -82,19 +82,10 @@ public final class TuiFramePtyProbe {
         return new TuiViewModel(
             List.of(
                 new TuiMessageBlock("history:pty", "message:history", "assistant", "history stable", false),
-                new TuiToolBlock(
-                    "tool:pty",
-                    "message:pty",
-                    "tool-use:pty",
-                    "bash",
-                    TuiToolState.RUNNING,
-                    "tool one\ntool two",
-                    "",
-                    true
-                )
+                new TuiMessageBlock("live:pty", "message:live", "assistant", "stream/live row", true)
             ),
-            new StatusBarState("status", "", "", ""),
-            runtimeLine,
+            new StatusBarState(runtimeLine, "", "", ""),
+            "",
             List.of(),
             Optional.empty(),
             Optional.empty()

@@ -14,11 +14,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicLong;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 public final class TuiInteractionPtyProbe {
+    private static final int INITIAL_HISTORY_BLOCKS = 42;
+
     private TuiInteractionPtyProbe() {
     }
 
@@ -39,24 +43,49 @@ public final class TuiInteractionPtyProbe {
             terminal.getWidth(),
             terminal.getHeight()
         )) {
-            for (int index = 1; index <= 30; index++) {
-                events.emit(message("msg_" + index, "block_" + index, "history-" + index, true));
+            for (int index = 1; index <= INITIAL_HISTORY_BLOCKS; index++) {
+                String suffix = "%03d".formatted(index);
+                events.emit(message(
+                    "msg_" + suffix,
+                    "block_" + suffix,
+                    "history-sentinel-" + suffix,
+                    true
+                ));
             }
             transport.flushPendingFrameForTest();
             Files.writeString(controlDirectory.resolve("ready"), "ready");
 
-            Thread emitter = Thread.ofVirtual().start(() -> {
+            AtomicReference<Throwable> controllerFailure = new AtomicReference<>();
+            Thread controller = Thread.ofVirtual().start(() -> {
                 try {
-                    await(controlDirectory.resolve("emit-first"));
-                    events.emit(message("msg_stream", "block_stream", "stream-first", false));
+                    await(controlDirectory.resolve("emit-intermediate"));
+                    events.emit(message("msg_stream", "block_stream", "stream-intermediate", false));
+                    transport.flushPendingFrameForTest();
+                    signal(controlDirectory.resolve("intermediate-emitted"));
+
+                    await(controlDirectory.resolve("resize-small"));
+                    awaitSize(terminal, 60, 9);
+                    transport.flushPendingFrameForTest();
+                    signal(controlDirectory.resolve("resize-small-processed"));
+
+                    await(controlDirectory.resolve("resize-large"));
+                    awaitSize(terminal, 80, 12);
+                    transport.flushPendingFrameForTest();
+                    signal(controlDirectory.resolve("resize-large-processed"));
+
                     await(controlDirectory.resolve("emit-final"));
                     events.emit(message("msg_stream", "block_stream", "-final", true));
-                } catch (Exception exception) {
-                    throw new IllegalStateException(exception);
+                    transport.flushPendingFrameForTest();
+                    signal(controlDirectory.resolve("final-emitted"));
+                } catch (Throwable failure) {
+                    controllerFailure.set(failure);
                 }
             });
             transport.runUntilExit();
-            emitter.join();
+            controller.join();
+            if (controllerFailure.get() != null) {
+                throw new IllegalStateException("PTY controller failed", controllerFailure.get());
+            }
         }
     }
 
@@ -76,13 +105,30 @@ public final class TuiInteractionPtyProbe {
     }
 
     private static void await(Path signal) throws Exception {
-        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(15);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
         while (!Files.exists(signal)) {
             if (System.nanoTime() >= deadline) {
                 throw new IllegalStateException("timed out waiting for " + signal.getFileName());
             }
             Thread.sleep(10L);
         }
+    }
+
+    private static void awaitSize(Terminal terminal, int width, int height) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (terminal.getWidth() != width || terminal.getHeight() != height) {
+            if (System.nanoTime() >= deadline) {
+                throw new IllegalStateException(
+                    "timed out waiting for terminal size " + width + "x" + height
+                        + ", current=" + terminal.getWidth() + "x" + terminal.getHeight()
+                );
+            }
+            Thread.sleep(10L);
+        }
+    }
+
+    private static void signal(Path path) throws Exception {
+        Files.writeString(path, "done");
     }
 
     private static final class ProbeEventBus implements EventBus {
