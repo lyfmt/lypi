@@ -15,10 +15,12 @@ import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
+import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
@@ -262,7 +264,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         String sessionId = request.sessionId();
         final boolean[] assistantStarted = {false};
         final MessageKind[] startedKind = {MessageKind.TEXT};
-        Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
+        ProviderAttemptLifecycles providerLifecycles = new ProviderAttemptLifecycles(sessionId);
         ProviderConversationStateHolder providerConversationState = new ProviderConversationStateHolder();
         try (AssistantEventStream stream = ports.aiProvider().stream(
             context,
@@ -271,18 +273,21 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             request.abortSignal()
         )) {
             for (AssistantStreamEvent event : stream) {
-                if (event instanceof ProviderRetryNotice notice) {
-                    pendingRetry.ifPresent(previous -> eventPublisher.publishRetryEnd(request.sessionId(), previous, false));
-                    eventPublisher.publishRetryStart(request.sessionId(), notice);
-                    pendingRetry = Optional.of(notice);
+                if (event instanceof ProviderFallbackNotice notice) {
+                    providerLifecycles.startFallback(notice);
                     continue;
                 }
-                if (pendingRetry.isPresent()) {
-                    ProviderRetryNotice notice = pendingRetry.get();
-                    eventPublisher.publishRetryEnd(request.sessionId(), notice, !(event instanceof cn.lypi.contracts.model.AssistantError));
-                    pendingRetry = Optional.empty();
+                if (event instanceof ProviderRetryNotice notice) {
+                    providerLifecycles.startRetry(notice);
+                    continue;
                 }
                 accumulator.accept(event);
+                boolean abortRequested = request.abortSignal().aborted();
+                if (abortRequested || event instanceof AssistantError) {
+                    providerLifecycles.close(false);
+                } else if (completesProviderLifecycleSuccessfully(event)) {
+                    providerLifecycles.close(true);
+                }
                 if (event instanceof TextDelta delta) {
                     String messageId = currentAssistantId(accumulator);
                     ensureAssistantMessageStart(sessionId, messageId, MessageKind.TEXT, assistantStarted, startedKind);
@@ -339,15 +344,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         Map.of("errorId", error.errorId())
                     ));
                 }
-                if (request.abortSignal().aborted()) {
-                    pendingRetry.ifPresent(notice -> eventPublisher.publishRetryEnd(request.sessionId(), notice, false));
-                    pendingRetry = Optional.empty();
+                if (abortRequested) {
                     break;
                 }
             }
             providerConversationState.value = stream.result().providerConversationState();
         } catch (RuntimeException failure) {
-            pendingRetry.ifPresent(notice -> eventPublisher.publishRetryEnd(sessionId, notice, false));
+            providerLifecycles.close(false);
             accumulator.messageId()
                 .ifPresent(messageId -> {
                     ensureAssistantMessageStart(sessionId, messageId, MessageKind.TEXT, assistantStarted, startedKind);
@@ -355,7 +358,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 });
             throw failure;
         }
-        pendingRetry.ifPresent(notice -> eventPublisher.publishRetryEnd(request.sessionId(), notice, false));
+        providerLifecycles.close(false);
 
         AgentMessage message = accumulator.toMessage(
             ids.newMessageId(),
@@ -364,6 +367,16 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         );
         ensureAssistantMessageStart(sessionId, message.id(), message.kind(), assistantStarted, startedKind);
         return message;
+    }
+
+    private boolean completesProviderLifecycleSuccessfully(AssistantStreamEvent event) {
+        return switch (event) {
+            case TextDelta delta -> delta.text() != null && !delta.text().isEmpty();
+            case ThinkingDelta delta -> delta.text() != null && !delta.text().isEmpty();
+            case ToolCallDelta ignored -> true;
+            case AssistantDone ignored -> true;
+            default -> false;
+        };
     }
 
     private List<ToolResult<?>> executeTools(
@@ -436,5 +449,43 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private static final class ProviderConversationStateHolder {
         private Optional<cn.lypi.contracts.model.ProviderConversationState> value = Optional.empty();
+    }
+
+    private final class ProviderAttemptLifecycles {
+        private final String sessionId;
+        private Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
+        private Optional<ProviderFallbackNotice> pendingFallback = Optional.empty();
+
+        private ProviderAttemptLifecycles(String sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        private void startRetry(ProviderRetryNotice notice) {
+            closeRetry(false);
+            eventPublisher.publishRetryStart(sessionId, notice);
+            pendingRetry = Optional.of(notice);
+        }
+
+        private void startFallback(ProviderFallbackNotice notice) {
+            closeRetry(false);
+            closeFallback(false);
+            eventPublisher.publishProviderFallbackStart(sessionId, notice);
+            pendingFallback = Optional.of(notice);
+        }
+
+        private void close(boolean success) {
+            closeRetry(success);
+            closeFallback(success);
+        }
+
+        private void closeRetry(boolean success) {
+            pendingRetry.ifPresent(notice -> eventPublisher.publishRetryEnd(sessionId, notice, success));
+            pendingRetry = Optional.empty();
+        }
+
+        private void closeFallback(boolean success) {
+            pendingFallback.ifPresent(notice -> eventPublisher.publishProviderFallbackEnd(sessionId, notice, success));
+            pendingFallback = Optional.empty();
+        }
     }
 }

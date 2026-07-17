@@ -1,5 +1,6 @@
 package cn.lypi.tool.builtin;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -147,6 +148,17 @@ class GlobToolTest {
         assertTrue(tool.isReadOnly(Map.of()));
         assertTrue(tool.isConcurrencySafe(Map.of()));
         assertFalse(tool.isDestructive(Map.of()));
+    }
+
+    @Test
+    void rendersOnlyPatternAndOptionalBasePath() {
+        GlobTool tool = new GlobTool();
+
+        assertEquals(
+            "glob **/*.java in src",
+            tool.renderForUser(Map.of("pattern", "**/*.java", "path", "src", "maxResults", 500))
+        );
+        assertEquals("glob **/*.java", tool.renderForUser(Map.of("pattern", "**/*.java")));
     }
 
     private ToolUseContext context() {

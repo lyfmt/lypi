@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 final class ToolDisplayRendererRegistry {
     private final Map<String, ToolDisplayRenderer> renderers;
@@ -33,12 +34,9 @@ final class ToolDisplayRendererRegistry {
         return new ToolDisplayRendererRegistry(renderers, fallback);
     }
 
-    ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
-        return renderers.getOrDefault(normalize(block.toolName()), fallback).render(block, expanded);
-    }
-
-    ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
-        return renderers.getOrDefault(normalize(block.toolName()), fallback).render(block, expanded, detailLineLimit);
+    ToolDisplayModel render(TuiToolBlock block, boolean expanded, ToolDisplayBudget budget) {
+        Objects.requireNonNull(budget, "budget must not be null");
+        return renderers.getOrDefault(normalize(block.toolName()), fallback).render(block, expanded, budget);
     }
 
     boolean isReadLikeTool(TuiToolBlock block) {
@@ -72,8 +70,12 @@ final class ToolDisplayRendererRegistry {
         if (lines.size() <= limit) {
             return lines;
         }
-        List<String> preview = new ArrayList<>(lines.subList(0, limit));
-        preview.add("... " + (lines.size() - limit) + " more lines");
+        if (limit == 0) {
+            return List.of();
+        }
+        int visibleLines = limit - 1;
+        List<String> preview = new ArrayList<>(lines.subList(0, visibleLines));
+        preview.add("... " + (lines.size() - visibleLines) + " more lines");
         return preview;
     }
 
@@ -82,31 +84,30 @@ final class ToolDisplayRendererRegistry {
         if (lines.size() <= limit) {
             return lines;
         }
+        if (limit == 0) {
+            return List.of();
+        }
+        int visibleLines = limit - 1;
         List<String> preview = new ArrayList<>();
-        preview.add("... " + (lines.size() - limit) + " earlier lines");
-        preview.addAll(lines.subList(lines.size() - limit, lines.size()));
+        preview.add("... " + (lines.size() - visibleLines) + " earlier lines");
+        preview.addAll(lines.subList(lines.size() - visibleLines, lines.size()));
         return preview;
     }
 
     private static final class BashToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
-            return render(block, expanded, expanded ? 80 : 5);
-        }
-
-        @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, ToolDisplayBudget budget) {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " $ " + label(block),
                 List.of(),
-                tailLines(detailLines(block), expanded ? detailLineLimit : 5)
+                tailLines(detailLines(block), budget.detailLines())
             );
         }
     }
 
     private static final class ReadToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, ToolDisplayBudget budget) {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " " + block.toolName() + " " + label(block),
                 List.of(),
@@ -117,28 +118,18 @@ final class ToolDisplayRendererRegistry {
 
     private static final class WriteToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
-            return render(block, expanded, expanded ? 120 : 10);
-        }
-
-        @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, ToolDisplayBudget budget) {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " " + block.toolName() + " " + label(block),
                 List.of(),
-                firstLines(detailLines(block), expanded ? detailLineLimit : 10)
+                firstLines(detailLines(block), budget.detailLines())
             );
         }
     }
 
     private static final class EditToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
-            return render(block, expanded, expanded ? 120 : 12);
-        }
-
-        @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, ToolDisplayBudget budget) {
             List<String> lines = detailLines(block);
             int added = 0;
             int removed = 0;
@@ -153,14 +144,14 @@ final class ToolDisplayRendererRegistry {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " edit " + label(block) + summary,
                 List.of(),
-                firstLines(lines, expanded ? detailLineLimit : 12)
+                firstLines(lines, budget.detailLines())
             );
         }
     }
 
     private static final class SearchToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, ToolDisplayBudget budget) {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " " + block.toolName() + " " + label(block),
                 List.of(),
@@ -171,16 +162,11 @@ final class ToolDisplayRendererRegistry {
 
     private static final class FallbackToolDisplayRenderer implements ToolDisplayRenderer {
         @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded) {
-            return render(block, expanded, expanded ? 120 : 10);
-        }
-
-        @Override
-        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, int detailLineLimit) {
+        public ToolDisplayModel render(TuiToolBlock block, boolean expanded, ToolDisplayBudget budget) {
             return new ToolDisplayModel(
                 stateLabel(block.state()) + " " + block.toolName() + " " + label(block),
                 List.of(),
-                firstLines(detailLines(block), expanded ? detailLineLimit : 10)
+                firstLines(detailLines(block), budget.detailLines())
             );
         }
     }

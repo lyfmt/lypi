@@ -22,7 +22,7 @@ class ProviderFallbackDeciderTest {
     }
 
     @Test
-    void doesNotFallbackAfterOutputOrForAuthRateLimitAndAbort() {
+    void doesNotFallbackAfterVisibleOutputOrForAuthRateLimitAndAbort() {
         ProviderFallbackDecider decider = new ProviderFallbackDecider();
 
         assertThat(decider.shouldFallback(new IllegalStateException("Provider HTTP 404: endpoint unsupported"), true))

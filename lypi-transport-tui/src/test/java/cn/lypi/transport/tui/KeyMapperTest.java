@@ -42,6 +42,19 @@ class KeyMapperTest {
     }
 
     @Test
+    void leavesNativeScrollbackAndMouseSequencesUnclaimed() {
+        KeyMapper mapper = new KeyMapper();
+
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[5~").orElseThrow());
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[6~").orElseThrow());
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[<64;40;12M").orElseThrow());
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[<65;40;12M").orElseThrow());
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[<0;40;12M").orElseThrow());
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[<0;40;12m").orElseThrow());
+        assertEquals(TerminalKey.OTHER, mapper.map("\033[<32;40;12M").orElseThrow());
+    }
+
+    @Test
     void filtersTerminalProtocolResponsesAndReleaseRepeatEvents() {
         KeyMapper mapper = new KeyMapper();
 

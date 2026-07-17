@@ -11,6 +11,7 @@ import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
@@ -58,6 +59,8 @@ public final class AssistantStreamAccumulator {
                 completed = true;
             }
             case ProviderRetryNotice ignored -> {
+            }
+            case ProviderFallbackNotice ignored -> {
             }
         }
     }

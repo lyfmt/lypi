@@ -17,6 +17,7 @@ import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import cn.lypi.tool.ToolEventSummaryFormatter;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -83,7 +84,7 @@ abstract class AbstractSubagentTool implements Tool<Map<String, Object>, String>
 
     @Override
     public String renderForUser(Map<String, Object> input) {
-        return name() + " " + input;
+        return ToolEventSummaryFormatter.genericInputSummary(name(), input);
     }
 
     protected ValidationResult requireAny(Map<String, Object> input, String... names) {

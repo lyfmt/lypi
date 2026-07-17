@@ -1,9 +1,19 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.common.ToolProgress;
+import cn.lypi.contracts.event.AgentEvent;
 import cn.lypi.contracts.event.ErrorEvent;
+import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.event.EventConsumer;
+import cn.lypi.contracts.event.EventEnvelope;
+import cn.lypi.contracts.event.EventFilter;
+import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.ToolProgressEvent;
+import cn.lypi.contracts.event.ToolStartEvent;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -15,6 +25,43 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportConcurrencyTest {
+    @Test
+    void publishingProgressDoesNotEnterBlockingFrameSink() throws Exception {
+        CountDownLatch renderEntered = new CountDownLatch(1);
+        CountDownLatch releaseRender = new CountDownLatch(1);
+        RecordingEventBus events = new RecordingEventBus();
+        JLineTuiTransport transport = JLineTuiTransport.withRenderer(lines -> {
+            renderEntered.countDown();
+            try {
+                releaseRender.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(exception);
+            }
+        }, 40, 5);
+        transport.attach(events, TestRuntimeStates.basic("ses_1"));
+        events.emit(new ToolStartEvent("ses_1", "toolu_1", "bash", Instant.parse("2026-06-10T00:00:00Z")));
+        Thread publisher = new Thread(() -> events.emit(new ToolProgressEvent(
+            "ses_1",
+            "toolu_1",
+            ToolProgress.output("stdout", "progress\n"),
+            Instant.parse("2026-06-10T00:00:00Z")
+        )));
+
+        publisher.start();
+        publisher.join(100L);
+
+        assertFalse(publisher.isAlive());
+        assertEquals(1L, renderEntered.getCount());
+
+        Thread uiFlush = new Thread(transport::flushPendingFrameForTest);
+        uiFlush.start();
+        assertTrue(renderEntered.await(1, TimeUnit.SECONDS));
+        releaseRender.countDown();
+        uiFlush.join(1_000L);
+        assertFalse(uiFlush.isAlive());
+    }
+
     @Test
     void eventInputAndResizeRenderPathsShareUiMonitor() {
         StringBuilder order = new StringBuilder();
@@ -83,7 +130,7 @@ class JLineTuiTransportConcurrencyTest {
                 @Override
                 public void submitUserInput(String input) {
                     new Thread(() -> {
-                        holder[0].reduceAndRenderUnderUiLock(new ErrorEvent(
+                        holder[0].reduceAndRequestRenderUnderUiLock(new ErrorEvent(
                             "ses_1",
                             "err_1",
                             "boom",
@@ -127,6 +174,25 @@ class JLineTuiTransportConcurrencyTest {
         @Override
         public Optional<String> read() {
             return Optional.ofNullable(chunks.pollFirst());
+        }
+    }
+
+    private static final class RecordingEventBus implements EventBus {
+        private EventConsumer consumer;
+
+        @Override
+        public void publish(AgentEvent event) {
+        }
+
+        @Override
+        public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
+            this.consumer = consumer;
+            return () -> {
+            };
+        }
+
+        void emit(AgentEvent event) {
+            consumer.accept(new EventEnvelope("evt_1", "ses_1", 1, event));
         }
     }
 

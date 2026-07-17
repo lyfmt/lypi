@@ -49,27 +49,35 @@ import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.SlashCommandHandler;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.jline.terminal.Attributes;
+import org.jline.terminal.Terminal;
+import org.jline.utils.NonBlockingReader;
 import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportTest {
     private static final DiffViewProvider NOOP_DIFF_PROVIDER = (cwd, maxPatchBytes) -> Optional.empty();
 
     @Test
-    void attachSubscribesToSessionEventsAndRendersUnderUiLock() {
+    void attachSubscribesToSessionEventsAndUiFlushRendersUnderUiLock() {
         RecordingScreen screen = new RecordingScreen();
         RecordingEventBus events = new RecordingEventBus();
         JLineTuiTransport transport = new JLineTuiTransport(screen::render);
 
         transport.attach(events, runtimeState());
         events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
+        transport.flushPendingFrameForTest();
 
         assertTrue(events.subscribed);
         assertEquals(1, screen.renderCount);
@@ -105,10 +113,15 @@ class JLineTuiTransportTest {
         );
 
         events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
+        transport.flushPendingFrameForTest();
 
+        String plainOutput = stripAnsi(io.output.toString());
         assertTrue(io.rawModeEntered);
-        assertFalse(io.output.toString().contains("\033[?1049h"));
-        assertTrue(io.output.toString().contains("\033[?2026h\033[2J\033[H"));
+        assertFalse(io.output.toString().contains("\033[?1049"));
+        assertFalse(io.output.toString().contains("\033[2J"));
+        assertTrue(io.output.toString().contains("\033[?2026h"));
+        assertTrue(plainOutput.contains("LY-PI"));
+        assertEquals(1, occurrences(plainOutput, "LY-PI"));
         assertTrue(io.output.toString().contains("error: boom"));
         assertTrue(io.output.toString().contains("> "));
         assertTrue(io.output.toString().contains("ses_1"));
@@ -116,12 +129,87 @@ class JLineTuiTransportTest {
         transport.close();
 
         assertTrue(io.rawModeRestored);
-        assertFalse(io.output.toString().contains("\033[?1049l"));
+        assertFalse(io.output.toString().contains("\033[?1049"));
+        assertTrue(io.output.toString().endsWith(
+            TerminalSession.SAVE_CURSOR
+                + TerminalSession.RESET_SCROLL_REGION
+                + TerminalSession.DISABLE_MODIFY_OTHER_KEYS
+                + TerminalSession.DISABLE_BRACKETED_PASTE
+                + TerminalSession.RESTORE_CURSOR
+                + TerminalSession.SHOW_CURSOR
+        ));
+    }
+
+    @Test
+    void publicOpenUsesCursorProbeAnchorAndReplaysConcurrentInput() throws Exception {
+        StringWriter output = new StringWriter();
+        RecordingTerminalState terminalState = new RecordingTerminalState();
+        Terminal terminal = terminal(new SequenceReader("typed\033[3;4R"), output, terminalState);
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            new RecordingCore(),
+            new RecordingEventBus(),
+            terminal
+        );
+        transport.drainInputForTest();
+
+        String written = output.toString();
+        assertTrue(written.indexOf("\033[6n") > written.indexOf(TerminalSession.ENABLE_MODIFY_OTHER_KEYS));
+        assertTrue(written.indexOf("\033[?2026h") > written.indexOf("\033[6n"));
+        assertTrue(written.indexOf("LY-PI") > written.indexOf("\033[6n"));
+        assertEquals(1, occurrences(stripAnsi(written), "LY-PI"));
+        assertTrue(written.contains("\033[5;1H"));
+        assertFalse(written.contains("\033[6n\r\n"));
+        assertEquals(5, transport.currentDraftLengthForTest());
+
+        transport.close();
+        assertTrue(terminalState.rawModeRestored);
+    }
+
+    @Test
+    void publicOpenWritesNewlineBeforeBottomRowFallback() throws Exception {
+        StringWriter output = new StringWriter();
+        RecordingTerminalState terminalState = new RecordingTerminalState();
+        Terminal terminal = terminal(new EofReader(), output, terminalState);
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            new RecordingCore(),
+            new RecordingEventBus(),
+            terminal
+        );
+
+        assertTrue(output.toString().contains("\033[6n\r\n\033[?2026h"));
+
+        transport.close();
+        assertTrue(terminalState.rawModeRestored);
+    }
+
+    @Test
+    void publicOpenRestoresTerminalWhenCursorProbeReadFails() {
+        StringWriter output = new StringWriter();
+        RecordingTerminalState terminalState = new RecordingTerminalState();
+        Terminal terminal = terminal(new FailingReader(), output, terminalState);
+
+        assertThrows(IOException.class, () -> JLineTuiTransport.open(
+            runtimeState(),
+            new RecordingCore(),
+            new RecordingEventBus(),
+            terminal
+        ));
+
+        assertTrue(terminalState.rawModeRestored);
+        assertTrue(output.toString().contains(TerminalSession.RESET_SCROLL_REGION));
+        assertTrue(output.toString().contains(TerminalSession.DISABLE_MODIFY_OTHER_KEYS));
+        assertTrue(output.toString().contains(TerminalSession.DISABLE_BRACKETED_PASTE));
+        assertTrue(output.toString().contains(TerminalSession.SHOW_CURSOR));
     }
 
     @Test
     void openRendersInitialFrameFromRuntimeState() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 120;
         RecordingEventBus events = new RecordingEventBus();
 
         JLineTuiTransport transport = JLineTuiTransport.open(
@@ -136,6 +224,8 @@ class JLineTuiTransportTest {
 
         String frame = io.output.toString();
         assertFalse(frame.contains("\033[H\033[J"));
+        assertTrue(stripAnsi(frame).contains("coding agent cockpit"));
+        assertEquals(1, occurrences(stripAnsi(frame), "LY-PI"));
         assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
         assertTrue(frame.contains("> "));
 
@@ -143,7 +233,7 @@ class JLineTuiTransportTest {
     }
 
     @Test
-    void openPipelineKeepsLongTranscriptInOutputStreamWithoutAlternateScreenOrRepeatedHomeClear() throws Exception {
+    void openPipelineCommitsLongTranscriptWithoutAlternateScreenOrFullClear() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 5;
         RecordingEventBus events = new RecordingEventBus();
@@ -171,20 +261,23 @@ class JLineTuiTransportTest {
                 Map.of(),
                 Instant.parse("2026-06-09T00:00:00Z")
             ));
+            transport.flushPendingFrameForTest();
         }
 
         String output = io.output.toString();
         assertTrue(output.contains("line 0"));
         assertTrue(output.contains("line 7"));
-        assertFalse(output.contains("\033[?1049h"));
-        assertFalse(output.contains("\033[?1049l"));
+        assertTrue(output.contains("\r\n"));
+        assertFalse(output.contains("\033[?1049"));
         assertFalse(output.contains("\033[H\033[J"));
+        assertFalse(output.contains("\033[2J"));
 
         transport.close();
+        assertFalse(io.output.toString().contains("\033[?1049"));
     }
 
     @Test
-    void openPipelineDoesNotAppendBottomChromeToScrollbackDuringOverflow() throws Exception {
+    void openPipelineKeepsBottomChromeInViewportWithoutScrollbackOverflow() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 4;
         RecordingEventBus events = new RecordingEventBus();
@@ -214,18 +307,20 @@ class JLineTuiTransportTest {
                 Instant.parse("2026-06-09T00:00:00Z")
             ));
         }
+        transport.flushPendingFrameForTest();
 
         String output = io.output.toString();
         assertTrue(output.contains("\r\n"));
-        assertFalse(output.matches("(?s).*\\033\\[1;\\d+r.*"));
+        assertTrue(output.contains("line 0"));
+        assertTrue(output.contains("line 3"));
+        assertFalse(output.contains("\r\n\033[48;5;236m> "));
         assertTrue(output.contains("\033[2K\033[48;5;236m> "));
-        assertTrue(output.contains("\033[2Kses_1 gpt-5.4"));
 
         transport.close();
     }
 
     @Test
-    void closeAfterOverflowMovesPromptBelowPhysicalViewport() throws Exception {
+    void closeAfterHistoryCommitClearsSurfaceAndRestoresModesWithoutPromptNewline() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.height = 3;
         RecordingEventBus events = new RecordingEventBus();
@@ -258,7 +353,18 @@ class JLineTuiTransportTest {
 
         transport.close();
 
-        assertTrue(io.output.toString().endsWith("\033[3;1H\n"));
+        assertTrue(io.output.toString().contains("\033[?2026h"));
+        assertTrue(io.output.toString().contains("\033[2K"));
+        assertTrue(io.output.toString().endsWith(
+            TerminalSession.SAVE_CURSOR
+                + TerminalSession.RESET_SCROLL_REGION
+                + TerminalSession.DISABLE_MODIFY_OTHER_KEYS
+                + TerminalSession.DISABLE_BRACKETED_PASTE
+                + TerminalSession.RESTORE_CURSOR
+                + TerminalSession.SHOW_CURSOR
+        ));
+        assertFalse(io.output.toString().contains("\033[?1049"));
+        assertFalse(io.output.toString().endsWith("\n"));
     }
 
     @Test
@@ -272,7 +378,7 @@ class JLineTuiTransportTest {
             false,
             Map.of("snapshotHash", "sha256:1")
         )));
-        io.height = 8;
+        io.height = 12;
 
         JLineTuiTransport transport = JLineTuiTransport.open(
             runtimeState(),
@@ -282,7 +388,7 @@ class JLineTuiTransportTest {
             new RecordingSubmitHandler(),
             diffProvider,
             80,
-            8
+            12
         );
         io.output.setLength(0);
 
@@ -292,6 +398,7 @@ class JLineTuiTransportTest {
             false,
             Instant.parse("2026-06-09T00:00:00Z")
         ));
+        transport.flushPendingFrameForTest();
 
         assertEquals(1, diffProvider.calls);
         assertEquals(Path.of("."), diffProvider.cwd);
@@ -318,7 +425,11 @@ class JLineTuiTransportTest {
         ));
 
         assertTrue(io.rawModeRestored);
-        assertFalse(io.output.toString().contains("\033[?1049l"));
+        assertTrue(io.output.toString().contains(TerminalSession.RESET_SCROLL_REGION));
+        assertTrue(io.output.toString().contains(TerminalSession.DISABLE_MODIFY_OTHER_KEYS));
+        assertTrue(io.output.toString().contains(TerminalSession.DISABLE_BRACKETED_PASTE));
+        assertTrue(io.output.toString().contains(TerminalSession.SHOW_CURSOR));
+        assertFalse(io.output.toString().contains("\033[?1049"));
     }
 
     @Test
@@ -342,10 +453,67 @@ class JLineTuiTransportTest {
         io.resizeCallback.run();
 
         String frame = io.output.toString();
-        String fullClear = "\033[2J\033[H";
-        String rendered = frame.substring(frame.indexOf(fullClear) + fullClear.length(), frame.indexOf("\033[?2026l"));
-        assertEquals(4, rendered.split("\n", -1).length);
-        assertTrue(rendered.contains("> "));
+        assertTrue(frame.startsWith("\033[?2026h"));
+        assertTrue(frame.endsWith("\033[?2026l"));
+        assertFalse(frame.contains("\033[2J"));
+        assertFalse(frame.contains("\n"));
+        assertTrue(frame.contains("> "));
+        assertTrue(frame.contains("\033[6;1H"));
+
+        transport.close();
+    }
+
+    @Test
+    void resizeCursorProbeReplaysInputReadBeforePositionReport() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.cursorProbeResult = new CursorProbeResult(
+            Optional.of(new TerminalPosition(2, 4)),
+            "x"
+        );
+        RecordingEventBus events = new RecordingEventBus();
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            new QueueInputSource(),
+            new RecordingSubmitHandler(),
+            40,
+            4
+        );
+
+        io.width = 20;
+        io.height = 6;
+        io.resizeCallback.run();
+
+        assertEquals(1, io.cursorProbeQueries);
+        assertEquals(1, transport.currentDraftLengthForTest());
+        assertTrue(io.output.toString().contains("> x"));
+        transport.close();
+    }
+
+    @Test
+    void renderReconcilesTerminalSizeWhenResizeSignalIsDelayed() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.height = 6;
+        RecordingEventBus events = new RecordingEventBus();
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            events,
+            io,
+            () -> Optional.empty(),
+            new RecordingSubmitHandler(),
+            40,
+            6
+        );
+        io.output.setLength(0);
+
+        io.height = 3;
+        events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
+
+        assertDoesNotThrow(transport::flushPendingFrameForTest);
+        assertTrue(io.output.toString().contains("\033[3;1H"));
+        assertFalse(io.output.toString().contains("\033[4;1H"));
 
         transport.close();
     }
@@ -540,6 +708,20 @@ class JLineTuiTransportTest {
 
     private SessionRuntimeState runtimeState() {
         return runtimeState("ses_1", "leaf_1");
+    }
+
+    private int occurrences(String value, String needle) {
+        int count = 0;
+        int from = 0;
+        while ((from = value.indexOf(needle, from)) >= 0) {
+            count++;
+            from += needle.length();
+        }
+        return count;
+    }
+
+    private String stripAnsi(String value) {
+        return value.replaceAll("\\u001B\\[[0-9;?]*[A-Za-z]", "");
     }
 
     private SessionRuntimeState runtimeState(String sessionId, String leafId) {
@@ -815,12 +997,111 @@ class JLineTuiTransportTest {
         }
     }
 
+    private static Terminal terminal(
+        NonBlockingReader reader,
+        StringWriter output,
+        RecordingTerminalState state
+    ) {
+        PrintWriter writer = new PrintWriter(output);
+        Attributes attributes = new Attributes();
+        Map<Terminal.Signal, Terminal.SignalHandler> handlers = new java.util.EnumMap<>(Terminal.Signal.class);
+        Terminal.SignalHandler defaultHandler = signal -> {
+        };
+        handlers.put(Terminal.Signal.WINCH, defaultHandler);
+        handlers.put(Terminal.Signal.INT, defaultHandler);
+        return (Terminal) Proxy.newProxyInstance(
+            Terminal.class.getClassLoader(),
+            new Class<?>[] { Terminal.class },
+            (proxy, method, arguments) -> switch (method.getName()) {
+                case "enterRawMode" -> {
+                    state.rawModeEntered = true;
+                    yield attributes;
+                }
+                case "setAttributes" -> {
+                    state.rawModeRestored = true;
+                    yield null;
+                }
+                case "handle" -> handlers.put(
+                    (Terminal.Signal) arguments[0],
+                    (Terminal.SignalHandler) arguments[1]
+                );
+                case "reader" -> reader;
+                case "writer" -> writer;
+                case "flush" -> {
+                    writer.flush();
+                    yield null;
+                }
+                case "getWidth" -> 40;
+                case "getHeight" -> 8;
+                case "toString" -> "transport-terminal";
+                default -> throw new UnsupportedOperationException(method.getName());
+            }
+        );
+    }
+
+    private static final class RecordingTerminalState {
+        private boolean rawModeEntered;
+        private boolean rawModeRestored;
+    }
+
+    private static final class SequenceReader extends NonBlockingReader {
+        private final String input;
+        private int index;
+
+        private SequenceReader(String input) {
+            this.input = input;
+        }
+
+        @Override
+        protected int read(long timeout, boolean isPeek) {
+            if (index >= input.length()) {
+                return READ_EXPIRED;
+            }
+            int next = input.charAt(index);
+            if (!isPeek) {
+                index++;
+            }
+            return next;
+        }
+
+        @Override
+        public int readBuffered(char[] buffer, int offset, int length, long timeout) {
+            return 0;
+        }
+    }
+
+    private static final class EofReader extends NonBlockingReader {
+        @Override
+        protected int read(long timeout, boolean isPeek) {
+            return EOF;
+        }
+
+        @Override
+        public int readBuffered(char[] buffer, int offset, int length, long timeout) {
+            return 0;
+        }
+    }
+
+    private static final class FailingReader extends NonBlockingReader {
+        @Override
+        protected int read(long timeout, boolean isPeek) throws IOException {
+            throw new IOException("cursor probe failed");
+        }
+
+        @Override
+        public int readBuffered(char[] buffer, int offset, int length, long timeout) {
+            return 0;
+        }
+    }
+
     private static final class RecordingTerminalIo implements TerminalIo {
         private final StringBuilder output = new StringBuilder();
         private boolean rawModeEntered;
         private boolean rawModeRestored;
         private int width = 40;
         private int height = 4;
+        private int cursorProbeQueries;
+        private CursorProbeResult cursorProbeResult = new CursorProbeResult(Optional.empty(), "");
         private Runnable resizeCallback = () -> {
         };
 
@@ -861,12 +1142,18 @@ class JLineTuiTransportTest {
         public int height() {
             return height;
         }
+
+        @Override
+        public CursorProbeResult queryCursor(Duration timeout) {
+            cursorProbeQueries++;
+            return cursorProbeResult;
+        }
     }
 
     private static final class FailingInitialFrameTerminalIo implements TerminalIo {
         private final StringBuilder output = new StringBuilder();
         private boolean rawModeRestored;
-        private int writesUntilFailure = 4;
+        private int writesUntilFailure = 6;
 
         @Override
         public AutoCloseable enterRawMode() {

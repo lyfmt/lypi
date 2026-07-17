@@ -151,6 +151,17 @@ class ReadToolTest {
         assertEquals(PermissionBehavior.ALLOW, tool.checkPermissions(Map.of("path", "notes.txt"), context()).behavior());
     }
 
+    @Test
+    void rendersOnlyPathAndRequestedLineRange() {
+        ReadTool tool = new ReadTool();
+
+        assertEquals(
+            "read AGENTS.md lines 10-30",
+            tool.renderForUser(Map.of("path", "AGENTS.md", "offset", 10, "limit", 21, "content", "ignored"))
+        );
+        assertEquals("read AGENTS.md", tool.renderForUser(Map.of("path", "AGENTS.md")));
+    }
+
     private ToolUseContext context() {
         return new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("toolUseId", "toolu_1"));
     }

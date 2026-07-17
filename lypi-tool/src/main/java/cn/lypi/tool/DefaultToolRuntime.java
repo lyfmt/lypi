@@ -546,6 +546,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             toolContext,
             toolName,
             toolName,
+            null,
             input
         );
         ToolResult<?> finalResult = null;
@@ -578,11 +579,13 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolUseContext toolContext,
         TurnPermissionState turnState
     ) {
+        String renderedForUser = safeRenderForUser(tool, input);
         ToolExecutionEventPublisher.StartedToolExecution started = lifecycleReporter.start(
             request,
             toolContext,
             toolName,
             originalToolName,
+            renderedForUser,
             input
         );
         ToolResult<?> rawResult = null;
@@ -645,6 +648,14 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             return finalResult;
         } finally {
             lifecycleReporter.end(request, toolContext, toolName, originalToolName, rawResult, finalResult, status, started.startedAt());
+        }
+    }
+
+    private String safeRenderForUser(Tool<Map<String, Object>, ?> tool, Map<String, Object> input) {
+        try {
+            return tool.renderForUser(input);
+        } catch (RuntimeException exception) {
+            return null;
         }
     }
 

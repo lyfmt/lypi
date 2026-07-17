@@ -18,10 +18,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(20, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -41,10 +39,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -63,10 +59,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4),
             TerminalInputPumpTest::permissionView
         );
@@ -87,10 +81,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -109,10 +101,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -131,10 +121,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -153,10 +141,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -175,10 +161,8 @@ class TerminalInputPumpTest {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(
@@ -194,14 +178,38 @@ class TerminalInputPumpTest {
     }
 
     @Test
+    void nativeScrollbackSequencesAreIgnoredWithoutChangingDraft() throws IOException {
+        TuiInputLoop loop = new TuiInputLoop(
+            new RecordingSubmitHandler(),
+            () -> {
+            },
+            new TuiLayout(40, 4)
+        );
+        loop.acceptText("draft");
+        TerminalInputPump pump = new TerminalInputPump(
+            new QueueInputSource(
+                "\033[5~",
+                "\033[6~",
+                "\033[<64;40;12M",
+                "\033[<65;40;12M"
+            ),
+            new KeyMapper(),
+            loop
+        );
+
+        pump.drainAvailable();
+
+        assertEquals("draft", loop.draft());
+        assertEquals(5, loop.cursor());
+    }
+
+    @Test
     void keepsPendingPasteWhenInputIsTemporarilyDrained() throws IOException {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = new TuiInputLoop(
             submit,
-            ignored -> {
+            () -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4)
         );
         TerminalInputPump pump = new TerminalInputPump(

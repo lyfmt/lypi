@@ -20,16 +20,20 @@ import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
+import cn.lypi.contracts.event.ProviderFallbackEndEvent;
+import cn.lypi.contracts.event.ProviderFallbackStartEvent;
 import cn.lypi.contracts.event.RetryEndEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.ProviderConversationState;
 import cn.lypi.contracts.model.TextDelta;
@@ -350,6 +354,178 @@ class DefaultTurnExecutorTest {
             assertThat(retry.success()).isTrue();
         });
         assertThat(state.newMessages()).hasSize(2);
+    }
+
+    @Test
+    void mapsProviderFallbackNoticeToLifecycleEventsWithoutAppendingTranscriptNoise() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        MutableTestClock clock = new MutableTestClock(NOW);
+        provider.enqueueProbe(List.of(
+            providerFallbackNotice(1, 2, "responses/websocket", "responses/sse"),
+            new AssistantStart("msg-assistant"),
+            new TextDelta("fallback ok"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ), event -> {
+            if (event instanceof AssistantStart || event instanceof TextDelta) {
+                clock.advance(java.time.Duration.ofSeconds(1));
+            }
+        });
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-assistant");
+        assertThat(eventBus.events.stream()
+            .filter(event -> event instanceof ProviderFallbackStartEvent || event instanceof ProviderFallbackEndEvent))
+            .containsExactly(
+                new ProviderFallbackStartEvent(
+                    "session-1",
+                    "responses/websocket",
+                    "responses/sse",
+                    "fallback_candidate",
+                    NOW
+                ),
+                new ProviderFallbackEndEvent("session-1", "responses/sse", true, NOW.plusSeconds(2))
+            );
+        assertThat(state.newMessages()).hasSize(2);
+    }
+
+    @Test
+    void marksProviderFallbackFailedWhenAttemptProducesAssistantError() {
+        FallbackTurnHarness harness = fallbackTurnHarness(Clock.fixed(NOW, ZoneOffset.UTC));
+        harness.provider().enqueue(List.of(
+            providerFallbackNotice(1, 2, "responses/websocket", "responses/sse"),
+            new AssistantStart("msg-error"),
+            new AssistantError("provider.request_failed", "Provider request failed.")
+        ));
+
+        TurnState state = harness.execute(() -> false);
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(harness.session().messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-error");
+        assertThat(providerFallbackStarts(harness.eventBus())).hasSize(1);
+        assertThat(providerFallbackEnds(harness.eventBus()))
+            .containsExactly(new ProviderFallbackEndEvent("session-1", "responses/sse", false, NOW));
+    }
+
+    @Test
+    void marksProviderFallbackFailedWhenStreamThrows() {
+        FallbackTurnHarness harness = fallbackTurnHarness(Clock.fixed(NOW, ZoneOffset.UTC));
+        harness.provider().enqueueFailingAfter(
+            List.of(
+                providerFallbackNotice(1, 2, "responses/websocket", "responses/sse"),
+                new AssistantStart("msg-assistant")
+            ),
+            new RuntimeException("stream interrupted")
+        );
+
+        TurnState state = harness.execute(() -> false);
+
+        assertThat(state.status()).isEqualTo(TurnStatus.FAILED);
+        assertThat(providerFallbackStarts(harness.eventBus())).hasSize(1);
+        assertThat(providerFallbackEnds(harness.eventBus()))
+            .containsExactly(new ProviderFallbackEndEvent("session-1", "responses/sse", false, NOW));
+    }
+
+    @Test
+    void marksProviderFallbackFailedWhenTurnIsAborted() {
+        FallbackTurnHarness harness = fallbackTurnHarness(Clock.fixed(NOW, ZoneOffset.UTC));
+        AtomicBoolean aborted = new AtomicBoolean();
+        harness.provider().enqueue(List.of(
+            providerFallbackNotice(1, 2, "responses/websocket", "responses/sse"),
+            new AssistantStart("msg-partial"),
+            new TextDelta("partial")
+        ));
+
+        TurnState state = harness.execute(() -> aborted.getAndSet(true));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.ABORTED);
+        assertThat(providerFallbackStarts(harness.eventBus())).hasSize(1);
+        assertThat(providerFallbackEnds(harness.eventBus()))
+            .containsExactly(new ProviderFallbackEndEvent("session-1", "responses/sse", false, NOW));
+    }
+
+    @Test
+    void closesRetryAndPreviousFallbackBeforeStartingConsecutiveFallback() {
+        FallbackTurnHarness harness = fallbackTurnHarness(Clock.fixed(NOW, ZoneOffset.UTC));
+        harness.provider().enqueue(List.of(
+            providerFallbackNotice(1, 2, "responses/websocket", "responses/sse"),
+            new ProviderRetryNotice(
+                "openai",
+                1,
+                1,
+                java.time.Duration.ofMillis(500),
+                "transient",
+                "provider.transient",
+                "Connection reset"
+            ),
+            providerFallbackNotice(2, 3, "responses/sse", "chat_completions/sse"),
+            new AssistantStart("msg-assistant"),
+            new TextDelta("fallback ok"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+
+        TurnState state = harness.execute(() -> false);
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(providerFallbackStarts(harness.eventBus()))
+            .extracting(ProviderFallbackStartEvent::toMode)
+            .containsExactly("responses/sse", "chat_completions/sse");
+        assertThat(providerFallbackEnds(harness.eventBus()))
+            .extracting(ProviderFallbackEndEvent::toMode, ProviderFallbackEndEvent::success)
+            .containsExactly(
+                org.assertj.core.groups.Tuple.tuple("responses/sse", false),
+                org.assertj.core.groups.Tuple.tuple("chat_completions/sse", true)
+            );
+        assertThat(providerFallbackStarts(harness.eventBus()))
+            .hasSameSizeAs(providerFallbackEnds(harness.eventBus()));
+        assertThat(harness.eventBus().events.stream()
+            .filter(RetryEndEvent.class::isInstance)
+            .map(RetryEndEvent.class::cast)
+            .map(RetryEndEvent::success))
+            .containsExactly(false);
+    }
+
+    @Test
+    void marksProviderFallbackFailedWhenStreamEndsWithoutAnotherEvent() {
+        FallbackTurnHarness harness = fallbackTurnHarness(Clock.fixed(NOW, ZoneOffset.UTC));
+        harness.provider().enqueue(List.of(
+            providerFallbackNotice(1, 2, "responses/websocket", "responses/sse"),
+            new AssistantStart("msg-assistant")
+        ));
+
+        TurnState state = harness.execute(() -> false);
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(providerFallbackStarts(harness.eventBus())).hasSize(1);
+        assertThat(providerFallbackEnds(harness.eventBus()))
+            .containsExactly(new ProviderFallbackEndEvent("session-1", "responses/sse", false, NOW));
     }
 
     @Test
@@ -2585,6 +2761,82 @@ class DefaultTurnExecutorTest {
             .map(MessageDeltaEvent.class::cast)
             .filter(event -> event.messageId().equals(messageId))
             .toList();
+    }
+
+    private static FallbackTurnHarness fallbackTurnHarness(Clock clock) {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback"),
+            clock
+        );
+        return new FallbackTurnHarness(session, provider, eventBus, executor);
+    }
+
+    private static List<ProviderFallbackStartEvent> providerFallbackStarts(
+        AgentCoreTestFixtures.RecordingEventBus eventBus
+    ) {
+        return eventBus.events.stream()
+            .filter(ProviderFallbackStartEvent.class::isInstance)
+            .map(ProviderFallbackStartEvent.class::cast)
+            .toList();
+    }
+
+    private static List<ProviderFallbackEndEvent> providerFallbackEnds(
+        AgentCoreTestFixtures.RecordingEventBus eventBus
+    ) {
+        return eventBus.events.stream()
+            .filter(ProviderFallbackEndEvent.class::isInstance)
+            .map(ProviderFallbackEndEvent.class::cast)
+            .toList();
+    }
+
+    private static ProviderFallbackNotice providerFallbackNotice(
+        int fromAttempt,
+        int toAttempt,
+        String fromMode,
+        String toMode
+    ) {
+        return new ProviderFallbackNotice(
+            "openai",
+            fromAttempt,
+            toAttempt,
+            fromMode,
+            toMode,
+            "fallback_candidate",
+            "provider.fallback_candidate",
+            "Provider attempt failed"
+        );
+    }
+
+    private record FallbackTurnHarness(
+        AgentCoreTestFixtures.InMemorySessionManager session,
+        AgentCoreTestFixtures.StubAiProvider provider,
+        AgentCoreTestFixtures.RecordingEventBus eventBus,
+        DefaultTurnExecutor executor
+    ) {
+        private TurnState execute(AbortSignal signal) {
+            return executor.execute(new TurnRequest("session-1", "hello", Optional.empty(), signal));
+        }
     }
 
     private static TurnIds countingIds() {

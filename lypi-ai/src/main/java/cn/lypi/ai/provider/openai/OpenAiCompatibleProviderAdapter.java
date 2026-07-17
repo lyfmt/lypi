@@ -131,7 +131,13 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         if (!options.sessionId().isBlank()) {
             request = requestWithPromptCacheKey(request, options.sessionId());
         }
-        return new OpenAiAssistantEventStream(attempts(request), signal, fallbackDecider, config.maxRetries());
+        return new OpenAiAssistantEventStream(
+            attempts(request),
+            config.provider(),
+            signal,
+            fallbackDecider,
+            config.maxRetries()
+        );
     }
 
     private LypiModelRequest requestWithPromptCacheKey(LypiModelRequest request, String promptCacheKey) {
@@ -182,11 +188,17 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
         if (style == cn.lypi.ai.provider.RequestStyle.RESPONSES) {
             if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.WEBSOCKET) {
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
-                attempts.add(new OpenAiStreamAttempt(webSocketTransport, responsesWebSocketRequest(request), normalizer));
+                attempts.add(new OpenAiStreamAttempt(
+                    "responses/websocket",
+                    webSocketTransport,
+                    responsesWebSocketRequest(request),
+                    normalizer
+                ));
             }
             if (config.transportMode() == TransportMode.AUTO || config.transportMode() == TransportMode.SSE) {
                 OpenAiResponsesStreamNormalizer normalizer = new OpenAiResponsesStreamNormalizer();
                 attempts.add(new OpenAiStreamAttempt(
+                    "responses/sse",
                     responsesSseTransport,
                     responsesSseRequest(request, OpenAiResponsesRequestOptions.fallbackWithoutPreviousResponseState()),
                     normalizer
@@ -201,7 +213,12 @@ public final class OpenAiCompatibleProviderAdapter implements ProviderAdapter, A
 
     private void addChatCompletionsSseAttempt(List<OpenAiStreamAttempt> attempts, LypiModelRequest request) {
         OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
-        attempts.add(new OpenAiStreamAttempt(chatCompletionsSseTransport, chatCompletionsRequest(request), normalizer));
+        attempts.add(new OpenAiStreamAttempt(
+            "chat_completions/sse",
+            chatCompletionsSseTransport,
+            chatCompletionsRequest(request),
+            normalizer
+        ));
     }
 
     private ProviderRequest responsesWebSocketRequest(LypiModelRequest request) {

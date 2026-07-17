@@ -2,6 +2,7 @@ package cn.lypi.transport.tui;
 
 import java.io.IOException;
 import java.io.IOError;
+import java.time.Duration;
 import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
 
@@ -47,6 +48,11 @@ final class JLineTerminalIo implements TerminalIo {
         } catch (IOError | RuntimeException error) {
             return FALLBACK_HEIGHT;
         }
+    }
+
+    @Override
+    public CursorProbeResult queryCursor(Duration timeout) throws IOException {
+        return TerminalCursorProbe.query(terminal, timeout);
     }
 
     @Override

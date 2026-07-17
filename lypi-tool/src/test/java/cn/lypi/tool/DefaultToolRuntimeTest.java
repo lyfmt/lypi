@@ -24,6 +24,7 @@ import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.mcp.McpToolSchema;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
@@ -61,6 +62,7 @@ import cn.lypi.tool.builtin.BashTool;
 import cn.lypi.tool.builtin.ReadTool;
 import cn.lypi.tool.builtin.RequestPermissionsTool;
 import cn.lypi.tool.builtin.WriteTool;
+import cn.lypi.tool.mcp.McpToolAdapter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -135,9 +137,18 @@ class DefaultToolRuntimeTest {
     void publishesLifecycleForUnknownTool() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        String content = "TOP-SECRET" + "x".repeat(1_048_576 - "TOP-SECRET".length());
+        Map<String, Object> input = Map.of(
+            "zzMode", "safe",
+            "nested", Map.of("first", 1, "second", 2),
+            "content", content,
+            "path", "none",
+            "zzItems", List.of("a", "b", "c"),
+            "zzEnabled", true
+        );
 
         ToolResult<?> result = runtime.execute(
-            List.of(new ToolUseRequest("toolu_1", "missing", Map.of("path", "none"), "msg_1")),
+            List.of(new ToolUseRequest("toolu_1", "missing", input, "msg_1")),
             TestTools.context(PermissionMode.DEFAULT_EXECUTE)
         ).getFirst();
 
@@ -150,14 +161,87 @@ class DefaultToolRuntimeTest {
         assertEquals("msg_1", start.parentMessageId());
         assertEquals("turn_1", start.turnId());
         assertEquals("missing", start.toolName());
-        assertEquals("missing {path=none}", start.inputSummary());
+        assertEquals("missing content=<1048576 chars> nested=<2 fields> path=none", start.inputSummary());
+        assertFalse(start.inputSummary().contains("TOP-SECRET"));
         assertEquals("none", start.inputMetadata().get("path"));
+        assertEquals(content, start.inputMetadata().get("content"));
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, lifecycle.get(1));
         assertEquals("toolu_1", end.toolUseId());
         assertEquals(ToolExecutionStatus.FAILED, end.status());
         assertTrue(end.resultSummary().error());
         assertEquals("missing", end.metadata().get("toolName"));
         assertTrue(end.durationMillis() >= 0);
+    }
+
+    @Test
+    void publishesWriteSummaryWithoutContentBody() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(new WriteTool());
+        String path = tempDir.resolve("notes.txt").toString();
+        String content = "PRIVATE-CONTENT\n".repeat(10_000);
+
+        runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_1",
+                "write",
+                Map.of("path", path, "content", content),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, lifecycleEvents(events).getFirst());
+        assertEquals("write " + path, start.inputSummary());
+        assertFalse(start.inputSummary().contains("PRIVATE-CONTENT"));
+        assertEquals(content, start.inputMetadata().get("content"));
+    }
+
+    @Test
+    void publishesBoundedSingleLineBashSummary() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()))));
+        String command = "printf 'one\ntwo'\r\n" + "🙂".repeat(200);
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("command", command), "msg_1")),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, lifecycleEvents(events).getFirst());
+        assertSingleLineInputSummary(start);
+        assertTrue(start.inputSummary().startsWith("bash printf 'one two'"));
+        assertEquals(command, start.inputMetadata().get("command"));
+    }
+
+    @Test
+    void publishesBoundedSingleLineMcpSummaryForNestedInput() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(new McpToolAdapter(
+            new McpToolSchema("filesystem", "read_file", "", new JsonSchema(Map.of()), ""),
+            (serverName, toolName, arguments, context, progress) -> "ok"
+        ));
+        Map<String, Object> nested = Map.of(
+            "content", "line-one\nline-two " + "x".repeat(300),
+            "options", List.of(Map.of("enabled", true))
+        );
+
+        runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_1",
+                "mcp__filesystem__read_file",
+                Map.of("path", "README.md", "nested", nested),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+        );
+
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, lifecycleEvents(events).getFirst());
+        assertSingleLineInputSummary(start);
+        assertTrue(start.inputSummary().startsWith("mcp read_file "));
+        assertEquals(nested, start.inputMetadata().get("nested"));
     }
 
     @Test
@@ -1576,7 +1660,7 @@ class DefaultToolRuntimeTest {
         assertEquals("", end.resultRef().location());
         assertEquals(16L, end.resultRef().byteLength());
         assertTrue(end.resultRef().contentHash().startsWith("sha256:"));
-        assertEquals("0123456789ab", end.resultRef().metadata().get("preview"));
+        assertEquals("0123456789abcdef", end.resultRef().metadata().get("preview"));
         assertEquals("budgeted", end.resultRef().metadata().get("truncationReason"));
         assertFalse(end.resultRef().metadata().containsKey("replacementPath"));
         assertFalse(end.resultRef().metadata().containsKey("replacementPreview"));
@@ -2467,6 +2551,15 @@ class DefaultToolRuntimeTest {
         return events.events.stream()
             .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
             .toList();
+    }
+
+    private void assertSingleLineInputSummary(ToolStartEvent start) {
+        assertFalse(start.inputSummary().contains("\r"));
+        assertFalse(start.inputSummary().contains("\n"));
+        assertTrue(
+            start.inputSummary().codePointCount(0, start.inputSummary().length())
+                <= ToolEventSummaryFormatter.INPUT_MAX_CODE_POINTS
+        );
     }
 
     private <T extends AgentEvent> T assertToolLifecycle(AgentEvent event, Class<T> type, String toolUseId) {
