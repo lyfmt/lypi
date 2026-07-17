@@ -15,6 +15,53 @@ class InlineTerminalRendererTest {
     private static final String SYNC_END = "\033[?2026l";
 
     @Test
+    void startupBannerCommitsBeforeInitialHistoryInOneSynchronizedFlush() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo(80, 12);
+        InlineTerminalRenderer renderer = InlineTerminalRenderer.withStartupBanner(
+            io,
+            new InlineViewport(4, 2, 80, 12)
+        );
+
+        renderer.render(new TuiRenderBatch(
+            List.of(new TerminalLine("history stable")),
+            TuiRenderFrame.fromTextLines(List.of("> |CURSOR|", "status"))
+        ));
+
+        String output = io.output.toString();
+        String plain = stripAnsi(output);
+        assertEquals(1, occurrences(output, SYNC_START));
+        assertEquals(1, occurrences(output, SYNC_END));
+        assertEquals(1, occurrences(plain, "LY-PI"));
+        assertTrue(plain.indexOf("LY-PI") < plain.indexOf("history stable"));
+        assertEquals(1, io.flushCount);
+    }
+
+    @Test
+    void startupBannerDoesNotReplayOnRedrawOrResize() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo(80, 12);
+        InlineTerminalRenderer renderer = InlineTerminalRenderer.withStartupBanner(
+            io,
+            new InlineViewport(7, 5, 80, 12)
+        );
+        TuiRenderFrame surface = TuiRenderFrame.fromTextLines(List.of(
+            "live",
+            "─".repeat(80),
+            "> draft|CURSOR|",
+            "─".repeat(80),
+            "status"
+        ));
+        renderer.render(new TuiRenderBatch(List.of(), surface));
+        io.resetOutput();
+
+        renderer.render(new TuiRenderBatch(List.of(), surface));
+        io.setDimensions(60, 9);
+        renderer.resize(60, 9, Optional.of(new TerminalPosition(2, 8)));
+        renderer.render(new TuiRenderBatch(List.of(), surface));
+
+        assertFalse(stripAnsi(io.output.toString()).contains("LY-PI"));
+    }
+
+    @Test
     void firstBatchCommitsHistoryAndSurfaceInOneSynchronizedFlush() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo(80, 12);
         InlineTerminalRenderer renderer = new InlineTerminalRenderer(
@@ -333,6 +380,10 @@ class InlineTerminalRendererTest {
             from += needle.length();
         }
         return count;
+    }
+
+    private String stripAnsi(String value) {
+        return value.replaceAll("\\u001B\\[[0-9;?]*[A-Za-z]", "");
     }
 
     private static final class RecordingTerminalIo implements TerminalIo {

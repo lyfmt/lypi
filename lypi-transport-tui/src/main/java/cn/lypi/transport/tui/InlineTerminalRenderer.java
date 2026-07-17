@@ -14,17 +14,28 @@ final class InlineTerminalRenderer {
     private static final TerminalLine EMPTY_LINE = new TerminalLine("");
 
     private final TerminalIo io;
+    private final boolean startupBannerEnabled;
     private InlineViewport viewport;
     private InlineViewport renderedViewport;
     private List<TerminalLine> previousSurface = List.of();
     private Optional<SurfaceCursor> previousCursor = Optional.empty();
     private Optional<TerminalPosition> resizeCursorPosition = Optional.empty();
     private boolean geometryDirty;
+    private boolean startupBannerCommitted;
     private boolean finished;
 
     InlineTerminalRenderer(TerminalIo io, InlineViewport viewport) {
+        this(io, viewport, false);
+    }
+
+    static InlineTerminalRenderer withStartupBanner(TerminalIo io, InlineViewport viewport) {
+        return new InlineTerminalRenderer(io, viewport, true);
+    }
+
+    private InlineTerminalRenderer(TerminalIo io, InlineViewport viewport, boolean startupBannerEnabled) {
         this.io = java.util.Objects.requireNonNull(io, "io");
         this.viewport = java.util.Objects.requireNonNull(viewport, "viewport");
+        this.startupBannerEnabled = startupBannerEnabled;
     }
 
     void render(TuiRenderBatch batch) throws IOException {
@@ -36,7 +47,11 @@ final class InlineTerminalRenderer {
             throw new IllegalArgumentException("mutable surface must contain at least one line");
         }
         InlineViewport nextViewport = viewport.withSurfaceHeight(surface.lines().size());
-        List<TerminalLine> history = prepareHistory(batch.historyLines(), nextViewport.width());
+        boolean commitStartupBanner = startupBannerEnabled && !startupBannerCommitted;
+        List<TerminalLine> history = prepareHistory(
+            pendingHistory(batch, nextViewport, commitStartupBanner),
+            nextViewport.width()
+        );
 
         if (history.isEmpty()
             && renderedViewport != null
@@ -65,6 +80,26 @@ final class InlineTerminalRenderer {
         previousCursor = surface.cursor();
         resizeCursorPosition = Optional.empty();
         geometryDirty = false;
+        startupBannerCommitted = startupBannerCommitted || commitStartupBanner;
+    }
+
+    private List<TerminalLine> pendingHistory(
+        TuiRenderBatch batch,
+        InlineViewport nextViewport,
+        boolean includeStartupBanner
+    ) {
+        if (!includeStartupBanner) {
+            return batch.historyLines();
+        }
+        int availableRows = Math.max(
+            0,
+            nextViewport.terminalHeight() - nextViewport.top() - nextViewport.surfaceHeight()
+        );
+        List<TerminalLine> combined = new ArrayList<>(
+            TuiStartupBanner.render(nextViewport.width(), availableRows)
+        );
+        combined.addAll(batch.historyLines());
+        return List.copyOf(combined);
     }
 
     void resize(int width, int height) {
