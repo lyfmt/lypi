@@ -30,6 +30,7 @@ The TUI adapts input and renders state. Durable behavior belongs in session, age
 - `lypi-transport-tui/src/main/java/cn/lypi/transport/tui/TuiRenderer.java`
 - `lypi-transport-tui/src/main/java/cn/lypi/transport/tui/InlineViewport.java`
 - `lypi-transport-tui/src/main/java/cn/lypi/transport/tui/InlineTerminalRenderer.java`
+- `lypi-transport-tui/src/main/java/cn/lypi/transport/tui/TuiStartupBanner.java`
 - `lypi-transport-tui/src/main/java/cn/lypi/transport/tui/TerminalCursorProbe.java`
 - `lypi-transport-tui/src/main/java/cn/lypi/transport/tui/TerminalSession.java`
 - `lypi-transport-tui/src/main/java/cn/lypi/transport/tui/TuiRenderState.java`
@@ -49,7 +50,8 @@ The TUI adapts input and renders state. Durable behavior belongs in session, age
 5. `TuiTranscriptPartitioner` splits the stable prefix from the live tail without storing durable state.
 6. `TuiTranscriptCommitLedger` emits each stable block once per `(sessionId, leafId)` projection.
 7. `TuiRenderer` renders new committed blocks separately from the bounded live/input/overlay/status surface.
-8. `InlineTerminalRenderer` inserts committed lines above the viewport and diffs only the mutable surface in one synchronized terminal transaction.
+8. On the first real-terminal frame, `InlineTerminalRenderer` prepends `TuiStartupBanner` as a one-time native-scrollback prelude.
+9. `InlineTerminalRenderer` inserts committed lines above the viewport and diffs only the mutable surface in one synchronized terminal transaction.
 
 ## Invariants
 
@@ -57,6 +59,7 @@ The TUI adapts input and renders state. Durable behavior belongs in session, age
 - The first streaming, active, pending or running block starts the live tail; only the stable prefix can be committed.
 - A stable block ID is committed at most once per projection key, including after transient stable/live regressions.
 - Committed transcript is terminal-native scrollback. There is no application-side 500-line history window or scroll offset.
+- The startup banner is terminal decoration, not transcript: render it once per transport before initial committed history, then preserve it across redraw, resize, projection changes and close.
 - PageUp, PageDown and mouse wheel never enter an application history model or mutate the draft; scrollback remains terminal/tmux-owned.
 - Historical tools always use their completed collapsed rendering. Ctrl+O affects tools in the live region only.
 - The mutable surface is bounded by `terminalHeight - 1` and contains only live content, input, overlays and status.
@@ -76,6 +79,7 @@ The TUI adapts input and renders state. Durable behavior belongs in session, age
 - `lypi-transport-tui/src/test/java/cn/lypi/transport/tui/TerminalCursorProbeTest.java`
 - `lypi-transport-tui/src/test/java/cn/lypi/transport/tui/InlineViewportTest.java`
 - `lypi-transport-tui/src/test/java/cn/lypi/transport/tui/InlineTerminalRendererTest.java`
+- `lypi-transport-tui/src/test/java/cn/lypi/transport/tui/TuiStartupBannerTest.java`
 - `lypi-transport-tui/src/test/java/cn/lypi/transport/tui/TuiTranscriptPartitionerTest.java`
 - `lypi-transport-tui/src/test/java/cn/lypi/transport/tui/TuiTranscriptCommitLedgerTest.java`
 - `lypi-transport-tui/src/test/java/cn/lypi/transport/tui/TuiLayoutTest.java`
