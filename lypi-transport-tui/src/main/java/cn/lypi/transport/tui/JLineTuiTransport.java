@@ -764,7 +764,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 viewport = initialViewport(initialWidth, initialHeight);
             }
             TerminalInputSource inputSource = new JLineTerminalInputSource(terminal, probe.replayInput());
-            InlineTerminalRenderer nextRenderer = new InlineTerminalRenderer(io, viewport);
+            InlineTerminalRenderer nextRenderer = InlineTerminalRenderer.withStartupBanner(io, viewport);
             terminalRenderer = nextRenderer;
             transport = new JLineTuiTransport(
                 terminalFrameSink(nextRenderer),
@@ -875,7 +875,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         try {
             int initialWidth = safeWidth(width > 0 ? width : io.width());
             int initialHeight = safeHeight(height > 1 ? height : io.height());
-            InlineTerminalRenderer nextRenderer = new InlineTerminalRenderer(
+            InlineTerminalRenderer nextRenderer = InlineTerminalRenderer.withStartupBanner(
                 io,
                 initialViewport(initialWidth, initialHeight)
             );

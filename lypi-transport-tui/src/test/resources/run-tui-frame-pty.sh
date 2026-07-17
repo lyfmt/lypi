@@ -63,6 +63,11 @@ for expected in "${expected_lines[@]}"; do
     exit 1
   fi
 done
+if [[ "$(grep -Fc 'LY-PI' "$FULL_CAPTURE" || true)" -ne 1 ]]; then
+  echo "expected startup banner exactly once" >&2
+  cat "$FULL_CAPTURE" >&2
+  exit 1
+fi
 if grep -Fq "status-old" "$FULL_CAPTURE"; then
   echo "stale status entered terminal scrollback" >&2
   cat "$FULL_CAPTURE" >&2
@@ -93,6 +98,11 @@ for retained in 'SHELL_SENTINEL' 'history stable'; do
     exit 1
   fi
 done
+if [[ "$(grep -Fc 'LY-PI' "$POST_CLOSE_CAPTURE" || true)" -ne 1 ]]; then
+  echo "expected startup banner retained exactly once after close" >&2
+  cat "$POST_CLOSE_CAPTURE" >&2
+  exit 1
+fi
 for mutable in 'stream/live row' '> input|' 'status-old' 'status-updated'; do
   if grep -Fxq "$mutable" "$POST_CLOSE_CAPTURE"; then
     echo "mutable surface remained after close: $mutable" >&2

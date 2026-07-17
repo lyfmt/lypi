@@ -115,10 +115,13 @@ class JLineTuiTransportTest {
         events.emit(new ErrorEvent("ses_1", "err_1", "boom", Instant.parse("2026-06-09T00:00:00Z")));
         transport.flushPendingFrameForTest();
 
+        String plainOutput = stripAnsi(io.output.toString());
         assertTrue(io.rawModeEntered);
         assertFalse(io.output.toString().contains("\033[?1049"));
         assertFalse(io.output.toString().contains("\033[2J"));
         assertTrue(io.output.toString().contains("\033[?2026h"));
+        assertTrue(plainOutput.contains("LY-PI"));
+        assertEquals(1, occurrences(plainOutput, "LY-PI"));
         assertTrue(io.output.toString().contains("error: boom"));
         assertTrue(io.output.toString().contains("> "));
         assertTrue(io.output.toString().contains("ses_1"));
@@ -154,7 +157,9 @@ class JLineTuiTransportTest {
         String written = output.toString();
         assertTrue(written.indexOf("\033[6n") > written.indexOf(TerminalSession.ENABLE_MODIFY_OTHER_KEYS));
         assertTrue(written.indexOf("\033[?2026h") > written.indexOf("\033[6n"));
-        assertTrue(written.contains("\033[3;1H"));
+        assertTrue(written.indexOf("LY-PI") > written.indexOf("\033[6n"));
+        assertEquals(1, occurrences(stripAnsi(written), "LY-PI"));
+        assertTrue(written.contains("\033[5;1H"));
         assertFalse(written.contains("\033[6n\r\n"));
         assertEquals(5, transport.currentDraftLengthForTest());
 
@@ -204,6 +209,7 @@ class JLineTuiTransportTest {
     @Test
     void openRendersInitialFrameFromRuntimeState() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 120;
         RecordingEventBus events = new RecordingEventBus();
 
         JLineTuiTransport transport = JLineTuiTransport.open(
@@ -218,6 +224,8 @@ class JLineTuiTransportTest {
 
         String frame = io.output.toString();
         assertFalse(frame.contains("\033[H\033[J"));
+        assertTrue(stripAnsi(frame).contains("coding agent cockpit"));
+        assertEquals(1, occurrences(stripAnsi(frame), "LY-PI"));
         assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
         assertTrue(frame.contains("> "));
 
@@ -700,6 +708,20 @@ class JLineTuiTransportTest {
 
     private SessionRuntimeState runtimeState() {
         return runtimeState("ses_1", "leaf_1");
+    }
+
+    private int occurrences(String value, String needle) {
+        int count = 0;
+        int from = 0;
+        while ((from = value.indexOf(needle, from)) >= 0) {
+            count++;
+            from += needle.length();
+        }
+        return count;
+    }
+
+    private String stripAnsi(String value) {
+        return value.replaceAll("\\u001B\\[[0-9;?]*[A-Za-z]", "");
     }
 
     private SessionRuntimeState runtimeState(String sessionId, String leafId) {

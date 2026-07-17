@@ -25,7 +25,7 @@ public final class TuiFramePtyProbe {
         Terminal terminal = TerminalBuilder.builder().system(true).build();
         TerminalIo io = new JLineTerminalIo(terminal);
         try (TerminalSession session = TerminalSession.open(io)) {
-            InlineTerminalRenderer terminalRenderer = new InlineTerminalRenderer(
+            InlineTerminalRenderer terminalRenderer = InlineTerminalRenderer.withStartupBanner(
                 io,
                 new InlineViewport(Math.max(0, io.height() - 1), 1, io.width(), io.height())
             );
