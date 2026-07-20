@@ -37,6 +37,17 @@ class ApplicationExampleConfigTest {
     }
 
     @Test
+    void applicationExamplePointsToUserRootConfiguration() throws IOException {
+        String example = new ClassPathResource("application.yml.example")
+            .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(example)
+            .contains("~/.ly-pi/application.yml")
+            .contains("运行目录中的 application.yml")
+            .doesNotContain("复制本文件为 application.yml");
+    }
+
+    @Test
     void applicationExampleDoesNotAdvertiseCwdAsYamlKey() throws IOException {
         String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
 

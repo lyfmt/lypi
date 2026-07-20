@@ -145,6 +145,8 @@ java -jar lypi-boot/target/lypi-boot-0.0.1-SNAPSHOT.jar --lypi.runtime.cwd=/tmp/
 lypi-boot/src/main/resources/application.yml.example
 ```
 
+用户级配置默认从 `~/.ly-pi/application.yml` 读取；文件不存在时跳过。运行目录中的 `application.yml`、环境变量、JVM 系统属性和命令行参数按 Spring Boot 标准优先级覆盖用户级配置。
+
 启用 Web 工具的最小配置示例：
 
 ```properties
