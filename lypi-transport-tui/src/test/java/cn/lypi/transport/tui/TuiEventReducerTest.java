@@ -585,7 +585,7 @@ class TuiEventReducerTest {
         assertEquals("ASK", reducer.view().statusBar().permissionMode());
         assertEquals("ON_REQUEST", reducer.view().statusBar().approvalMode());
         assertEquals(":workspace", reducer.view().statusBar().activePermissionProfileId());
-        assertEquals("ly-pi", reducer.view().statusBar().cwd());
+        assertEquals("/workspace/ly-pi", reducer.view().statusBar().cwd());
         assertEquals("leaf_1", reducer.view().statusBar().branchLeafId());
         assertEquals("1234/200000tok", reducer.view().statusBar().budget());
         assertFalse(reducer.view().statusBar().hasInterruptibleTool());
@@ -1297,7 +1297,7 @@ class TuiEventReducerTest {
         assertEquals("gpt-5.4", status.model());
         assertEquals("EXECUTE", status.mode());
         assertEquals("ASK", status.permissionMode());
-        assertEquals("ly-pi", status.cwd());
+        assertEquals("/workspace/ly-pi", status.cwd());
         assertEquals("leaf_1", status.branchLeafId());
         assertEquals("1234/200000tok", status.budget());
         assertTrue(reducer.view().blocks().isEmpty(), "new session transcript stays empty");

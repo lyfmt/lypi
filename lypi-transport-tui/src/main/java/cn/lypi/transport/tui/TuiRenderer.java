@@ -387,7 +387,7 @@ final class TuiRenderer {
         String full = String.join(
             " ",
             List.of(
-                singleLine(status.sessionId()),
+                singleLine(status.cwd()),
                 singleLine(status.model()),
                 singleLine(status.mode()),
                 permissionMode

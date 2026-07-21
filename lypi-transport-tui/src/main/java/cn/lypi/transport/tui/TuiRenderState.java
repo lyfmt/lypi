@@ -421,11 +421,27 @@ final class TuiRenderState {
     }
 
     private String pathLabel(Path path) {
+        String userHome = System.getProperty("user.home");
+        Path home = userHome == null || userHome.isBlank() ? null : Path.of(userHome);
+        return pathLabel(path, home);
+    }
+
+    static String pathLabel(Path path, Path home) {
         if (path == null) {
             return "";
         }
-        Path fileName = path.getFileName();
-        return fileName == null ? path.toString() : fileName.toString();
+        Path absolute = path.toAbsolutePath().normalize();
+        if (home == null) {
+            return absolute.toString();
+        }
+        Path absoluteHome = home.toAbsolutePath().normalize();
+        if (!absolute.startsWith(absoluteHome)) {
+            return absolute.toString();
+        }
+        Path relative = absoluteHome.relativize(absolute);
+        return relative.toString().isEmpty()
+            ? "~"
+            : Path.of("~").resolve(relative).toString();
     }
 
     private String budgetLabel(SessionRuntimeState runtimeState) {

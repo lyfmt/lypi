@@ -433,7 +433,7 @@ class JLineTuiTransportRenderPipelineTest {
         assertFalse(surfaceText(latest).contains("line 0"));
         assertFalse(surfaceText(latest).contains("line 5"));
         assertEquals(inputContent("> "), inputLine(latest.surface().lines()));
-        assertTrue(latest.surface().lines().getLast().contains("ses_1"));
+        assertTrue(latest.surface().lines().getLast().contains("/workspace/ly-pi"));
     }
 
     @Test
@@ -458,9 +458,10 @@ class JLineTuiTransportRenderPipelineTest {
         transport.flushPendingFrameForTest();
 
         assertEquals(
-            "ses_1 gpt-5.4 EXECUTE ASK",
+            "/workspace/ly-pi gpt-5.4 EXECUTE ASK",
             frames.getLast().getLast()
         );
+        assertFalse(frames.getLast().getLast().contains("ses_1"));
     }
 
     @Test
@@ -542,7 +543,7 @@ class JLineTuiTransportRenderPipelineTest {
         transport.drainInputForTest();
 
         assertEquals(
-            "ses_1 gpt-5.4 EXECUTE ASK",
+            "/workspace/ly-pi gpt-5.4 EXECUTE ASK",
             frames.getLast().getLast()
         );
         assertEquals(inputContent("> draft|CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));
@@ -786,7 +787,7 @@ class JLineTuiTransportRenderPipelineTest {
         assertTrue(latest.historyLines().isEmpty());
         assertTrue(latest.surface().lines().contains("· retrying attempt 2 rate limit"));
         assertEquals(inputContent("> "), inputLine(latest.surface().lines()));
-        assertTrue(latest.surface().lines().getLast().contains("ses_1"));
+        assertTrue(latest.surface().lines().getLast().contains("/workspace/ly-pi"));
     }
 
     @Test
@@ -810,7 +811,7 @@ class JLineTuiTransportRenderPipelineTest {
         assertTrue(fallbackFrame.contains(
             "· fallback responses/websocket -> responses/sse provider.fallback_candidate"
         ));
-        assertTrue(fallbackFrame.getLast().contains("ses_1"));
+        assertTrue(fallbackFrame.getLast().contains("/workspace/ly-pi"));
 
         events.emit(new ProviderFallbackEndEvent("ses_1", "responses/sse", true, timestamp.plusMillis(1)));
         events.emit(new MessageDeltaEvent(
@@ -831,7 +832,7 @@ class JLineTuiTransportRenderPipelineTest {
         assertTrue(outputFrame.contains("fallback ok"));
         assertFalse(outputFrame.stream().anyMatch(line -> line.contains("· fallback")));
         assertEquals(fallbackFrame.size(), outputFrame.size());
-        assertTrue(outputFrame.getLast().contains("ses_1"));
+        assertTrue(outputFrame.getLast().contains("/workspace/ly-pi"));
     }
 
     @Test

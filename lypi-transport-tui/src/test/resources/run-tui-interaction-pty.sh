@@ -118,7 +118,7 @@ if ! wait_for_file "$CONTROL_DIR/ready" || ! wait_for_full_text "history-sentine
 fi
 assert_committed_history_once
 assert_exact_count "SHELL_INTERACTION_SENTINEL" 1
-assert_substring_count "ses_1" 1
+assert_substring_count "/workspace/ly-pi" 1
 
 tmux -L "$TMUX_SOCKET" send-keys -t "$PANE_TARGET" -l "draft"
 if ! wait_for_pane_text "> draft|"; then
@@ -138,7 +138,7 @@ capture_full
 assert_committed_history_once
 assert_exact_count "stream-intermediate" 1
 assert_exact_count "> draft|" 1
-assert_substring_count "ses_1" 1
+assert_substring_count "/workspace/ly-pi" 1
 
 tmux -L "$TMUX_SOCKET" resize-window -t 0 -x 60 -y 9
 : >"$CONTROL_DIR/resize-small"
@@ -156,7 +156,7 @@ capture_full
 assert_committed_history_once
 assert_exact_count "stream-intermediate" 1
 assert_exact_count "> draft|" 1
-assert_substring_count "ses_1" 1
+assert_substring_count "/workspace/ly-pi" 1
 
 tmux -L "$TMUX_SOCKET" resize-window -t 0 -x 80 -y 12
 : >"$CONTROL_DIR/resize-large"
@@ -174,7 +174,7 @@ capture_full
 assert_committed_history_once
 assert_exact_count "stream-intermediate" 1
 assert_exact_count "> draft|" 1
-assert_substring_count "ses_1" 1
+assert_substring_count "/workspace/ly-pi" 1
 
 : >"$CONTROL_DIR/emit-final"
 if ! wait_for_file "$CONTROL_DIR/final-emitted" \
@@ -188,7 +188,7 @@ assert_committed_history_once
 assert_exact_count "stream-intermediate" 0
 assert_exact_count "stream-intermediate-final" 1
 assert_exact_count "> draft|" 1
-assert_substring_count "ses_1" 1
+assert_substring_count "/workspace/ly-pi" 1
 
 printf -v ATTACH_COMMAND \
   'stty rows 12 cols 80; exec tmux -L %q attach-session -t 0' \
@@ -233,7 +233,7 @@ assert_committed_history_once
 assert_exact_count "stream-intermediate" 0
 assert_exact_count "stream-intermediate-final" 1
 assert_exact_count "> draft|" 1
-assert_substring_count "ses_1" 1
+assert_substring_count "/workspace/ly-pi" 1
 
 tmux -L "$TMUX_SOCKET" send-keys -t "$PANE_TARGET" C-u
 if ! wait_for_pane_text "> |"; then
@@ -245,7 +245,7 @@ capture_full
 assert_committed_history_once
 assert_exact_count "> draft|" 0
 assert_exact_count "> |" 1
-assert_substring_count "ses_1" 1
+assert_substring_count "/workspace/ly-pi" 1
 
 tmux -L "$TMUX_SOCKET" send-keys -t "$PANE_TARGET" C-c
 if ! wait_for_full_text "LYPI_TUI_INTERACTION_EXIT=0"; then
@@ -268,7 +268,7 @@ assert_exact_count "stream-intermediate" 0
 assert_exact_count "stream-intermediate-final" 1
 assert_exact_count "> draft|" 0
 assert_exact_count "> |" 0
-assert_substring_count "ses_1" 0
+assert_substring_count "/workspace/ly-pi" 0
 assert_exact_count "LYPI_TUI_INTERACTION_EXIT=0" 1
 assert_exact_count "SHELL_INPUT=shell-after-exit" 1
 

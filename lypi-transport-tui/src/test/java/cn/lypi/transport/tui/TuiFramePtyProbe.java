@@ -84,7 +84,7 @@ public final class TuiFramePtyProbe {
                 new TuiMessageBlock("history:pty", "message:history", "assistant", "history stable", false),
                 new TuiMessageBlock("live:pty", "message:live", "assistant", "stream/live row", true)
             ),
-            new StatusBarState(runtimeLine, "", "", ""),
+            new StatusBarState("", "", "", "", runtimeLine, "", "", false),
             "",
             List.of(),
             Optional.empty(),

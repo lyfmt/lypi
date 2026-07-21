@@ -16,7 +16,7 @@ final class TestRuntimeStates {
     static SessionRuntimeState basic(String sessionId) {
         return new SessionRuntimeState(
             sessionId,
-            Path.of("/home/lyfmt/src/study/ly-pi"),
+            Path.of("/workspace/ly-pi"),
             "leaf_1",
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
@@ -33,7 +33,7 @@ final class TestRuntimeStates {
     static SessionRuntimeState interruptible(String sessionId) {
         return new SessionRuntimeState(
             sessionId,
-            Path.of("/home/lyfmt/src/study/ly-pi"),
+            Path.of("/workspace/ly-pi"),
             "leaf_1",
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
