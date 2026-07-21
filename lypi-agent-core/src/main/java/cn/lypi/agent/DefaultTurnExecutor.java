@@ -92,15 +92,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
         String contextLeafId = appendNewMessage(request.sessionId(), user);
         newMessages.add(user);
-        Optional<SteeringMessage> queuedAtStart = request.steeringMessages().poll();
-        if (queuedAtStart.isPresent()) {
-            contextLeafId = appendSteeringMessage(
-                request.sessionId(),
-                queuedAtStart.orElseThrow(),
-                activeSkillMentions,
-                newMessages
-            );
-        }
+        BoundaryMessages queuedAtStart = appendBoundaryMessages(
+            request,
+            contextLeafId,
+            activeSkillMentions,
+            newMessages
+        );
+        contextLeafId = queuedAtStart.leafId();
 
         ContextSnapshot context = null;
         int toolRound = 0;
@@ -132,7 +130,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         turnId,
                         contextLeafId,
                         toolRequests,
-                        context
+                        context,
+                        request
                     );
                     for (ToolResult<?> toolResult : toolResults) {
                         for (AgentMessage toolMessage : toolResult.newMessages()) {
@@ -142,16 +141,17 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         }
                     }
                 }
-                Optional<SteeringMessage> steering = request.steeringMessages().poll();
-                if (steering.isPresent()) {
-                    contextLeafId = appendSteeringMessage(
-                        request.sessionId(),
-                        steering.orElseThrow(),
-                        activeSkillMentions,
-                        newMessages
-                    );
+                if (request.abortSignal().aborted()) {
+                    break;
                 }
-                if (toolRequests.isEmpty() && steering.isEmpty()) {
+                BoundaryMessages boundaryMessages = appendBoundaryMessages(
+                    request,
+                    contextLeafId,
+                    activeSkillMentions,
+                    newMessages
+                );
+                contextLeafId = boundaryMessages.leafId();
+                if (toolRequests.isEmpty() && !boundaryMessages.received()) {
                     break;
                 }
                 context = buildContext(request, Optional.of(contextLeafId), activeSkillMentions);
@@ -269,11 +269,53 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         List<SkillMention> activeSkillMentions,
         List<AgentMessage> newMessages
     ) {
-        mergeSkillMentions(activeSkillMentions, steering.skillMentions());
-        AgentMessage user = messageFactory.userMessage(ids.newMessageId(), steering.userInput());
-        String leafId = appendNewMessage(sessionId, user);
-        newMessages.add(user);
+        AgentMessage message;
+        switch (steering.type()) {
+            case USER -> {
+                mergeSkillMentions(activeSkillMentions, steering.skillMentions());
+                message = messageFactory.userMessage(ids.newMessageId(), steering.content());
+            }
+            case AGENT_COMMUNICATION -> message = messageFactory.systemLocalMessage(
+                ids.newMessageId(),
+                steering.content(),
+                steering.metadata()
+            );
+            default -> throw new IllegalStateException("Unsupported steering message type: " + steering.type());
+        }
+        String leafId = appendNewMessage(sessionId, message);
+        newMessages.add(message);
         return leafId;
+    }
+
+    private BoundaryMessages appendBoundaryMessages(
+        TurnRequest request,
+        String currentLeafId,
+        List<SkillMention> activeSkillMentions,
+        List<AgentMessage> newMessages
+    ) {
+        String leafId = currentLeafId;
+        boolean received = false;
+        Optional<SteeringMessage> userSteering = request.steeringMessages().poll();
+        if (userSteering.isPresent()) {
+            leafId = appendSteeringMessage(
+                request.sessionId(),
+                userSteering.orElseThrow(),
+                activeSkillMentions,
+                newMessages
+            );
+            received = true;
+        }
+        Optional<SteeringMessage> agentCommunication = ports.agentCommunication().poll(request.sessionId());
+        if (agentCommunication.isPresent()) {
+            leafId = appendSteeringMessage(
+                request.sessionId(),
+                agentCommunication.orElseThrow(),
+                activeSkillMentions,
+                newMessages
+            );
+            received = true;
+        }
+        return new BoundaryMessages(leafId, received);
     }
 
     private static void mergeSkillMentions(List<SkillMention> target, List<SkillMention> additions) {
@@ -432,7 +474,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         String turnId,
         String parentEntryId,
         List<ToolUseRequest> toolRequests,
-        ContextSnapshot context
+        ContextSnapshot context,
+        TurnRequest turnRequest
     ) {
         ensureToolRuntimeCwdMatches();
         List<ToolResult<?>> results;
@@ -440,7 +483,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             results = ports.toolRuntime().execute(
                 toolRequests,
                 context,
-                new ToolRuntimeInvocation(sessionId, turnId, parentEntryId)
+                new ToolRuntimeInvocation(
+                    sessionId,
+                    turnId,
+                    parentEntryId,
+                    turnRequest.abortSignal(),
+                    turnRequest.steeringMessages()
+                )
             );
             if (results.size() != toolRequests.size()) {
                 throw new IllegalStateException(
@@ -498,6 +547,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
     private static final class ProviderConversationStateHolder {
         private Optional<cn.lypi.contracts.model.ProviderConversationState> value = Optional.empty();
     }
+
+    private record BoundaryMessages(String leafId, boolean received) {}
 
     private final class ProviderAttemptLifecycles {
         private final String sessionId;

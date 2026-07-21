@@ -526,16 +526,16 @@ class JLineTuiTransportTest {
         RecordingTerminalIo io = new RecordingTerminalIo();
         RecordingEventBus events = new RecordingEventBus();
         RecordingCore core = new RecordingCore();
-        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("mailId: mail_1");
+        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("target: item_1");
 
         JLineTuiTransport transport = JLineTuiTransport.open(
             runtimeState(),
             core,
             events,
             io,
-            new QueueInputSource("/mailbox accept mail_1", "\r"),
+            new QueueInputSource("/custom action=inspect target=item_1", "\r"),
             Runnable::run,
-            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), slash)),
+            List.of(new SlashCommand("custom", "测试外部命令", List.of(), slash)),
             40,
             4
         );
@@ -543,9 +543,9 @@ class JLineTuiTransportTest {
         transport.drainInputForTest();
 
         assertTrue(core.requests.isEmpty());
-        assertEquals(Map.of("action", "accept", "mailId", "mail_1"), slash.arguments);
+        assertEquals(Map.of("action", "inspect", "target", "item_1"), slash.arguments);
         MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
-        assertEquals("mailId: mail_1", delta.delta());
+        assertEquals("target: item_1", delta.delta());
 
         transport.close();
     }

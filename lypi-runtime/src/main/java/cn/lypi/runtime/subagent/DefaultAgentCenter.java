@@ -1,26 +1,22 @@
 package cn.lypi.runtime.subagent;
 
+import cn.lypi.contracts.model.ModelCatalogPort;
+import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
-import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
-import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CustomEntry;
-import cn.lypi.contracts.session.ModeChangeEntry;
-import cn.lypi.contracts.session.ModelChangeEntry;
-import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
-import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
-import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
-import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
-import cn.lypi.contracts.subagent.SubagentContinueRequest;
-import cn.lypi.contracts.subagent.SubagentContinueResult;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
@@ -34,423 +30,260 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSnapshotProvider {
+    private static final int DEFAULT_RUN_TIMEOUT_SECONDS = 1_200;
+
     private final List<String> command;
     private final ChildSessionPort childSessions;
     private final SessionManagerPort parentSession;
     private final Path parentCwd;
-    private final SessionManagerFactoryPort sessionManagerFactory;
     private final SubagentProcessRunner processRunner;
     private final DefaultMailboxService mailbox;
-    private final MailboxDeliveryService deliveryService;
+    private final ModelCatalogPort modelCatalog;
     private final Clock clock;
     private final SubagentRunResultProjector resultProjector;
-    private final Map<String, RunningAgent> runningByAgentId = new ConcurrentHashMap<>();
-    private final Map<String, RunningAgent> agentsByChildSessionId = new ConcurrentHashMap<>();
-    private final Map<String, String> agentIdByChildSessionId = new ConcurrentHashMap<>();
-    private final Map<String, HeadlessSubagentOutput> resultsByChildSessionId = new ConcurrentHashMap<>();
-    private final Map<String, String> latestRunIdByChildSessionId = new ConcurrentHashMap<>();
+    private final Map<String, RunningSubagentRun> runsById = new ConcurrentHashMap<>();
+    private final Map<String, String> runIdByAgentId = new ConcurrentHashMap<>();
 
     public DefaultAgentCenter(
         List<String> command,
         ChildSessionPort childSessions,
         SessionManagerPort parentSession,
         Path parentCwd,
-        SessionManagerFactoryPort sessionManagerFactory,
         SubagentProcessRunner processRunner,
         DefaultMailboxService mailbox,
-        MailboxDeliveryService deliveryService,
+        ModelCatalogPort modelCatalog,
         Clock clock
     ) {
         this.command = command == null ? List.of() : List.copyOf(command);
-        this.childSessions = childSessions;
-        this.parentSession = parentSession;
-        this.parentCwd = parentCwd;
-        this.sessionManagerFactory = sessionManagerFactory;
-        this.processRunner = processRunner;
-        this.mailbox = mailbox;
-        this.deliveryService = deliveryService;
+        this.childSessions = java.util.Objects.requireNonNull(childSessions, "childSessions must not be null");
+        this.parentSession = java.util.Objects.requireNonNull(parentSession, "parentSession must not be null");
+        this.parentCwd = java.util.Objects.requireNonNull(parentCwd, "parentCwd must not be null");
+        this.processRunner = java.util.Objects.requireNonNull(processRunner, "processRunner must not be null");
+        this.mailbox = java.util.Objects.requireNonNull(mailbox, "mailbox must not be null");
+        this.modelCatalog = modelCatalog;
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.resultProjector = new SubagentRunResultProjector(this.clock, this::randomId);
     }
 
     @Override
     public SubagentSpawnResult spawn(SubagentSpawnRequest request) {
-        if (command.isEmpty()) {
-            return failedSpawn(request, subagentCommandMissingMessage());
-        }
-        String agentId = "agent_" + randomId();
-        String childSessionId = "ses_child_" + randomId();
-        String parentSpawnEntryId = "entry_spawn_" + randomId();
-        Instant now = Instant.now(clock);
-        SubagentToolPolicy toolPolicy = request.toolPolicy();
-        SessionContext parentContext = parentSession.context(request.parentEntryId());
-        PermissionRuntimeState effectivePermissionRuntimeState = request.permissionModeSpecified()
-            ? request.permissionRuntimeState()
-            : parentContext.permissionRuntimeState();
-        childSessions.create(new ChildSessionRequest(
-            childSessionId,
-            request.parentSessionId(),
-            parentSpawnEntryId,
-            parentCwd,
-            request.cwd(),
-            1,
-            request.agentName(),
-            request.agentRole(),
-            Optional.ofNullable(request.model().orElse(parentContext.model())),
-            Optional.ofNullable(request.thinkingLevel().orElse(parentContext.thinkingLevel())),
-            Optional.ofNullable(request.agentMode().orElse(parentContext.mode())),
-            effectivePermissionRuntimeState,
-            toolPolicy
-        ));
-        parentSession.append(new AgentLifecycleEntry(
-            parentSpawnEntryId,
-            request.parentEntryId(),
-            agentId,
-            childSessionId,
-            request.parentSessionId(),
-            "spawned",
-            Map.of(
-                "command", command,
-                "prompt", request.prompt()
-            ),
-            now
-        ));
-        HeadlessSubagentInput input = new HeadlessSubagentInput(
-            childSessionId,
-            request.parentSessionId(),
-            parentSpawnEntryId,
-            request.prompt(),
-            parentCwd,
-            request.cwd(),
-            request.allowedTools(),
-            toolPolicy,
-            effectivePermissionRuntimeState,
-            request.timeoutSeconds(),
-            null,
-            List.of()
-        );
-        SubagentProcessHandle handle;
+        String taskName = request == null ? "" : safe(request.taskName());
         try {
-            handle = processRunner.start(input);
-        } catch (RuntimeException exception) {
-            HeadlessSubagentOutput output = new HeadlessSubagentOutput(
-                childSessionId,
-                SubagentRunStatus.FAILED,
-                "",
-                Optional.empty(),
-                Optional.ofNullable(exception.getMessage())
-            );
-            completeStartedAgent(
-                new RunningAgent(
-                    agentId,
-                    childSessionId,
-                    request.parentSessionId(),
-                    parentSpawnEntryId,
-                    request.agentName(),
-                    request.agentRole(),
-                    parentCwd,
-                    null
-                ),
-                output
-            );
-            return new SubagentSpawnResult(
+            validateRequest(request);
+            if (command.isEmpty()) {
+                return failedSpawn(taskName, subagentCommandMissingMessage());
+            }
+            String parentSpawnEntryId = request.parentEntryId();
+            SessionContext parentContext = parentSession.context(parentSpawnEntryId);
+            ModelSelection effectiveModel = effectiveModel(request, parentContext);
+            PermissionRuntimeState childPermissions = childPermissions(parentContext.permissionRuntimeState());
+            String agentId = "agent_" + randomId();
+            String childSessionId = "ses_child_" + randomId();
+            String runId = "run_" + randomId();
+            SubagentAgent agent = new SubagentAgent(
                 agentId,
+                request.taskName(),
                 childSessionId,
                 request.parentSessionId(),
                 parentSpawnEntryId,
-                SubagentRunStatus.FAILED,
-                Optional.ofNullable(exception.getMessage())
+                parentCwd
             );
-        }
-        RunningAgent running = new RunningAgent(
-            agentId,
-            childSessionId,
-            request.parentSessionId(),
-            parentSpawnEntryId,
-            request.agentName(),
-            request.agentRole(),
-            parentCwd,
-            handle
-        );
-        runningByAgentId.put(agentId, running);
-        agentsByChildSessionId.put(childSessionId, running);
-        agentIdByChildSessionId.put(childSessionId, agentId);
-        latestRunIdByChildSessionId.put(childSessionId, parentSpawnEntryId);
-        handle.completion().whenComplete((output, failure) -> complete(agentId, output, failure));
-        return new SubagentSpawnResult(
-            agentId,
-            childSessionId,
-            request.parentSessionId(),
-            parentSpawnEntryId,
-            SubagentRunStatus.STARTED,
-            Optional.of("subagent started")
-        );
-    }
+            SubagentToolPolicy toolPolicy = new SubagentToolPolicy(request.tools(), request.tools());
 
-    @Override
-    public SubagentContinueResult continueRun(SubagentContinueRequest request) {
-        RunningAgent existing = agentsByChildSessionId.get(request.childSessionId());
-        if (existing == null) {
-            return failedContinue(request, "Unknown child session: " + request.childSessionId());
-        }
-        if (runningByAgentId.containsKey(existing.agentId())) {
-            return failedContinue(request, "Subagent is already running: " + existing.agentId());
-        }
-        String parentContinueEntryId = "entry_continue_" + randomId();
-        RunningAgent running = existing.withParentSpawnEntryId(parentContinueEntryId).withHandle(null);
-        SessionManagerPort childSession = sessionManagerFactory.open(existing.parentCwd(), existing.childSessionId());
-        PermissionRuntimeState effectivePermissionRuntimeState = effectiveContinuePermissionRuntimeState(childSession, request);
-        applyContinueContextChanges(childSession, request);
-        parentSession.append(new AgentLifecycleEntry(
-            parentContinueEntryId,
-            request.parentEntryId(),
-            existing.agentId(),
-            existing.childSessionId(),
-            existing.parentSessionId(),
-            "continued",
-            Map.of("prompt", request.prompt()),
-            Instant.now(clock)
-        ));
-        HeadlessSubagentInput input = new HeadlessSubagentInput(
-            existing.childSessionId(),
-            existing.parentSessionId(),
-            parentContinueEntryId,
-            request.prompt(),
-            existing.parentCwd(),
-            request.cwd() == null ? parentCwd : request.cwd(),
-            request.allowedTools(),
-            request.toolPolicy(),
-            effectivePermissionRuntimeState,
-            request.timeoutSeconds(),
-            HeadlessSubagentRunMode.CONTINUE,
-            List.of()
-        );
-        try {
-            SubagentProcessHandle handle = processRunner.start(input);
-            running = running.withHandle(handle);
-            runningByAgentId.put(existing.agentId(), running);
-            agentsByChildSessionId.put(existing.childSessionId(), running);
-            latestRunIdByChildSessionId.put(existing.childSessionId(), parentContinueEntryId);
-            handle.completion().whenComplete((output, failure) -> complete(existing.agentId(), output, failure));
-            return new SubagentContinueResult(
-                existing.agentId(),
-                existing.childSessionId(),
-                existing.parentSessionId(),
-                parentContinueEntryId,
-                parentContinueEntryId,
+            childSessions.create(new ChildSessionRequest(
+                childSessionId,
+                request.parentSessionId(),
+                parentSpawnEntryId,
+                parentCwd,
+                parentCwd,
+                1,
+                Optional.of(request.taskName()),
+                Optional.empty(),
+                Optional.of(effectiveModel),
+                Optional.of(effectiveModel.thinkingLevel()),
+                Optional.ofNullable(parentContext.mode()),
+                childPermissions,
+                toolPolicy
+            ));
+            HeadlessSubagentInput input = new HeadlessSubagentInput(
+                request.taskName(),
+                agentId,
+                childSessionId,
+                runId,
+                request.parentSessionId(),
+                parentSpawnEntryId,
+                request.message(),
+                parentCwd,
+                parentCwd,
+                toolPolicy,
+                childPermissions,
+                DEFAULT_RUN_TIMEOUT_SECONDS
+            );
+            RunningSubagentRun running;
+            try {
+                SubagentProcessHandle handle = processRunner.start(input);
+                running = new RunningSubagentRun(runId, agent, handle);
+                runsById.put(runId, running);
+                runIdByAgentId.put(agentId, runId);
+                handle.completion().whenComplete((output, failure) -> complete(runId, output, failure));
+            } catch (RuntimeException exception) {
+                running = new RunningSubagentRun(runId, agent, null);
+                completeStartedRun(running, failedOutput(running, exception));
+                return failedSpawn(request.taskName(), agent, runId, exception.getMessage());
+            }
+            return new SubagentSpawnResult(
+                request.taskName(),
+                agentId,
+                childSessionId,
+                runId,
                 SubagentRunStatus.STARTED,
-                Optional.of("subagent continued")
+                Optional.of("subagent started")
             );
-        } catch (RuntimeException exception) {
-            return failedContinue(request, exception.getMessage());
-        }
-    }
-
-    private PermissionRuntimeState effectiveContinuePermissionRuntimeState(
-        SessionManagerPort childSession,
-        SubagentContinueRequest request
-    ) {
-        if (request.permissionRuntimeStateSpecified()) {
-            return request.permissionRuntimeState();
-        }
-        return childSession.context(childSession.currentView().leafId()).permissionRuntimeState();
-    }
-
-    private void applyContinueContextChanges(SessionManagerPort childSession, SubagentContinueRequest request) {
-        if (request.model().isEmpty()
-            && request.thinkingLevel().isEmpty()
-            && request.agentMode().isEmpty()
-            && !request.permissionRuntimeStateSpecified()) {
-            return;
-        }
-        String parentId = childSession.currentView().leafId();
-        Instant now = Instant.now(clock);
-        if (request.model().isPresent()) {
-            String entryId = "entry_model_" + randomId();
-            childSession.append(new ModelChangeEntry(entryId, parentId, request.model().orElseThrow(), "subagent continue model", now));
-            parentId = entryId;
-        }
-        if (request.thinkingLevel().isPresent()) {
-            String entryId = "entry_thinking_" + randomId();
-            childSession.append(new ThinkingChangeEntry(entryId, parentId, request.thinkingLevel().orElseThrow(), "subagent continue thinking", now));
-            parentId = entryId;
-        }
-        if (request.agentMode().isPresent()) {
-            String entryId = "entry_mode_" + randomId();
-            childSession.append(new ModeChangeEntry(entryId, parentId, request.agentMode().orElseThrow(), "subagent continue mode", now));
-            parentId = entryId;
-        }
-        if (request.permissionRuntimeStateSpecified()) {
-            String entryId = "entry_permission_" + randomId();
-            childSession.append(new PermissionRuntimeStateChangeEntry(entryId, parentId, request.permissionRuntimeState(), now));
+        } catch (IllegalArgumentException exception) {
+            return failedSpawn(taskName, exception.getMessage());
         }
     }
 
     @Override
     public SubagentWaitResult waitFor(SubagentWaitRequest request) {
-        RunningAgent running = findRunning(request);
-        if (running == null) {
-            return completedWaitResult(request);
+        if (request == null || !parentSession.currentView().sessionId().equals(request.parentSessionId())) {
+            return SubagentWaitResult.timedOut();
         }
-        try {
-            HeadlessSubagentOutput output = running.handle()
-                .completion()
-                .get(Math.max(0, request.timeoutSeconds()), TimeUnit.SECONDS);
-            complete(running.agentId(), output, null);
-            return waitResult(running.agentId(), running.parentSpawnEntryId(), output);
-        } catch (TimeoutException exception) {
-            return SubagentWaitResultFactory.timedOut(running);
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            return SubagentWaitResultFactory.interrupted(running);
-        } catch (Exception exception) {
-            return SubagentWaitResultFactory.failed(running, exception);
-        }
+        return mailbox.waitAndConsume(request);
     }
 
     @Override
     public MailboxCommandResult interrupt(String agentId) {
-        RunningAgent running = runningByAgentId.get(agentId);
-        if (running == null) {
+        String runId = runIdByAgentId.get(agentId);
+        RunningSubagentRun running = runId == null ? null : runsById.get(runId);
+        if (running == null || running.handle() == null) {
             return MailboxCommandResult.failure("Agent is not running: " + agentId);
         }
-        try {
-            appendInterruptFact(running);
-        } catch (RuntimeException exception) {
-            return MailboxCommandResult.failure("Failed to persist interrupt command: " + exception.getMessage());
-        }
+        parentSession.append(new CustomEntry(
+            "entry_agent_command_" + randomId(),
+            parentSession.currentView().leafId(),
+            "agent_command",
+            Map.of("action", "interrupt", "agentId", agentId, "runId", runId),
+            Instant.now(clock)
+        ));
         running.handle().interrupt();
         return MailboxCommandResult.success(null);
     }
 
     @Override
-    public Optional<HeadlessSubagentOutput> readResult(String childSessionId) {
-        HeadlessSubagentOutput result = resultsByChildSessionId.get(childSessionId);
-        if (result != null) {
-            return Optional.of(result);
-        }
-        return mailbox.readResult(childSessionId);
-    }
-
-    @Override
     public List<RunningAgentSnapshot> runningAgents(String parentSessionId) {
-        if (parentSessionId == null || parentSessionId.isBlank()) {
-            return List.of();
-        }
-        return runningByAgentId.values().stream()
-            .filter(running -> parentSessionId.equals(running.parentSessionId()))
-            .map(running -> new RunningAgentSnapshot(
-                running.agentId(),
-                running.childSessionId(),
-                running.parentSessionId(),
-                running.parentSpawnEntryId(),
-                running.agentName(),
-                running.agentRole()
+        return runsById.values().stream()
+            .filter(run -> parentSessionId != null && parentSessionId.equals(run.agent().parentSessionId()))
+            .map(run -> new RunningAgentSnapshot(
+                run.agent().agentId(),
+                run.agent().taskName(),
+                run.agent().childSessionId(),
+                run.runId(),
+                run.agent().parentSessionId(),
+                run.agent().parentSpawnEntryId()
             ))
             .toList();
     }
 
-    private void complete(String agentId, HeadlessSubagentOutput output, Throwable failure) {
-        RunningAgent running = runningByAgentId.remove(agentId);
+    private void complete(String runId, HeadlessSubagentOutput output, Throwable failure) {
+        RunningSubagentRun running = runsById.remove(runId);
         if (running == null) {
             return;
         }
-        HeadlessSubagentOutput safeOutput = output == null
-            ? SubagentRunResultProjector.failedOutput(running.childSessionId(), failure)
-            : output;
-        completeStartedAgent(running, safeOutput);
+        runIdByAgentId.remove(running.agent().agentId(), runId);
+        HeadlessSubagentOutput safeOutput = output == null ? failedOutput(running, failure) : output;
+        completeStartedRun(running, safeOutput);
     }
 
-    private void completeStartedAgent(RunningAgent running, HeadlessSubagentOutput safeOutput) {
-        resultsByChildSessionId.put(running.childSessionId(), safeOutput);
-        agentsByChildSessionId.put(running.childSessionId(), running.withHandle(null));
-        agentIdByChildSessionId.put(running.childSessionId(), running.agentId());
-        latestRunIdByChildSessionId.put(running.childSessionId(), running.parentSpawnEntryId());
-        SessionManagerPort lifecycleSession = sessionManagerFactory.open(running.parentCwd(), running.parentSessionId());
-        lifecycleSession.append(resultProjector.lifecycleEntry(running, safeOutput));
-        MailboxMessage message = resultProjector.mailboxMessage(running, safeOutput);
-        mailbox.publish(message);
-        deliveryService.tryDeliver(message);
+    private void completeStartedRun(RunningSubagentRun running, HeadlessSubagentOutput output) {
+        mailbox.publish(resultProjector.mailboxMessage(running, output));
     }
 
-    private RunningAgent findRunning(SubagentWaitRequest request) {
-        Optional<String> agentId = request.agentId();
-        if (agentId.isPresent()) {
-            return runningByAgentId.get(agentId.get());
+    private ModelSelection effectiveModel(SubagentSpawnRequest request, SessionContext parentContext) {
+        ModelSelection parentModel = parentContext.model();
+        if (parentModel == null) {
+            throw new IllegalArgumentException("Parent session model is unavailable");
         }
-        return request.childSessionId()
-            .flatMap(childSessionId -> runningByAgentId.values().stream()
-                .filter(running -> childSessionId.equals(running.childSessionId()))
-                .findFirst())
-            .orElse(null);
+        String provider = request.provider().orElse(parentModel.provider());
+        String model = request.model().orElse(parentModel.modelId());
+        ThinkingLevel thinking = request.thinkingLevel().orElseGet(() ->
+            parentContext.thinkingLevel() == null ? parentModel.thinkingLevel() : parentContext.thinkingLevel()
+        );
+        ModelSelection selection = new ModelSelection(provider, model, thinking);
+        if (request.provider().isPresent() || request.model().isPresent() || request.thinkingLevel().isPresent()) {
+            if (modelCatalog == null) {
+                throw new IllegalArgumentException("Model catalog is unavailable for explicit subagent configuration");
+            }
+            ModelDescriptor descriptor = modelCatalog.find(selection)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown subagent model: " + provider + "/" + model));
+            if (thinking != ThinkingLevel.OFF && !descriptor.supportsThinking()) {
+                throw new IllegalArgumentException("Model does not support thinking: " + provider + "/" + model);
+            }
+        }
+        return selection;
     }
 
-    private SubagentWaitResult completedWaitResult(SubagentWaitRequest request) {
-        Optional<String> requestedChildSessionId = request.childSessionId();
-        Optional<String> resolvedChildSessionId = requestedChildSessionId;
-        if (resolvedChildSessionId.isEmpty() && request.agentId().isPresent()) {
-            resolvedChildSessionId = agentIdByChildSessionId.entrySet().stream()
-                .filter(entry -> request.agentId().get().equals(entry.getValue()))
-                .map(Map.Entry::getKey)
-                .findFirst();
-        }
-        if (resolvedChildSessionId.isEmpty()) {
-            return SubagentWaitResultFactory.failed(request, "Subagent is not running and no completed result was found");
-        }
-        String childSessionId = resolvedChildSessionId.get();
-        Optional<HeadlessSubagentOutput> output = readResult(childSessionId);
-        if (output.isEmpty()) {
-            return SubagentWaitResultFactory.failed(request, "Subagent is not running and no completed result was found");
-        }
-        return SubagentWaitResultFactory.fromOutput(
-            request.agentId().orElseGet(() -> agentIdByChildSessionId.getOrDefault(childSessionId, "")),
-            request.runId().orElseGet(() -> latestRunIdByChildSessionId.getOrDefault(childSessionId, "")),
-            output.get()
+    private PermissionRuntimeState childPermissions(PermissionRuntimeState parent) {
+        PermissionRuntimeState auto = PermissionRuntimeState.forMode(PermissionMode.AUTO);
+        return new PermissionRuntimeState(
+            ApprovalPolicy.forMode(PermissionMode.AUTO),
+            parent.activePermissionProfile(),
+            parent.permissionProfile(),
+            auto.legacyBehavior(),
+            PermissionMode.AUTO
         );
     }
 
-    private SubagentWaitResult waitResult(String agentId, String runId, HeadlessSubagentOutput output) {
-        return SubagentWaitResultFactory.fromOutput(agentId, runId, output);
+    private void validateRequest(SubagentSpawnRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Subagent spawn request is required");
+        }
+        if (!parentSession.currentView().sessionId().equals(request.parentSessionId())) {
+            throw new IllegalArgumentException("Parent session does not match current session");
+        }
+        if (safe(request.taskName()).isBlank()) {
+            throw new IllegalArgumentException("taskName is required");
+        }
+        if (safe(request.message()).isBlank()) {
+            throw new IllegalArgumentException("message is required");
+        }
+        if (safe(request.parentEntryId()).isBlank()) {
+            throw new IllegalArgumentException("parentEntryId is required");
+        }
     }
 
-    private void appendInterruptFact(RunningAgent running) {
-        parentSession.append(new CustomEntry(
-            "entry_agent_command_" + randomId(),
-            parentSession.currentView().leafId(),
-            "agent_command",
-            Map.of(
-                "action", "interrupt",
-                "agentId", running.agentId(),
-                "childSessionId", running.childSessionId(),
-                "parentSessionId", running.parentSessionId(),
-                "parentSpawnEntryId", running.parentSpawnEntryId()
-            ),
-            Instant.now(clock)
-        ));
+    private HeadlessSubagentOutput failedOutput(RunningSubagentRun running, Throwable failure) {
+        return new HeadlessSubagentOutput(
+            running.agent().taskName(),
+            running.agent().agentId(),
+            running.agent().childSessionId(),
+            running.runId(),
+            SubagentRunStatus.FAILED,
+            "",
+            Optional.empty(),
+            Optional.ofNullable(failure == null ? "Subagent failed" : failure.getMessage())
+        );
     }
 
-    private SubagentSpawnResult failedSpawn(SubagentSpawnRequest request, String message) {
+    private SubagentSpawnResult failedSpawn(String taskName, String message) {
         return new SubagentSpawnResult(
+            taskName,
             "",
             "",
-            request.parentSessionId(),
             "",
             SubagentRunStatus.FAILED,
-            Optional.of(message)
+            Optional.ofNullable(message)
         );
     }
 
-    private SubagentContinueResult failedContinue(SubagentContinueRequest request, String message) {
-        return new SubagentContinueResult(
-            "",
-            request.childSessionId(),
-            request.parentSessionId(),
-            "",
-            "",
+    private SubagentSpawnResult failedSpawn(String taskName, SubagentAgent agent, String runId, String message) {
+        return new SubagentSpawnResult(
+            taskName,
+            agent.agentId(),
+            agent.childSessionId(),
+            runId,
             SubagentRunStatus.FAILED,
             Optional.ofNullable(message)
         );
@@ -460,45 +293,11 @@ public final class DefaultAgentCenter implements AgentCenterPort, RunningAgentSn
         return UUID.randomUUID().toString().replace("-", "");
     }
 
-    private String subagentCommandMissingMessage() {
-        return "Subagent command is not configured. Configure lypi.subagent.command or run from a packaged lypi-boot jar "
-            + "so the default command can be inferred as: java -jar <current-jar> headless-subagent";
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
-    record RunningAgent(
-        String agentId,
-        String childSessionId,
-        String parentSessionId,
-        String parentSpawnEntryId,
-        Optional<String> agentName,
-        Optional<String> agentRole,
-        Path parentCwd,
-        SubagentProcessHandle handle
-    ) {
-        private RunningAgent withHandle(SubagentProcessHandle handle) {
-            return new RunningAgent(
-                agentId,
-                childSessionId,
-                parentSessionId,
-                parentSpawnEntryId,
-                agentName,
-                agentRole,
-                parentCwd,
-                handle
-            );
-        }
-
-        private RunningAgent withParentSpawnEntryId(String parentSpawnEntryId) {
-            return new RunningAgent(
-                agentId,
-                childSessionId,
-                parentSessionId,
-                parentSpawnEntryId,
-                agentName,
-                agentRole,
-                parentCwd,
-                handle
-            );
-        }
+    private String subagentCommandMissingMessage() {
+        return "Subagent command is not configured. Configure lypi.subagent.command or run from a packaged lypi-boot jar.";
     }
 }

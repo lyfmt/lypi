@@ -38,6 +38,11 @@ final class BaseAgentPromptSection implements SystemPromptSection {
         content.append("- Ask for permission before actions that require escalation or may be destructive.\n");
         content.append("- Prefer incremental edits over broad rewrites.\n");
         content.append("- Keep tool outputs and intermediate findings grounded in the files or commands that produced them.\n\n");
+        content.append("## Subagents\n");
+        content.append("- When `spawn_agent` is available, continue useful independent work after spawning. Subagent completion is delivered automatically at a later model boundary.\n");
+        content.append("- Call `wait_agent` only when the next step depends on the completion and no useful independent work remains.\n");
+        content.append("- If the user asks you not to wait or to continue working, do not call `wait_agent`.\n");
+        content.append("- Automatic delivery does not start a new model turn after the current turn ends; a late completion is delivered at the next turn's first model boundary.\n\n");
         content.append("## Final Response\n");
         content.append("- Be concise and factual.\n");
         content.append("- Summarize changed files and verification.\n");

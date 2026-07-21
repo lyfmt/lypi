@@ -13,7 +13,6 @@ import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
-import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -36,49 +35,43 @@ public final class HeadlessSubagentRunner {
         this.codec = codec == null ? new HeadlessSubagentJsonCodec() : codec;
     }
 
-    /**
-     * 执行一次 headless subagent JSON 请求。
-     *
-     * NOTE: stdout 只写结构化 JSON；诊断日志应由调用方写 stderr。
-     */
     public void run(InputStream in, OutputStream out) {
         HeadlessSubagentOutput output;
         try {
             output = execute(codec.readInput(in));
-        } catch (RuntimeException e) {
-            output = failure("", e.getMessage());
+        } catch (RuntimeException exception) {
+            output = failure(null, exception.getMessage());
         }
         codec.writeOutput(output, out);
     }
 
-    /**
-     * 执行已解析的 headless subagent 输入。
-     */
     public HeadlessSubagentOutput execute(HeadlessSubagentInput input) {
         validate(input);
         try {
             SessionManagerPort childSessionManager = sessionManagerFactory.open(input.sessionCwd(), input.childSessionId());
             AgentCorePort agentCore = agentCoreFactory.create(input.cwd(), childSessionManager, input.toolPolicy());
-            Optional<String> parentEntryId = turnParentEntryId(input, childSessionManager);
             TurnState state = agentCore.execute(new TurnRequest(
                 input.childSessionId(),
-                input.prompt(),
-                parentEntryId,
+                input.message(),
+                Optional.empty(),
                 neverAborted(),
                 TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
-                input.skillMentions()
+                List.of()
             ));
             SubagentRunStatus status = status(state.status());
-            String summary = summary(state);
+            String content = content(state);
             return new HeadlessSubagentOutput(
+                input.taskName(),
+                input.agentId(),
                 input.childSessionId(),
+                input.runId(),
                 status,
-                summary,
+                content,
                 finalEntryId(childSessionManager),
-                failureMessage(status, state.status(), summary)
+                failureMessage(status, state.status(), content)
             );
-        } catch (RuntimeException e) {
-            return failure(input.childSessionId(), e.getMessage());
+        } catch (RuntimeException exception) {
+            return failure(input, exception.getMessage());
         }
     }
 
@@ -86,33 +79,30 @@ public final class HeadlessSubagentRunner {
         if (input == null) {
             throw new IllegalArgumentException("Headless subagent input is required");
         }
-        if (blank(input.childSessionId())) {
-            throw new IllegalArgumentException("childSessionId is required");
-        }
-        if (blank(input.parentSessionId())) {
-            throw new IllegalArgumentException("parentSessionId is required");
-        }
-        if (input.runMode() == HeadlessSubagentRunMode.START && blank(input.parentSpawnEntryId())) {
-            throw new IllegalArgumentException("parentSpawnEntryId is required");
-        }
-        if (blank(input.prompt())) {
-            throw new IllegalArgumentException("prompt is required");
-        }
-        if (input.cwd() == null) {
-            throw new IllegalArgumentException("cwd is required");
-        }
-        if (input.sessionCwd() == null) {
-            throw new IllegalArgumentException("sessionCwd is required");
+        require(input.taskName(), "taskName");
+        require(input.agentId(), "agentId");
+        require(input.childSessionId(), "childSessionId");
+        require(input.runId(), "runId");
+        require(input.parentSessionId(), "parentSessionId");
+        require(input.parentSpawnEntryId(), "parentSpawnEntryId");
+        require(input.message(), "message");
+        if (input.cwd() == null || input.sessionCwd() == null) {
+            throw new IllegalArgumentException("cwd and sessionCwd are required");
         }
     }
 
-    private boolean blank(String value) {
-        return value == null || value.isBlank();
+    private void require(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(name + " is required");
+        }
     }
 
-    private HeadlessSubagentOutput failure(String childSessionId, String errorMessage) {
+    private HeadlessSubagentOutput failure(HeadlessSubagentInput input, String errorMessage) {
         return new HeadlessSubagentOutput(
-            childSessionId == null ? "" : childSessionId,
+            input == null ? "" : input.taskName(),
+            input == null ? "" : input.agentId(),
+            input == null ? "" : input.childSessionId(),
+            input == null ? "" : input.runId(),
             SubagentRunStatus.FAILED,
             "",
             Optional.empty(),
@@ -122,17 +112,6 @@ public final class HeadlessSubagentRunner {
 
     private AbortSignal neverAborted() {
         return () -> false;
-    }
-
-    private Optional<String> turnParentEntryId(HeadlessSubagentInput input, SessionManagerPort childSessionManager) {
-        if (input.runMode() != HeadlessSubagentRunMode.CONTINUE) {
-            return Optional.empty();
-        }
-        String leafId = childSessionManager.currentView().leafId();
-        if (leafId == null || leafId.isBlank()) {
-            return Optional.empty();
-        }
-        return Optional.of(leafId);
     }
 
     private SubagentRunStatus status(TurnStatus status) {
@@ -145,27 +124,20 @@ public final class HeadlessSubagentRunner {
         return SubagentRunStatus.FAILED;
     }
 
-    private Optional<String> failureMessage(SubagentRunStatus runStatus, TurnStatus turnStatus, String summary) {
+    private Optional<String> failureMessage(SubagentRunStatus runStatus, TurnStatus turnStatus, String content) {
         if (runStatus == SubagentRunStatus.SUCCEEDED) {
             return Optional.empty();
         }
         String base = "Child turn ended with " + turnStatus;
-        if (summary == null || summary.isBlank()) {
-            return Optional.of(base);
-        }
-        return Optional.of(base + ": " + summary);
+        return content.isBlank() ? Optional.of(base) : Optional.of(base + ": " + content);
     }
 
-    private String summary(TurnState state) {
+    private String content(TurnState state) {
         List<AgentMessage> messages = state.newMessages();
-        if (messages == null || messages.isEmpty()) {
+        if (messages == null || messages.isEmpty() || messages.getLast().content() == null) {
             return "";
         }
-        AgentMessage message = messages.getLast();
-        if (message.content() == null) {
-            return "";
-        }
-        return message.content().stream()
+        return messages.getLast().content().stream()
             .map(this::text)
             .filter(text -> !text.isBlank())
             .findFirst()
@@ -174,16 +146,10 @@ public final class HeadlessSubagentRunner {
 
     private Optional<String> finalEntryId(SessionManagerPort childSessionManager) {
         String leafId = childSessionManager.currentView().leafId();
-        if (leafId == null || leafId.isBlank()) {
-            return Optional.empty();
-        }
-        return Optional.of(leafId);
+        return leafId == null || leafId.isBlank() ? Optional.empty() : Optional.of(leafId);
     }
 
     private String text(ContentBlock block) {
-        if (block instanceof TextContentBlock text) {
-            return text.text();
-        }
-        return "";
+        return block instanceof TextContentBlock text ? text.text() : "";
     }
 }

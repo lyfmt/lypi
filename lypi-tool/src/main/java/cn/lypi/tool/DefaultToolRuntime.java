@@ -750,9 +750,11 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             ExecutedToolResult execution = executeTool(request, tool, input, toolContext, started.progressSink());
             rawResult = applyAfterInterceptor(request, tool, toolContext, execution.result());
             finalResult = resultBudgeter.apply(request.toolUseId(), tool.name(), rawResult, tool.maxResultSize());
-            status = execution.threw() || finalResult.isError()
-                ? ToolExecutionStatus.FAILED
-                : ToolExecutionStatus.SUCCEEDED;
+            status = shouldSkipForAbort(tool, toolContext)
+                ? ToolExecutionStatus.CANCELLED
+                : execution.threw() || finalResult.isError()
+                    ? ToolExecutionStatus.FAILED
+                    : ToolExecutionStatus.SUCCEEDED;
             recordTurnState(tool.name(), finalResult, turnState, toolContext);
             return finalResult;
         } catch (RuntimeException exception) {

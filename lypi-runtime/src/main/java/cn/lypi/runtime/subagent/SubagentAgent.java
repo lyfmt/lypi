@@ -1,10 +1,12 @@
 package cn.lypi.runtime.subagent;
 
-public record RunningAgentSnapshot(
+import java.nio.file.Path;
+
+public record SubagentAgent(
     String agentId,
     String taskName,
     String childSessionId,
-    String runId,
     String parentSessionId,
-    String parentSpawnEntryId
+    String parentSpawnEntryId,
+    Path parentCwd
 ) {}

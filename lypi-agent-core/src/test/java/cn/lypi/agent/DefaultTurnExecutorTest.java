@@ -5,6 +5,7 @@ import cn.lypi.agent.compact.CompactionDecision;
 import cn.lypi.agent.compact.DefaultToolMicroCompactor;
 import cn.lypi.agent.compact.NoopCompactionCoordinator;
 import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.agent.SteeringMessageSource;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -41,6 +42,7 @@ import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.runtime.AgentCommunicationPort;
 import cn.lypi.contracts.session.MessageEntry;
 import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
@@ -855,6 +857,149 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
+    void insertsAgentCompletionAsSystemLocalAfterToolRoundBeforeNextModelCall() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        Queue<SteeringMessage> communications = new ConcurrentLinkedQueue<>();
+        AgentCommunicationPort agentCommunication = ignored -> Optional.ofNullable(communications.poll());
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("used child result"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "ok",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "content", false)),
+            Optional.empty()
+        )));
+        tools.onExecute(() -> communications.add(SteeringMessage.agentCommunication(
+            "inspection complete",
+            Map.of(
+                "taskName", "inspect-session",
+                "agentId", "agent_1",
+                "childSessionId", "ses_child",
+                "runId", "run_1",
+                "status", "SUCCEEDED"
+            )
+        )));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                Path.of("."),
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new cn.lypi.agent.compact.NoopToolMicroCompactor(),
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker(),
+                agentCommunication
+            ),
+            TurnIds.fixed(
+                "turn-1",
+                "msg-user",
+                "msg-fallback-tool-call",
+                "msg-agent-communication",
+                "msg-fallback-final"
+            ),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest("session-1", "inspect", Optional.empty(), () -> false));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(provider.contexts).hasSize(2);
+        AgentMessage communication = provider.contexts.get(1).messages().stream()
+            .filter(message -> message.id().equals("msg-agent-communication"))
+            .findFirst()
+            .orElseThrow();
+        assertThat(communication.role()).isEqualTo(MessageRole.SYSTEM_LOCAL);
+        assertThat(communication.role()).isNotEqualTo(MessageRole.USER);
+        assertThat(communication.content().getFirst().text()).isEqualTo("inspection complete");
+        assertThat(communication.content().getFirst().metadata()).containsEntry("runId", "run_1");
+    }
+
+    @Test
+    void completionPublishedAfterFinalPollIsInjectedAtNextTurnStart() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Queue<SteeringMessage> communications = new ConcurrentLinkedQueue<>();
+        AgentCommunicationPort agentCommunication = ignored -> Optional.ofNullable(communications.poll());
+        provider.enqueue(List.of(
+            new AssistantStart("msg-first-assistant"),
+            new TextDelta("first done"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-second-assistant"),
+            new TextDelta("child result observed"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                Path.of("."),
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new cn.lypi.agent.compact.NoopToolMicroCompactor(),
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker(),
+                agentCommunication
+            ),
+            countingIds(),
+            Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        executor.execute(new TurnRequest("session-1", "first", Optional.empty(), () -> false));
+        assertThat(session.messages()).noneMatch(message -> message.role() == MessageRole.SYSTEM_LOCAL);
+
+        communications.add(SteeringMessage.agentCommunication(
+            "late completion",
+            Map.of("agentId", "agent_1", "runId", "run_1", "status", "SUCCEEDED")
+        ));
+        executor.execute(new TurnRequest("session-1", "second", Optional.empty(), () -> false));
+
+        assertThat(provider.contexts).hasSize(2);
+        assertThat(provider.contexts.get(1).messages())
+            .filteredOn(message -> message.role() == MessageRole.SYSTEM_LOCAL)
+            .singleElement()
+            .satisfies(message -> {
+                assertThat(message.content().getFirst().text()).isEqualTo("late completion");
+                assertThat(message.content().getFirst().metadata()).containsEntry("runId", "run_1");
+            });
+        assertThat(communications).isEmpty();
+    }
+
+    @Test
     void insertsQueuedSteeringOneAtATimeBetweenAssistantResponses() {
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
         AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
@@ -1374,16 +1519,94 @@ class DefaultTurnExecutorTest {
             clock
         );
 
-        executor.execute(new TurnRequest("session-1", "run tool", Optional.empty(), () -> false));
+        AbortSignal abortSignal = () -> false;
+        SteeringMessageSource steering = Optional::empty;
+        executor.execute(new TurnRequest(
+            "session-1",
+            "run tool",
+            Optional.empty(),
+            abortSignal,
+            TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+            List.of(),
+            steering
+        ));
 
         assertThat(tools.invocations).hasSize(1);
         ToolRuntimeInvocation invocation = tools.invocations.getFirst();
         assertThat(invocation.sessionId()).isEqualTo("session-1");
         assertThat(invocation.turnId()).isEqualTo("turn-1");
         assertThat(invocation.parentEntryId()).isEqualTo("entry-msg-tool-call");
+        assertThat(invocation.abortSignal()).isSameAs(abortSignal);
+        assertThat(invocation.steeringMessages()).isSameAs(steering);
         assertThat(tools.clearedInvocations).hasSize(1);
         assertThat(tools.clearedInvocations.getFirst().sessionId()).isEqualTo("session-1");
         assertThat(tools.clearedInvocations.getFirst().turnId()).isEqualTo("turn-1");
+    }
+
+    @Test
+    void abortDuringToolExecutionPersistsResultWithoutAnotherModelCall() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        AtomicBoolean aborted = new AtomicBoolean();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "bash", Map.of("command", "sleep 60"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-after-abort"),
+            new TextDelta("must not run"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "工具调用已中止。",
+            true,
+            List.of(AgentCoreTestFixtures.toolResultMessage(
+                "msg-tool-result",
+                "toolu-1",
+                "工具调用已中止。",
+                true,
+                Map.of("status", ToolExecutionStatus.CANCELLED.name())
+            )),
+            Optional.empty()
+        )));
+        tools.onExecute(() -> aborted.set(true));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest(
+            "session-1",
+            "run tool",
+            Optional.empty(),
+            aborted::get
+        ));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.ABORTED);
+        assertThat(provider.contexts).hasSize(1);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-tool-call", "msg-tool-result");
     }
 
     @Test

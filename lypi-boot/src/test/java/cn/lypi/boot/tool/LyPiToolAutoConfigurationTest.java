@@ -36,9 +36,7 @@ import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
-import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.Executor;
-import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
@@ -59,14 +57,11 @@ import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
-import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
-import cn.lypi.contracts.subagent.AgentRunStatus;
-import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
-import cn.lypi.contracts.subagent.MailboxMessage;
-import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import cn.lypi.contracts.subagent.SubagentWaitRequest;
+import cn.lypi.contracts.subagent.SubagentWaitResult;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.mcp.McpClient;
@@ -539,15 +534,15 @@ class LyPiToolAutoConfigurationTest {
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
             .withBean(AgentCenterPort.class, LyPiToolAutoConfigurationTest::agentCenter)
-            .withBean(MailboxPort.class, LyPiToolAutoConfigurationTest::mailbox)
-            .withBean(AgentRegistryPort.class, LyPiToolAutoConfigurationTest::agentRegistry)
             .run(context -> {
                 ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
 
                 assertThat(runtime.resolve("spawn_agent")).isPresent();
-                assertThat(runtime.resolve("read_agent_result")).isPresent();
-                assertThat(runtime.resolve("read_mailbox")).isPresent();
-                assertThat(runtime.resolve("list_agents")).isPresent();
+                assertThat(runtime.resolve("wait_agent")).isPresent();
+                assertThat(runtime.resolve("continue_agent")).isEmpty();
+                assertThat(runtime.resolve("read_agent_result")).isEmpty();
+                assertThat(runtime.resolve("read_mailbox")).isEmpty();
+                assertThat(runtime.resolve("list_agents")).isEmpty();
             });
     }
 
@@ -780,41 +775,8 @@ class LyPiToolAutoConfigurationTest {
             }
 
             @Override
-            public Optional<HeadlessSubagentOutput> readResult(String childSessionId) {
-                throw new UnsupportedOperationException("not used");
-            }
-        };
-    }
-
-    private static MailboxPort mailbox() {
-        return new MailboxPort() {
-            @Override
-            public List<MailboxMessage> read(String sessionId, java.util.Set<MailboxStatus> statuses) {
-                throw new UnsupportedOperationException("not used");
-            }
-
-            @Override
-            public MailboxCommandResult accept(String sessionId, String mailId) {
-                throw new UnsupportedOperationException("not used");
-            }
-
-            @Override
-            public MailboxCommandResult stash(String sessionId, String mailId) {
-                throw new UnsupportedOperationException("not used");
-            }
-
-            @Override
-            public MailboxCommandResult discard(String sessionId, String mailId) {
-                throw new UnsupportedOperationException("not used");
-            }
-        };
-    }
-
-    private static AgentRegistryPort agentRegistry() {
-        return new AgentRegistryPort() {
-            @Override
-            public List<AgentView> list(String parentSessionId, java.util.Set<AgentRunStatus> statuses) {
-                throw new UnsupportedOperationException("not used");
+            public SubagentWaitResult waitFor(SubagentWaitRequest request) {
+                return SubagentWaitResult.timedOut();
             }
         };
     }

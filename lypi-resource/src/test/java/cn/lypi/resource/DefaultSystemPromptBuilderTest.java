@@ -60,6 +60,10 @@ class DefaultSystemPromptBuilderTest {
         assertThat(prompt.content()).contains("## General");
         assertThat(prompt.content()).contains("## Editing Constraints");
         assertThat(prompt.content()).contains("## Workflow");
+        assertThat(prompt.content()).contains("## Subagents");
+        assertThat(prompt.content()).contains("Subagent completion is delivered automatically at a later model boundary");
+        assertThat(prompt.content()).contains("Call `wait_agent` only when the next step depends on the completion");
+        assertThat(prompt.content()).contains("If the user asks you not to wait or to continue working");
         assertThat(prompt.content()).contains("## AGENTS.md");
         assertThat(prompt.content()).contains("Follow project rules.");
         assertThat(prompt.content()).contains("L0 index body");

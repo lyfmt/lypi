@@ -58,6 +58,7 @@ class ChildSessionServiceTest {
                 assertThat(entry.metadata())
                     .containsEntry("parentSessionId", "ses_parent")
                     .containsEntry("parentSpawnEntryId", "entry_spawn")
+                    .containsEntry("taskName", "reviewer")
                     .containsEntry("agentName", "reviewer")
                     .containsEntry("agentRole", "code-review");
             });
@@ -67,6 +68,7 @@ class ChildSessionServiceTest {
             .contains("\"parentSessionId\":\"ses_parent\"")
             .contains("\"parentSpawnEntryId\":\"entry_spawn\"")
             .contains("\"depth\":1")
+            .contains("\"taskName\":\"reviewer\"")
             .contains("\"agentName\":\"reviewer\"")
             .contains("\"agentRole\":\"code-review\"")
             .doesNotContain("entry_root")

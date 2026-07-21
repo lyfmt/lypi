@@ -1,6 +1,5 @@
 package cn.lypi.session;
 
-import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -86,9 +85,7 @@ final class EntryTreeIndex {
     private void restore(SessionEntry entry) {
         validateAppend(entry);
         byId.put(entry.id(), entry);
-        if (!(entry instanceof AgentLifecycleEntry)) {
-            leafId = entry.id();
-        }
+        leafId = entry.id();
     }
 
     /**

@@ -1,12 +1,10 @@
 package cn.lypi.boot.tool;
 
 import cn.lypi.contracts.runtime.AgentCenterPort;
-import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.runtime.Executor;
-import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
@@ -177,8 +175,6 @@ public class LyPiToolAutoConfiguration {
         SecurityRuntimePort securityRuntime,
         Executor executor,
         ObjectProvider<AgentCenterPort> agentCenter,
-        ObjectProvider<MailboxPort> mailbox,
-        ObjectProvider<AgentRegistryPort> agentRegistry,
         SandboxPolicyResolver sandboxPolicyResolver,
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionResponseGate> responseGate,
@@ -261,14 +257,8 @@ public class LyPiToolAutoConfiguration {
                         BuiltInTools.registerWebSearchTools(runtime, providers, webResultStore, webProperties.getMaxResults())
                     );
                 AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
-                MailboxPort resolvedMailbox = mailbox.getIfAvailable();
-                if (resolvedAgentCenter != null && resolvedMailbox != null) {
-                    AgentRegistryPort resolvedAgentRegistry = agentRegistry.getIfAvailable();
-                    if (resolvedAgentRegistry == null) {
-                        BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox);
-                    } else {
-                        BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter, resolvedMailbox, resolvedAgentRegistry);
-                    }
+                if (resolvedAgentCenter != null) {
+                    BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter);
                 }
                 registerMcpTools(runtime, runtimeCwd, resolvedResourceRuntime, resolvedMcpClientManagerFactory, mcpClientManagerLifecycle);
                 return runtime;

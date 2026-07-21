@@ -2,9 +2,7 @@ package cn.lypi.runtime.subagent;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
-import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.nio.file.Path;
@@ -15,80 +13,39 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class SubagentRunResultProjectorTest {
-    private static final Instant NOW = Instant.parse("2026-06-09T00:00:00Z");
-
     @Test
-    void createsFailureOutputWhenProcessFailsWithoutStructuredOutput() {
-        HeadlessSubagentOutput output = SubagentRunResultProjector.failedOutput(
-            "ses_child",
-            new IllegalStateException("boom")
-        );
-
-        assertThat(output.childSessionId()).isEqualTo("ses_child");
-        assertThat(output.status()).isEqualTo(SubagentRunStatus.FAILED);
-        assertThat(output.summary()).isEmpty();
-        assertThat(output.errorMessage()).contains("boom");
-    }
-
-    @Test
-    void createsLifecycleEntryForCompletion() {
-        SubagentRunResultProjector projector = new SubagentRunResultProjector(
-            Clock.fixed(NOW, ZoneOffset.UTC),
-            () -> "fixed"
-        );
-        DefaultAgentCenter.RunningAgent running = new DefaultAgentCenter.RunningAgent(
+    void projectsAuthoritativeAgentAndRunIdentity() {
+        SubagentAgent agent = new SubagentAgent(
             "agent_1",
+            "inspect-session",
             "ses_child",
             "ses_parent",
             "entry_spawn",
-            Optional.empty(),
-            Optional.empty(),
-            Path.of("."),
-            null
+            Path.of("/workspace")
         );
-
-        AgentLifecycleEntry entry = projector.lifecycleEntry(running, new HeadlessSubagentOutput(
-            "ses_child",
+        RunningSubagentRun run = new RunningSubagentRun("run_1", agent, null);
+        HeadlessSubagentOutput output = new HeadlessSubagentOutput(
+            "untrusted-task",
+            "untrusted-agent",
+            "untrusted-session",
+            "untrusted-run",
             SubagentRunStatus.SUCCEEDED,
-            "summary",
+            "done",
             Optional.of("entry_final"),
             Optional.empty()
-        ));
-
-        assertThat(entry.id()).isEqualTo("entry_agent_fixed");
-        assertThat(entry.parentId()).isEqualTo("entry_spawn");
-        assertThat(entry.lifecycle()).isEqualTo("finished");
-        assertThat(entry.metadata()).containsEntry("status", "SUCCEEDED");
-    }
-
-    @Test
-    void createsMailboxMessageWithSummaryFallback() {
+        );
         SubagentRunResultProjector projector = new SubagentRunResultProjector(
-            Clock.fixed(NOW, ZoneOffset.UTC),
-            () -> "fixed"
-        );
-        DefaultAgentCenter.RunningAgent running = new DefaultAgentCenter.RunningAgent(
-            "agent_1",
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            Optional.empty(),
-            Optional.empty(),
-            Path.of("."),
-            null
+            Clock.fixed(Instant.EPOCH, ZoneOffset.UTC),
+            () -> "1"
         );
 
-        MailboxMessage message = projector.mailboxMessage(running, new HeadlessSubagentOutput(
-            "ses_child",
-            SubagentRunStatus.FAILED,
-            "",
-            Optional.empty(),
-            Optional.of("failure summary")
-        ));
+        var mailbox = projector.mailboxMessage(run, output);
 
-        assertThat(message.mailId()).isEqualTo("mail_fixed");
-        assertThat(message.summary()).isEqualTo("failure summary");
-        assertThat(message.status()).isEqualTo(MailboxStatus.PENDING);
-        assertThat(message.contentRef().status()).contains(SubagentRunStatus.FAILED);
+        assertThat(mailbox.taskName()).isEqualTo("inspect-session");
+        assertThat(mailbox.agentId()).isEqualTo("agent_1");
+        assertThat(mailbox.childSessionId()).isEqualTo("ses_child");
+        assertThat(mailbox.runId()).isEqualTo("run_1");
+        assertThat(mailbox.parentSpawnEntryId()).isEqualTo("entry_spawn");
+        assertThat(mailbox.status()).isEqualTo(MailboxStatus.PENDING);
     }
 }

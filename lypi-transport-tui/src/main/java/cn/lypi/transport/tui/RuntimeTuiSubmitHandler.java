@@ -1,9 +1,11 @@
 package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.agent.SteeringMessageSource;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
+import cn.lypi.contracts.common.SignalSubscription;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
@@ -25,11 +27,14 @@ import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -168,10 +173,12 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         String sessionId = currentSessionId;
         ActiveTurn turn;
         String conflictingSessionId = null;
+        List<SteeringListener> steeringListeners = List.of();
         synchronized (activeTurnLock) {
             if (activeTurn != null) {
                 if (activeTurn.sessionId.equals(sessionId)) {
                     activeTurn.steering.addLast(new SteeringMessage(routedInput, resolvedSkillMentions));
+                    steeringListeners = List.copyOf(activeTurn.steeringListeners);
                 } else {
                     conflictingSessionId = activeTurn.sessionId;
                 }
@@ -183,6 +190,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
                 activeSignal = signal;
             }
         }
+        notifySteeringListeners(steeringListeners);
         if (turn == null) {
             if (conflictingSessionId != null) {
                 publishSlashCommandError("turn is running for session " + conflictingSessionId);
@@ -196,7 +204,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             turn.signal,
             TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
             resolvedSkillMentions,
-            () -> pollSteering(turn)
+            steeringSource(turn)
         );
         executor.execute(() -> runTurn(turn, request));
     }
@@ -251,13 +259,15 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
                 signal,
                 maxToolRounds,
                 message.skillMentions(),
-                () -> pollSteering(turn)
+                steeringSource(turn)
             );
         }
     }
 
     private void clearActiveTurn(ActiveTurn turn) {
         turn.steering.clear();
+        turn.steeringListeners.forEach(SteeringListener::close);
+        turn.steeringListeners.clear();
         if (activeTurn == turn) {
             activeTurn = null;
         }
@@ -272,6 +282,63 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
                 return Optional.empty();
             }
             return drainMergedSteering(turn);
+        }
+    }
+
+    private SteeringMessageSource steeringSource(ActiveTurn turn) {
+        return new SteeringMessageSource() {
+            @Override
+            public Optional<SteeringMessage> poll() {
+                return pollSteering(turn);
+            }
+
+            @Override
+            public boolean hasPending() {
+                return hasPendingSteering(turn);
+            }
+
+            @Override
+            public SignalSubscription subscribe(Runnable listener) {
+                return subscribeSteering(turn, listener);
+            }
+        };
+    }
+
+    private boolean hasPendingSteering(ActiveTurn turn) {
+        synchronized (activeTurnLock) {
+            return activeTurn == turn && !turn.signal.aborted() && !turn.steering.isEmpty();
+        }
+    }
+
+    private SignalSubscription subscribeSteering(ActiveTurn turn, Runnable listener) {
+        Objects.requireNonNull(listener, "listener must not be null");
+        SteeringListener registration = new SteeringListener(listener);
+        boolean notifyImmediately;
+        synchronized (activeTurnLock) {
+            if (activeTurn != turn) {
+                registration.close();
+                return SignalSubscription.none();
+            }
+            turn.steeringListeners.add(registration);
+            notifyImmediately = !turn.signal.aborted() && !turn.steering.isEmpty();
+        }
+        if (notifyImmediately) {
+            notifySteeringListeners(List.of(registration));
+        }
+        return () -> {
+            registration.close();
+            synchronized (activeTurnLock) {
+                turn.steeringListeners.remove(registration);
+            }
+        };
+    }
+
+    private void notifySteeringListeners(List<SteeringListener> listeners) {
+        for (SteeringListener listener : listeners) {
+            try {
+                listener.notifyActivity();
+            } catch (RuntimeException ignored) {
+            }
         }
     }
 
@@ -382,13 +449,15 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
 
     @Override
     public void requestInterrupt(String reason) {
+        List<Runnable> abortListeners = List.of();
         synchronized (activeTurnLock) {
             if (activeTurn != null) {
-                activeTurn.signal.abort();
+                abortListeners = activeTurn.signal.abortAndDrainListeners();
             } else if (activeSignal != null) {
-                activeSignal.abort();
+                abortListeners = activeSignal.abortAndDrainListeners();
             }
         }
+        MutableAbortSignal.notifyListeners(abortListeners);
         events.publish(new InterruptEvent(
             currentSessionId,
             reason == null || reason.isBlank() ? "interrupt" : reason,
@@ -470,10 +539,30 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         private final String sessionId;
         private MutableAbortSignal signal;
         private final ArrayDeque<SteeringMessage> steering = new ArrayDeque<>();
+        private final List<SteeringListener> steeringListeners = new ArrayList<>();
 
         private ActiveTurn(String sessionId, MutableAbortSignal signal) {
             this.sessionId = sessionId;
             this.signal = signal;
+        }
+    }
+
+    private static final class SteeringListener {
+        private final Runnable listener;
+        private final AtomicBoolean active = new AtomicBoolean(true);
+
+        private SteeringListener(Runnable listener) {
+            this.listener = listener;
+        }
+
+        private void notifyActivity() {
+            if (active.get()) {
+                listener.run();
+            }
+        }
+
+        private void close() {
+            active.set(false);
         }
     }
 }

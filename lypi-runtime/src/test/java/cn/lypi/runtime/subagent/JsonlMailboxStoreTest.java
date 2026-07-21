@@ -5,84 +5,58 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
-import cn.lypi.contracts.subagent.SubagentResultRef;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.Path;
 
 class JsonlMailboxStoreTest {
-    private static final Instant NOW = Instant.parse("2026-06-09T00:00:00Z");
-
     @TempDir
     Path tempDir;
 
     @Test
-    void appendOnlyStoreProjectsLatestMailboxStatus() throws Exception {
+    void readsLatestDeliveryProjectionWithRunIdentity() {
         JsonlMailboxStore store = new JsonlMailboxStore(tempDir);
-        MailboxMessage pending = message(MailboxStatus.PENDING, NOW);
-        MailboxMessage stashed = new MailboxMessage(
-            pending.mailId(),
-            pending.agentId(),
-            pending.childSessionId(),
-            pending.parentSessionId(),
-            pending.parentSpawnEntryId(),
-            pending.summary(),
-            pending.contentRef(),
-            MailboxStatus.STASHED,
-            pending.createdAt(),
-            NOW.plusSeconds(1)
-        );
+        store.append(message(MailboxStatus.PENDING));
+        store.append(message(MailboxStatus.DELIVERED));
 
-        store.append(pending);
-        store.append(stashed);
-
-        assertThat(store.read("ses_parent", Set.of(MailboxStatus.STASHED)))
-            .containsExactly(stashed);
-        assertThat(store.read("ses_parent", Set.of(MailboxStatus.PENDING))).isEmpty();
-        assertThat(Files.readAllLines(tempDir.resolve(".ly-pi").resolve("mailbox").resolve("ses_parent.jsonl")))
-            .hasSize(2);
+        assertThat(store.read("ses_parent", Set.of(MailboxStatus.DELIVERED)))
+            .singleElement()
+            .satisfies(message -> {
+                assertThat(message.runId()).isEqualTo("run_1");
+                assertThat(message.status()).isEqualTo(MailboxStatus.DELIVERED);
+            });
     }
 
     @Test
-    void rejectsMailboxSessionIdsThatEscapeMailboxDirectory() {
+    void rejectsTraversalSessionId() {
         JsonlMailboxStore store = new JsonlMailboxStore(tempDir);
-        MailboxMessage traversal = new MailboxMessage(
-            "mail_01",
-            "agent_01",
-            "ses_child",
-            "../sessions/ses_parent",
-            "entry_spawn",
-            "完成摘要",
-            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
-            MailboxStatus.PENDING,
-            NOW,
-            NOW
-        );
-
-        assertThatThrownBy(() -> store.append(traversal))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Invalid mailbox session id");
-        assertThatThrownBy(() -> store.read("../sessions/ses_parent", Set.of()))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Invalid mailbox session id");
+        assertThatThrownBy(() -> store.append(new MailboxMessage(
+            "mail_1", "task", "agent_1", "ses_child", "run_1", "../outside", "entry_spawn",
+            SubagentRunStatus.SUCCEEDED, "done", Optional.empty(), Optional.empty(), MailboxStatus.PENDING,
+            Instant.EPOCH, Instant.EPOCH
+        ))).isInstanceOf(IllegalArgumentException.class);
     }
 
-    private MailboxMessage message(MailboxStatus status, Instant now) {
+    private MailboxMessage message(MailboxStatus status) {
         return new MailboxMessage(
-            "mail_01",
-            "agent_01",
+            "mail_1",
+            "inspect-session",
+            "agent_1",
             "ses_child",
+            "run_1",
             "ses_parent",
             "entry_spawn",
-            "完成摘要",
-            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
+            SubagentRunStatus.SUCCEEDED,
+            "done",
+            Optional.of("entry_final"),
+            Optional.empty(),
             status,
-            now,
-            now
+            Instant.EPOCH,
+            Instant.EPOCH
         );
     }
 }

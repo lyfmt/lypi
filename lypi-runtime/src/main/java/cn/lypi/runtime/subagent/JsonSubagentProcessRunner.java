@@ -45,7 +45,7 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
             AtomicBoolean interrupted = new AtomicBoolean(false);
             CompletableFuture<HeadlessSubagentOutput> completion = CompletableFuture.supplyAsync(() ->
                 readOutput(process, input, interrupted));
-            return new ProcessHandle(process, input.childSessionId(), completion, interrupted);
+            return new ProcessHandle(process, input, completion, interrupted);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to start subagent process", e);
         }
@@ -59,7 +59,10 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
             if (!exited) {
                 process.destroyForcibly();
                 return new HeadlessSubagentOutput(
+                    input.taskName(),
+                    input.agentId(),
                     input.childSessionId(),
+                    input.runId(),
                     SubagentRunStatus.TIMED_OUT,
                     "",
                     Optional.empty(),
@@ -67,28 +70,28 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
                 );
             }
             if (interrupted.get()) {
-                return interrupted(input.childSessionId());
+                return interrupted(input);
             }
             byte[] output = stdout.get(1, TimeUnit.SECONDS);
             String error = new String(stderr.get(1, TimeUnit.SECONDS), StandardCharsets.UTF_8).trim();
             if (output.length == 0) {
-                return failure(input.childSessionId(), nonZeroMessage(process.exitValue(), error));
+                return failure(input, nonZeroMessage(process.exitValue(), error));
             }
             HeadlessSubagentOutput parsed = objectMapper.readValue(output, HeadlessSubagentOutput.class);
             if (process.exitValue() != 0 && parsed.status() == SubagentRunStatus.SUCCEEDED) {
-                return failure(input.childSessionId(), nonZeroMessage(process.exitValue(), error));
+                return failure(input, nonZeroMessage(process.exitValue(), error));
             }
             return parsed;
         } catch (IOException e) {
             if (interrupted.get()) {
-                return interrupted(input.childSessionId());
+                return interrupted(input);
             }
-            return failure(input.childSessionId(), "Failed to read subagent output: " + e.getMessage());
+            return failure(input, "Failed to read subagent output: " + e.getMessage());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return interrupted(input.childSessionId());
+            return interrupted(input);
         } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
-            return failure(input.childSessionId(), "Failed to collect subagent process output: " + e.getMessage());
+            return failure(input, "Failed to collect subagent process output: " + e.getMessage());
         }
     }
 
@@ -100,9 +103,12 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
         }
     }
 
-    private HeadlessSubagentOutput failure(String childSessionId, String message) {
+    private HeadlessSubagentOutput failure(HeadlessSubagentInput input, String message) {
         return new HeadlessSubagentOutput(
-            childSessionId,
+            input.taskName(),
+            input.agentId(),
+            input.childSessionId(),
+            input.runId(),
             SubagentRunStatus.FAILED,
             "",
             Optional.empty(),
@@ -110,9 +116,12 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
         );
     }
 
-    private HeadlessSubagentOutput interrupted(String childSessionId) {
+    private HeadlessSubagentOutput interrupted(HeadlessSubagentInput input) {
         return new HeadlessSubagentOutput(
-            childSessionId,
+            input.taskName(),
+            input.agentId(),
+            input.childSessionId(),
+            input.runId(),
             SubagentRunStatus.INTERRUPTED,
             "已中断",
             Optional.empty(),
@@ -134,7 +143,7 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
 
     private record ProcessHandle(
         Process process,
-        String childSessionId,
+        HeadlessSubagentInput input,
         CompletableFuture<HeadlessSubagentOutput> completion,
         AtomicBoolean interrupted
     )
@@ -152,7 +161,10 @@ public final class JsonSubagentProcessRunner implements SubagentProcessRunner {
                 process.destroyForcibly();
             }
             completion.complete(new HeadlessSubagentOutput(
-                childSessionId,
+                input.taskName(),
+                input.agentId(),
+                input.childSessionId(),
+                input.runId(),
                 SubagentRunStatus.INTERRUPTED,
                 "已中断",
                 Optional.empty(),

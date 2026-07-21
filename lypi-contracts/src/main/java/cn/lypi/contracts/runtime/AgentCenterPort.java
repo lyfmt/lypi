@@ -1,14 +1,10 @@
 package cn.lypi.contracts.runtime;
 
-import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
-import cn.lypi.contracts.subagent.SubagentContinueRequest;
-import cn.lypi.contracts.subagent.SubagentContinueResult;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.subagent.SubagentWaitRequest;
 import cn.lypi.contracts.subagent.SubagentWaitResult;
-import java.util.Optional;
 
 public interface AgentCenterPort {
     /**
@@ -19,26 +15,12 @@ public interface AgentCenterPort {
     SubagentSpawnResult spawn(SubagentSpawnRequest request);
 
     /**
-     * 向已有 child session 发送一轮新输入。
+     * 等待当前 parent session 任意 subagent completion。
      */
-    default SubagentContinueResult continueRun(SubagentContinueRequest request) {
-        throw new UnsupportedOperationException("continueRun is not supported");
-    }
-
-    /**
-     * 等待指定 subagent run 完成。
-     */
-    default SubagentWaitResult waitFor(SubagentWaitRequest request) {
-        throw new UnsupportedOperationException("waitFor is not supported");
-    }
+    SubagentWaitResult waitFor(SubagentWaitRequest request);
 
     /**
      * 中断运行中的 subagent。
      */
     MailboxCommandResult interrupt(String agentId);
-
-    /**
-     * 读取 child session 或 result ref 中的最终结果。
-     */
-    Optional<HeadlessSubagentOutput> readResult(String childSessionId);
 }

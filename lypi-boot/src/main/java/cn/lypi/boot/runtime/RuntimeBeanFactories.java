@@ -23,6 +23,7 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentCommunicationPort;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
@@ -32,7 +33,6 @@ import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
-import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
@@ -42,7 +42,6 @@ import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionProfileSelection;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
-import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
@@ -67,8 +66,6 @@ import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.DefaultMailboxService;
 import cn.lypi.runtime.subagent.JsonSubagentProcessRunner;
 import cn.lypi.runtime.subagent.JsonlMailboxStore;
-import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
-import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.security.ExecPolicyRuleFileReader;
@@ -82,7 +79,6 @@ import cn.lypi.session.SessionTreeQuery;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransport;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
-import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import cn.lypi.tool.FilePermissionAmendmentStore;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -287,6 +283,36 @@ final class RuntimeBeanFactories {
         CompactStateBackfillPort compactStateBackfill,
         Clock clock
     ) {
+        return agentCore(
+            properties,
+            sessionManager,
+            aiProvider,
+            toolRuntime,
+            securityRuntime,
+            resourceRuntime,
+            eventBus,
+            contextAssembler,
+            compactionCoordinator,
+            compactStateBackfill,
+            AgentCommunicationPort.none(),
+            clock
+        );
+    }
+
+    static AgentCorePort agentCore(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        AiProviderRuntimePort aiProvider,
+        ToolRuntimePort toolRuntime,
+        SecurityRuntimePort securityRuntime,
+        ResourceRuntimePort resourceRuntime,
+        EventBus eventBus,
+        ContextAssembler contextAssembler,
+        CompactionCoordinator compactionCoordinator,
+        CompactStateBackfillPort compactStateBackfill,
+        AgentCommunicationPort agentCommunication,
+        Clock clock
+    ) {
         AgentCoreRuntimePorts ports = new AgentCoreRuntimePorts(
             properties.getCwd(),
             sessionManager,
@@ -299,6 +325,7 @@ final class RuntimeBeanFactories {
             null,
             compactionCoordinator,
             compactStateBackfill,
+            agentCommunication,
             new NoopMemoryExtractionWorker()
         );
         return new DefaultTurnExecutor(ports, TurnIds.random(), clock);
@@ -379,6 +406,7 @@ final class RuntimeBeanFactories {
                         null,
                         compactionCoordinator,
                         resolvedCompactStateBackfill,
+                        AgentCommunicationPort.none(),
                         new NoopMemoryExtractionWorker()
                     ),
                     TurnIds.random(),
@@ -633,47 +661,8 @@ final class RuntimeBeanFactories {
         return new JsonlMailboxStore(sessionStorageRoot(sessionManager));
     }
 
-    static DefaultMailboxService mailboxPort(JsonlMailboxStore store, SessionManagerPort sessionManager, Clock clock) {
-        return new DefaultMailboxService(store, sessionManager, clock);
-    }
-
-    static MailboxDeliveryGuard mailboxDeliveryGuard(
-        Supplier<SessionRuntimeState> runtimeStateSupplier,
-        SessionManagerPort sessionManager
-    ) {
-        return message -> {
-            if (message == null) {
-                return false;
-            }
-            SessionRuntimeState runtimeState = runtimeStateSupplier.get();
-            if (runtimeState == null
-                || runtimeState.hasInterruptibleTool()
-                || runtimeState.hasActiveTurn()
-                || runtimeState.hasPendingPermission()
-                || runtimeState.hasPendingInput()) {
-                return false;
-            }
-            return message.parentSessionId().equals(runtimeState.sessionId())
-                && currentBranchContainsSpawnEntry(sessionManager, runtimeState, message.parentSpawnEntryId());
-        };
-    }
-
-    static MailboxDeliveryService mailboxDeliveryService(DefaultMailboxService mailbox, MailboxDeliveryGuard guard) {
-        return new MailboxDeliveryService(mailbox, guard);
-    }
-
-    static MailboxSlashCommandHandler mailboxSlashCommandHandler(
-        MailboxPort mailbox,
-        Supplier<SessionRuntimeState> runtimeStateSupplier,
-        SessionManagerPort sessionManager
-    ) {
-        return new MailboxSlashCommandHandler(mailbox, () -> {
-            SessionRuntimeState runtimeState = runtimeStateSupplier.get();
-            if (runtimeState != null) {
-                return runtimeState.sessionId();
-            }
-            return sessionManager.currentView().sessionId();
-        });
+    static DefaultMailboxService mailboxPort(JsonlMailboxStore store, Clock clock) {
+        return new DefaultMailboxService(store, clock);
     }
 
     static AgentRegistryPort agentRegistry(
@@ -735,10 +724,9 @@ final class RuntimeBeanFactories {
     static AgentCenterPort agentCenter(
         ChildSessionPort childSessions,
         SessionManagerPort parentSession,
-        SessionManagerFactoryPort sessionManagerFactory,
         SubagentProcessRunner processRunner,
         DefaultMailboxService mailbox,
-        MailboxDeliveryService deliveryService,
+        ModelCatalogPort modelCatalog,
         SubagentCommandResolver subagentCommandResolver,
         Clock clock
     ) {
@@ -748,10 +736,9 @@ final class RuntimeBeanFactories {
             childSessions,
             parentSession,
             sessionStorageRoot(parentSession),
-            sessionManagerFactory,
             processRunner,
             mailbox,
-            deliveryService,
+            modelCatalog,
             clock
         );
     }
@@ -783,20 +770,4 @@ final class RuntimeBeanFactories {
         );
     }
 
-    private static boolean currentBranchContainsSpawnEntry(
-        SessionManagerPort sessionManager,
-        SessionRuntimeState runtimeState,
-        String parentSpawnEntryId
-    ) {
-        if (parentSpawnEntryId == null || parentSpawnEntryId.isBlank()) {
-            return false;
-        }
-        try {
-            return sessionManager.branch(runtimeState.currentBranchLeafId()).stream()
-                .map(SessionEntry::id)
-                .anyMatch(parentSpawnEntryId::equals);
-        } catch (RuntimeException exception) {
-            return false;
-        }
-    }
 }

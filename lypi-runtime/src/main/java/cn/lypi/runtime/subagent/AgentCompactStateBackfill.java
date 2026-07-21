@@ -19,7 +19,7 @@ import java.util.stream.Collectors;
  */
 public final class AgentCompactStateBackfill implements CompactStateBackfillPort {
     private static final int MAX_CONTENT_CHARS = 12_000;
-    private static final String TRUNCATION_NOTICE = "\n\n[内容已截断；如需完整 agent 状态，请调用 list_agents。]";
+    private static final String TRUNCATION_NOTICE = "\n\n[内容已截断。]";
 
     private final AgentRegistryPort registry;
 
@@ -59,8 +59,7 @@ public final class AgentCompactStateBackfill implements CompactStateBackfillPort
         text.append("summary: ").append(view.summary().orElse("")).append('\n');
         if (unfinished(view.status())) {
             text.append("\n未完成任务指导:\n");
-            text.append("- 使用 wait_agent 查询该 agent 的完成状态。\n");
-            text.append("- 完成后使用 read_agent_result 或 read_mailbox 读取结果。\n");
+            text.append("- 使用 wait_agent 等待任意 subagent 回复。\n");
             text.append("- 不要重复 spawn_agent；compact 只丢失上下文窗口，不代表子任务丢失。\n");
         }
         return text.toString().strip();

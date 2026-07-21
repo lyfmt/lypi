@@ -4,499 +4,215 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.runtime.SessionManagerPort;
-import cn.lypi.contracts.session.AgentLifecycleEntry;
+import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.subagent.AgentRunStatus;
-import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
-import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import java.nio.file.Path;
 
 class DefaultAgentRegistryTest {
-    private static final Instant NOW = Instant.parse("2026-06-09T00:00:00Z");
+    private static final String PARENT_SESSION_ID = "ses_parent";
+    private static final String SPAWN_ENTRY_ID = "entry_spawn_call";
 
     @TempDir
     Path tempDir;
 
     @Test
-    void listsRunningAgentsFromCurrentBranchInSpawnOrder() {
-        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_leaf");
-        parentSession.append(new AgentLifecycleEntry(
-            "entry_spawn_1",
-            "entry_leaf",
-            "agent_1",
-            "ses_child_1",
-            "ses_parent",
-            "spawned",
-            Map.of(),
-            NOW
+    void projectsCompletedAgentFromChildAndMailboxWithoutLifecycle() {
+        ParentSession parent = parentSession();
+        DefaultMailboxService mailbox = mailbox();
+        mailbox.publish(completion(
+            "mail_visible",
+            "inspect-session",
+            "agent_visible",
+            "ses_child_visible",
+            SPAWN_ENTRY_ID
         ));
-        parentSession.append(new AgentLifecycleEntry(
-            "entry_spawn_2",
-            "entry_spawn_1",
-            "agent_2",
-            "ses_child_2",
-            "ses_parent",
-            "spawned",
-            Map.of(),
-            NOW.plusSeconds(1)
-        ));
-        DefaultMailboxService mailbox = mailbox(parentSession);
-        DefaultAgentRegistry registry = new DefaultAgentRegistry(
-            parentSession,
-            mailbox,
-            parentSessionId -> List.of(
-                new RunningAgentSnapshot(
-                    "agent_1",
-                    "ses_child_1",
-                    parentSessionId,
-                    "entry_spawn_1",
-                    Optional.of("Scout"),
-                    Optional.of("explorer")
-                )
-            ),
-            parentSessionId -> List.of()
-        );
-
-        List<AgentView> views = registry.list("ses_parent", Set.of());
-
-        assertThat(views)
-            .extracting(AgentView::agentId)
-            .containsExactly("agent_1", "agent_2");
-        assertThat(views.getFirst()).satisfies(view -> {
-            assertThat(view.status()).isEqualTo(AgentRunStatus.RUNNING);
-            assertThat(view.label()).isEqualTo("Scout [explorer]");
-            assertThat(view.childSessionId()).isEqualTo("ses_child_1");
-        });
-        assertThat(views.get(1)).satisfies(view -> {
-            assertThat(view.status()).isEqualTo(AgentRunStatus.UNKNOWN);
-            assertThat(view.label()).isEqualTo("agent_2");
-        });
-    }
-
-    @Test
-    void mergesMailboxStatusSummaryAndFinalEntryForCompletedAgent() {
-        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_leaf");
-        parentSession.append(new AgentLifecycleEntry(
-            "entry_spawn",
-            "entry_leaf",
-            "agent_1",
-            "ses_child",
-            "ses_parent",
-            "spawned",
-            Map.of(),
-            NOW
-        ));
-        parentSession.append(new AgentLifecycleEntry(
-            "entry_finished",
-            "entry_spawn",
-            "agent_1",
-            "ses_child",
-            "ses_parent",
-            "finished",
-            Map.of(),
-            NOW.plusSeconds(1)
-        ));
-        DefaultMailboxService mailbox = mailbox(parentSession);
-        mailbox.publish(new MailboxMessage(
-            "mail_1",
-            "agent_1",
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            "完成摘要",
-            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
-            MailboxStatus.PENDING,
-            NOW.plusSeconds(2),
-            NOW.plusSeconds(2)
+        mailbox.publish(completion(
+            "mail_hidden",
+            "hidden-task",
+            "agent_hidden",
+            "ses_child_hidden",
+            "entry_other_branch"
         ));
         DefaultAgentRegistry registry = new DefaultAgentRegistry(
-            parentSession,
+            parent,
             mailbox,
-            parentSessionId -> List.of(),
-            parentSessionId -> List.of()
-        );
-
-        List<AgentView> views = registry.list("ses_parent", Set.of(AgentRunStatus.SUCCEEDED));
-
-        assertThat(views).singleElement().satisfies(view -> {
-            assertThat(view.status()).isEqualTo(AgentRunStatus.SUCCEEDED);
-            assertThat(view.mailboxStatus()).hasValue(MailboxStatus.PENDING);
-            assertThat(view.summary()).hasValue("完成摘要");
-            assertThat(view.finalEntryId()).hasValue("entry_final");
-            assertThat(view.parentSpawnEntryId()).isEqualTo("entry_spawn");
-        });
-    }
-
-    @Test
-    void derivesCompletedStatusFromMailboxWhenFinishedLifecycleIsSidecarOnly() {
-        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_leaf");
-        parentSession.append(new AgentLifecycleEntry(
-            "entry_spawn",
-            "entry_leaf",
-            "agent_1",
-            "ses_child",
-            "ses_parent",
-            "spawned",
-            Map.of(),
-            NOW
-        ));
-        DefaultMailboxService mailbox = mailbox(parentSession);
-        mailbox.publish(new MailboxMessage(
-            "mail_1",
-            "agent_1",
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            "完成摘要",
-            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
-            MailboxStatus.PENDING,
-            NOW.plusSeconds(2),
-            NOW.plusSeconds(2)
-        ));
-        DefaultAgentRegistry registry = new DefaultAgentRegistry(
-            parentSession,
-            mailbox,
-            parentSessionId -> List.of(),
-            parentSessionId -> List.of()
-        );
-
-        List<AgentView> views = registry.list("ses_parent", Set.of(AgentRunStatus.SUCCEEDED));
-
-        assertThat(views).singleElement().satisfies(view -> {
-            assertThat(view.status()).isEqualTo(AgentRunStatus.SUCCEEDED);
-            assertThat(view.finalEntryId()).hasValue("entry_final");
-        });
-    }
-
-    @Test
-    void derivesFailedStatusFromMailboxEvenWhenFinalEntryExists() {
-        CapturingParentSession parentSession = new CapturingParentSession("ses_parent", "entry_leaf");
-        parentSession.append(new AgentLifecycleEntry(
-            "entry_spawn",
-            "entry_leaf",
-            "agent_1",
-            "ses_child",
-            "ses_parent",
-            "spawned",
-            Map.of(),
-            NOW
-        ));
-        DefaultMailboxService mailbox = mailbox(parentSession);
-        mailbox.publish(new MailboxMessage(
-            "mail_1",
-            "agent_1",
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            "执行失败",
-            new SubagentResultRef("ses_child", "entry_final", Optional.empty(), Optional.of(SubagentRunStatus.FAILED)),
-            MailboxStatus.PENDING,
-            NOW.plusSeconds(2),
-            NOW.plusSeconds(2)
-        ));
-        DefaultAgentRegistry registry = new DefaultAgentRegistry(
-            parentSession,
-            mailbox,
-            parentSessionId -> List.of(),
-            parentSessionId -> List.of()
-        );
-
-        assertThat(registry.list("ses_parent", Set.of(AgentRunStatus.SUCCEEDED))).isEmpty();
-        assertThat(registry.list("ses_parent", Set.of(AgentRunStatus.FAILED)))
-            .singleElement()
-            .satisfies(view -> assertThat(view.status()).isEqualTo(AgentRunStatus.FAILED));
-    }
-
-    @Test
-    void ignoresChildSnapshotsOutsideCurrentBranch() {
-        BranchingParentSession parentSession = new BranchingParentSession("ses_parent", "entry_visible");
-        DefaultMailboxService mailbox = mailbox(parentSession);
-        DefaultAgentRegistry registry = new DefaultAgentRegistry(
-            parentSession,
-            mailbox,
-            parentSessionId -> List.of(),
-            parentSessionId -> List.of(
-                new ChildAgentSnapshot(
-                    "ses_child_visible",
-                    "ses_parent",
-                    "entry_visible",
-                    Optional.of("Visible"),
-                    Optional.empty()
-                ),
-                new ChildAgentSnapshot(
-                    "ses_child_hidden",
-                    "ses_parent",
-                    "entry_hidden",
-                    Optional.of("Hidden"),
-                    Optional.empty()
-                )
+            ignored -> List.of(),
+            ignored -> List.of(
+                child("ses_child_visible", SPAWN_ENTRY_ID, "inspect-session"),
+                child("ses_child_hidden", "entry_other_branch", "hidden-task")
             )
         );
 
-        List<AgentView> views = registry.list("ses_parent", Set.of());
-
-        assertThat(views)
-            .extracting(AgentView::childSessionId)
-            .containsExactly("ses_child_visible");
+        assertThat(registry.list(PARENT_SESSION_ID, Set.of(AgentRunStatus.SUCCEEDED)))
+            .singleElement()
+            .satisfies(view -> {
+                assertThat(view.agentId()).isEqualTo("agent_visible");
+                assertThat(view.childSessionId()).isEqualTo("ses_child_visible");
+                assertThat(view.parentSpawnEntryId()).isEqualTo(SPAWN_ENTRY_ID);
+                assertThat(view.label()).isEqualTo("inspect-session");
+                assertThat(view.status()).isEqualTo(AgentRunStatus.SUCCEEDED);
+                assertThat(view.summary()).contains("done: inspect-session");
+                assertThat(view.finalEntryId()).contains("entry_final");
+            });
     }
 
     @Test
-    void listUsesRequestedLeafInsteadOfCurrentViewLeaf() {
-        BranchByLeafParentSession parentSession = new BranchByLeafParentSession("ses_parent", "entry_current");
-        DefaultMailboxService mailbox = mailbox(parentSession);
+    void projectsOnlyLiveRunsAttachedToCurrentBranch() {
         DefaultAgentRegistry registry = new DefaultAgentRegistry(
-            parentSession,
-            mailbox,
-            parentSessionId -> List.of(),
-            parentSessionId -> List.of()
+            parentSession(),
+            mailbox(),
+            ignored -> List.of(
+                running("agent_visible", "live-task", "ses_child_visible", SPAWN_ENTRY_ID),
+                running("agent_hidden", "hidden-task", "ses_child_hidden", "entry_other_branch")
+            ),
+            ignored -> List.of()
         );
 
-        List<AgentView> views = registry.list("ses_parent", Optional.of("entry_target"), Set.of());
-
-        assertThat(parentSession.requestedLeafIds).containsExactly("entry_target");
-        assertThat(views)
-            .extracting(AgentView::agentId)
-            .containsExactly("agent_target");
+        assertThat(registry.list(PARENT_SESSION_ID, Set.of(AgentRunStatus.RUNNING)))
+            .singleElement()
+            .satisfies(view -> {
+                assertThat(view.agentId()).isEqualTo("agent_visible");
+                assertThat(view.label()).isEqualTo("live-task");
+                assertThat(view.status()).isEqualTo(AgentRunStatus.RUNNING);
+            });
     }
 
-    private DefaultMailboxService mailbox(SessionManagerPort parentSession) {
-        return new DefaultMailboxService(
-            new JsonlMailboxStore(tempDir),
-            parentSession,
-            Clock.fixed(NOW, ZoneOffset.UTC)
+    @Test
+    void restoresCompletedAgentFromMailboxWithoutLiveOrChildState() {
+        mailbox().publish(completion(
+            "mail_persisted",
+            "persisted-task",
+            "agent_persisted",
+            "ses_child_persisted",
+            SPAWN_ENTRY_ID
+        ));
+        DefaultAgentRegistry restarted = new DefaultAgentRegistry(
+            parentSession(),
+            mailbox(),
+            ignored -> List.of(),
+            ignored -> List.of()
+        );
+
+        assertThat(restarted.list(PARENT_SESSION_ID, Set.of(AgentRunStatus.SUCCEEDED)))
+            .singleElement()
+            .satisfies(view -> {
+                assertThat(view.agentId()).isEqualTo("agent_persisted");
+                assertThat(view.childSessionId()).isEqualTo("ses_child_persisted");
+                assertThat(view.label()).isEqualTo("persisted-task");
+                assertThat(view.summary()).contains("done: persisted-task");
+            });
+    }
+
+    @Test
+    void restoresChildWithoutMailboxOrLiveRunAsUnknown() {
+        DefaultAgentRegistry restarted = new DefaultAgentRegistry(
+            parentSession(),
+            mailbox(),
+            ignored -> List.of(),
+            ignored -> List.of(child("ses_child_orphaned", SPAWN_ENTRY_ID, "orphaned-task"))
+        );
+
+        assertThat(restarted.list(PARENT_SESSION_ID, Set.of(AgentRunStatus.UNKNOWN)))
+            .singleElement()
+            .satisfies(view -> {
+                assertThat(view.childSessionId()).isEqualTo("ses_child_orphaned");
+                assertThat(view.parentSpawnEntryId()).isEqualTo(SPAWN_ENTRY_ID);
+                assertThat(view.label()).isEqualTo("orphaned-task");
+                assertThat(view.status()).isEqualTo(AgentRunStatus.UNKNOWN);
+                assertThat(view.summary()).isEmpty();
+            });
+    }
+
+    private ParentSession parentSession() {
+        return new ParentSession(List.of(
+            new CustomMessageEntry("entry_root", null, "root", Instant.EPOCH),
+            new CustomMessageEntry(SPAWN_ENTRY_ID, "entry_root", "spawn call", Instant.EPOCH)
+        ));
+    }
+
+    private DefaultMailboxService mailbox() {
+        return new DefaultMailboxService(new JsonlMailboxStore(tempDir), Clock.systemUTC());
+    }
+
+    private MailboxMessage completion(
+        String mailId,
+        String taskName,
+        String agentId,
+        String childSessionId,
+        String parentSpawnEntryId
+    ) {
+        return new MailboxMessage(
+            mailId,
+            taskName,
+            agentId,
+            childSessionId,
+            "run_" + agentId,
+            PARENT_SESSION_ID,
+            parentSpawnEntryId,
+            SubagentRunStatus.SUCCEEDED,
+            "done: " + taskName,
+            Optional.of("entry_final"),
+            Optional.empty(),
+            MailboxStatus.PENDING,
+            Instant.EPOCH,
+            Instant.EPOCH
         );
     }
 
-    private static final class CapturingParentSession implements SessionManagerPort {
-        private final String sessionId;
-        private String leafId;
-        private final List<SessionEntry> entries = new ArrayList<>();
-
-        private CapturingParentSession(String sessionId, String leafId) {
-            this.sessionId = sessionId;
-            this.leafId = leafId;
-        }
-
-        @Override
-        public SessionHandle openOrCreate(String sessionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle append(SessionEntry entry) {
-            entries.add(entry);
-            leafId = entry.id();
-            return new SessionHandle(sessionId, null, leafId, Map.of());
-        }
-
-        @Override
-        public SessionHandle switchLeaf(String leafId) {
-            this.leafId = leafId;
-            return new SessionHandle(sessionId, null, leafId, Map.of());
-        }
-
-        @Override
-        public List<SessionEntry> branch(String leafId) {
-            return entries;
-        }
-
-        @Override
-        public SessionView currentView() {
-            return new SessionView(sessionId, leafId);
-        }
-
-        @Override
-        public SessionView view(String leafId) {
-            return new SessionView(sessionId, leafId);
-        }
-
-        @Override
-        public List<AgentMessage> transcript(String leafId) {
-            return List.of();
-        }
-
-        @Override
-        public SessionContext context(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle appendMessage(AgentMessage message) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle fork(ForkRequest request) {
-            throw new UnsupportedOperationException();
-        }
+    private ChildAgentSnapshot child(String childSessionId, String parentSpawnEntryId, String taskName) {
+        return new ChildAgentSnapshot(
+            childSessionId,
+            PARENT_SESSION_ID,
+            parentSpawnEntryId,
+            Optional.of(taskName),
+            Optional.empty()
+        );
     }
 
-    private static final class BranchingParentSession implements SessionManagerPort {
-        private final String sessionId;
-        private final String leafId;
-
-        private BranchingParentSession(String sessionId, String leafId) {
-            this.sessionId = sessionId;
-            this.leafId = leafId;
-        }
-
-        @Override
-        public SessionHandle openOrCreate(String sessionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle append(SessionEntry entry) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle switchLeaf(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public List<SessionEntry> branch(String leafId) {
-            return List.of(new AgentLifecycleEntry(
-                "entry_visible",
-                null,
-                "agent_visible",
-                "ses_child_visible",
-                sessionId,
-                "spawned",
-                Map.of(),
-                NOW
-            ));
-        }
-
-        @Override
-        public SessionView currentView() {
-            return new SessionView(sessionId, leafId);
-        }
-
-        @Override
-        public SessionView view(String leafId) {
-            return new SessionView(sessionId, leafId);
-        }
-
-        @Override
-        public List<AgentMessage> transcript(String leafId) {
-            return List.of();
-        }
-
-        @Override
-        public SessionContext context(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle appendMessage(AgentMessage message) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle fork(ForkRequest request) {
-            throw new UnsupportedOperationException();
-        }
+    private RunningAgentSnapshot running(
+        String agentId,
+        String taskName,
+        String childSessionId,
+        String parentSpawnEntryId
+    ) {
+        return new RunningAgentSnapshot(
+            agentId,
+            taskName,
+            childSessionId,
+            "run_" + agentId,
+            PARENT_SESSION_ID,
+            parentSpawnEntryId
+        );
     }
 
-    private static final class BranchByLeafParentSession implements SessionManagerPort {
-        private final String sessionId;
-        private final String currentLeafId;
-        private final List<String> requestedLeafIds = new ArrayList<>();
-
-        private BranchByLeafParentSession(String sessionId, String currentLeafId) {
-            this.sessionId = sessionId;
-            this.currentLeafId = currentLeafId;
+    private record ParentSession(List<SessionEntry> entries) implements SessionManagerPort {
+        @Override public SessionHandle openOrCreate(String sessionId) { return null; }
+        @Override public SessionHandle append(SessionEntry entry) { return null; }
+        @Override public SessionHandle switchLeaf(String leafId) { return null; }
+        @Override public List<SessionEntry> branch(String leafId) { return entries; }
+        @Override public SessionView currentView() { return new SessionView(PARENT_SESSION_ID, SPAWN_ENTRY_ID); }
+        @Override public SessionView view(String leafId) { return new SessionView(PARENT_SESSION_ID, leafId); }
+        @Override public List<AgentMessage> transcript(String leafId) { return List.of(); }
+        @Override public SessionContext context(String leafId) {
+            return new SessionContext(List.of(), List.of(), List.of(), null, null, null, PermissionMode.ASK);
         }
-
-        @Override
-        public SessionHandle openOrCreate(String sessionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle append(SessionEntry entry) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle switchLeaf(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public List<SessionEntry> branch(String leafId) {
-            requestedLeafIds.add(leafId);
-            if ("entry_target".equals(leafId)) {
-                return List.of(new AgentLifecycleEntry(
-                    "entry_target",
-                    null,
-                    "agent_target",
-                    "ses_child_target",
-                    sessionId,
-                    "spawned",
-                    Map.of(),
-                    NOW
-                ));
-            }
-            return List.of(new AgentLifecycleEntry(
-                "entry_current",
-                null,
-                "agent_current",
-                "ses_child_current",
-                sessionId,
-                "spawned",
-                Map.of(),
-                NOW
-            ));
-        }
-
-        @Override
-        public SessionView currentView() {
-            return new SessionView(sessionId, currentLeafId);
-        }
-
-        @Override
-        public SessionView view(String leafId) {
-            return new SessionView(sessionId, leafId);
-        }
-
-        @Override
-        public List<AgentMessage> transcript(String leafId) {
-            return List.of();
-        }
-
-        @Override
-        public SessionContext context(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle appendMessage(AgentMessage message) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle fork(ForkRequest request) {
-            throw new UnsupportedOperationException();
-        }
+        @Override public SessionHandle appendMessage(AgentMessage message) { return null; }
+        @Override public SessionHandle fork(ForkRequest request) { return null; }
     }
 }
