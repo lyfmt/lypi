@@ -68,6 +68,7 @@ import org.junit.jupiter.api.Test;
 
 class JLineTuiTransportTest {
     private static final DiffViewProvider NOOP_DIFF_PROVIDER = (cwd, maxPatchBytes) -> Optional.empty();
+    private static final Path TEST_CWD = Path.of("/workspace/ly-pi");
 
     @Test
     void attachSubscribesToSessionEventsAndUiFlushRendersUnderUiLock() {
@@ -124,7 +125,8 @@ class JLineTuiTransportTest {
         assertEquals(1, occurrences(plainOutput, "LY-PI"));
         assertTrue(io.output.toString().contains("error: boom"));
         assertTrue(io.output.toString().contains("> "));
-        assertTrue(io.output.toString().contains("ses_1"));
+        assertTrue(io.output.toString().contains(TEST_CWD.toString()));
+        assertFalse(io.output.toString().contains("ses_1"));
 
         transport.close();
 
@@ -226,7 +228,7 @@ class JLineTuiTransportTest {
         assertFalse(frame.contains("\033[H\033[J"));
         assertTrue(stripAnsi(frame).contains("coding agent cockpit"));
         assertEquals(1, occurrences(stripAnsi(frame), "LY-PI"));
-        assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
+        assertTrue(frame.contains(TEST_CWD + " gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
         assertTrue(frame.contains("> "));
 
         transport.close();
@@ -401,7 +403,7 @@ class JLineTuiTransportTest {
         transport.flushPendingFrameForTest();
 
         assertEquals(1, diffProvider.calls);
-        assertEquals(Path.of("."), diffProvider.cwd);
+        assertEquals(TEST_CWD, diffProvider.cwd);
         assertTrue(io.output.toString().contains("diff: 1 file changed"));
         assertTrue(io.output.toString().contains("M src/App.java"));
         assertTrue(io.output.toString().contains("+new line"));
@@ -727,7 +729,7 @@ class JLineTuiTransportTest {
     private SessionRuntimeState runtimeState(String sessionId, String leafId) {
         return new SessionRuntimeState(
             sessionId,
-            Path.of("."),
+            TEST_CWD,
             leafId,
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
@@ -744,7 +746,7 @@ class JLineTuiTransportTest {
     private SessionRuntimeState runtimeStateWithTranscript(String sessionId, String leafId, String content) {
         return new SessionRuntimeState(
             sessionId,
-            Path.of("."),
+            TEST_CWD,
             leafId,
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
@@ -774,7 +776,7 @@ class JLineTuiTransportTest {
                 return List.of(new SessionResumeInfo(
                     Path.of("old.jsonl"),
                     state.sessionId(),
-                    Path.of("."),
+                    TEST_CWD,
                     Optional.empty(),
                     state.currentBranchLeafId(),
                     Instant.EPOCH,

@@ -32,6 +32,7 @@ class TuiRendererTest {
     private static final String INPUT_BACKGROUND = "\033[48;5;236m";
     private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
     private static final String ANSI_RESET = "\033[0m";
+    private static final String STATUS_CWD = "~/workspace";
 
     @Test
     void rendersCommittedBlocksAsStandaloneHistoryLines() {
@@ -56,7 +57,7 @@ class TuiRendererTest {
         );
         TuiViewModel view = new TuiViewModel(
             List.of(stable, streaming),
-            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            statusBar("ses_1", "gpt-5.4", "running", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -75,7 +76,7 @@ class TuiRendererTest {
         assertFalse(surface.lines().stream().anyMatch(line -> line.contains("stable history")));
         assertTrue(surface.lines().stream().anyMatch(line -> line.contains("streaming")));
         assertTrue(surface.lines().stream().anyMatch(line -> line.contains("> draft")));
-        assertTrue(surface.lines().getLast().contains("ses_1"));
+        assertTrue(surface.lines().getLast().contains(STATUS_CWD));
         assertTrue(surface.lines().size() <= 11);
     }
 
@@ -100,7 +101,7 @@ class TuiRendererTest {
         );
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.of(prompt),
             Optional.of(new DiffView(
@@ -131,8 +132,8 @@ class TuiRendererTest {
         assertTrue(rendered.contains("skill: @review"));
         assertTrue(rendered.contains("> resume: ses_2"));
         assertTrue(rendered.contains("diff: 1 file changed"));
-        assertEquals(1, surface.lines().stream().filter(line -> line.contains("ses_1")).count());
-        assertTrue(surface.lines().getLast().contains("ses_1"));
+        assertEquals(1, surface.lines().stream().filter(line -> line.contains(STATUS_CWD)).count());
+        assertTrue(surface.lines().getLast().contains(STATUS_CWD));
     }
 
     @Test
@@ -163,7 +164,7 @@ class TuiRendererTest {
                     true
                 )
             ),
-            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            statusBar("ses_1", "gpt-5.4", "running", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -187,7 +188,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "hello world", false)),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "tool:running"),
+            statusBar("ses_1", "gpt-5.4", "execute", "tool:running"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -208,7 +209,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("session-long", "very-long-model", "execute", "tool:running"),
+            statusBar("session-long", "very-long-model", "execute", "tool:running"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -248,7 +249,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void statusBarDoesNotRenderInternalRuntimeFields() {
+    void statusBarRendersWorkingDirectoryInsteadOfSessionId() {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
@@ -257,7 +258,7 @@ class TuiRendererTest {
                 "gpt-5.4",
                 "EXECUTE",
                 "DEFAULT_EXECUTE",
-                "long-project-name",
+                "~/src/study/ly-pi",
                 "leaf_1234567890",
                 "1234/200000tok",
                 true
@@ -269,7 +270,8 @@ class TuiRendererTest {
 
         List<String> lines = render(renderer, view, new TuiLayout(120, 3), "");
 
-        assertEquals("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE", lines.getLast());
+        assertEquals("~/src/study/ly-pi gpt-5.4 EXECUTE DEFAULT_EXECUTE", lines.getLast());
+        assertFalse(lines.getLast().contains("ses_1"));
         assertFalse(lines.getLast().contains("cwd:"));
         assertFalse(lines.getLast().contains("leaf:"));
         assertFalse(lines.getLast().contains("ctx:"));
@@ -281,7 +283,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "## Done ##\n- [x] task", false)),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -302,7 +304,7 @@ class TuiRendererTest {
                 new TuiThinkingBlock("t1", "m2", "分析路径", false, false),
                 new TuiMessageBlock("a1", "m2", "assistant", "已处理", false)
             ),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -320,7 +322,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiThinkingBlock("t1", "m1", "第一行\n第二行", false, false)),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -337,7 +339,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiThinkingBlock("t1", "m1", "第一行\n第二行\n第三行\n第四行\n第五行", false, false)),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -358,7 +360,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -375,7 +377,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -387,7 +389,7 @@ class TuiRendererTest {
         assertInputBorder(lines.get(0), 20);
         assertInputContent(lines.get(1), "> |CURSOR|" + INPUT_CURSOR);
         assertInputBorder(lines.get(2), 20);
-        assertTrue(lines.get(3).contains("ses_1"));
+        assertTrue(lines.get(3).contains(STATUS_CWD));
     }
 
     @Test
@@ -395,7 +397,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4-mini", "running", "DEFAULT_EXECUTE"),
+            statusBar("ses_1", "gpt-5.4-mini", "running", "DEFAULT_EXECUTE"),
             "compacting MANUAL",
             List.of(),
             Optional.empty(),
@@ -415,7 +417,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -425,7 +427,7 @@ class TuiRendererTest {
 
         assertEquals(2, lines.size());
         assertInputContent(lines.getFirst(), "fgh|CURSOR|" + INPUT_CURSOR);
-        assertTrue(lines.getLast().contains("ses_1"));
+        assertEquals(AnsiWidth.truncate(STATUS_CWD, 8), lines.getLast());
     }
 
     @Test
@@ -433,7 +435,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -456,7 +458,7 @@ class TuiRendererTest {
                 new TuiMessageBlock("b3", "m3", "assistant", "line3", false),
                 new TuiMessageBlock("b4", "m4", "assistant", "line4", false)
             ),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -480,7 +482,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -493,7 +495,7 @@ class TuiRendererTest {
         assertEquals("\033[48;5;236m> hello\033[0m", lines.get(1));
         assertEquals("\033[48;5;236mworld|CURSOR|" + INPUT_CURSOR + "\033[0m", lines.get(2));
         assertInputBorder(lines.get(3), 12);
-        assertTrue(lines.get(4).contains("ses_1"));
+        assertTrue(lines.get(4).contains(STATUS_CWD));
     }
 
     @Test
@@ -501,7 +503,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "history", false)),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -522,7 +524,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "history", false)),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -538,7 +540,7 @@ class TuiRendererTest {
         assertTrue(surface.lines().size() <= 2);
         assertTrue(surface.lines().stream().anyMatch(line -> line.contains("four")
             && line.contains(TuiRenderFrame.CURSOR_MARKER)));
-        assertTrue(surface.lines().getLast().contains("ses_1"));
+        assertEquals(AnsiWidth.truncate(STATUS_CWD, 10), surface.lines().getLast());
     }
 
     @Test
@@ -555,7 +557,7 @@ class TuiRendererTest {
         );
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.of(new PermissionPromptView(
                 "perm_toolu_1",
@@ -589,7 +591,7 @@ class TuiRendererTest {
         assertEquals("rule: bash:npm test", lines.get(3));
         assertEquals("> 允许一次", lines.get(4));
         assertEquals("  允许并记住", lines.get(5));
-        assertTrue(lines.getLast().contains("ses_1"));
+        assertTrue(lines.getLast().contains(STATUS_CWD));
     }
 
     @Test
@@ -610,7 +612,7 @@ class TuiRendererTest {
         );
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "previous", false)),
-            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            statusBar("ses_1", "gpt-5.4", "running", "default"),
             "working (12s)",
             List.of(),
             Optional.of(prompt),
@@ -649,7 +651,7 @@ class TuiRendererTest {
         );
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "latest message", false)),
-            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            statusBar("ses_1", "gpt-5.4", "running", "default"),
             List.of(),
             Optional.of(prompt),
             Optional.empty()
@@ -660,7 +662,7 @@ class TuiRendererTest {
         assertTrue(lines.size() <= 6);
         assertTrue(lines.stream().anyMatch(line -> line.contains("> Option 6")));
         assertTrue(lines.stream().anyMatch(line -> line.contains(TuiRenderFrame.CURSOR_MARKER)));
-        assertTrue(lines.getLast().contains("ses_1"));
+        assertTrue(lines.getLast().contains(STATUS_CWD));
         assertFalse(lines.stream().anyMatch(line -> line.contains("Option 1")));
     }
 
@@ -669,7 +671,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.of(new PermissionPromptView(
                 "perm_toolu_1",
@@ -704,7 +706,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.of(new DiffView(
@@ -733,7 +735,7 @@ class TuiRendererTest {
                 new TuiMessageBlock("b2", "m2", "assistant", "line2", false),
                 new TuiMessageBlock("b3", "m3", "assistant", "line3", false)
             ),
-            new StatusBarState("ses_1", "gpt-5.4", "running", "default"),
+            statusBar("ses_1", "gpt-5.4", "running", "default"),
             "retrying attempt 2 rate limit",
             List.of(),
             Optional.empty(),
@@ -747,10 +749,10 @@ class TuiRendererTest {
         assertInputBorder(lines.get(4), 40);
         assertInputContent(lines.get(5), "> ");
         assertInputBorder(lines.get(6), 40);
-        assertTrue(lines.getLast().contains("ses_1"));
+        assertTrue(lines.getLast().contains(STATUS_CWD));
         TuiViewModel withoutRuntime = new TuiViewModel(
             view.blocks(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -765,7 +767,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiToolBlock("tool:1", "msg_1", "toolu_1", "bash", TuiToolState.DONE, "Bash", "stdout: ok\nexit 0", false)),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -792,7 +794,7 @@ class TuiRendererTest {
                 "stdout: third\r\nstdout: fourth",
                 true
             )),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             "phase one\rphase two",
             List.of(),
             Optional.empty(),
@@ -822,7 +824,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4\r\nmini", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4\r\nmini", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -840,7 +842,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("session-long", "model-long", "execute", "tool:\nrunning"),
+            statusBar("session-long", "model-long", "execute", "tool:\nrunning"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -865,7 +867,7 @@ class TuiRendererTest {
                 "stdout: line 1\nstdout: line 2\nstdout: line 3\nstdout: line 4\nstdout: line 5\nstdout: line 6\nexit 1\nBUILD FAILURE",
                 false
             )),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -888,7 +890,7 @@ class TuiRendererTest {
                 new TuiToolBlock("tool:edit", "msg_1", "toolu_edit", "edit", TuiToolState.DONE, "src/App.java", "@@ -1 +1 @@\n-old\n+new", false),
                 new TuiToolBlock("tool:custom", "msg_1", "toolu_custom", "custom_tool", TuiToolState.RUNNING, "payload", "{\"key\":\"value\"}", true)
             ),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -917,7 +919,7 @@ class TuiRendererTest {
                     .toList()),
                 false
             )),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -948,7 +950,7 @@ class TuiRendererTest {
                 "class App {}\n",
                 false
             )),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -996,7 +998,7 @@ class TuiRendererTest {
                     true
                 )
             ),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -1033,7 +1035,7 @@ class TuiRendererTest {
                     .toList()),
                 true
             )),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -1053,7 +1055,7 @@ class TuiRendererTest {
         assertTrue(lines.stream().anyMatch(line -> line.contains("more lines") || line.contains("earlier lines")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("> draft")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("> /model")));
-        assertTrue(lines.getLast().contains("ses_1"));
+        assertTrue(lines.getLast().contains(STATUS_CWD));
     }
 
     @Test
@@ -1075,7 +1077,7 @@ class TuiRendererTest {
             .toList();
         TuiViewModel view = new TuiViewModel(
             tools,
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -1121,7 +1123,7 @@ class TuiRendererTest {
                 details,
                 false
             )),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -1151,7 +1153,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
-            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            statusBar("ses_1", "gpt-5.4", "execute", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -1172,7 +1174,7 @@ class TuiRendererTest {
         assertTrue(lines.get(2).startsWith("> /model"));
         assertTrue(lines.get(3).contains("  /thinking"));
         assertTrue(lines.get(4).contains("  /compact"));
-        assertTrue(lines.get(5).contains("ses_1"));
+        assertTrue(lines.get(5).contains(STATUS_CWD));
     }
 
     @Test
@@ -1183,7 +1185,7 @@ class TuiRendererTest {
                 new TuiMessageBlock("b1", "m1", "assistant", "hello", false),
                 new TuiMessageBlock("b2", "m2", "assistant", "world", false)
             ),
-            new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
+            statusBar("ses_1", "gpt-5.4", "ready", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -1223,7 +1225,7 @@ class TuiRendererTest {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(new TuiMessageBlock("b1", "m1", "assistant", "test", false)),
-            new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
+            statusBar("ses_1", "gpt-5.4", "ready", "default"),
             List.of(),
             Optional.empty(),
             Optional.empty()
@@ -1237,6 +1239,24 @@ class TuiRendererTest {
         );
 
         assertEquals(withoutOverlay, withEmptyOverlay);
+    }
+
+    private static StatusBarState statusBar(
+        String sessionId,
+        String model,
+        String mode,
+        String permissionMode
+    ) {
+        return new StatusBarState(
+            sessionId,
+            model,
+            mode,
+            permissionMode,
+            STATUS_CWD,
+            "",
+            "",
+            false
+        );
     }
 
     private List<String> render(
