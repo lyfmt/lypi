@@ -431,7 +431,7 @@ final class SlashCommandRouter {
 
     private SlashCommandResult routePermissionMode(SlashCommandArguments arguments, String reason) {
         if (arguments.positionals().size() != 1) {
-            return SlashCommandResult.error("usage: /permission-mode <default-execute|accept-edits|bypass>");
+            return SlashCommandResult.error("usage: /permission-mode <ask|auto|bypass>");
         }
         PermissionMode mode = parseEnum(PermissionMode.class, arguments.positionals().getFirst());
         if (mode == null) {

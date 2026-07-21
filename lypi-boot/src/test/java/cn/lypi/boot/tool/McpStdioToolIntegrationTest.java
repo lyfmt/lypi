@@ -128,7 +128,7 @@ class McpStdioToolIntegrationTest {
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.ASK,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO)
         );
     }

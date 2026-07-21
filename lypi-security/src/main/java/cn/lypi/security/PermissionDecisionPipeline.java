@@ -360,7 +360,7 @@ public final class PermissionDecisionPipeline {
         PermissionRuntimeState runtimeState,
         BashRiskAnalysis bashRisk
     ) {
-        // NOTE: BYPASS 仍不能越过未知 Bash；DEFAULT_EXECUTE 对非低风险 Bash 更保守。
+        // NOTE: ASK 对非低风险 Bash 保持更保守的 review 原因；最终路由仍由权限模式决定。
         if (!isBashTool(request.toolName())) {
             return Optional.empty();
         }
@@ -475,9 +475,9 @@ public final class PermissionDecisionPipeline {
             return PermissionRuntimeState.fromLegacy(permissionMode);
         }
         if (value instanceof String permissionMode) {
-            return PermissionRuntimeState.fromLegacy(PermissionMode.valueOf(permissionMode));
+            return PermissionRuntimeState.fromLegacy(PermissionMode.fromJson(permissionMode));
         }
-        return PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
+        return PermissionRuntimeState.forMode(PermissionMode.ASK);
     }
 
     private boolean strictAutoReview(ToolUseContext context) {

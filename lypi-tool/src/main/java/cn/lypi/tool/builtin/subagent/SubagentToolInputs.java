@@ -98,17 +98,17 @@ final class SubagentToolInputs {
             return permissionMode;
         }
         if (value == null || value.toString().isBlank()) {
-            return PermissionMode.DEFAULT_EXECUTE;
+            return PermissionMode.ASK;
         }
         String normalized = normalizeEnumToken(value.toString());
         if (normalized.equals("USEDEFAULT") || normalized.equals("USE_DEFAULT") || normalized.equals("DEFAULT")) {
-            return PermissionMode.DEFAULT_EXECUTE;
+            return PermissionMode.ASK;
         }
         try {
-            return PermissionMode.valueOf(normalized);
+            return PermissionMode.fromJson(normalized);
         } catch (IllegalArgumentException exception) {
             throw new IllegalArgumentException(
-                "permissionMode 不支持: %s。允许值: %s。默认执行模式请省略该字段，或使用 DEFAULT_EXECUTE；兼容别名: useDefault/use_default。"
+                "permissionMode 不支持: %s。允许值: %s。默认请省略该字段，或使用 ask；兼容旧值 DEFAULT_EXECUTE/ACCEPT_EDITS。"
                     .formatted(value, String.join(", ", SubagentToolSchemas.PERMISSION_MODE_VALUES))
             );
         }

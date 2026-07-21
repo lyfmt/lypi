@@ -176,7 +176,7 @@ public record SubagentSpawnRequest(
 
     @JsonGetter("permissionMode")
     public PermissionMode permissionMode() {
-        return permissionRuntimeState.legacyPermissionMode();
+        return permissionRuntimeState.mode();
     }
 
     @JsonCreator
@@ -225,6 +225,6 @@ public record SubagentSpawnRequest(
         if (permissionRuntimeState != null) {
             return permissionRuntimeState;
         }
-        return PermissionRuntimeState.fromLegacy(Objects.requireNonNullElse(permissionMode, PermissionMode.DEFAULT_EXECUTE));
+        return PermissionRuntimeState.fromLegacy(Objects.requireNonNullElse(permissionMode, PermissionMode.ASK));
     }
 }

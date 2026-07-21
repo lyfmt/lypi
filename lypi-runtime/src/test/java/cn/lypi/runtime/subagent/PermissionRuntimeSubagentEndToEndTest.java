@@ -54,7 +54,7 @@ class PermissionRuntimeSubagentEndToEndTest {
         CapturingSession childSession = new CapturingSession(
             "ses_child",
             "entry_child_leaf",
-            PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS)
+            PermissionRuntimeState.fromLegacy(PermissionMode.AUTO)
         );
         CompletingProcessRunner processRunner = new CompletingProcessRunner();
         DefaultAgentCenter center = center(childSessions, parentSession, childSession, processRunner);
@@ -66,7 +66,7 @@ class PermissionRuntimeSubagentEndToEndTest {
             tempDir,
             List.of(),
             SubagentToolPolicy.empty(),
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             30,
             Optional.empty(),
             Optional.empty(),
@@ -115,7 +115,7 @@ class PermissionRuntimeSubagentEndToEndTest {
     void continueWithoutPermissionOverrideUsesChildCurrentRuntimeState() {
         CapturingChildSessions childSessions = new CapturingChildSessions();
         CapturingSession parentSession = new CapturingSession("ses_parent", "entry_parent", customPermissionRuntimeState());
-        PermissionRuntimeState childRuntimeState = PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS);
+        PermissionRuntimeState childRuntimeState = PermissionRuntimeState.fromLegacy(PermissionMode.AUTO);
         CapturingSession childSession = new CapturingSession("ses_child", "entry_child_leaf", childRuntimeState);
         CompletingProcessRunner processRunner = new CompletingProcessRunner();
         DefaultAgentCenter center = center(childSessions, parentSession, childSession, processRunner);
@@ -127,7 +127,7 @@ class PermissionRuntimeSubagentEndToEndTest {
             tempDir,
             List.of(),
             SubagentToolPolicy.empty(),
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             30,
             Optional.empty(),
             Optional.empty(),
@@ -192,7 +192,7 @@ class PermissionRuntimeSubagentEndToEndTest {
             new ActivePermissionProfile(":workspace-write"),
             cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, true),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 

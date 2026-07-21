@@ -9,6 +9,7 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.runtime.AppEntry;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
@@ -42,6 +43,7 @@ class RuntimeBeanFactoriesTest {
 
         assertThat(state.sessionId()).isEqualTo("ses_factory");
         assertThat(state.cwd()).isEqualTo(Path.of("/tmp/project").toAbsolutePath().normalize());
+        assertThat(state.permissionRuntimeState()).isEqualTo(sessionManager.permissionRuntimeState);
         assertThat(sessionManager.openedSessionIds).containsExactly("ses_factory");
         assertThat(sessionManager.temporarySessionIds).isEmpty();
     }
@@ -82,7 +84,7 @@ class RuntimeBeanFactoriesTest {
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO),
             false,
             false,
@@ -109,6 +111,7 @@ class RuntimeBeanFactoriesTest {
     private static final class RecordingSessionManager implements cn.lypi.contracts.runtime.SessionManagerPort {
         private final List<String> openedSessionIds = new ArrayList<>();
         private final List<String> temporarySessionIds = new ArrayList<>();
+        private final PermissionRuntimeState permissionRuntimeState = PermissionRuntimeState.forMode(PermissionMode.AUTO);
 
         @Override
         public SessionHandle openOrCreate(String sessionId) {
@@ -154,7 +157,15 @@ class RuntimeBeanFactoriesTest {
 
         @Override
         public SessionContext context(String leafId) {
-            throw new UnsupportedOperationException();
+            return new SessionContext(
+                List.of(),
+                List.of(),
+                List.of(),
+                new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
+                ThinkingLevel.MEDIUM,
+                AgentMode.EXECUTE,
+                permissionRuntimeState
+            );
         }
 
         @Override

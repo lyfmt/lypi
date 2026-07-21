@@ -37,7 +37,7 @@ final class SessionReplayProjector {
     private final PermissionRuntimeState defaultPermissionRuntimeState;
 
     SessionReplayProjector() {
-        this(DEFAULT_MODEL, ThinkingLevel.MEDIUM, AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE);
+        this(DEFAULT_MODEL, ThinkingLevel.MEDIUM, AgentMode.EXECUTE, PermissionMode.ASK);
     }
 
     SessionReplayProjector(

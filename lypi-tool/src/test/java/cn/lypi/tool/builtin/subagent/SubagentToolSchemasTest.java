@@ -20,11 +20,11 @@ class SubagentToolSchemasTest {
         assertEquals("integer", timeout.get("type"));
         assertEquals(1, timeout.get("minimum"));
         assertEquals(1_200, timeout.get("maximum"));
-        assertEquals(List.of("DEFAULT_EXECUTE", "ACCEPT_EDITS", "BYPASS"), permissionMode.get("enum"));
+        assertEquals(List.of("ask", "auto", "bypass"), permissionMode.get("enum"));
         assertEquals(List.of("PLAN", "EXECUTE"), agentMode.get("enum"));
         assertEquals(List.of("LOW", "MEDIUM", "HIGH", "MAX"), thinkingLevel.get("enum"));
-        assertTrue(permissionMode.get("description").toString().contains("useDefault"));
-        assertTrue(permissionMode.get("description").toString().contains("legacy"));
+        assertTrue(permissionMode.get("description").toString().contains("ask"));
+        assertTrue(permissionMode.get("description").toString().contains("继承父 session"));
         assertTrue(permissionRuntimeState.get("description").toString().contains("canonical"));
         assertTrue(permissionRuntimeState.get("description").toString().contains("approvalPolicy"));
         assertTrue(permissionRuntimeState.get("description").toString().contains("activePermissionProfile"));

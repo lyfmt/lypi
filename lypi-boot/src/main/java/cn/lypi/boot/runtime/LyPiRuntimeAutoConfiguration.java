@@ -24,6 +24,7 @@ import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionProfileSelection;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
@@ -55,8 +56,10 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.ConfigurationPropertiesBinding;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.convert.converter.Converter;
 
 @AutoConfiguration(after = {
     cn.lypi.boot.ai.LyPiAiAutoConfiguration.class,
@@ -68,6 +71,12 @@ import org.springframework.context.annotation.Bean;
     LyPiPermissionsProperties.class
 })
 public class LyPiRuntimeAutoConfiguration {
+    @Bean
+    @ConfigurationPropertiesBinding
+    public static Converter<String, PermissionMode> permissionModeConverter() {
+        return PermissionMode::fromJson;
+    }
+
     /**
      * 创建默认事件总线。
      */

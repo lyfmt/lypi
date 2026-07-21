@@ -102,7 +102,7 @@ class PermissionRuntimeEndToEndTest {
 
             assertThat(bootstrap.systemPrompt().content())
                 .contains("## Permissions")
-                .contains("approval policy: NEVER")
+                .contains("approval policy metadata: NEVER")
                 .contains("active sandbox profile: :danger-full-access")
                 .contains("request_permissions")
                 .contains("sandboxPermissions=requireEscalated")
@@ -196,7 +196,7 @@ class PermissionRuntimeEndToEndTest {
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO)
         );
     }

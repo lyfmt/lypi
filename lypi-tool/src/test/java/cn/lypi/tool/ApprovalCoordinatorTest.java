@@ -67,7 +67,7 @@ class ApprovalCoordinatorTest {
     }
 
     @Test
-    void askNeverPolicyDeniesWithoutCallingGate() {
+    void askModeCallsGateRegardlessOfLegacyApprovalPolicy() {
         AtomicInteger gateCalls = new AtomicInteger();
         ApprovalCoordinator coordinator = coordinator(
             (request, tool, context, decision) -> {
@@ -85,13 +85,12 @@ class ApprovalCoordinatorTest {
             askDecision(Optional.empty(), Map.of("approvalKind", ApprovalKind.COMMAND))
         );
 
-        assertEquals(PermissionGateResult.Status.DENY, result.status());
-        assertTrue(result.message().orElseThrow().contains("never"));
-        assertEquals(0, gateCalls.get());
+        assertEquals(PermissionGateResult.Status.ALLOW, result.status());
+        assertEquals(1, gateCalls.get());
     }
 
     @Test
-    void legacyOnlyBypassModeDeniesAskWithoutCallingGate() {
+    void legacyOnlyBypassModeAllowsWithoutCallingGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         ApprovalCoordinator coordinator = coordinator(
             (request, tool, context, decision) -> {
@@ -109,8 +108,7 @@ class ApprovalCoordinatorTest {
             askDecision(Optional.empty(), Map.of("approvalKind", ApprovalKind.COMMAND))
         );
 
-        assertEquals(PermissionGateResult.Status.DENY, result.status());
-        assertTrue(result.message().orElseThrow().contains("never"));
+        assertEquals(PermissionGateResult.Status.ALLOW, result.status());
         assertEquals(0, gateCalls.get());
     }
 
@@ -209,7 +207,7 @@ class ApprovalCoordinatorTest {
             Path.of("/workspace"),
             Map.of(
                 ToolRuntimeContextFactory.METADATA_PERMISSION_MODE,
-                runtimeState.legacyPermissionMode(),
+                runtimeState.mode(),
                 ToolRuntimeContextFactory.METADATA_PERMISSION_RUNTIME_STATE,
                 runtimeState
             )
@@ -231,7 +229,7 @@ class ApprovalCoordinatorTest {
             new ActivePermissionProfile(":workspace"),
             cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, true),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 

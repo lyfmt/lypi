@@ -52,7 +52,7 @@ public final class RequestPermissionsTool implements Tool<Map<String, Object>, R
     @Override
     public String description() {
         return "Request additional filesystem or network permissions for the current turn or session. "
-            + "The model may request permissions; the active approval policy decides whether a prompt is shown.";
+            + "ASK routes the request to the user, AUTO uses the independent model reviewer, and BYPASS skips review.";
     }
 
     @Override

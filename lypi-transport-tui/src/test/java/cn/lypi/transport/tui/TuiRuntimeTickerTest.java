@@ -103,7 +103,7 @@ class TuiRuntimeTickerTest {
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             cn.lypi.contracts.security.AgentMode.EXECUTE,
-            cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE,
+            cn.lypi.contracts.security.PermissionMode.ASK,
             new ContextBudget(0, 0, 0, 0, 0, 0, 0, java.math.BigDecimal.ZERO),
             List.of(),
             false,

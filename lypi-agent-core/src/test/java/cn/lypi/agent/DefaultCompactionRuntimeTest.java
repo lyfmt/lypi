@@ -35,7 +35,7 @@ class DefaultCompactionRuntimeTest {
     void compactBuildsContextAndDelegatesToCoordinator() {
         RecordingAssembler assembler = new RecordingAssembler();
         RecordingCoordinator coordinator = new RecordingCoordinator(new CompactionDecision(
-            new ContextSnapshot(null, java.util.List.of(), null, null, null, PermissionMode.DEFAULT_EXECUTE, null),
+            new ContextSnapshot(null, java.util.List.of(), null, null, null, PermissionMode.ASK, null),
             Optional.of(new CompactionPlan("entry-compact-1", "leaf_3", java.util.List.of("leaf_1"), CompactionKind.MANUAL)),
             true,
             "compacted",
@@ -66,7 +66,7 @@ class DefaultCompactionRuntimeTest {
     void compactDelegatesCurrentToolSnapshotForManualMcpBackfill() {
         RecordingAssembler assembler = new RecordingAssembler();
         RecordingCoordinator coordinator = new RecordingCoordinator(new CompactionDecision(
-            new ContextSnapshot(null, java.util.List.of(), null, null, null, PermissionMode.DEFAULT_EXECUTE, null),
+            new ContextSnapshot(null, java.util.List.of(), null, null, null, PermissionMode.ASK, null),
             Optional.empty(),
             false,
             "within budget"
@@ -132,7 +132,7 @@ class DefaultCompactionRuntimeTest {
                 null,
                 null,
                 null,
-                PermissionMode.DEFAULT_EXECUTE,
+                PermissionMode.ASK,
                 new cn.lypi.contracts.context.ContextBudget(10, 128_000, 100_000, 8_192, 16_384, 0, 0, java.math.BigDecimal.ZERO)
             ),
             AgentCoreTestFixtures.emptyResources(),

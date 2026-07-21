@@ -1,6 +1,7 @@
 package cn.lypi.boot.tool;
 
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextBudget;
@@ -20,6 +21,11 @@ import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantEventStream;
+import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.AssistantStreamResult;
+import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.mcp.McpServerConfig;
 import cn.lypi.contracts.mcp.McpStdioServerConfig;
@@ -28,6 +34,7 @@ import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.Executor;
@@ -44,8 +51,10 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
@@ -75,6 +84,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -106,6 +116,37 @@ class LyPiToolAutoConfigurationTest {
                 assertThat(runtime.resolve("bash")).isPresent();
                 assertThat(runtime.resolve("read")).isPresent();
                 assertThat(runtime.resolve("glob")).isPresent();
+            });
+    }
+
+    @Test
+    void defaultSandboxResolverFollowsRuntimePermissionMode() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+                Path cwd = Path.of(".").toAbsolutePath();
+
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.ASK)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.MANAGED);
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.BYPASS)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.DISABLED);
+            });
+    }
+
+    @Test
+    void explicitDefaultPermissionsProfileOverridesRuntimeMode() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues("lypi.permissions.default-permissions=:workspace")
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+                Path cwd = Path.of(".").toAbsolutePath();
+
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.BYPASS)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.MANAGED);
             });
     }
 
@@ -350,6 +391,32 @@ class LyPiToolAutoConfigurationTest {
                 assertThat(result.isError()).isTrue();
                 assertThat(((ToolResultContentBlock) result.newMessages().getFirst().content().getFirst()).text())
                     .contains("权限请求未获允许");
+            });
+    }
+
+    @Test
+    void autoRuntimeUsesModelPermissionReviewerWithoutUserGate() {
+        RecordingPermissionReviewProvider provider = new RecordingPermissionReviewProvider(
+            "{\"decision\":\"allow\",\"reason\":\"matches request\"}"
+        );
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(AiProviderRuntimePort.class, () -> provider)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                runtime.register(new AskTool());
+
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "ask-test", Map.of("text", "approved"), "msg_1")),
+                    context(PermissionMode.AUTO)
+                ).getFirst();
+
+                assertThat(result.isError()).isFalse();
+                assertThat(provider.calls).isEqualTo(1);
+                assertThat(provider.tools.tools()).isEmpty();
+                assertThat(provider.context.model()).isEqualTo(context(PermissionMode.AUTO).model());
             });
     }
 
@@ -643,13 +710,17 @@ class LyPiToolAutoConfigurationTest {
     }
 
     private static ContextSnapshot context() {
+        return context(PermissionMode.ASK);
+    }
+
+    private static ContextSnapshot context(PermissionMode permissionMode) {
         return new ContextSnapshot(
             new SystemPrompt("system", List.of(), "hash"),
             List.of(),
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            permissionMode,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO)
         );
     }
@@ -772,6 +843,60 @@ class LyPiToolAutoConfigurationTest {
         @Override
         public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
             return () -> {
+            };
+        }
+    }
+
+    private static final class RecordingPermissionReviewProvider implements AiProviderRuntimePort {
+        private final String output;
+        private ContextSnapshot context;
+        private ToolRegistrySnapshot tools;
+        private int calls;
+
+        private RecordingPermissionReviewProvider(String output) {
+            this.output = output;
+        }
+
+        @Override
+        public AssistantEventStream stream(ContextSnapshot context, AbortSignal signal) {
+            throw new AssertionError("reviewer must provide an explicit empty tool snapshot");
+        }
+
+        @Override
+        public AssistantEventStream stream(
+            ContextSnapshot context,
+            ToolRegistrySnapshot tools,
+            AbortSignal signal
+        ) {
+            this.context = context;
+            this.tools = tools;
+            calls++;
+            List<AssistantStreamEvent> events = List.of(
+                new TextDelta(output),
+                new AssistantDone(Optional.empty(), Optional.of("stop"))
+            );
+            return new AssistantEventStream() {
+                @Override
+                public Iterator<AssistantStreamEvent> iterator() {
+                    return events.iterator();
+                }
+
+                @Override
+                public AssistantStreamResult result() {
+                    return new AssistantStreamResult(
+                        "review",
+                        events,
+                        Optional.empty(),
+                        Optional.of("stop"),
+                        true,
+                        false,
+                        Optional.empty()
+                    );
+                }
+
+                @Override
+                public void close() {
+                }
             };
         }
     }

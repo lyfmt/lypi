@@ -76,7 +76,7 @@ class JsonSubagentProcessRunnerTest {
             "请审查代码",
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             timeoutSeconds
         );
     }

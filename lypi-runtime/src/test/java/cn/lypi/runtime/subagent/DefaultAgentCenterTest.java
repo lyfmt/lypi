@@ -86,7 +86,7 @@ class DefaultAgentCenterTest {
             "请审查代码",
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             Optional.of("reviewer"),
             Optional.of("code-review")
@@ -256,13 +256,13 @@ class DefaultAgentCenterTest {
             "请审查代码",
             tempDir,
             List.of(),
-            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.AUTO,
             30,
             Optional.empty(),
             Optional.empty()
         ));
 
-        PermissionRuntimeState explicitRuntimeState = PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS);
+        PermissionRuntimeState explicitRuntimeState = PermissionRuntimeState.fromLegacy(PermissionMode.AUTO);
         assertThat(childSessions.request.permissionRuntimeState()).contains(explicitRuntimeState);
         assertThat(processRunner.input.permissionRuntimeState()).isEqualTo(explicitRuntimeState);
     }
@@ -278,7 +278,7 @@ class DefaultAgentCenterTest {
             new ModelSelection("parent-provider", "parent-model", ThinkingLevel.MAX),
             ThinkingLevel.MAX,
             AgentMode.PLAN,
-            PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS)
+            PermissionRuntimeState.fromLegacy(PermissionMode.AUTO)
         );
         CompletingProcessRunner processRunner = new CompletingProcessRunner();
         DefaultAgentCenter center = center(childSessions, parentSession, processRunner);
@@ -468,7 +468,7 @@ class DefaultAgentCenterTest {
             Optional.of("entry_final_1"),
             Optional.empty()
         ));
-        PermissionRuntimeState defaultRuntimeState = PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
+        PermissionRuntimeState defaultRuntimeState = PermissionRuntimeState.fromLegacy(PermissionMode.ASK);
 
         center.continueRun(new SubagentContinueRequest(
             "ses_parent",
@@ -478,7 +478,7 @@ class DefaultAgentCenterTest {
             tempDir,
             List.of(),
             SubagentToolPolicy.empty(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             Optional.empty(),
             Optional.empty(),
@@ -517,7 +517,7 @@ class DefaultAgentCenterTest {
             tempDir,
             List.of("read", "bash"),
             new SubagentToolPolicy(List.of("read", "bash"), List.of("read", "grep", "glob", "bash")),
-            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.AUTO,
             30,
             Optional.empty(),
             Optional.empty(),
@@ -530,8 +530,8 @@ class DefaultAgentCenterTest {
             .contains(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH));
         assertThat(childSessions.request.initialThinkingLevel()).contains(ThinkingLevel.HIGH);
         assertThat(childSessions.request.initialAgentMode()).contains(AgentMode.EXECUTE);
-        assertThat(childSessions.request.initialPermissionMode()).contains(PermissionMode.ACCEPT_EDITS);
-        assertThat(processRunner.input.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
+        assertThat(childSessions.request.initialPermissionMode()).contains(PermissionMode.AUTO);
+        assertThat(processRunner.input.permissionMode()).isEqualTo(PermissionMode.AUTO);
         assertThat(processRunner.input.toolPolicy().requestedTools()).containsExactly("read", "bash");
         assertThat(processRunner.input.toolPolicy().effectiveTools()).containsExactly("read", "grep", "glob", "bash");
     }
@@ -868,7 +868,7 @@ class DefaultAgentCenterTest {
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         CompletingProcessRunner processRunner = new CompletingProcessRunner();
         DefaultMailboxService mailbox = new DefaultMailboxService(
@@ -895,7 +895,7 @@ class DefaultAgentCenterTest {
             tempDir,
             List.of(),
             new SubagentToolPolicy(List.of(), List.of()),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             Optional.empty(),
             Optional.empty(),
@@ -909,7 +909,7 @@ class DefaultAgentCenterTest {
             .contains(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH));
         assertThat(childSessions.request.initialThinkingLevel()).contains(ThinkingLevel.HIGH);
         assertThat(childSessions.request.initialAgentMode()).contains(AgentMode.EXECUTE);
-        assertThat(childSessions.request.initialPermissionMode()).contains(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(childSessions.request.initialPermissionMode()).contains(PermissionMode.ASK);
     }
 
     @Test
@@ -940,7 +940,7 @@ class DefaultAgentCenterTest {
             "请审查代码",
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             Optional.empty(),
             Optional.empty()
@@ -981,7 +981,7 @@ class DefaultAgentCenterTest {
             "请审查代码",
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             Optional.empty(),
             Optional.empty()
@@ -1031,7 +1031,7 @@ class DefaultAgentCenterTest {
             "请审查代码",
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             Optional.empty(),
             Optional.empty()
@@ -1082,7 +1082,7 @@ class DefaultAgentCenterTest {
             "请审查代码",
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             Optional.of("Scout"),
             Optional.of("explorer")
@@ -1228,7 +1228,7 @@ class DefaultAgentCenterTest {
             "请审查代码",
             childCwd,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             Optional.empty(),
             Optional.empty()
@@ -1257,7 +1257,7 @@ class DefaultAgentCenterTest {
             tempDir,
             List.of(),
             SubagentToolPolicy.empty(),
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             30,
             Optional.empty(),
             Optional.empty(),
@@ -1274,7 +1274,7 @@ class DefaultAgentCenterTest {
             new ActivePermissionProfile(":workspace-write"),
             cn.lypi.contracts.security.PermissionProfiles.readOnly(),
             new LegacyPermissionBehavior(false, false, false),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 
@@ -1415,7 +1415,7 @@ class DefaultAgentCenterTest {
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
 
         private CapturingParentSession(String sessionId, String leafId) {

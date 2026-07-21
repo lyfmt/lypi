@@ -42,7 +42,7 @@ class FilteredToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "hello"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -59,7 +59,7 @@ class FilteredToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "cat", Map.of("text", "hello"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());

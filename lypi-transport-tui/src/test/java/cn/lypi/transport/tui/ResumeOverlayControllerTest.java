@@ -199,7 +199,7 @@ class ResumeOverlayControllerTest {
             new cn.lypi.contracts.model.ModelSelection("openai", "gpt-5.4", cn.lypi.contracts.model.ThinkingLevel.MEDIUM),
             cn.lypi.contracts.model.ThinkingLevel.MEDIUM,
             cn.lypi.contracts.security.AgentMode.EXECUTE,
-            cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE,
+            cn.lypi.contracts.security.PermissionMode.ASK,
             new cn.lypi.contracts.context.ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, java.math.BigDecimal.ZERO),
             transcript,
             false,

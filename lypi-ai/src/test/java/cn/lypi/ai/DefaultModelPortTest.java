@@ -158,7 +158,7 @@ class DefaultModelPortTest {
             selection,
             thinkingLevel,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
         );
     }

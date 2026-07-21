@@ -47,9 +47,9 @@ public final class ToolRuntimeContextFactory {
         Map<String, Object> metadata = new LinkedHashMap<>();
         AgentMode agentMode = context == null ? AgentMode.EXECUTE : context.mode();
         PermissionRuntimeState permissionRuntimeState = context == null
-            ? PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE)
+            ? PermissionRuntimeState.forMode(PermissionMode.ASK)
             : context.permissionRuntimeState();
-        PermissionMode permissionMode = permissionRuntimeState.legacyPermissionMode();
+        PermissionMode permissionMode = permissionRuntimeState.mode();
         metadata.putAll(options.metadata());
         metadata.put(METADATA_AGENT_MODE, agentMode);
         metadata.put(METADATA_PERMISSION_RUNTIME_STATE, permissionRuntimeState);

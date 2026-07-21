@@ -6,7 +6,7 @@ import java.util.Map;
 final class SubagentToolSchemas {
     static final int DEFAULT_TIMEOUT_SECONDS = 1_200;
     static final int MAX_TIMEOUT_SECONDS = 1_200;
-    static final List<String> PERMISSION_MODE_VALUES = List.of("DEFAULT_EXECUTE", "ACCEPT_EDITS", "BYPASS");
+    static final List<String> PERMISSION_MODE_VALUES = List.of("ask", "auto", "bypass");
     static final List<String> AGENT_MODE_VALUES = List.of("PLAN", "EXECUTE");
 
     private SubagentToolSchemas() {
@@ -25,7 +25,7 @@ final class SubagentToolSchemas {
         return Map.of(
             "type", "string",
             "enum", PERMISSION_MODE_VALUES,
-            "description", "legacy 子 Agent 权限模式。新协议优先使用 permissionRuntimeState；默认请省略或使用 DEFAULT_EXECUTE；兼容 useDefault/use_default。"
+            "description", "子 Agent 权限模式。可选 ask、auto 或 bypass；默认继承父 session。"
         );
     }
 

@@ -225,7 +225,7 @@ class AnthropicCompatibleProviderAdapterTest {
             new ModelSelection("anthropic", "claude-sonnet-4-5", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 200_000, 160_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
         );
     }

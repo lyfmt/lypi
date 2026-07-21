@@ -36,7 +36,7 @@ class ResumeBranchTreeSelectorTest {
             assistant("asst-1", "user-1", "hi"),
             user("user-2", "asst-1", "active branch"),
             new ModelChangeEntry("model-1", "user-2", new ModelSelection("openai", "gpt-5.4", ThinkingLevel.MEDIUM), "test", NOW),
-            new PermissionRuntimeStateChangeEntry("permission-1", "model-1", PermissionMode.DEFAULT_EXECUTE, NOW),
+            new PermissionRuntimeStateChangeEntry("permission-1", "model-1", PermissionMode.ASK, NOW),
             user("user-3", "asst-1", "sibling branch")
         );
 

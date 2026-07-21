@@ -90,7 +90,7 @@ class DefaultContextAssemblerTest {
             new ModelSelection("openai", "gpt-test", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         DefaultContextAssembler assembler = new DefaultContextAssembler(
             sessionManager,
@@ -113,7 +113,7 @@ class DefaultContextAssemblerTest {
         assertThat(assembly.snapshot().model().modelId()).isEqualTo("gpt-test");
         assertThat(assembly.snapshot().thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(assembly.snapshot().mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(assembly.snapshot().permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(assembly.snapshot().permissionMode()).isEqualTo(PermissionMode.ASK);
         assertThat(assembly.branchEntryIds()).containsExactly("entry-user");
         assertThat(assembly.appliedCompactionEntryIds()).containsExactly("entry-compact");
         assertThat(assembly.budgetExceeded()).isFalse();
@@ -128,7 +128,7 @@ class DefaultContextAssemblerTest {
             new ModelSelection("fixture", "configured-model", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         DefaultContextAssembler assembler = new DefaultContextAssembler(
             sessionManager,
@@ -215,7 +215,7 @@ class DefaultContextAssemblerTest {
             new ModelSelection("default", "default", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         DefaultContextAssembler assembler = new DefaultContextAssembler(
             sessionManager,
@@ -245,7 +245,7 @@ class DefaultContextAssemblerTest {
             new ModelSelection("default", "default", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         DefaultContextAssembler assembler = new DefaultContextAssembler(
             sessionManager,
@@ -374,7 +374,7 @@ class DefaultContextAssemblerTest {
             new ActivePermissionProfile(":workspace-write"),
             cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, false),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 }

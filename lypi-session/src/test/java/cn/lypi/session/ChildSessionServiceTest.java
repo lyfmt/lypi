@@ -92,7 +92,7 @@ class ChildSessionServiceTest {
             Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
             Optional.of(ThinkingLevel.HIGH),
             Optional.of(AgentMode.EXECUTE),
-            Optional.of(PermissionMode.DEFAULT_EXECUTE),
+            Optional.of(PermissionMode.ASK),
             new SubagentToolPolicy(List.of("bash"), List.of("read", "grep", "glob", "bash"))
         ));
 
@@ -101,7 +101,7 @@ class ChildSessionServiceTest {
         assertThat(header.initialModel()).contains(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH));
         assertThat(header.initialThinkingLevel()).contains(ThinkingLevel.HIGH);
         assertThat(header.initialAgentMode()).contains(AgentMode.EXECUTE);
-        assertThat(header.initialPermissionMode()).contains(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(header.initialPermissionMode()).contains(PermissionMode.ASK);
     }
 
     @Test

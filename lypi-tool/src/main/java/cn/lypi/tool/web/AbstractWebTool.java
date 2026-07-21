@@ -127,7 +127,7 @@ abstract class AbstractWebTool implements Tool<Map<String, Object>, String> {
         if (value instanceof PermissionRuntimeState state) {
             return state;
         }
-        return PermissionRuntimeState.fromLegacy(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE);
+        return PermissionRuntimeState.forMode(cn.lypi.contracts.security.PermissionMode.ASK);
     }
 
     private Map<String, Object> withNetworkMode(Map<String, Object> metadata, NetworkPolicyMode networkMode) {

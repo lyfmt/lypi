@@ -197,7 +197,7 @@ class HeadlessSubagentRunnerTest {
             Path.of("/tmp/project/.lypi-store"),
             Path.of("/tmp/project/work"),
             new SubagentToolPolicy(List.of(), List.of()),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             HeadlessSubagentRunMode.CONTINUE
         ));
@@ -224,7 +224,7 @@ class HeadlessSubagentRunnerTest {
             Path.of("/tmp/project/.lypi-store"),
             Path.of("/tmp/project/work"),
             toolPolicy,
-            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.AUTO,
             30,
             HeadlessSubagentRunMode.START
         ));
@@ -248,7 +248,7 @@ class HeadlessSubagentRunnerTest {
             Path.of("/tmp/project/.lypi-store"),
             Path.of("/tmp/project/work"),
             new SubagentToolPolicy(List.of(), List.of()),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             HeadlessSubagentRunMode.START,
             List.of(skill)
@@ -267,7 +267,7 @@ class HeadlessSubagentRunnerTest {
             Path.of("/tmp/project/.lypi-store"),
             Path.of("/tmp/project/work"),
             new SubagentToolPolicy(List.of(), List.of()),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             null
         );
@@ -279,7 +279,7 @@ class HeadlessSubagentRunnerTest {
             new ActivePermissionProfile(":workspace-write"),
             cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, false),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 
@@ -350,7 +350,7 @@ class HeadlessSubagentRunnerTest {
         private SessionManagerPort openedSessionManager;
 
         private CapturingSessionFactory(String leafId) {
-            this(leafId, PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE));
+            this(leafId, PermissionRuntimeState.fromLegacy(PermissionMode.ASK));
         }
 
         private CapturingSessionFactory(String leafId, PermissionRuntimeState permissionRuntimeState) {

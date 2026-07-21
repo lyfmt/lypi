@@ -62,7 +62,7 @@ class TuiContractSessionIntegrationTest {
         manager.append(new PermissionModeChangeEntry(
             "permission_mode_change",
             "mode_change",
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             "/permission-mode default",
             NOW
         ));
@@ -122,7 +122,7 @@ class TuiContractSessionIntegrationTest {
         assertThat(context.model().modelId()).isEqualTo("gpt-5.4");
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ASK);
         assertThat(context.messages())
             .extracting(AgentMessage::id)
             .containsExactly("summary-compact", "msg_tool_result", "msg_after");

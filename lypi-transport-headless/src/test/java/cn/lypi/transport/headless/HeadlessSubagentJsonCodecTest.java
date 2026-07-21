@@ -46,7 +46,7 @@ class HeadlessSubagentJsonCodecTest {
         assertThat(input.parentSpawnEntryId()).isEqualTo("entry_spawn");
         assertThat(input.cwd()).isEqualTo(Path.of("/tmp/project"));
         assertThat(input.allowedTools()).containsExactly("read", "grep");
-        assertThat(input.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(input.permissionMode()).isEqualTo(PermissionMode.ASK);
         assertThat(input.timeoutSeconds()).isEqualTo(30);
     }
 
@@ -83,7 +83,7 @@ class HeadlessSubagentJsonCodecTest {
         HeadlessSubagentInput input = codec.readInput(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)));
 
         assertThat(input.permissionRuntimeState()).isEqualTo(customPermissionRuntimeState());
-        assertThat(input.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(input.permissionMode()).isEqualTo(PermissionMode.ASK);
     }
 
     @Test
@@ -120,7 +120,7 @@ class HeadlessSubagentJsonCodecTest {
         HeadlessSubagentInput input = codec.readInput(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)));
 
         assertThat(input.permissionRuntimeState()).isEqualTo(customPermissionRuntimeState());
-        assertThat(input.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(input.permissionMode()).isEqualTo(PermissionMode.ASK);
     }
 
     @Test
@@ -147,7 +147,7 @@ class HeadlessSubagentJsonCodecTest {
         String json = out.toString(StandardCharsets.UTF_8);
         assertThat(json).contains("\"permissionRuntimeState\"");
         assertThat(json).contains("\"approvalPolicy\"");
-        assertThat(json).contains("\"permissionMode\":\"DEFAULT_EXECUTE\"");
+        assertThat(json).contains("\"permissionMode\":\"ask\"");
     }
 
     @Test
@@ -214,7 +214,7 @@ class HeadlessSubagentJsonCodecTest {
             new ActivePermissionProfile(":workspace-write"),
             cn.lypi.contracts.security.PermissionProfiles.readOnly(),
             new LegacyPermissionBehavior(false, false, false),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 }

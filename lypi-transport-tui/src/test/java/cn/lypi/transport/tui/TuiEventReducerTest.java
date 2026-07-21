@@ -582,7 +582,7 @@ class TuiEventReducerTest {
         assertEquals("ses_1", reducer.view().statusBar().sessionId());
         assertEquals("gpt-5.4", reducer.view().statusBar().model());
         assertEquals("EXECUTE", reducer.view().statusBar().mode());
-        assertEquals("DEFAULT_EXECUTE", reducer.view().statusBar().permissionMode());
+        assertEquals("ASK", reducer.view().statusBar().permissionMode());
         assertEquals("ON_REQUEST", reducer.view().statusBar().approvalMode());
         assertEquals(":workspace", reducer.view().statusBar().activePermissionProfileId());
         assertEquals("ly-pi", reducer.view().statusBar().cwd());
@@ -614,8 +614,8 @@ class TuiEventReducerTest {
                 new ApprovalPolicy(ApprovalMode.ON_FAILURE),
                 new ActivePermissionProfile("project-dev", Optional.of(":workspace")),
                 cn.lypi.contracts.security.PermissionProfiles.workspace(),
-                PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS).legacyBehavior(),
-                PermissionMode.ACCEPT_EDITS
+                PermissionRuntimeState.fromLegacy(PermissionMode.AUTO).legacyBehavior(),
+                PermissionMode.AUTO
             ),
             TestRuntimeStates.basic("ses_1").budget(),
             List.of(),
@@ -627,7 +627,7 @@ class TuiEventReducerTest {
 
         TuiEventReducer reducer = TuiEventReducer.withRuntimeState(runtimeState);
 
-        assertEquals("ACCEPT_EDITS", reducer.view().statusBar().permissionMode());
+        assertEquals("AUTO", reducer.view().statusBar().permissionMode());
         assertEquals("ON_FAILURE", reducer.view().statusBar().approvalMode());
         assertEquals("project-dev", reducer.view().statusBar().activePermissionProfileId());
     }
@@ -641,7 +641,7 @@ class TuiEventReducerTest {
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             TestRuntimeStates.basic("ses_old").budget(),
             List.of(
                 new AgentMessage(
@@ -1296,7 +1296,7 @@ class TuiEventReducerTest {
         assertEquals("ses_1", status.sessionId());
         assertEquals("gpt-5.4", status.model());
         assertEquals("EXECUTE", status.mode());
-        assertEquals("DEFAULT_EXECUTE", status.permissionMode());
+        assertEquals("ASK", status.permissionMode());
         assertEquals("ly-pi", status.cwd());
         assertEquals("leaf_1", status.branchLeafId());
         assertEquals("1234/200000tok", status.budget());

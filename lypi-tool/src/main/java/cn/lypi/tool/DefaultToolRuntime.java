@@ -107,6 +107,29 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     public DefaultToolRuntime(
         ToolRuntimeOptions options,
         SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        EventBus eventBus,
+        PermissionReviewer permissionReviewer
+    ) {
+        this(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(normalizeOptions(options)),
+            ToolExecutionInterceptors.noop(),
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionGate),
+            lifecyclePublisher(eventBus),
+            normalizeOptions(options),
+            PermissionUpdateStore.noop(),
+            permissionReviewer
+        );
+    }
+
+    public DefaultToolRuntime(
+        ToolRuntimeOptions options,
+        SecurityRuntimePort securityRuntime,
         PermissionResponseGate permissionResponseGate,
         EventBus eventBus
     ) {
@@ -171,6 +194,35 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             lifecyclePublisher(eventBus),
             ToolRuntimeOptions.defaults(),
             permissionUpdateStore
+        );
+    }
+
+    public DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionResponseGate permissionResponseGate,
+        EventBus eventBus,
+        PermissionUpdateStore permissionUpdateStore,
+        PermissionReviewer permissionReviewer
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionResponseGate),
+            lifecyclePublisher(eventBus),
+            ToolRuntimeOptions.defaults(),
+            permissionUpdateStore,
+            permissionReviewer
         );
     }
 
@@ -275,6 +327,35 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         );
     }
 
+    public DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        EventBus eventBus,
+        PermissionUpdateStore permissionUpdateStore,
+        PermissionReviewer permissionReviewer
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionGate),
+            lifecyclePublisher(eventBus),
+            ToolRuntimeOptions.defaults(),
+            permissionUpdateStore,
+            permissionReviewer
+        );
+    }
+
     DefaultToolRuntime(
         ToolRegistry registry,
         ToolSchemaValidator schemaValidator,
@@ -368,6 +449,36 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         ToolRuntimeOptions options,
         PermissionUpdateStore permissionUpdateStore
     ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            permissionGate,
+            eventPublisher,
+            options,
+            permissionUpdateStore,
+            PermissionReviewer.denying()
+        );
+    }
+
+    private DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        ToolExecutionEventPublisher eventPublisher,
+        ToolRuntimeOptions options,
+        PermissionUpdateStore permissionUpdateStore,
+        PermissionReviewer permissionReviewer
+    ) {
         ToolRuntimeOptions normalizedOptions = normalizeOptions(options);
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
         this.callResolver = new ToolCallResolver(this.registry);
@@ -388,7 +499,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             this.permissionUpdateStore,
             this.runtimePermissionRules,
             new SandboxEscalationPolicy(),
-            new BashSandboxRiskPolicy()
+            new BashSandboxRiskPolicy(),
+            permissionReviewer
         );
         this.maxConcurrency = normalizedOptions.maxConcurrency();
         this.batchExecutor = new ToolBatchExecutor(this.maxConcurrency);
@@ -523,7 +635,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             request.toolName(),
             turnState
         );
-        return executeStartedCall(request, originalToolName, tool.name(), tool, input, toolContext, turnState);
+        return executeStartedCall(request, originalToolName, tool.name(), tool, input, context, toolContext, turnState);
     }
 
     private ToolResult<?> executeUnknownCall(
@@ -576,6 +688,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         String toolName,
         Tool<Map<String, Object>, ?> tool,
         Map<String, Object> input,
+        ContextSnapshot contextSnapshot,
         ToolUseContext toolContext,
         TurnPermissionState turnState
     ) {
@@ -615,7 +728,8 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 request,
                 tool,
                 input,
-                toolContext
+                toolContext,
+                contextSnapshot
             );
             if (!permissionResult.allowed()) {
                 status = statusForGateResult(permissionResult.gateResult());

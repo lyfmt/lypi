@@ -121,12 +121,16 @@ final class RuntimeBeanFactories {
         LyPiPermissionsProperties permissionsProperties,
         PermissionProfileSelection selection
     ) {
-        PermissionRuntimeState legacyState = PermissionRuntimeState.fromLegacy(properties.getPermissionMode());
+        PermissionRuntimeState modeState = PermissionRuntimeState.forMode(properties.getPermissionMode());
+        boolean configuredProfileOverridesMode = permissionsProperties.hasExplicitProfileConfig()
+            || !":workspace".equals(selection.activePermissionProfile().id());
         PermissionRuntimeState runtimeState = new PermissionRuntimeState(
-            permissionsProperties.getApprovalPolicy().toApprovalPolicy(),
-            selection.activePermissionProfile(),
-            selection.permissionProfile(),
-            legacyState.legacyBehavior(),
+            permissionsProperties.hasExplicitApprovalPolicyConfig()
+                ? permissionsProperties.getApprovalPolicy().toApprovalPolicy()
+                : modeState.approvalPolicy(),
+            configuredProfileOverridesMode ? selection.activePermissionProfile() : modeState.activePermissionProfile(),
+            configuredProfileOverridesMode ? selection.permissionProfile() : modeState.permissionProfile(),
+            modeState.legacyBehavior(),
             properties.getPermissionMode()
         );
         return sessionManager(properties, runtimeState);
@@ -445,6 +449,7 @@ final class RuntimeBeanFactories {
         var handle = properties.isSessionIdConfigured()
             ? sessionManager.openOrCreate(properties.getSessionId())
             : sessionManager.openTemporary(properties.getSessionId());
+        var sessionContext = sessionManager.context(handle.leafId());
         return new SessionRuntimeState(
             handle.sessionId(),
             properties.getCwd(),
@@ -452,8 +457,9 @@ final class RuntimeBeanFactories {
             new ModelSelection(properties.getDefaultProvider(), properties.getDefaultModel(), properties.getThinkingLevel()),
             properties.getThinkingLevel(),
             properties.getAgentMode(),
-            properties.getPermissionMode(),
+            sessionContext.permissionRuntimeState(),
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
+            List.of(),
             false,
             false,
             false,

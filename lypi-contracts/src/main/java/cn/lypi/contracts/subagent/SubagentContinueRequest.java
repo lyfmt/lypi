@@ -56,7 +56,7 @@ public record SubagentContinueRequest(
             cwd,
             allowedTools,
             new SubagentToolPolicy(allowedTools, allowedTools),
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             timeoutSeconds,
             Optional.empty(),
             Optional.empty(),
@@ -79,7 +79,7 @@ public record SubagentContinueRequest(
             null,
             tools,
             new SubagentToolPolicy(tools, tools),
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             timeoutSeconds,
             Optional.empty(),
             Optional.empty(),
@@ -158,7 +158,7 @@ public record SubagentContinueRequest(
 
     @JsonGetter("permissionMode")
     public PermissionMode permissionMode() {
-        return permissionRuntimeState.legacyPermissionMode();
+        return permissionRuntimeState.mode();
     }
 
     @JsonCreator
@@ -205,6 +205,6 @@ public record SubagentContinueRequest(
         if (permissionRuntimeState != null) {
             return permissionRuntimeState;
         }
-        return PermissionRuntimeState.fromLegacy(Objects.requireNonNullElse(permissionMode, PermissionMode.DEFAULT_EXECUTE));
+        return PermissionRuntimeState.fromLegacy(Objects.requireNonNullElse(permissionMode, PermissionMode.ASK));
     }
 }

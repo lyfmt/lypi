@@ -38,9 +38,9 @@
 #     agent-mode: execute
 #
 #     # 重要性：必须谨慎。权限模式决定工具调用是否需要审批以及默认放行范围。
-#     # 可选值：default_execute、accept_edits、bypass。
-#     # 建议：默认 default_execute；高信任自动化场景才考虑 bypass。
-#     permission-mode: default_execute
+#     # 可选值：ask、auto、bypass。
+#     # 建议：默认 ask；需要模型自动复核时使用 auto，高信任自动化场景才考虑 bypass。
+#     permission-mode: ask
 #
 #     # 重要性：可选覆盖。启动传输入口。
 #     # 当前内置值：headless、tui。
@@ -54,15 +54,15 @@
 #   permissions:
 #     # 重要性：可选覆盖。Codex 风格权限 profile 入口；新配置优先于 runtime.permission-mode。
 #     # 内置值：:read-only、:workspace、:danger-full-access、:external。
-#     # 建议：日常开发保持 :workspace；只读审查使用 :read-only；全权限自动化需明确评估 hard safety 边界。
+#     # 建议：日常开发保持 :workspace；只读审查使用 :read-only；全权限自动化需明确评估宿主机执行和网络风险。
 #     default-permissions: :workspace
 #
-#     # 重要性：可选覆盖。审批策略决定运行时是否可以询问用户。
+#     # 重要性：兼容性配置。工具调用的最终复核路由由 runtime.permission-mode 决定。
 #     # 可选值：on_request、granular、never；unless_trusted/on_failure 为兼容预留，当前等价于 on_request。
 #     approval-policy:
 #       mode: on_request
 #
-#       # mode=granular 时生效，用于分别控制沙盒提权、规则修订、request_permissions 和 MCP elicitation。
+#       # mode=granular 时写入兼容运行态；当前工具调用仍由 runtime.permission-mode 选择最终复核方。
 #       # NOTE: skill-approval 为协议预留字段，当前没有独立生产审批种类。
 #       granular:
 #         sandbox-approval: on_request

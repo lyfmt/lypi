@@ -18,7 +18,7 @@ class PermissionRuntimeStateResolverTest {
 
     @Test
     void startsFromBootDefaultState() {
-        PermissionRuntimeState base = PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS);
+        PermissionRuntimeState base = PermissionRuntimeState.fromLegacy(PermissionMode.AUTO);
 
         PermissionRuntimeStateResolver.ResolvedRuntimeState resolved = resolver.resolve(
             base,
@@ -44,7 +44,7 @@ class PermissionRuntimeStateResolverTest {
         );
 
         PermissionRuntimeStateResolver.ResolvedRuntimeState resolved = resolver.resolve(
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             List.of(sessionOverride, turnOverride),
             false
         );
@@ -66,7 +66,7 @@ class PermissionRuntimeStateResolverTest {
         );
 
         PermissionRuntimeStateResolver.ResolvedRuntimeState resolved = resolver.resolve(
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             List.of(legacyOverride),
             false
         );
@@ -83,7 +83,7 @@ class PermissionRuntimeStateResolverTest {
         );
 
         PermissionRuntimeStateResolver.ResolvedRuntimeState resolved = resolver.resolve(
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             List.of(turnOverride),
             true
         );
@@ -94,7 +94,7 @@ class PermissionRuntimeStateResolverTest {
     @Test
     void explicitContinueOverrideCanClearStrictAutoReview() {
         PermissionRuntimeStateResolver.ResolvedRuntimeState resolved = resolver.resolve(
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             List.of(
                 override(Optional.empty(), Optional.empty(), Optional.of(true)),
                 override(Optional.empty(), Optional.empty(), Optional.of(false))
@@ -108,7 +108,7 @@ class PermissionRuntimeStateResolverTest {
     @Test
     void childSessionSpawnDoesNotInheritTurnScopedStrictAutoReview() {
         PermissionRuntimeStateResolver.ResolvedRuntimeState parent = resolver.resolve(
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             List.of(override(Optional.empty(), Optional.empty(), Optional.of(true))),
             false
         );

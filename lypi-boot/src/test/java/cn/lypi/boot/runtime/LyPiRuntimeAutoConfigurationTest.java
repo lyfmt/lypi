@@ -201,7 +201,60 @@ class LyPiRuntimeAutoConfigurationTest {
                     .isEqualTo(ApprovalMode.GRANULAR);
                 assertThat(sessionContext.permissionRuntimeState().approvalPolicy().granularApprovalPolicy().orElseThrow().rules())
                     .isEqualTo(ApprovalMode.NEVER);
-                assertThat(sessionContext.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+                assertThat(sessionContext.permissionMode()).isEqualTo(PermissionMode.ASK);
+                assertThat(context.getBean(SessionRuntimeState.class).permissionRuntimeState())
+                    .isEqualTo(sessionContext.permissionRuntimeState());
+            });
+    }
+
+    @Test
+    void defaultRuntimeStateUsesPermissionModeSandboxProfile() {
+        runtimeAutoConfigurations()
+            .withPropertyValues("lypi.runtime.permission-mode=bypass")
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_bypass_profile");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo(":danger-full-access");
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().kind())
+                    .isEqualTo(cn.lypi.contracts.security.PermissionProfile.Kind.DISABLED);
+                assertThat(sessionContext.permissionRuntimeState().approvalPolicy().mode())
+                    .isEqualTo(ApprovalMode.NEVER);
+            });
+    }
+
+    @Test
+    void legacyPermissionModeConfigAliasesRemainReadable() {
+        runtimeConfiguration()
+            .withPropertyValues("lypi.runtime.permission-mode=default_execute")
+            .run(context -> assertThat(context.getBean(LyPiRuntimeProperties.class).getPermissionMode())
+                .isEqualTo(PermissionMode.ASK));
+        runtimeConfiguration()
+            .withPropertyValues("lypi.runtime.permission-mode=accept_edits")
+            .run(context -> assertThat(context.getBean(LyPiRuntimeProperties.class).getPermissionMode())
+                .isEqualTo(PermissionMode.AUTO));
+    }
+
+    @Test
+    void explicitDefaultPermissionsOverridesPermissionModeSandboxProfile() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.runtime.permission-mode=bypass",
+                "lypi.permissions.default-permissions=:workspace"
+            )
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_explicit_workspace_profile");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo(":workspace");
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().kind())
+                    .isEqualTo(cn.lypi.contracts.security.PermissionProfile.Kind.MANAGED);
             });
     }
 
@@ -394,7 +447,7 @@ class LyPiRuntimeAutoConfigurationTest {
 
                 PermissionDecision decision = security.decide(
                     new ToolUseRequest("toolu_1", "bash", Map.of("command", "go test ./..."), "msg_1"),
-                    new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.DEFAULT_EXECUTE))
+                    new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.ASK))
                 );
 
                 assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
@@ -424,13 +477,13 @@ class LyPiRuntimeAutoConfigurationTest {
 
                 PermissionDecision decision = security.decide(
                     new ToolUseRequest("toolu_1", "bash", Map.of("command", "cargo build --workspace"), "msg_1"),
-                    new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.DEFAULT_EXECUTE))
+                    new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.ASK))
                 );
 
                 assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
                 PermissionDecision otherSessionDecision = security.decide(
                     new ToolUseRequest("toolu_2", "bash", Map.of("command", "cargo build --workspace"), "msg_1"),
-                    new ToolUseContext("ses_2", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.DEFAULT_EXECUTE))
+                    new ToolUseContext("ses_2", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.ASK))
                 );
                 assertThat(otherSessionDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
             });
@@ -554,7 +607,7 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(bootstrap.systemPrompt()).isNotNull();
                 assertThat(bootstrap.systemPrompt().content())
                     .contains("## Permissions")
-                    .contains("approval policy: ON_REQUEST")
+                    .contains("approval policy metadata: ON_REQUEST")
                     .contains("active sandbox profile: :workspace")
                     .contains("request_permissions")
                     .contains("sandboxPermissions=requireEscalated")
@@ -914,7 +967,7 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(state.model()).isEqualTo(new ModelSelection("default", "default", ThinkingLevel.MEDIUM));
                 assertThat(state.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
                 assertThat(state.agentMode()).isEqualTo(AgentMode.EXECUTE);
-                assertThat(state.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+                assertThat(state.permissionMode()).isEqualTo(PermissionMode.ASK);
                 assertThat(events.events).hasAtLeastOneElementOfType(cn.lypi.contracts.event.SessionStartEvent.class);
                 assertThat(events.events).hasAtLeastOneElementOfType(SessionStateEvent.class);
             });
@@ -1481,7 +1534,7 @@ class LyPiRuntimeAutoConfigurationTest {
                     "执行检查",
                     tempDir,
                     List.of(),
-                    PermissionMode.DEFAULT_EXECUTE,
+                    PermissionMode.ASK,
                     30,
                     java.util.Optional.empty(),
                     java.util.Optional.empty()
@@ -1692,7 +1745,7 @@ class LyPiRuntimeAutoConfigurationTest {
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO)
         );
     }
@@ -1719,7 +1772,7 @@ class LyPiRuntimeAutoConfigurationTest {
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO),
             hasInterruptibleTool,
             hasActiveTurn,
@@ -2135,7 +2188,7 @@ class LyPiRuntimeAutoConfigurationTest {
 
         @Override
         public boolean isReadOnly(Map<String, Object> input) {
-            return true;
+            return false;
         }
 
         @Override

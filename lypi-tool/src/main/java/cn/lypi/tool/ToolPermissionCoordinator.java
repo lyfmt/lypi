@@ -1,13 +1,14 @@
 package cn.lypi.tool;
 
-import cn.lypi.contracts.runtime.SandboxPermissions;
+import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
-import cn.lypi.contracts.security.BashRiskAnalysis;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRule;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -20,8 +21,6 @@ import java.util.Optional;
  * 协调安全运行时、工具权限和交互式权限确认。
  */
 final class ToolPermissionCoordinator {
-    private static final String INPUT_SANDBOX_PERMISSIONS = "sandboxPermissions";
-
     private final SecurityRuntimePort securityRuntime;
     private final ApprovalCoordinator approvalCoordinator;
     private final InlineAdditionalPermissionsAuthorizer additionalPermissionsAuthorizer;
@@ -36,12 +35,33 @@ final class ToolPermissionCoordinator {
         SandboxEscalationPolicy sandboxEscalationPolicy,
         BashSandboxRiskPolicy bashSandboxRiskPolicy
     ) {
+        this(
+            securityRuntime,
+            permissionGate,
+            permissionUpdateStore,
+            runtimePermissionRules,
+            sandboxEscalationPolicy,
+            bashSandboxRiskPolicy,
+            PermissionReviewer.denying()
+        );
+    }
+
+    ToolPermissionCoordinator(
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        PermissionUpdateStore permissionUpdateStore,
+        List<PermissionRule> runtimePermissionRules,
+        SandboxEscalationPolicy sandboxEscalationPolicy,
+        BashSandboxRiskPolicy bashSandboxRiskPolicy,
+        PermissionReviewer permissionReviewer
+    ) {
         this.securityRuntime = securityRuntime;
         this.approvalCoordinator = new ApprovalCoordinator(
             permissionGate,
             permissionUpdateStore,
-            runtimePermissionRules,
-            new ApprovalRequestFactory()
+            new RuntimePermissionRuleStore(runtimePermissionRules),
+            new ApprovalRequestFactory(),
+            permissionReviewer
         );
         this.additionalPermissionsAuthorizer = new InlineAdditionalPermissionsAuthorizer(this.approvalCoordinator);
         this.sandboxEscalationPolicy = sandboxEscalationPolicy == null ? new SandboxEscalationPolicy() : sandboxEscalationPolicy;
@@ -56,12 +76,33 @@ final class ToolPermissionCoordinator {
         SandboxEscalationPolicy sandboxEscalationPolicy,
         BashSandboxRiskPolicy bashSandboxRiskPolicy
     ) {
+        this(
+            securityRuntime,
+            permissionGate,
+            permissionUpdateStore,
+            runtimePermissionRules,
+            sandboxEscalationPolicy,
+            bashSandboxRiskPolicy,
+            PermissionReviewer.denying()
+        );
+    }
+
+    ToolPermissionCoordinator(
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        PermissionUpdateStore permissionUpdateStore,
+        RuntimePermissionRuleStore runtimePermissionRules,
+        SandboxEscalationPolicy sandboxEscalationPolicy,
+        BashSandboxRiskPolicy bashSandboxRiskPolicy,
+        PermissionReviewer permissionReviewer
+    ) {
         this.securityRuntime = securityRuntime;
         this.approvalCoordinator = new ApprovalCoordinator(
             permissionGate,
             permissionUpdateStore,
             runtimePermissionRules,
-            new ApprovalRequestFactory()
+            new ApprovalRequestFactory(),
+            permissionReviewer
         );
         this.additionalPermissionsAuthorizer = new InlineAdditionalPermissionsAuthorizer(this.approvalCoordinator);
         this.sandboxEscalationPolicy = sandboxEscalationPolicy == null ? new SandboxEscalationPolicy() : sandboxEscalationPolicy;
@@ -74,34 +115,34 @@ final class ToolPermissionCoordinator {
         Map<String, Object> input,
         ToolUseContext context
     ) {
-        PermissionDecision securityDecision = securityRuntime.decide(request, context);
-        Optional<Result> additionalPermissionsResult = additionalPermissionsAuthorizer.authorize(
-            request,
-            tool,
-            context,
-            securityDecision
-        );
-        if (additionalPermissionsResult.isPresent()) {
-            return additionalPermissionsResult.get();
+        return authorize(request, tool, input, context, null);
+    }
+
+    Result authorize(
+        ToolUseRequest request,
+        Tool<Map<String, Object>, ?> tool,
+        Map<String, Object> input,
+        ToolUseContext context,
+        ContextSnapshot contextSnapshot
+    ) {
+        PermissionMode mode = runtimeState(context).mode();
+        if (mode == PermissionMode.BYPASS) {
+            return additionalPermissionsAuthorizer.authorizeBypass(request, context)
+                .orElseGet(() -> Result.allowed(PermissionGateResult.allow()));
+        }
+        if (tool.isReadOnly(input)) {
+            return Result.allowed(PermissionGateResult.allow());
         }
 
-        PermissionDecision effectiveDecision;
-        if (isDefaultSandboxBashRequest(request) && canEnterDefaultSandbox(securityDecision)) {
-            effectiveDecision = isDeny(securityDecision)
-                ? securityDecision
-                : isStrictAutoReview(securityDecision)
-                    ? securityDecision
-                : allowDecision("默认 Bash 请求先进入沙箱执行。");
-        } else {
-            PermissionDecision toolDecision = tool.checkPermissions(input, context);
-            effectiveDecision = effectiveDecision(toolDecision, securityDecision);
-        }
+        PermissionDecision securityDecision = securityRuntime.decide(request, context);
+        PermissionDecision toolDecision = tool.checkPermissions(input, context);
+        PermissionDecision effectiveDecision = effectiveDecision(toolDecision, securityDecision);
 
         Optional<PermissionDecision> sandboxEscalationDecision = sandboxEscalationPolicy.decide(request, context);
         if (sandboxEscalationDecision.isPresent()) {
             PermissionDecision sandboxDecision = withSuggestedUpdate(
                 sandboxEscalationDecision.get(),
-                securityDecision.suggestedUpdate()
+                securityDecision == null ? Optional.empty() : securityDecision.suggestedUpdate()
             );
             effectiveDecision = effectiveDecision(
                 isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"),
@@ -114,11 +155,24 @@ final class ToolPermissionCoordinator {
             }
         }
 
-        if (isDeny(effectiveDecision)) {
-            return Result.denied(PermissionGateResult.deny(decisionMessage(effectiveDecision)));
+        Optional<Result> additionalPermissionsResult = additionalPermissionsAuthorizer.authorize(
+            request,
+            tool,
+            context,
+            contextSnapshot,
+            effectiveDecision
+        );
+        if (additionalPermissionsResult.isPresent()) {
+            return additionalPermissionsResult.get();
         }
 
-        PermissionGateResult permissionResult = approvalCoordinator.resolve(request, tool, context, effectiveDecision);
+        PermissionGateResult permissionResult = approvalCoordinator.resolve(
+            request,
+            tool,
+            context,
+            contextSnapshot,
+            reviewDecision(effectiveDecision)
+        );
         if (permissionResult.status() != PermissionGateResult.Status.ALLOW) {
             return Result.disallowed(permissionResult);
         }
@@ -145,38 +199,6 @@ final class ToolPermissionCoordinator {
         return securityDecision == null ? toolDecision : securityDecision;
     }
 
-    private boolean isDefaultSandboxBashRequest(ToolUseRequest request) {
-        return request != null
-            && "bash".equals(request.toolName())
-            && !hasPrefixRule(request.input())
-            && SandboxPermissions.fromToolValue(stringInput(request.input(), INPUT_SANDBOX_PERMISSIONS)) == SandboxPermissions.USE_DEFAULT;
-    }
-
-    private boolean canEnterDefaultSandbox(PermissionDecision securityDecision) {
-        if (securityDecision == null || securityDecision.behavior() != PermissionBehavior.ASK) {
-            return true;
-        }
-        Object bashRisk = securityDecision.metadata().get("bashRisk");
-        return !(bashRisk instanceof BashRiskAnalysis risk) || risk.redirectTargets().isEmpty();
-    }
-
-    private boolean hasPrefixRule(Map<String, Object> input) {
-        return input != null && input.containsKey("prefix_rule");
-    }
-
-    private String stringInput(Map<String, Object> input, String key) {
-        Object value = input == null ? null : input.get(key);
-        return value == null ? "" : value.toString();
-    }
-
-    private boolean isStrictAutoReview(PermissionDecision decision) {
-        Object value = decision.metadata().get("strictAutoReview");
-        if (value instanceof Boolean strictAutoReview) {
-            return strictAutoReview;
-        }
-        return value instanceof String strictAutoReview && Boolean.parseBoolean(strictAutoReview);
-    }
-
     private boolean isDeny(PermissionDecision decision) {
         return decision == null || decision.behavior() == PermissionBehavior.DENY;
     }
@@ -199,6 +221,40 @@ final class ToolPermissionCoordinator {
             Optional.empty(),
             Map.of()
         );
+    }
+
+    private PermissionDecision reviewDecision(PermissionDecision decision) {
+        if (decision == null) {
+            return new PermissionDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.MODE_DEFAULT,
+                "权限判定未提供原因。",
+                Optional.empty(),
+                Map.of()
+            );
+        }
+        return new PermissionDecision(
+            PermissionBehavior.ASK,
+            decision.reason(),
+            decisionMessage(decision),
+            decision.suggestedUpdate(),
+            decision.metadata()
+        );
+    }
+
+    private PermissionRuntimeState runtimeState(ToolUseContext context) {
+        Object state = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_RUNTIME_STATE);
+        if (state instanceof PermissionRuntimeState runtimeState) {
+            return runtimeState;
+        }
+        Object mode = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_MODE);
+        if (mode instanceof PermissionMode permissionMode) {
+            return PermissionRuntimeState.forMode(permissionMode);
+        }
+        if (mode instanceof String permissionMode && !permissionMode.isBlank()) {
+            return PermissionRuntimeState.forMode(PermissionMode.fromJson(permissionMode));
+        }
+        return PermissionRuntimeState.forMode(PermissionMode.ASK);
     }
 
     private PermissionDecision withSuggestedUpdate(

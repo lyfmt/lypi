@@ -53,7 +53,7 @@ class MemoryConsolidationToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("command", "date"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -71,7 +71,7 @@ class MemoryConsolidationToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of("path", "src/Main.java"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -90,7 +90,7 @@ class MemoryConsolidationToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of("path", ".ly-pi/memory/project/facts.md"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
         ).getFirst();
 

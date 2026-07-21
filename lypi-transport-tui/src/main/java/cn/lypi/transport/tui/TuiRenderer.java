@@ -390,9 +390,7 @@ final class TuiRenderer {
                 singleLine(status.sessionId()),
                 singleLine(status.model()),
                 singleLine(status.mode()),
-                permissionMode,
-                singleLine(status.approvalMode()),
-                singleLine(status.activePermissionProfileId())
+                permissionMode
             )
         ).trim();
         if (AnsiWidth.displayWidth(full) <= width) {

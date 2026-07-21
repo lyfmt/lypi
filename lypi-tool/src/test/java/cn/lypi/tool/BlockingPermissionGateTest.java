@@ -20,7 +20,7 @@ class BlockingPermissionGateTest {
         PermissionGateResult result = gate.request(
             request(),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "需要确认")
         );
 
@@ -37,7 +37,7 @@ class BlockingPermissionGateTest {
         PermissionGateResult result = gate.request(
             request(),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "需要确认")
         );
 
@@ -52,7 +52,7 @@ class BlockingPermissionGateTest {
         PermissionGateResult result = gate.request(
             request(),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "需要确认")
         );
 
@@ -67,7 +67,7 @@ class BlockingPermissionGateTest {
         PermissionGateResult result = gate.request(
             request(),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "需要确认")
         );
 
@@ -86,7 +86,7 @@ class BlockingPermissionGateTest {
         PermissionGateResult result = gate.request(
             request(),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "需要确认")
         );
 
@@ -103,7 +103,7 @@ class BlockingPermissionGateTest {
         PermissionGateResult result = gate.request(
             request(),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "需要确认")
         );
 

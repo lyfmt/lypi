@@ -12,6 +12,8 @@ import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.PermissionDecision;
+import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
@@ -35,6 +37,8 @@ public final class BashTool extends AbstractFileTool {
     private static final String INPUT_LOGIN_SHELL = "loginShell";
     private static final String METADATA_ADDITIONAL_PERMISSIONS = "additionalPermissions";
     private static final String METADATA_APPROVED_ADDITIONAL_PERMISSIONS = "approvedAdditionalPermissions";
+    private static final String METADATA_PERMISSION_MODE = "permissionMode";
+    private static final String METADATA_PERMISSION_RUNTIME_STATE = "permissionRuntimeState";
     private static final List<String> ALLOWED_SHELLS = List.of("bash", "sh", "zsh");
 
     private final Executor executor;
@@ -72,7 +76,7 @@ public final class BashTool extends AbstractFileTool {
                     "enum", List.of("useDefault", "requireEscalated", "withAdditionalPermissions"),
                     "description",
                     "useDefault follows the active sandbox profile. requireEscalated asks to run outside the sandbox; "
-                        + "the approval policy decides whether a prompt is shown. withAdditionalPermissions uses "
+                        + "the current permission mode decides the review route. withAdditionalPermissions uses "
                         + "permissions approved by request_permissions."
                 ),
                 INPUT_ADDITIONAL_PERMISSIONS, Map.of(
@@ -114,7 +118,7 @@ public final class BashTool extends AbstractFileTool {
         try {
             Path cwd = resolvePath(input, context, "cwd");
             requireRealPathInsideWorkspace(cwd, context);
-            return permissionPolicy.decide(input, context, cwd);
+            return permissionPolicy.decide(input, context, cwd, permissionRuntimeState(context));
         } catch (RuntimeException | IOException exception) {
             return permissionPolicy.ask(input);
         }
@@ -129,7 +133,12 @@ public final class BashTool extends AbstractFileTool {
             Duration timeout = Duration.ofSeconds(intInput(input, "timeoutSeconds", (int) DEFAULT_TIMEOUT.toSeconds(), 1, 86_400));
             SandboxPermissions sandboxPermissions = sandboxPermissions(input);
             Optional<AdditionalPermissionProfile> additionalPermissions = additionalPermissionsForRequest(context, sandboxPermissions);
-            SandboxRuntimePolicy sandboxPolicy = sandboxPolicy(context.cwd(), cwd, additionalPermissions);
+            SandboxRuntimePolicy sandboxPolicy = sandboxPolicy(
+                context.cwd(),
+                cwd,
+                permissionRuntimeState(context),
+                additionalPermissions
+            );
             ExecutionRequest request = new ExecutionRequest(
                 shellCommand(input),
                 cwd,
@@ -234,12 +243,33 @@ public final class BashTool extends AbstractFileTool {
     private SandboxRuntimePolicy sandboxPolicy(
         Path workspace,
         Path cwd,
+        PermissionRuntimeState permissionRuntimeState,
         Optional<AdditionalPermissionProfile> additionalPermissions
     ) {
         if (additionalPermissions.isPresent()) {
-            return sandboxPolicyResolver.resolve(workspace, cwd, additionalPermissions.orElseThrow());
+            return sandboxPolicyResolver.resolve(
+                workspace,
+                cwd,
+                permissionRuntimeState,
+                additionalPermissions.orElseThrow()
+            );
         }
-        return sandboxPolicyResolver.resolve(workspace, cwd);
+        return sandboxPolicyResolver.resolve(workspace, cwd, permissionRuntimeState);
+    }
+
+    private PermissionRuntimeState permissionRuntimeState(ToolUseContext context) {
+        Object canonical = context.metadata().get(METADATA_PERMISSION_RUNTIME_STATE);
+        if (canonical instanceof PermissionRuntimeState permissionRuntimeState) {
+            return permissionRuntimeState;
+        }
+        Object legacy = context.metadata().get(METADATA_PERMISSION_MODE);
+        if (legacy instanceof PermissionMode permissionMode) {
+            return PermissionRuntimeState.forMode(permissionMode);
+        }
+        if (legacy instanceof String permissionMode && !permissionMode.isBlank()) {
+            return PermissionRuntimeState.forMode(PermissionMode.fromJson(permissionMode));
+        }
+        return PermissionRuntimeState.forMode(PermissionMode.ASK);
     }
 
     private Optional<AdditionalPermissionProfile> approvedAdditionalPermissions(ToolUseContext context) {

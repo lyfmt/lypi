@@ -94,7 +94,7 @@ final class WebSearchToolTest {
     void asksWhenNetworkProfileIsRestricted() {
         WebSearchTool tool = new WebSearchTool(registry(successProvider()));
 
-        var decision = tool.checkPermissions(Map.of("query", "java"), context(PermissionMode.DEFAULT_EXECUTE));
+        var decision = tool.checkPermissions(Map.of("query", "java"), context(PermissionMode.ASK));
 
         assertEquals(PermissionBehavior.ASK, decision.behavior());
         assertTrue(decision.message().contains("web_search"));
@@ -340,7 +340,7 @@ final class WebSearchToolTest {
             "message",
             Path.of("."),
             Map.of(
-                "permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+                "permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
                 "toolUseId", "toolu_1",
                 "approvedAdditionalPermissions", true,
                 "additionalPermissions", new AdditionalPermissionProfile(

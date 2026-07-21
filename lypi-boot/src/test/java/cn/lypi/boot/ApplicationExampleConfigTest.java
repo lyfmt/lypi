@@ -59,8 +59,11 @@ class ApplicationExampleConfigTest {
         String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
 
         assertThat(example).contains("#     # 可选值：plan、execute。");
-        assertThat(example).contains("#     # 可选值：default_execute、accept_edits、bypass。");
-        assertThat(example).doesNotContain("#     # 可选值：plan、default_execute、accept_edits、dont_ask、bypass。");
+        assertThat(example).contains("#     # 可选值：ask、auto、bypass。");
+        assertThat(example).contains("#     permission-mode: ask");
+        assertThat(example).doesNotContain("default_execute").doesNotContain("accept_edits");
+        assertThat(example).contains("最终复核路由由 runtime.permission-mode 决定");
+        assertThat(example).doesNotContain("审批策略决定运行时是否可以询问用户");
         assertThat(example).doesNotContain("允许回退到宿主机执行器");
         assertThat(example).contains("不会自动回退到宿主机执行器");
     }
