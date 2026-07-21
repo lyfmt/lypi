@@ -3,10 +3,12 @@ package cn.lypi.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionHandle;
@@ -104,6 +106,49 @@ class ChildSessionServiceTest {
         assertThat(header.initialThinkingLevel()).contains(ThinkingLevel.HIGH);
         assertThat(header.initialAgentMode()).contains(AgentMode.EXECUTE);
         assertThat(header.initialPermissionMode()).contains(PermissionMode.ASK);
+    }
+
+    @Test
+    void createChildSessionPersistsInitialExpertPromptAsSystemLocalMessage() throws Exception {
+        SessionManager parent = new SessionManagerImpl(tempDir);
+        parent.openOrCreate("ses_parent");
+        ChildSessionService service = new ChildSessionService(Clock.fixed(NOW, ZoneOffset.UTC));
+
+        SessionHandle child = service.create(new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            tempDir,
+            tempDir,
+            1,
+            Optional.of("review-auth"),
+            Optional.of("code-reviewer"),
+            Optional.of("Review code precisely."),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            PermissionRuntimeState.forMode(PermissionMode.AUTO),
+            new SubagentToolPolicy(List.of(), List.of("read", "grep", "glob"))
+        ));
+
+        List<cn.lypi.contracts.session.SessionEntry> entries = new JsonlSessionStore(tempDir)
+            .read(child.sessionId())
+            .entries();
+        assertThat(entries).hasSize(2);
+        assertThat(entries.get(0)).isInstanceOf(SessionInfoEntry.class);
+        assertThat(entries.get(1)).isInstanceOfSatisfying(CustomMessageEntry.class, prompt -> {
+            assertThat(prompt.parentId()).isEqualTo(entries.get(0).id());
+            assertThat(prompt.content()).isEqualTo("Review code precisely.");
+            assertThat(child.leafId()).isEqualTo(prompt.id());
+        });
+
+        SessionManager childManager = new SessionManagerImpl(tempDir);
+        childManager.openOrCreate(child.sessionId());
+        var context = childManager.context(child.leafId());
+        assertThat(context.messages()).singleElement().satisfies(message -> {
+            assertThat(message.role()).isEqualTo(MessageRole.SYSTEM_LOCAL);
+            assertThat(message.content().getFirst().text()).isEqualTo("Review code precisely.");
+        });
     }
 
     @Test

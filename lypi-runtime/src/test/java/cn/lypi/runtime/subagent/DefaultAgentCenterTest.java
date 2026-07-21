@@ -97,6 +97,38 @@ class DefaultAgentCenterTest {
     }
 
     @Test
+    void expertSpawnPassesRoleAndPromptOnlyToChildSession() {
+        Fixture fixture = fixture(PermissionRuntimeState.forMode(PermissionMode.ASK), catalog(
+            descriptor("anthropic", "expert-model", true)
+        ));
+        SubagentSpawnRequest request = new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "review-auth",
+            "Review auth changes.",
+            List.of("read", "grep", "glob", "bash"),
+            Optional.of("anthropic"),
+            Optional.of("expert-model"),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of("code-reviewer"),
+            Optional.of("Review code precisely.")
+        );
+
+        SubagentSpawnResult result = fixture.center.spawn(request);
+
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.STARTED);
+        ChildSessionRequest child = fixture.children.last();
+        assertThat(child.agentRole()).contains("code-reviewer");
+        assertThat(child.initialSystemPrompt()).contains("Review code precisely.");
+        assertThat(child.initialModel()).contains(new ModelSelection("anthropic", "expert-model", ThinkingLevel.HIGH));
+        assertThat(child.toolPolicy().effectiveTools()).containsExactly("read", "grep", "glob", "bash");
+        assertThat(fixture.process.input.message()).isEqualTo("Review auth changes.");
+        assertThat(HeadlessSubagentInput.class.getRecordComponents())
+            .extracting(java.lang.reflect.RecordComponent::getName)
+            .doesNotContain("agentRole", "initialSystemPrompt");
+    }
+
+    @Test
     void explicitUnknownModelFailsBeforeCreatingChildSession() {
         Fixture fixture = fixture(PermissionRuntimeState.forMode(PermissionMode.ASK), catalog(
             descriptor("openai", "base", true)
