@@ -79,7 +79,6 @@ import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
-import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
@@ -100,6 +99,7 @@ import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
+import cn.lypi.contracts.subagent.SubagentWaitOutcome;
 import cn.lypi.contracts.subagent.SubagentWaitRequest;
 import cn.lypi.contracts.subagent.SubagentWaitResult;
 import cn.lypi.contracts.model.TokenUsage;
@@ -492,24 +492,6 @@ class ContractSerializationTest {
     @Test
     void subagentContractsRoundTripKeepDistinctIdentitiesAndMailboxStatus() throws Exception {
         Instant now = Instant.parse("2026-06-09T00:00:00Z");
-        SessionEntry entry = new AgentLifecycleEntry(
-            "entry_spawn",
-            "entry_parent",
-            "agent_01",
-            "ses_child",
-            "ses_parent",
-            "spawned",
-            Map.of("agentName", "reviewer"),
-            now
-        );
-
-        String entryJson = mapper.writeValueAsString(entry);
-        SessionEntry restoredEntry = mapper.readValue(entryJson, SessionEntry.class);
-
-        assertTrue(entryJson.contains("\"type\":\"agent_lifecycle\""));
-        assertInstanceOf(AgentLifecycleEntry.class, restoredEntry);
-        assertEquals(entry, restoredEntry);
-
         MailboxMessage message = new MailboxMessage(
             "mail_01",
             "inspect-contracts",
@@ -634,9 +616,9 @@ class ContractSerializationTest {
     }
 
     @Test
-    void subagentWaitContractsDistinguishCompletionFromWaitTimeout() throws Exception {
+    void subagentWaitContractsDistinguishAllOutcomes() throws Exception {
         SubagentWaitRequest request = new SubagentWaitRequest("ses_parent", 600_000);
-        SubagentWaitResult result = SubagentWaitResult.completed(
+        SubagentWaitResult completed = SubagentWaitResult.completed(
             "inspect-contracts",
             "agent_01",
             "ses_child",
@@ -644,16 +626,31 @@ class ContractSerializationTest {
             SubagentRunStatus.SUCCEEDED,
             "完成"
         );
+        SubagentWaitResult steered = SubagentWaitResult.steered();
+        SubagentWaitResult aborted = SubagentWaitResult.aborted();
         SubagentWaitResult timedOut = SubagentWaitResult.timedOut();
 
         String requestJson = mapper.writeValueAsString(request);
-        String resultJson = mapper.writeValueAsString(result);
+        String completedJson = mapper.writeValueAsString(completed);
+        String steeredJson = mapper.writeValueAsString(steered);
+        String abortedJson = mapper.writeValueAsString(aborted);
+        String timedOutJson = mapper.writeValueAsString(timedOut);
 
-        assertEquals(request, mapper.readValue(requestJson, SubagentWaitRequest.class));
-        assertEquals(result, mapper.readValue(resultJson, SubagentWaitResult.class));
+        SubagentWaitRequest restoredRequest = mapper.readValue(requestJson, SubagentWaitRequest.class);
+        assertEquals(request.parentSessionId(), restoredRequest.parentSessionId());
+        assertEquals(request.timeoutMillis(), restoredRequest.timeoutMillis());
+        assertEquals(completed, mapper.readValue(completedJson, SubagentWaitResult.class));
         assertTrue(requestJson.contains("\"timeoutMillis\":600000"));
-        assertTrue(result.received());
-        assertEquals(Optional.of(SubagentRunStatus.SUCCEEDED), result.status());
+        assertEquals(SubagentWaitOutcome.COMPLETED, completed.outcome());
+        assertEquals(Optional.of(SubagentRunStatus.SUCCEEDED), completed.status());
+        assertEquals(SubagentWaitOutcome.STEERED, steered.outcome());
+        assertEquals(SubagentWaitOutcome.ABORTED, aborted.outcome());
+        assertEquals(SubagentWaitOutcome.TIMED_OUT, timedOut.outcome());
+        assertTrue(completedJson.contains("\"outcome\":\"COMPLETED\""));
+        assertTrue(steeredJson.contains("\"outcome\":\"STEERED\""));
+        assertTrue(abortedJson.contains("\"outcome\":\"ABORTED\""));
+        assertTrue(timedOutJson.contains("\"outcome\":\"TIMED_OUT\""));
+        assertTrue(completed.received());
         assertFalse(timedOut.received());
         assertTrue(timedOut.status().isEmpty());
     }

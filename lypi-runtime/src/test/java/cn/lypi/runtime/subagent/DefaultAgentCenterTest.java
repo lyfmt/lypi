@@ -14,7 +14,6 @@ import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
-import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.ChildSessionRequest;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionContext;
@@ -51,25 +50,26 @@ class DefaultAgentCenterTest {
     Path tempDir;
 
     @Test
-    void spawnSeparatesTaskAgentSessionRunAndLifecycleIdentity() {
+    void spawnUsesConversationEntryAsBranchAnchorWithoutAppendingLifecycle() {
         Fixture fixture = fixture(PermissionRuntimeState.forMode(PermissionMode.ASK), catalog(
             descriptor("openai", "base", true)
         ));
 
         SubagentSpawnResult result = fixture.center.spawn(request());
 
-        AgentLifecycleEntry lifecycle = (AgentLifecycleEntry) fixture.parent.entries.getFirst();
         assertThat(result.status()).isEqualTo(SubagentRunStatus.STARTED);
         assertThat(result.taskName()).isEqualTo("inspect-session");
         assertThat(result.agentId()).startsWith("agent_");
         assertThat(result.childSessionId()).startsWith("ses_child_");
         assertThat(result.runId()).startsWith("run_");
-        assertThat(Set.of(result.agentId(), result.childSessionId(), result.runId(), lifecycle.id())).hasSize(4);
-        assertThat(lifecycle.metadata()).containsEntry("runId", result.runId());
+        assertThat(Set.of(result.agentId(), result.childSessionId(), result.runId())).hasSize(3);
+        assertThat(fixture.parent.entries).isEmpty();
+        assertThat(fixture.children.last().parentSpawnEntryId()).isEqualTo("entry_parent");
         assertThat(fixture.process.input.taskName()).isEqualTo("inspect-session");
         assertThat(fixture.process.input.message()).isEqualTo("inspect the session module");
         assertThat(fixture.process.input.agentId()).isEqualTo(result.agentId());
         assertThat(fixture.process.input.runId()).isEqualTo(result.runId());
+        assertThat(fixture.process.input.parentSpawnEntryId()).isEqualTo("entry_parent");
     }
 
     @Test
@@ -166,6 +166,7 @@ class DefaultAgentCenterTest {
             Optional.empty()
         ));
 
+        assertThat(fixture.parent.entries).isEmpty();
         assertThat(fixture.mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
             .singleElement()
             .satisfies(message -> {
@@ -181,6 +182,92 @@ class DefaultAgentCenterTest {
         assertThat(waited.runId()).contains(spawned.runId());
         assertThat(waited.content()).contains("session inspection complete");
         assertThat(fixture.mailbox.poll("ses_parent")).isEmpty();
+    }
+
+    @Test
+    void spawnRejectsMissingParentEntryInsteadOfUsingMutableCurrentLeaf() {
+        Fixture fixture = fixture(PermissionRuntimeState.forMode(PermissionMode.ASK), catalog(
+            descriptor("openai", "base", true)
+        ));
+
+        SubagentSpawnResult result = fixture.center.spawn(request(null));
+
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.FAILED);
+        assertThat(result.message()).hasValueSatisfying(message -> assertThat(message).contains("parentEntryId"));
+        assertThat(fixture.children.requests).isEmpty();
+        assertThat(fixture.process.input).isNull();
+        assertThat(fixture.parent.entries).isEmpty();
+    }
+
+    @Test
+    void processStartFailurePublishesMailboxWithoutChangingParentSession() {
+        Fixture fixture = fixture(PermissionRuntimeState.forMode(PermissionMode.ASK), catalog(
+            descriptor("openai", "base", true)
+        ));
+        fixture.process.failOnStart(new IllegalStateException("process start failed"));
+
+        SubagentSpawnResult result = fixture.center.spawn(request());
+
+        assertThat(result.status()).isEqualTo(SubagentRunStatus.FAILED);
+        assertThat(fixture.parent.entries).isEmpty();
+        assertThat(fixture.mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
+            .singleElement()
+            .satisfies(message -> {
+                assertThat(message.agentId()).isEqualTo(result.agentId());
+                assertThat(message.childSessionId()).isEqualTo(result.childSessionId());
+                assertThat(message.runId()).isEqualTo(result.runId());
+                assertThat(message.runStatus()).isEqualTo(SubagentRunStatus.FAILED);
+                assertThat(message.errorMessage()).contains("process start failed");
+            });
+    }
+
+    @Test
+    void exceptionalCompletionPublishesFailureWithoutChangingParentSession() {
+        Fixture fixture = fixture(PermissionRuntimeState.forMode(PermissionMode.ASK), catalog(
+            descriptor("openai", "base", true)
+        ));
+        SubagentSpawnResult spawned = fixture.center.spawn(request());
+
+        fixture.process.completeExceptionally(new IllegalStateException("child completion failed"));
+
+        assertThat(fixture.parent.entries).isEmpty();
+        assertThat(fixture.mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
+            .singleElement()
+            .satisfies(message -> {
+                assertThat(message.agentId()).isEqualTo(spawned.agentId());
+                assertThat(message.childSessionId()).isEqualTo(spawned.childSessionId());
+                assertThat(message.runId()).isEqualTo(spawned.runId());
+                assertThat(message.runStatus()).isEqualTo(SubagentRunStatus.FAILED);
+                assertThat(message.errorMessage()).contains("child completion failed");
+            });
+    }
+
+    @Test
+    void completionUsesRuntimeIdentityInsteadOfChildProvidedIdentity() {
+        Fixture fixture = fixture(PermissionRuntimeState.forMode(PermissionMode.ASK), catalog(
+            descriptor("openai", "base", true)
+        ));
+        SubagentSpawnResult spawned = fixture.center.spawn(request());
+
+        fixture.process.complete(new HeadlessSubagentOutput(
+            "forged-task",
+            "forged-agent",
+            "forged-session",
+            "forged-run",
+            SubagentRunStatus.SUCCEEDED,
+            "done",
+            Optional.of("entry_final"),
+            Optional.empty()
+        ));
+
+        assertThat(fixture.mailbox.read("ses_parent", Set.of(MailboxStatus.PENDING)))
+            .singleElement()
+            .satisfies(message -> {
+                assertThat(message.taskName()).isEqualTo(spawned.taskName());
+                assertThat(message.agentId()).isEqualTo(spawned.agentId());
+                assertThat(message.childSessionId()).isEqualTo(spawned.childSessionId());
+                assertThat(message.runId()).isEqualTo(spawned.runId());
+            });
     }
 
     @Test
@@ -230,14 +317,27 @@ class DefaultAgentCenterTest {
         return request(Optional.empty(), Optional.empty(), Optional.empty());
     }
 
+    private SubagentSpawnRequest request(String parentEntryId) {
+        return request(parentEntryId, Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
     private SubagentSpawnRequest request(
+        Optional<String> provider,
+        Optional<String> model,
+        Optional<ThinkingLevel> thinking
+    ) {
+        return request("entry_parent", provider, model, thinking);
+    }
+
+    private SubagentSpawnRequest request(
+        String parentEntryId,
         Optional<String> provider,
         Optional<String> model,
         Optional<ThinkingLevel> thinking
     ) {
         return new SubagentSpawnRequest(
             "ses_parent",
-            "entry_parent",
+            parentEntryId,
             "inspect-session",
             "inspect the session module",
             List.of("read", "grep", "glob"),
@@ -295,17 +395,29 @@ class DefaultAgentCenterTest {
     private static final class ControlledProcessRunner implements SubagentProcessRunner {
         private final List<ControlledHandle> handles = new ArrayList<>();
         private HeadlessSubagentInput input;
+        private RuntimeException startFailure;
 
         @Override
         public SubagentProcessHandle start(HeadlessSubagentInput input) {
             this.input = input;
+            if (startFailure != null) {
+                throw startFailure;
+            }
             ControlledHandle handle = new ControlledHandle();
             handles.add(handle);
             return handle;
         }
 
+        private void failOnStart(RuntimeException failure) {
+            startFailure = failure;
+        }
+
         private void complete(HeadlessSubagentOutput output) {
             handles.getLast().completion.complete(output);
+        }
+
+        private void completeExceptionally(Throwable failure) {
+            handles.getLast().completion.completeExceptionally(failure);
         }
     }
 

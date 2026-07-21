@@ -20,7 +20,7 @@ final class SubagentToolSchemas {
             "type", "integer",
             "minimum", 0L,
             "maximum", MAX_TIMEOUT_MILLIS,
-            "description", "等待任意 subagent mailbox 消息的最长毫秒数，默认 600000。"
+            "description", "本次等待的最长毫秒数；completion、用户输入或中断会提前结束，默认 600000。"
         );
     }
 
@@ -28,7 +28,23 @@ final class SubagentToolSchemas {
         return Map.of(
             "type", "string",
             "enum", THINKING_LEVEL_VALUES,
-            "description", "推理强度；省略时继承主 Agent，显式值由运行时校验。"
+            "description", "可选推理强度覆盖；省略或空白时继承当前 Agent 的 thinking level，建议直接省略；显式值由运行时校验。"
+        );
+    }
+
+    static Map<String, Object> providerSchema() {
+        return optionalModelOverrideSchema("provider");
+    }
+
+    static Map<String, Object> modelSchema() {
+        return optionalModelOverrideSchema("model");
+    }
+
+    private static Map<String, Object> optionalModelOverrideSchema(String field) {
+        return Map.of(
+            "type", "string",
+            "description", "可选 %s 覆盖；省略或空白时继承当前 Agent 的 %s，建议直接省略；显式值由运行时校验。"
+                .formatted(field, field)
         );
     }
 }

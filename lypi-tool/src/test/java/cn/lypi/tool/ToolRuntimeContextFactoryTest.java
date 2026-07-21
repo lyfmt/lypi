@@ -1,8 +1,11 @@
 package cn.lypi.tool;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.agent.SteeringMessageSource;
+import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
@@ -22,6 +25,7 @@ import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class ToolRuntimeContextFactoryTest {
@@ -108,6 +112,35 @@ class ToolRuntimeContextFactoryTest {
         assertEquals("turn_runtime", context.metadata().get("turnId"));
         assertEquals("entry_tool_call", context.metadata().get("parentEntryId"));
         assertEquals("tr_1", context.metadata().get("traceId"));
+    }
+
+    @Test
+    void invocationOverridesStaticTurnActivitySignals() {
+        AbortSignal staticAbort = () -> true;
+        AbortSignal invocationAbort = () -> false;
+        SteeringMessageSource staticSteering = Optional::empty;
+        SteeringMessageSource invocationSteering = Optional::empty;
+        ToolRuntimeOptions options = ToolRuntimeOptions.builder()
+            .metadata(Map.of(
+                ToolAbortSupport.METADATA_ABORT_SIGNAL, staticAbort,
+                ToolSteeringSupport.METADATA_STEERING_MESSAGES, staticSteering
+            ))
+            .build();
+
+        ToolUseContext context = new ToolRuntimeContextFactory(options).create(
+            new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation(
+                "session_runtime",
+                "turn_runtime",
+                "entry_tool_call",
+                invocationAbort,
+                invocationSteering
+            )
+        );
+
+        assertSame(invocationAbort, ToolAbortSupport.signal(context));
+        assertSame(invocationSteering, ToolSteeringSupport.source(context));
     }
 
     private ContextSnapshot context(AgentMode agentMode, PermissionRuntimeState runtimeState) {

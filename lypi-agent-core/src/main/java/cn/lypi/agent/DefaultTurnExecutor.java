@@ -130,7 +130,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         turnId,
                         contextLeafId,
                         toolRequests,
-                        context
+                        context,
+                        request
                     );
                     for (ToolResult<?> toolResult : toolResults) {
                         for (AgentMessage toolMessage : toolResult.newMessages()) {
@@ -139,6 +140,9 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                             newMessages.add(pendingToolMessage);
                         }
                     }
+                }
+                if (request.abortSignal().aborted()) {
+                    break;
                 }
                 BoundaryMessages boundaryMessages = appendBoundaryMessages(
                     request,
@@ -470,7 +474,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         String turnId,
         String parentEntryId,
         List<ToolUseRequest> toolRequests,
-        ContextSnapshot context
+        ContextSnapshot context,
+        TurnRequest turnRequest
     ) {
         ensureToolRuntimeCwdMatches();
         List<ToolResult<?>> results;
@@ -478,7 +483,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             results = ports.toolRuntime().execute(
                 toolRequests,
                 context,
-                new ToolRuntimeInvocation(sessionId, turnId, parentEntryId)
+                new ToolRuntimeInvocation(
+                    sessionId,
+                    turnId,
+                    parentEntryId,
+                    turnRequest.abortSignal(),
+                    turnRequest.steeringMessages()
+                )
             );
             if (results.size() != toolRequests.size()) {
                 throw new IllegalStateException(

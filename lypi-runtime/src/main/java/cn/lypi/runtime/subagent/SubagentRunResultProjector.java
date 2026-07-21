@@ -1,13 +1,10 @@
 package cn.lypi.runtime.subagent;
 
-import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
-import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -20,24 +17,6 @@ final class SubagentRunResultProjector {
         this.idSupplier = idSupplier;
     }
 
-    AgentLifecycleEntry lifecycleEntry(RunningSubagentRun running, HeadlessSubagentOutput output) {
-        return new AgentLifecycleEntry(
-            "entry_agent_" + idSupplier.get(),
-            running.lifecycleEntryId(),
-            running.agent().agentId(),
-            running.agent().childSessionId(),
-            running.agent().parentSessionId(),
-            lifecycle(output.status()),
-            Map.of(
-                "taskName", running.agent().taskName(),
-                "runId", running.runId(),
-                "status", output.status().name(),
-                "errorMessage", output.errorMessage().orElse("")
-            ),
-            Instant.now(clock)
-        );
-    }
-
     MailboxMessage mailboxMessage(RunningSubagentRun running, HeadlessSubagentOutput output) {
         Instant now = Instant.now(clock);
         return new MailboxMessage(
@@ -47,7 +26,7 @@ final class SubagentRunResultProjector {
             running.agent().childSessionId(),
             running.runId(),
             running.agent().parentSessionId(),
-            running.lifecycleEntryId(),
+            running.agent().parentSpawnEntryId(),
             output.status(),
             completionContent(output),
             output.finalEntryId(),
@@ -65,12 +44,4 @@ final class SubagentRunResultProjector {
         return output.errorMessage().filter(message -> !message.isBlank()).orElse(output.status().name());
     }
 
-    private String lifecycle(SubagentRunStatus status) {
-        return switch (status) {
-            case SUCCEEDED -> "finished";
-            case INTERRUPTED -> "interrupted";
-            case TIMED_OUT -> "timed_out";
-            case STARTED, RUNNING, FAILED -> "failed";
-        };
-    }
 }

@@ -1,9 +1,11 @@
 package cn.lypi.runtime.subagent;
 
 import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.common.SignalSubscription;
 import cn.lypi.contracts.runtime.AgentCommunicationPort;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
+import cn.lypi.contracts.subagent.SubagentWaitRequest;
 import cn.lypi.contracts.subagent.SubagentWaitResult;
 import java.time.Clock;
 import java.time.Instant;
@@ -13,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 public final class DefaultMailboxService implements AgentCommunicationPort {
     private final JsonlMailboxStore store;
@@ -32,11 +35,31 @@ public final class DefaultMailboxService implements AgentCommunicationPort {
         return store.read(sessionId, statuses);
     }
 
-    public synchronized SubagentWaitResult waitAndConsume(String parentSessionId, long timeoutMillis) {
-        long remainingNanos = Math.max(0, timeoutMillis) * 1_000_000L;
+    public SubagentWaitResult waitAndConsume(String parentSessionId, long timeoutMillis) {
+        return waitAndConsume(new SubagentWaitRequest(parentSessionId, timeoutMillis));
+    }
+
+    public SubagentWaitResult waitAndConsume(SubagentWaitRequest request) {
+        Objects.requireNonNull(request, "request must not be null");
+        try (
+            SignalSubscription ignoredAbort = request.abortSignal().subscribe(this::signalWaiters);
+            SignalSubscription ignoredSteering = request.steeringMessages().subscribe(this::signalWaiters)
+        ) {
+            return waitLoop(request);
+        }
+    }
+
+    private synchronized SubagentWaitResult waitLoop(SubagentWaitRequest request) {
+        long remainingNanos = TimeUnit.MILLISECONDS.toNanos(request.timeoutMillis());
         long deadline = System.nanoTime() + remainingNanos;
         while (true) {
-            Optional<MailboxMessage> message = consumePending(parentSessionId);
+            if (request.abortSignal().aborted()) {
+                return SubagentWaitResult.aborted();
+            }
+            if (request.steeringMessages().hasPending()) {
+                return SubagentWaitResult.steered();
+            }
+            Optional<MailboxMessage> message = consumePending(request.parentSessionId());
             if (message.isPresent()) {
                 return waitResult(message.orElseThrow());
             }
@@ -49,10 +72,14 @@ public final class DefaultMailboxService implements AgentCommunicationPort {
                 wait(millis, nanos);
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
-                return SubagentWaitResult.timedOut();
+                return SubagentWaitResult.aborted();
             }
             remainingNanos = deadline - System.nanoTime();
         }
+    }
+
+    private synchronized void signalWaiters() {
+        notifyAll();
     }
 
     @Override

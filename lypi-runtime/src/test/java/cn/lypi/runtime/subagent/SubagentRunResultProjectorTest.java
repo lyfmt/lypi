@@ -23,7 +23,7 @@ class SubagentRunResultProjectorTest {
             "entry_spawn",
             Path.of("/workspace")
         );
-        RunningSubagentRun run = new RunningSubagentRun("run_1", "entry_spawn", agent, null);
+        RunningSubagentRun run = new RunningSubagentRun("run_1", agent, null);
         HeadlessSubagentOutput output = new HeadlessSubagentOutput(
             "untrusted-task",
             "untrusted-agent",
@@ -40,13 +40,12 @@ class SubagentRunResultProjectorTest {
         );
 
         var mailbox = projector.mailboxMessage(run, output);
-        var lifecycle = projector.lifecycleEntry(run, output);
 
         assertThat(mailbox.taskName()).isEqualTo("inspect-session");
         assertThat(mailbox.agentId()).isEqualTo("agent_1");
         assertThat(mailbox.childSessionId()).isEqualTo("ses_child");
         assertThat(mailbox.runId()).isEqualTo("run_1");
+        assertThat(mailbox.parentSpawnEntryId()).isEqualTo("entry_spawn");
         assertThat(mailbox.status()).isEqualTo(MailboxStatus.PENDING);
-        assertThat(lifecycle.metadata()).containsEntry("runId", "run_1");
     }
 }

@@ -63,6 +63,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -216,6 +217,76 @@ class RuntimeTuiSubmitHandlerTest {
 
         assertTrue(core.finished.await(2, TimeUnit.SECONDS));
         assertEquals(new SteeringMessage("busy steering", List.of()), core.steering);
+    }
+
+    @Test
+    void activeTurnSteeringSubmissionNotifiesWithoutConsumingMessage() throws Exception {
+        SubscribingSteeringCore core = new SubscribingSteeringCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+
+        handler.submitUserInput("first");
+        assertTrue(core.subscribed.await(1, TimeUnit.SECONDS));
+        handler.submitUserInput("wake wait");
+
+        assertTrue(core.notified.await(1, TimeUnit.SECONDS));
+        core.release.countDown();
+        assertTrue(core.finished.await(1, TimeUnit.SECONDS));
+        assertEquals(new SteeringMessage("wake wait", List.of()), core.steering);
+    }
+
+    @Test
+    void requestInterruptNotifiesActiveAbortSubscriber() throws Exception {
+        SubscribingAbortCore core = new SubscribingAbortCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+
+        handler.submitUserInput("first");
+        assertTrue(core.subscribed.await(1, TimeUnit.SECONDS));
+        handler.requestInterrupt("ctrl-c");
+
+        assertTrue(core.notified.await(1, TimeUnit.SECONDS));
+        assertTrue(core.request.abortSignal().aborted());
+        core.release.countDown();
+        assertTrue(core.finished.await(1, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void alreadyAbortedSignalNotifiesLateSubscriber() {
+        MutableAbortSignal signal = new MutableAbortSignal();
+        AtomicBoolean notified = new AtomicBoolean();
+        signal.abort();
+
+        try (var ignored = signal.subscribe(() -> notified.set(true))) {
+            assertTrue(notified.get());
+        }
+    }
+
+    @Test
+    void requestInterruptNotifiesAbortSubscriberOutsideActiveTurnLock() throws Exception {
+        SubscribingAbortCore core = new SubscribingAbortCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+        AtomicBoolean lockAvailable = new AtomicBoolean();
+        core.onAbort = () -> {
+            Thread probe = Thread.ofVirtual().start(() -> handler.pendingSteeringMessages());
+            try {
+                probe.join(1_000);
+                lockAvailable.set(!probe.isAlive());
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+        };
+
+        handler.submitUserInput("first");
+        assertTrue(core.subscribed.await(1, TimeUnit.SECONDS));
+        try {
+            handler.requestInterrupt("ctrl-c");
+            assertTrue(lockAvailable.get());
+        } finally {
+            core.release.countDown();
+        }
+        assertTrue(core.finished.await(1, TimeUnit.SECONDS));
     }
 
     @Test
@@ -785,6 +856,59 @@ class RuntimeTuiSubmitHandlerTest {
             requests.add(request);
             steering = request.steeringMessages().poll().orElse(null);
             return null;
+        }
+    }
+
+    private static final class SubscribingSteeringCore implements AgentCorePort {
+        private final CountDownLatch subscribed = new CountDownLatch(1);
+        private final CountDownLatch notified = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final CountDownLatch finished = new CountDownLatch(1);
+        private SteeringMessage steering;
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            try (var ignored = request.steeringMessages().subscribe(notified::countDown)) {
+                subscribed.countDown();
+                await(release);
+                steering = request.steeringMessages().poll().orElse(null);
+            } finally {
+                finished.countDown();
+            }
+            return null;
+        }
+    }
+
+    private static final class SubscribingAbortCore implements AgentCorePort {
+        private final CountDownLatch subscribed = new CountDownLatch(1);
+        private final CountDownLatch notified = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final CountDownLatch finished = new CountDownLatch(1);
+        private Runnable onAbort = () -> {
+        };
+        private TurnRequest request;
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            this.request = request;
+            try (var ignored = request.abortSignal().subscribe(() -> {
+                onAbort.run();
+                notified.countDown();
+            })) {
+                subscribed.countDown();
+                await(release);
+            } finally {
+                finished.countDown();
+            }
+            return new TurnState("turn-1", request.sessionId(), null, List.of(), 0, TurnStatus.ABORTED);
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await(2, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
         }
     }
 

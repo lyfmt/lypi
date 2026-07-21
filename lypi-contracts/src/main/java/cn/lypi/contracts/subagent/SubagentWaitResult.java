@@ -3,7 +3,7 @@ package cn.lypi.contracts.subagent;
 import java.util.Optional;
 
 public record SubagentWaitResult(
-    boolean received,
+    SubagentWaitOutcome outcome,
     Optional<String> taskName,
     Optional<String> agentId,
     Optional<String> childSessionId,
@@ -12,6 +12,7 @@ public record SubagentWaitResult(
     Optional<String> content
 ) {
     public SubagentWaitResult {
+        outcome = outcome == null ? SubagentWaitOutcome.TIMED_OUT : outcome;
         taskName = taskName == null ? Optional.empty() : taskName;
         agentId = agentId == null ? Optional.empty() : agentId;
         childSessionId = childSessionId == null ? Optional.empty() : childSessionId;
@@ -29,7 +30,7 @@ public record SubagentWaitResult(
         String content
     ) {
         return new SubagentWaitResult(
-            true,
+            SubagentWaitOutcome.COMPLETED,
             Optional.ofNullable(taskName),
             Optional.ofNullable(agentId),
             Optional.ofNullable(childSessionId),
@@ -39,9 +40,25 @@ public record SubagentWaitResult(
         );
     }
 
+    public static SubagentWaitResult steered() {
+        return empty(SubagentWaitOutcome.STEERED);
+    }
+
+    public static SubagentWaitResult aborted() {
+        return empty(SubagentWaitOutcome.ABORTED);
+    }
+
     public static SubagentWaitResult timedOut() {
+        return empty(SubagentWaitOutcome.TIMED_OUT);
+    }
+
+    public boolean received() {
+        return outcome == SubagentWaitOutcome.COMPLETED;
+    }
+
+    private static SubagentWaitResult empty(SubagentWaitOutcome outcome) {
         return new SubagentWaitResult(
-            false,
+            outcome,
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),

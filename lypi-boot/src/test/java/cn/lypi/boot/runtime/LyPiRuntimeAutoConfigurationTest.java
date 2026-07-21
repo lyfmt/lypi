@@ -1460,7 +1460,8 @@ class LyPiRuntimeAutoConfigurationTest {
             .withPropertyValues(
                 "lypi.subagent.command[0]=python3",
                 "lypi.subagent.command[1]=-c",
-                "lypi.subagent.command[2]=import json, sys; data=json.load(sys.stdin); print(json.dumps({'taskName':data['taskName'],'agentId':data['agentId'],'childSessionId':data['childSessionId'],'runId':data['runId'],'status':'SUCCEEDED','content':'ok','finalEntryId':'msg_final'}))"
+                "lypi.subagent.command[2]=import json, sys; data=json.load(sys.stdin); print(json.dumps({'taskName':data['taskName'],'agentId':data['agentId'],'childSessionId':data['childSessionId'],'runId':data['runId'],'status':'SUCCEEDED','content':'ok','finalEntryId':'msg_final'}))",
+                "lypi.runtime.cwd=" + tempDir
             )
             .run(context -> {
                 SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);

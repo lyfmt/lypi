@@ -2,6 +2,7 @@ package cn.lypi.tool.builtin.subagent;
 
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.model.ThinkingLevel;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -54,10 +55,11 @@ final class SubagentToolInputs {
             return Optional.empty();
         }
         Object value = input.get(name);
-        if (!(value instanceof String text) || text.isBlank()) {
-            throw new IllegalArgumentException(name + " 必须是非空字符串。");
+        if (!(value instanceof String text)) {
+            throw new IllegalArgumentException(name + " 必须是字符串。");
         }
-        return Optional.of(text);
+        String normalized = text.trim();
+        return normalized.isEmpty() ? Optional.empty() : Optional.of(normalized);
     }
 
     static List<String> tools(Map<String, Object> input) {
@@ -86,14 +88,18 @@ final class SubagentToolInputs {
         if (value instanceof ThinkingLevel level) {
             return Optional.of(level);
         }
-        if (!(value instanceof String name) || name.isBlank()) {
+        if (!(value instanceof String name)) {
             throw new IllegalArgumentException("thinking_level 必须是 canonical 枚举名。");
         }
+        String normalized = name.trim();
+        if (normalized.isEmpty()) {
+            return Optional.empty();
+        }
         try {
-            return Optional.of(ThinkingLevel.valueOf(name));
+            return Optional.of(ThinkingLevel.valueOf(normalized));
         } catch (IllegalArgumentException exception) {
             throw new IllegalArgumentException(
-                "thinking_level 不支持: " + name + "。允许值: "
+                "thinking_level 不支持: " + normalized + "。允许值: "
                     + String.join(", ", SubagentToolSchemas.THINKING_LEVEL_VALUES)
             );
         }
@@ -107,7 +113,12 @@ final class SubagentToolInputs {
         if (!(value instanceof Number number)) {
             throw new IllegalArgumentException("timeout_ms 必须是整数毫秒值。");
         }
-        long timeout = number.longValue();
+        long timeout;
+        try {
+            timeout = new BigDecimal(number.toString()).longValueExact();
+        } catch (ArithmeticException | NumberFormatException exception) {
+            throw new IllegalArgumentException("timeout_ms 必须是整数毫秒值。");
+        }
         if (timeout < 0 || timeout > SubagentToolSchemas.MAX_TIMEOUT_MILLIS) {
             throw new IllegalArgumentException(
                 "timeout_ms 必须在 0 到 " + SubagentToolSchemas.MAX_TIMEOUT_MILLIS + " 之间。"

@@ -9,6 +9,8 @@ import cn.lypi.contracts.subagent.SubagentWaitRequest;
 import cn.lypi.contracts.subagent.SubagentWaitResult;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import cn.lypi.tool.ToolAbortSupport;
+import cn.lypi.tool.ToolSteeringSupport;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -27,7 +29,9 @@ public final class WaitAgentTool extends AbstractSubagentTool {
 
     @Override
     public String description() {
-        return "等待当前 session 任意 subagent mailbox 消息；收到时直接返回 completion，超时不改变 child 状态。";
+        return "阻塞等待当前 session 的 subagent completion。completion 原本会在后续模型边界自动投递；"
+            + "仅当下一步依赖结果且没有其他可执行工作时调用。用户要求继续执行时不要调用 wait_agent。"
+            + "用户输入、中断或超时也会结束等待。";
     }
 
     @Override
@@ -53,7 +57,9 @@ public final class WaitAgentTool extends AbstractSubagentTool {
         progress.progress(ToolProgress.phase("waiting", "等待 subagent 回复"));
         SubagentWaitResult result = agentCenter.waitFor(new SubagentWaitRequest(
             context.sessionId(),
-            SubagentToolInputs.timeoutMillis(input)
+            SubagentToolInputs.timeoutMillis(input),
+            ToolAbortSupport.signal(context),
+            ToolSteeringSupport.source(context)
         ));
         return success(context, render(result));
     }
@@ -64,25 +70,27 @@ public final class WaitAgentTool extends AbstractSubagentTool {
     }
 
     private String render(SubagentWaitResult result) {
-        if (!result.received()) {
-            return "等待结束，subagent 尚未回复。";
-        }
-        return """
-            收到 subagent 回复。
-            taskName: %s
-            agentId: %s
-            childSessionId: %s
-            runId: %s
-            status: %s
-            content:
-            %s
-            """.formatted(
-                result.taskName().orElse(""),
-                result.agentId().orElse(""),
-                result.childSessionId().orElse(""),
-                result.runId().orElse(""),
-                result.status().map(Enum::name).orElse(""),
-                result.content().orElse("")
-            ).trim();
+        return switch (result.outcome()) {
+            case STEERED -> "等待已被新的用户输入唤醒。";
+            case ABORTED -> "等待已中断。";
+            case TIMED_OUT -> "等待结束，subagent 尚未回复。";
+            case COMPLETED -> """
+                收到 subagent 回复。
+                taskName: %s
+                agentId: %s
+                childSessionId: %s
+                runId: %s
+                status: %s
+                content:
+                %s
+                """.formatted(
+                    result.taskName().orElse(""),
+                    result.agentId().orElse(""),
+                    result.childSessionId().orElse(""),
+                    result.runId().orElse(""),
+                    result.status().map(Enum::name).orElse(""),
+                    result.content().orElse("")
+                ).trim();
+        };
     }
 }

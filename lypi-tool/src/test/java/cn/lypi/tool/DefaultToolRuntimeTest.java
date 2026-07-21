@@ -11,6 +11,7 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.agent.SteeringMessageSource;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
@@ -76,6 +77,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -1857,6 +1859,34 @@ class DefaultToolRuntimeTest {
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
         assertEquals(ToolExecutionStatus.CANCELLED, end.status());
         assertTrue(end.resultSummary().error());
+    }
+
+    @Test
+    void publishesCancelledEndWhenCancelToolReceivesAbortDuringExecution() {
+        RecordingEventBus events = new RecordingEventBus();
+        AtomicBoolean aborted = new AtomicBoolean();
+        ToolExecutionInterceptor interceptor = ToolExecutionInterceptor.after((request, tool, context, result) -> {
+            aborted.set(true);
+            return result;
+        });
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity(), interceptor);
+        runtime.register(TestTools.echo("echo", List.of(), true, true, false));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "echo", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation(
+                "ses_1",
+                "turn_1",
+                "entry_1",
+                aborted::get,
+                SteeringMessageSource.none()
+            )
+        ).getFirst();
+
+        assertFalse(result.isError());
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals(ToolExecutionStatus.CANCELLED, end.status());
     }
 
     @Test

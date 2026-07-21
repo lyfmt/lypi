@@ -2,14 +2,13 @@ package cn.lypi.runtime.subagent;
 
 import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
-import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
-import java.util.LinkedHashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -51,10 +50,10 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
         List<SessionEntry> branch = branch(leafEntryId);
         Set<String> branchEntryIds = branchEntryIds(branch);
         Map<String, AgentRecord> records = new LinkedHashMap<>();
-        lifecycleRecords(parentSessionId, branch, records);
         childRecords(parentSessionId, branchEntryIds, records);
-        runningRecords(parentSessionId, records);
         Map<String, MailboxMessage> mailboxByChildSessionId = mailboxByChildSessionId(parentSessionId);
+        mailboxRecords(parentSessionId, branchEntryIds, mailboxByChildSessionId, records);
+        runningRecords(parentSessionId, branchEntryIds, records);
         return records.values().stream()
             .map(record -> view(record, mailboxByChildSessionId.get(record.childSessionId())))
             .filter(view -> statuses == null || statuses.isEmpty() || statuses.contains(view.status()))
@@ -79,29 +78,6 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
         return Set.copyOf(ids);
     }
 
-    private void lifecycleRecords(String parentSessionId, List<SessionEntry> branch, Map<String, AgentRecord> records) {
-        for (SessionEntry entry : branch) {
-            if (entry instanceof AgentLifecycleEntry lifecycle && parentSessionId.equals(lifecycle.parentSessionId())) {
-                AgentRecord record = records.computeIfAbsent(
-                    lifecycle.agentId(),
-                    ignored -> new AgentRecord(
-                        lifecycle.agentId(),
-                        lifecycle.childSessionId(),
-                        lifecycle.parentSessionId(),
-                        lifecycle.id(),
-                        taskName(lifecycle),
-                        Optional.empty(),
-                        AgentRunStatus.UNKNOWN
-                    )
-                );
-                record.childSessionId = lifecycle.childSessionId();
-                record.parentSessionId = lifecycle.parentSessionId();
-                record.agentName = firstPresent(taskName(lifecycle), record.agentName);
-                record.status = status(lifecycle.lifecycle());
-            }
-        }
-    }
-
     private void childRecords(String parentSessionId, Set<String> branchEntryIds, Map<String, AgentRecord> records) {
         for (ChildAgentSnapshot child : childAgents.childAgents(parentSessionId)) {
             if (!parentSessionId.equals(child.parentSessionId())) {
@@ -110,37 +86,67 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
             if (!branchEntryIds.contains(child.parentSpawnEntryId())) {
                 continue;
             }
-            Optional<AgentRecord> existing = records.values().stream()
-                .filter(record -> child.childSessionId().equals(record.childSessionId))
-                .findFirst();
-            if (existing.isPresent()) {
-                AgentRecord record = existing.get();
-                record.agentName = firstPresent(record.agentName, child.agentName());
-                record.agentRole = firstPresent(record.agentRole, child.agentRole());
-            } else {
-                records.put(
-                    "child:" + child.childSessionId(),
-                    new AgentRecord(
-                        "",
-                        child.childSessionId(),
-                        child.parentSessionId(),
-                        child.parentSpawnEntryId(),
-                        child.agentName(),
-                        child.agentRole(),
-                        AgentRunStatus.UNKNOWN
-                    )
-                );
-            }
+            AgentRecord record = records.computeIfAbsent(
+                child.childSessionId(),
+                ignored -> new AgentRecord(
+                    "",
+                    child.childSessionId(),
+                    child.parentSessionId(),
+                    child.parentSpawnEntryId(),
+                    child.agentName(),
+                    child.agentRole(),
+                    AgentRunStatus.UNKNOWN
+                )
+            );
+            record.agentName = firstPresent(record.agentName, child.agentName());
+            record.agentRole = firstPresent(record.agentRole, child.agentRole());
         }
     }
 
-    private void runningRecords(String parentSessionId, Map<String, AgentRecord> records) {
-        for (RunningAgentSnapshot running : runningAgents.runningAgents(parentSessionId)) {
-            if (!parentSessionId.equals(running.parentSessionId())) {
+    private void mailboxRecords(
+        String parentSessionId,
+        Set<String> branchEntryIds,
+        Map<String, MailboxMessage> mailboxByChildSessionId,
+        Map<String, AgentRecord> records
+    ) {
+        for (MailboxMessage message : mailboxByChildSessionId.values()) {
+            if (!parentSessionId.equals(message.parentSessionId())
+                || !branchEntryIds.contains(message.parentSpawnEntryId())) {
                 continue;
             }
             AgentRecord record = records.computeIfAbsent(
-                running.agentId(),
+                message.childSessionId(),
+                ignored -> new AgentRecord(
+                    message.agentId(),
+                    message.childSessionId(),
+                    message.parentSessionId(),
+                    message.parentSpawnEntryId(),
+                    Optional.ofNullable(message.taskName()),
+                    Optional.empty(),
+                    agentRunStatus(message.runStatus())
+                )
+            );
+            record.agentId = message.agentId();
+            record.childSessionId = message.childSessionId();
+            record.parentSessionId = message.parentSessionId();
+            record.parentSpawnEntryId = message.parentSpawnEntryId();
+            record.agentName = firstPresent(Optional.ofNullable(message.taskName()), record.agentName);
+            record.status = agentRunStatus(message.runStatus());
+        }
+    }
+
+    private void runningRecords(
+        String parentSessionId,
+        Set<String> branchEntryIds,
+        Map<String, AgentRecord> records
+    ) {
+        for (RunningAgentSnapshot running : runningAgents.runningAgents(parentSessionId)) {
+            if (!parentSessionId.equals(running.parentSessionId())
+                || !branchEntryIds.contains(running.parentSpawnEntryId())) {
+                continue;
+            }
+            AgentRecord record = records.computeIfAbsent(
+                running.childSessionId(),
                 ignored -> new AgentRecord(
                     running.agentId(),
                     running.childSessionId(),
@@ -151,6 +157,7 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
                     AgentRunStatus.RUNNING
                 )
             );
+            record.agentId = running.agentId();
             record.childSessionId = running.childSessionId();
             record.parentSessionId = running.parentSessionId();
             record.parentSpawnEntryId = running.parentSpawnEntryId();
@@ -216,29 +223,6 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
             case TIMED_OUT -> AgentRunStatus.TIMED_OUT;
             case INTERRUPTED -> AgentRunStatus.INTERRUPTED;
         };
-    }
-
-    private AgentRunStatus status(String lifecycle) {
-        if ("finished".equals(lifecycle)) {
-            return AgentRunStatus.SUCCEEDED;
-        }
-        if ("failed".equals(lifecycle)) {
-            return AgentRunStatus.FAILED;
-        }
-        if ("interrupted".equals(lifecycle)) {
-            return AgentRunStatus.INTERRUPTED;
-        }
-        if ("timed_out".equals(lifecycle)) {
-            return AgentRunStatus.TIMED_OUT;
-        }
-        return AgentRunStatus.UNKNOWN;
-    }
-
-    private Optional<String> taskName(AgentLifecycleEntry lifecycle) {
-        Object value = lifecycle.metadata().get("taskName");
-        return value instanceof String taskName && !taskName.isBlank()
-            ? Optional.of(taskName)
-            : Optional.empty();
     }
 
     private Optional<String> firstPresent(Optional<String> preferred, Optional<String> fallback) {

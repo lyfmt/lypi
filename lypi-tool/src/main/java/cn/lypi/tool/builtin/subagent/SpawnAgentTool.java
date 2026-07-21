@@ -33,7 +33,9 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
 
     @Override
     public String description() {
-        return "启动一个 prompt-only subagent。read、grep、glob 固定可用，tools 只追加 canonical 工具名。";
+        return "启动一个 prompt-only subagent。默认继承当前 Agent 的 provider、model 与 thinking level；仅在明确需要覆盖时填写这些可选参数。"
+            + "read、grep、glob 固定可用，tools 只追加 canonical 工具名。启动后继续执行其他独立工作；completion 会在后续模型边界自动投递。"
+            + "仅当下一步依赖结果且没有其他可执行工作时才调用 wait_agent；用户要求继续时不要调用 wait_agent。";
     }
 
     @Override
@@ -42,8 +44,8 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
         properties.put("task_name", Map.of("type", "string"));
         properties.put("message", Map.of("type", "string"));
         properties.put("tools", Map.of("type", "array", "items", Map.of("type", "string")));
-        properties.put("provider", Map.of("type", "string"));
-        properties.put("model", Map.of("type", "string"));
+        properties.put("provider", SubagentToolSchemas.providerSchema());
+        properties.put("model", SubagentToolSchemas.modelSchema());
         properties.put("thinking_level", SubagentToolSchemas.thinkingLevelSchema());
         return new JsonSchema(Map.of(
             "type", "object",
@@ -96,6 +98,7 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
                 childSessionId: %s
                 runId: %s
                 status: %s
+                completion 会在后续模型边界自动投递。请继续执行其他独立工作；仅当下一步依赖该结果且没有其他可执行工作时调用 wait_agent。用户要求继续时不要等待。
                 """.formatted(
                     result.taskName(),
                     result.agentId(),

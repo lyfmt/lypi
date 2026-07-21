@@ -50,6 +50,40 @@ class SubagentToolInputsTest {
     }
 
     @Test
+    void normalizesOptionalModelOverridesAndRejectsInvalidExplicitValues() {
+        assertEquals(
+            Optional.empty(),
+            SubagentToolInputs.optionalString(Map.of("provider", " "), "provider")
+        );
+        assertEquals(
+            Optional.empty(),
+            SubagentToolInputs.optionalString(Map.of("model", ""), "model")
+        );
+        assertEquals(
+            Optional.empty(),
+            SubagentToolInputs.thinkingLevel(Map.of("thinking_level", " "))
+        );
+        assertEquals(
+            Optional.of("openai"),
+            SubagentToolInputs.optionalString(Map.of("provider", " openai "), "provider")
+        );
+        assertEquals(
+            Optional.of(ThinkingLevel.HIGH),
+            SubagentToolInputs.thinkingLevel(Map.of("thinking_level", " HIGH "))
+        );
+
+        assertThrows(IllegalArgumentException.class, () ->
+            SubagentToolInputs.optionalString(Map.of("provider", 1), "provider")
+        );
+        assertThrows(IllegalArgumentException.class, () ->
+            SubagentToolInputs.optionalString(Map.of("model", 1), "model")
+        );
+        assertThrows(IllegalArgumentException.class, () ->
+            SubagentToolInputs.thinkingLevel(Map.of("thinking_level", "UNKNOWN"))
+        );
+    }
+
+    @Test
     void waitTimeoutUsesMillisecondsAndRejectsRemovedAliases() {
         assertEquals(600_000, SubagentToolInputs.timeoutMillis(Map.of()));
         assertEquals(25_000, SubagentToolInputs.timeoutMillis(Map.of("timeout_ms", 25_000)));
@@ -58,5 +92,9 @@ class SubagentToolInputsTest {
         assertThrows(IllegalArgumentException.class, () ->
             SubagentToolInputs.timeoutMillis(Map.of("timeout_ms", "10"))
         );
+        assertThrows(IllegalArgumentException.class, () ->
+            SubagentToolInputs.timeoutMillis(Map.of("timeout_ms", 1.5))
+        );
+        assertFalse(SubagentToolInputs.validateWait(Map.of("timeout_ms", Double.NaN)).valid());
     }
 }

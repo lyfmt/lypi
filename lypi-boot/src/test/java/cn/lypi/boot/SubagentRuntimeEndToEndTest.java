@@ -6,15 +6,26 @@ import cn.lypi.boot.headless.HeadlessSubagentCommand;
 import cn.lypi.boot.headless.HeadlessSubagentCommandAutoConfiguration;
 import cn.lypi.boot.runtime.LyPiRuntimeAutoConfiguration;
 import cn.lypi.boot.tool.LyPiToolAutoConfiguration;
+import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.agent.SteeringMessageSource;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
 import cn.lypi.contracts.context.TextContentBlock;
+import cn.lypi.contracts.context.ToolCallContentBlock;
+import cn.lypi.contracts.context.ToolResultContentBlock;
+import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.event.EventFilter;
+import cn.lypi.contracts.event.EventSubscription;
+import cn.lypi.contracts.event.MessageEndEvent;
+import cn.lypi.contracts.event.ToolProgressEvent;
+import cn.lypi.contracts.common.SignalSubscription;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
@@ -39,6 +50,7 @@ import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxStatus;
+import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -59,6 +71,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -236,16 +256,133 @@ class SubagentRuntimeEndToEndTest {
         });
     }
 
+    @Test
+    void completionBetweenWaitCallAndResultPreservesBothToolPairs() {
+        CapturingChildAgentCoreFactory childFactory = new CapturingChildAgentCoreFactory();
+        ControlledSubagentProcessRunner childProcess = new ControlledSubagentProcessRunner();
+        InterleavedWaitParentAiProvider parentAi = new InterleavedWaitParentAiProvider();
+
+        contextRunner(childFactory, parentAi, childProcess).run(context -> {
+            SessionManagerPort sessions = context.getBean(SessionManagerPort.class);
+            prepareParentSession(sessions);
+            EventBus eventBus = context.getBean(EventBus.class);
+
+            try (EventSubscription ignored = eventBus.subscribe(
+                new EventFilter(Optional.of(PARENT_SESSION_ID), Optional.of(MessageEndEvent.class)),
+                envelope -> {
+                    MessageEndEvent event = (MessageEndEvent) envelope.event();
+                    if ("msg_parent_wait_call".equals(event.messageId())) {
+                        childProcess.completeSuccessfully();
+                    }
+                }
+            )) {
+                TurnState state = context.getBean(AgentCorePort.class).execute(new TurnRequest(
+                    PARENT_SESSION_ID,
+                    "delegate and wait",
+                    Optional.empty(),
+                    () -> false
+                ));
+
+                assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+                assertThat(state.currentToolRound()).isEqualTo(2);
+            }
+
+            assertThat(childProcess.completed()).isTrue();
+            assertThat(parentAi.contexts).hasSize(3);
+            assertThat(toolBlockKeys(parentAi.contexts.get(2))).containsExactly(
+                "call:toolu_spawn_interleaved",
+                "result:toolu_spawn_interleaved",
+                "call:toolu_wait_interleaved",
+                "result:toolu_wait_interleaved"
+            );
+        });
+    }
+
+    @Test
+    void steeringWakesWaitAndIsInjectedAtNextModelBoundaryInSameTurn() {
+        CapturingChildAgentCoreFactory childFactory = new CapturingChildAgentCoreFactory();
+        WaitThenFinishParentAiProvider parentAi = new WaitThenFinishParentAiProvider();
+        TestSteeringSource steering = new TestSteeringSource();
+
+        contextRunner(childFactory, parentAi).run(context -> {
+            context.getBean(SessionManagerPort.class).openOrCreate(PARENT_SESSION_ID);
+            CountDownLatch waitStarted = waitStartedLatch(context.getBean(EventBus.class));
+            TurnRequest request = new TurnRequest(
+                PARENT_SESSION_ID,
+                "wait for a child",
+                Optional.empty(),
+                () -> false,
+                TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+                List.of(),
+                steering
+            );
+
+            try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+                Future<TurnState> turn = executor.submit(() -> context.getBean(AgentCorePort.class).execute(request));
+                try {
+                    assertThat(waitStarted.await(1, TimeUnit.SECONDS)).isTrue();
+                    steering.add(SteeringMessage.user("stop waiting", List.of()));
+                    TurnState state = turn.get(2, TimeUnit.SECONDS);
+
+                    assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+                    assertThat(parentAi.contexts).hasSize(2);
+                    assertThat(waitResultText(parentAi.contexts.get(1))).contains("新的用户输入");
+                    assertThat(parentAi.contexts.get(1).messages())
+                        .filteredOn(message -> message.role() == MessageRole.USER)
+                        .extracting(message -> message.content().getFirst().text())
+                        .containsExactly("wait for a child", "stop waiting");
+                } finally {
+                    turn.cancel(true);
+                }
+            }
+        });
+    }
+
+    @Test
+    void abortWakesWaitAndEndsTurnWithoutAnotherModelCall() {
+        CapturingChildAgentCoreFactory childFactory = new CapturingChildAgentCoreFactory();
+        WaitThenFinishParentAiProvider parentAi = new WaitThenFinishParentAiProvider();
+        TestAbortSignal abort = new TestAbortSignal();
+
+        contextRunner(childFactory, parentAi).run(context -> {
+            context.getBean(SessionManagerPort.class).openOrCreate(PARENT_SESSION_ID);
+            CountDownLatch waitStarted = waitStartedLatch(context.getBean(EventBus.class));
+            TurnRequest request = new TurnRequest(PARENT_SESSION_ID, "wait for a child", Optional.empty(), abort);
+
+            try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+                Future<TurnState> turn = executor.submit(() -> context.getBean(AgentCorePort.class).execute(request));
+                try {
+                    assertThat(waitStarted.await(1, TimeUnit.SECONDS)).isTrue();
+                    abort.abort();
+                    TurnState state = turn.get(2, TimeUnit.SECONDS);
+
+                    assertThat(state.status()).isEqualTo(TurnStatus.ABORTED);
+                    assertThat(parentAi.contexts).hasSize(1);
+                } finally {
+                    turn.cancel(true);
+                }
+            }
+        });
+    }
+
     private ApplicationContextRunner contextRunner(
         CapturingChildAgentCoreFactory childFactory,
         AiProviderRuntimePort parentAi
     ) {
-        return new ApplicationContextRunner()
+        return contextRunner(childFactory, parentAi, null);
+    }
+
+    private ApplicationContextRunner contextRunner(
+        CapturingChildAgentCoreFactory childFactory,
+        AiProviderRuntimePort parentAi,
+        SubagentProcessRunner processRunner
+    ) {
+        ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                 LyPiToolAutoConfiguration.class,
                 LyPiRuntimeAutoConfiguration.class
             ))
-            .withUserConfiguration(HeadlessSubagentCommandAutoConfiguration.class, InProcessHeadlessConfiguration.class)
+            .withUserConfiguration(HeadlessSubagentCommandAutoConfiguration.class)
             .withPropertyValues(
                 "lypi.runtime.cwd=" + tempDir,
                 "lypi.runtime.session-id=" + PARENT_SESSION_ID,
@@ -255,6 +392,9 @@ class SubagentRuntimeEndToEndTest {
             .withBean(AgentCoreFactoryPort.class, () -> childFactory)
             .withBean(AiProviderRuntimePort.class, () -> parentAi)
             .withBean(SecurityRuntimePort.class, () -> SubagentRuntimeEndToEndTest::allowAllSecurity);
+        return processRunner == null
+            ? runner.withUserConfiguration(InProcessHeadlessConfiguration.class)
+            : runner.withBean(SubagentProcessRunner.class, () -> processRunner);
     }
 
     private String prepareParentSession(SessionManagerPort sessions) {
@@ -317,6 +457,49 @@ class SubagentRuntimeEndToEndTest {
             .orElseThrow(() -> new AssertionError("Missing field " + name + " in output: " + output));
     }
 
+    private static List<String> toolBlockKeys(ContextSnapshot context) {
+        return context.messages().stream()
+            .flatMap(message -> message.content().stream())
+            .map(SubagentRuntimeEndToEndTest::toolBlockKey)
+            .filter(key -> !key.isEmpty())
+            .toList();
+    }
+
+    private static String toolBlockKey(ContentBlock block) {
+        if (block instanceof ToolCallContentBlock call) {
+            return "call:" + call.toolUseId();
+        }
+        if (block instanceof ToolResultContentBlock result) {
+            return "result:" + result.toolUseId();
+        }
+        return "";
+    }
+
+    private static CountDownLatch waitStartedLatch(EventBus eventBus) {
+        CountDownLatch waitStarted = new CountDownLatch(1);
+        eventBus.subscribe(
+            new EventFilter(Optional.of(PARENT_SESSION_ID), Optional.of(ToolProgressEvent.class)),
+            envelope -> {
+                ToolProgressEvent event = (ToolProgressEvent) envelope.event();
+                if ("waiting".equals(event.progress().phase())) {
+                    waitStarted.countDown();
+                }
+            }
+        );
+        return waitStarted;
+    }
+
+    private static String waitResultText(ContextSnapshot context) {
+        return context.messages().stream()
+            .flatMap(message -> message.content().stream())
+            .filter(ToolResultContentBlock.class::isInstance)
+            .map(ToolResultContentBlock.class::cast)
+            .filter(result -> "toolu_wait_interruptible".equals(result.toolUseId()))
+            .map(ToolResultContentBlock::text)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("Missing wait_agent result"));
+    }
+
     @TestConfiguration(proxyBeanMethods = false)
     static class InProcessHeadlessConfiguration {
         @Bean
@@ -360,6 +543,48 @@ class SubagentRuntimeEndToEndTest {
                     completion.cancel(true);
                 }
             };
+        }
+    }
+
+    private static final class ControlledSubagentProcessRunner implements SubagentProcessRunner {
+        private final CompletableFuture<HeadlessSubagentOutput> completion = new CompletableFuture<>();
+        private final AtomicReference<HeadlessSubagentInput> input = new AtomicReference<>();
+
+        @Override
+        public SubagentProcessHandle start(HeadlessSubagentInput input) {
+            this.input.set(input);
+            return new SubagentProcessHandle() {
+                @Override
+                public CompletableFuture<HeadlessSubagentOutput> completion() {
+                    return completion;
+                }
+
+                @Override
+                public void interrupt() {
+                    completion.cancel(true);
+                }
+            };
+        }
+
+        private void completeSuccessfully() {
+            HeadlessSubagentInput started = input.get();
+            if (started == null) {
+                throw new IllegalStateException("subagent process has not started");
+            }
+            completion.complete(new HeadlessSubagentOutput(
+                started.taskName(),
+                started.agentId(),
+                started.childSessionId(),
+                started.runId(),
+                SubagentRunStatus.SUCCEEDED,
+                "child completed",
+                Optional.of("msg_child_final"),
+                Optional.empty()
+            ));
+        }
+
+        private boolean completed() {
+            return completion.isDone() && !completion.isCompletedExceptionally() && !completion.isCancelled();
         }
     }
 
@@ -442,6 +667,122 @@ class SubagentRuntimeEndToEndTest {
                 new AssistantStart("msg_parent_after_child"),
                 new AssistantDone(Optional.empty(), Optional.of("end_turn"))
             ));
+        }
+    }
+
+    private static final class InterleavedWaitParentAiProvider implements AiProviderRuntimePort {
+        private final List<ContextSnapshot> contexts = new ArrayList<>();
+
+        @Override
+        public AssistantEventStream stream(ContextSnapshot context, cn.lypi.contracts.common.AbortSignal signal) {
+            contexts.add(context);
+            if (contexts.size() == 1) {
+                return new ListAssistantEventStream(List.of(
+                    new AssistantStart("msg_parent_spawn_call"),
+                    new ToolCallDelta(
+                        "toolu_spawn_interleaved",
+                        "spawn_agent",
+                        Map.of("task_name", "inspect-interleaving", "message", "inspect the session topology"),
+                        true
+                    ),
+                    new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+                ));
+            }
+            if (contexts.size() == 2) {
+                return new ListAssistantEventStream(List.of(
+                    new AssistantStart("msg_parent_wait_call"),
+                    new ToolCallDelta(
+                        "toolu_wait_interleaved",
+                        "wait_agent",
+                        Map.of("timeout_ms", 1_000),
+                        true
+                    ),
+                    new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+                ));
+            }
+            return new ListAssistantEventStream(List.of(
+                new AssistantStart("msg_parent_after_wait"),
+                new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+            ));
+        }
+    }
+
+    private static final class WaitThenFinishParentAiProvider implements AiProviderRuntimePort {
+        private final List<ContextSnapshot> contexts = new ArrayList<>();
+
+        @Override
+        public AssistantEventStream stream(ContextSnapshot context, cn.lypi.contracts.common.AbortSignal signal) {
+            contexts.add(context);
+            if (contexts.size() == 1) {
+                return new ListAssistantEventStream(List.of(
+                    new AssistantStart("msg_parent_wait_interruptible"),
+                    new ToolCallDelta(
+                        "toolu_wait_interruptible",
+                        "wait_agent",
+                        Map.of("timeout_ms", 60_000),
+                        true
+                    ),
+                    new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+                ));
+            }
+            return new ListAssistantEventStream(List.of(
+                new AssistantStart("msg_parent_after_interruptible_wait"),
+                new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+            ));
+        }
+    }
+
+    private static final class TestSteeringSource implements SteeringMessageSource {
+        private final ConcurrentLinkedQueue<SteeringMessage> messages = new ConcurrentLinkedQueue<>();
+        private final CopyOnWriteArrayList<Runnable> listeners = new CopyOnWriteArrayList<>();
+
+        @Override
+        public Optional<SteeringMessage> poll() {
+            return Optional.ofNullable(messages.poll());
+        }
+
+        @Override
+        public boolean hasPending() {
+            return !messages.isEmpty();
+        }
+
+        @Override
+        public SignalSubscription subscribe(Runnable listener) {
+            listeners.add(listener);
+            if (hasPending()) {
+                listener.run();
+            }
+            return () -> listeners.remove(listener);
+        }
+
+        private void add(SteeringMessage message) {
+            messages.add(message);
+            listeners.forEach(Runnable::run);
+        }
+    }
+
+    private static final class TestAbortSignal implements cn.lypi.contracts.common.AbortSignal {
+        private final AtomicBoolean aborted = new AtomicBoolean();
+        private final CopyOnWriteArrayList<Runnable> listeners = new CopyOnWriteArrayList<>();
+
+        @Override
+        public boolean aborted() {
+            return aborted.get();
+        }
+
+        @Override
+        public SignalSubscription subscribe(Runnable listener) {
+            listeners.add(listener);
+            if (aborted()) {
+                listener.run();
+            }
+            return () -> listeners.remove(listener);
+        }
+
+        private void abort() {
+            if (aborted.compareAndSet(false, true)) {
+                listeners.forEach(Runnable::run);
+            }
         }
     }
 

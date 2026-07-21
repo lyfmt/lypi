@@ -5,6 +5,7 @@ import cn.lypi.agent.compact.CompactionDecision;
 import cn.lypi.agent.compact.DefaultToolMicroCompactor;
 import cn.lypi.agent.compact.NoopCompactionCoordinator;
 import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.agent.SteeringMessageSource;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -1518,16 +1519,94 @@ class DefaultTurnExecutorTest {
             clock
         );
 
-        executor.execute(new TurnRequest("session-1", "run tool", Optional.empty(), () -> false));
+        AbortSignal abortSignal = () -> false;
+        SteeringMessageSource steering = Optional::empty;
+        executor.execute(new TurnRequest(
+            "session-1",
+            "run tool",
+            Optional.empty(),
+            abortSignal,
+            TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+            List.of(),
+            steering
+        ));
 
         assertThat(tools.invocations).hasSize(1);
         ToolRuntimeInvocation invocation = tools.invocations.getFirst();
         assertThat(invocation.sessionId()).isEqualTo("session-1");
         assertThat(invocation.turnId()).isEqualTo("turn-1");
         assertThat(invocation.parentEntryId()).isEqualTo("entry-msg-tool-call");
+        assertThat(invocation.abortSignal()).isSameAs(abortSignal);
+        assertThat(invocation.steeringMessages()).isSameAs(steering);
         assertThat(tools.clearedInvocations).hasSize(1);
         assertThat(tools.clearedInvocations.getFirst().sessionId()).isEqualTo("session-1");
         assertThat(tools.clearedInvocations.getFirst().turnId()).isEqualTo("turn-1");
+    }
+
+    @Test
+    void abortDuringToolExecutionPersistsResultWithoutAnotherModelCall() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        AtomicBoolean aborted = new AtomicBoolean();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "bash", Map.of("command", "sleep 60"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-after-abort"),
+            new TextDelta("must not run"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "工具调用已中止。",
+            true,
+            List.of(AgentCoreTestFixtures.toolResultMessage(
+                "msg-tool-result",
+                "toolu-1",
+                "工具调用已中止。",
+                true,
+                Map.of("status", ToolExecutionStatus.CANCELLED.name())
+            )),
+            Optional.empty()
+        )));
+        tools.onExecute(() -> aborted.set(true));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-fallback-1", "msg-fallback-2"),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest(
+            "session-1",
+            "run tool",
+            Optional.empty(),
+            aborted::get
+        ));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.ABORTED);
+        assertThat(provider.contexts).hasSize(1);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-tool-call", "msg-tool-result");
     }
 
     @Test
