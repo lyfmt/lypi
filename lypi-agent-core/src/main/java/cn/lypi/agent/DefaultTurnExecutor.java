@@ -4,6 +4,7 @@ import cn.lypi.agent.compact.CompactionDecision;
 import cn.lypi.agent.compact.CompactionRequest;
 import cn.lypi.agent.compact.ToolMicroCompactRequest;
 import cn.lypi.agent.compact.ToolMicroCompactResult;
+import cn.lypi.contracts.agent.SteeringMessage;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -25,6 +26,7 @@ import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
+import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
@@ -71,6 +73,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private TurnState executeWithTurnId(TurnRequest request, String turnId) {
         List<AgentMessage> newMessages = new ArrayList<>();
+        List<SkillMention> activeSkillMentions = new ArrayList<>(request.skillMentions());
         ports.sessionManager().openOrCreate(request.sessionId());
         request.parentEntryId().ifPresent(parentEntryId -> ports.sessionManager().switchLeaf(parentEntryId));
         Instant startedAt = clock.instant();
@@ -89,11 +92,20 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
         String contextLeafId = appendNewMessage(request.sessionId(), user);
         newMessages.add(user);
+        Optional<SteeringMessage> queuedAtStart = request.steeringMessages().poll();
+        if (queuedAtStart.isPresent()) {
+            contextLeafId = appendSteeringMessage(
+                request.sessionId(),
+                queuedAtStart.orElseThrow(),
+                activeSkillMentions,
+                newMessages
+            );
+        }
 
         ContextSnapshot context = null;
         int toolRound = 0;
         try {
-            context = buildContext(request, Optional.of(contextLeafId));
+            context = buildContext(request, Optional.of(contextLeafId), activeSkillMentions);
             AgentMessage assistant = runModel(request, context);
             contextLeafId = appendStartedMessage(request.sessionId(), assistant);
             newMessages.add(assistant);
@@ -113,25 +125,36 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, contextLeafId);
                 }
                 List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
-                if (toolRequests.isEmpty()) {
-                    break;
-                }
-                toolRound++;
-                List<ToolResult<?>> toolResults = executeTools(
-                    request.sessionId(),
-                    turnId,
-                    contextLeafId,
-                    toolRequests,
-                    context
-                );
-                for (ToolResult<?> toolResult : toolResults) {
-                    for (AgentMessage toolMessage : toolResult.newMessages()) {
-                        AgentMessage pendingToolMessage = ToolResultMessageMarker.markPendingToolOutput(toolMessage);
-                        contextLeafId = appendNewMessage(request.sessionId(), pendingToolMessage);
-                        newMessages.add(pendingToolMessage);
+                if (!toolRequests.isEmpty()) {
+                    toolRound++;
+                    List<ToolResult<?>> toolResults = executeTools(
+                        request.sessionId(),
+                        turnId,
+                        contextLeafId,
+                        toolRequests,
+                        context
+                    );
+                    for (ToolResult<?> toolResult : toolResults) {
+                        for (AgentMessage toolMessage : toolResult.newMessages()) {
+                            AgentMessage pendingToolMessage = ToolResultMessageMarker.markPendingToolOutput(toolMessage);
+                            contextLeafId = appendNewMessage(request.sessionId(), pendingToolMessage);
+                            newMessages.add(pendingToolMessage);
+                        }
                     }
                 }
-                context = buildContext(request, Optional.of(contextLeafId));
+                Optional<SteeringMessage> steering = request.steeringMessages().poll();
+                if (steering.isPresent()) {
+                    contextLeafId = appendSteeringMessage(
+                        request.sessionId(),
+                        steering.orElseThrow(),
+                        activeSkillMentions,
+                        newMessages
+                    );
+                }
+                if (toolRequests.isEmpty() && steering.isEmpty()) {
+                    break;
+                }
+                context = buildContext(request, Optional.of(contextLeafId), activeSkillMentions);
                 assistant = runModel(request, context);
                 contextLeafId = appendStartedMessage(request.sessionId(), assistant);
                 newMessages.add(assistant);
@@ -193,14 +216,18 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return state;
     }
 
-    private ContextSnapshot buildContext(TurnRequest request, Optional<String> leafEntryId) {
+    private ContextSnapshot buildContext(
+        TurnRequest request,
+        Optional<String> leafEntryId,
+        List<SkillMention> skillMentions
+    ) {
         ContextBuildRequest contextBuildRequest = new ContextBuildRequest(
             request.sessionId(),
             leafEntryId,
             // NOTE: lypi-resource 负责从 cwd 探索 project root 和资源层级；agent-core 只传入启动层确定的 cwd 起点。
             ports.cwd(),
             true,
-            request.skillMentions()
+            skillMentions
         );
         ContextAssembly assembly = ports.contextAssembler().build(contextBuildRequest);
         ToolMicroCompactResult microCompact = ports.toolMicroCompactor().compact(new ToolMicroCompactRequest(
@@ -234,6 +261,27 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             ports.toolMicroCompactor().reset();
         }
         return compaction.context();
+    }
+
+    private String appendSteeringMessage(
+        String sessionId,
+        SteeringMessage steering,
+        List<SkillMention> activeSkillMentions,
+        List<AgentMessage> newMessages
+    ) {
+        mergeSkillMentions(activeSkillMentions, steering.skillMentions());
+        AgentMessage user = messageFactory.userMessage(ids.newMessageId(), steering.userInput());
+        String leafId = appendNewMessage(sessionId, user);
+        newMessages.add(user);
+        return leafId;
+    }
+
+    private static void mergeSkillMentions(List<SkillMention> target, List<SkillMention> additions) {
+        for (SkillMention mention : additions) {
+            if (!target.contains(mention)) {
+                target.add(mention);
+            }
+        }
     }
 
     private ContextSnapshot reestimateBudget(ContextSnapshot context, ContextBudget previousBudget) {

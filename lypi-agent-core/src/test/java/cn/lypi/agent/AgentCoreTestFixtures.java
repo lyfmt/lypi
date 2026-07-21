@@ -668,6 +668,8 @@ final class AgentCoreTestFixtures {
         private final Map<String, Tool<?, ?>> toolsByNameOrAlias = new LinkedHashMap<>();
         private ToolRegistrySnapshot snapshot = new ToolRegistrySnapshot(List.of());
         private Path cwd = Path.of(".").toAbsolutePath().normalize();
+        private Runnable onExecute = () -> {
+        };
 
         void enqueue(List<ToolResult<?>> result) {
             results.add(result);
@@ -683,6 +685,10 @@ final class AgentCoreTestFixtures {
 
         void snapshot(ToolRegistrySnapshot snapshot) {
             this.snapshot = snapshot;
+        }
+
+        void onExecute(Runnable onExecute) {
+            this.onExecute = onExecute;
         }
 
         @Override
@@ -730,6 +736,7 @@ final class AgentCoreTestFixtures {
 
         private List<ToolResult<?>> executeQueued(List<ToolUseRequest> requests) {
             this.requests.add(List.copyOf(requests));
+            onExecute.run();
             if (!failures.isEmpty()) {
                 throw failures.removeFirst();
             }

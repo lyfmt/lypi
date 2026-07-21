@@ -4,6 +4,7 @@ import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.agent.compact.CompactionDecision;
 import cn.lypi.agent.compact.DefaultToolMicroCompactor;
 import cn.lypi.agent.compact.NoopCompactionCoordinator;
+import cn.lypi.contracts.agent.SteeringMessage;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -41,6 +42,7 @@ import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.session.MessageEntry;
+import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolDescriptor;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
@@ -53,6 +55,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
@@ -755,6 +759,303 @@ class DefaultTurnExecutorTest {
             .orElseThrow();
         assertThat(toolCallStart.kind()).isEqualTo(MessageKind.TOOL_CALL);
         assertThat(toolCallEnd.kind()).isEqualTo(MessageKind.TOOL_CALL);
+    }
+
+    @Test
+    void insertsSteeringSubmittedDuringToolExecutionBeforeNextModelCall() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        Queue<SteeringMessage> steering = new ConcurrentLinkedQueue<>();
+        provider.enqueue(List.of(
+            new AssistantStart("msg-tool-call"),
+            new ToolCallDelta("toolu-1", "read", Map.of("path", "pom.xml"), true),
+            new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-final"),
+            new TextDelta("changed course"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        tools.enqueue(List.of(new ToolResult<>(
+            "ok",
+            false,
+            List.of(AgentCoreTestFixtures.toolResultMessage("msg-tool-result", "toolu-1", "content", false)),
+            Optional.empty()
+        )));
+        tools.onExecute(() -> steering.add(new SteeringMessage("use README instead", List.of())));
+
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed(
+                "turn-1",
+                "msg-user",
+                "msg-fallback-tool-call",
+                "msg-steering",
+                "msg-fallback-final"
+            ),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest(
+            "session-1",
+            "read pom",
+            Optional.empty(),
+            () -> false,
+            TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+            List.of(),
+            () -> Optional.ofNullable(steering.poll())
+        ));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(state.newMessages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-tool-call", "msg-tool-result", "msg-steering", "msg-final");
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-tool-call", "msg-tool-result", "msg-steering", "msg-final");
+        assertThat(session.messages()).extracting(AgentMessage::role)
+            .containsExactly(
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.TOOL_RESULT,
+                MessageRole.USER,
+                MessageRole.ASSISTANT
+            );
+        assertThat(provider.contexts).hasSize(2);
+        assertThat(provider.contexts.get(1).messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-tool-call", "msg-tool-result", "msg-steering");
+        assertThat(eventBus.events.stream()
+            .filter(event -> event instanceof MessageStartEvent || event instanceof MessageEndEvent)
+            .map(event -> event.getClass().getSimpleName() + ":" + messageId(event)))
+            .containsSubsequence(
+                "MessageStartEvent:msg-tool-result",
+                "MessageEndEvent:msg-tool-result",
+                "MessageStartEvent:msg-steering",
+                "MessageEndEvent:msg-steering",
+                "MessageStartEvent:msg-final",
+                "MessageEndEvent:msg-final"
+            );
+    }
+
+    @Test
+    void insertsQueuedSteeringOneAtATimeBetweenAssistantResponses() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        Queue<SteeringMessage> steering = new ConcurrentLinkedQueue<>();
+        AtomicBoolean queued = new AtomicBoolean();
+        provider.enqueueProbe(List.of(
+            new AssistantStart("msg-assistant-1"),
+            new TextDelta("first response"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ), event -> {
+            if (event instanceof AssistantDone && queued.compareAndSet(false, true)) {
+                steering.add(new SteeringMessage("first steering", List.of()));
+                steering.add(new SteeringMessage("second steering", List.of()));
+            }
+        });
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant-2"),
+            new TextDelta("second response"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant-3"),
+            new TextDelta("third response"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed(
+                "turn-1",
+                "msg-user",
+                "msg-fallback-assistant-1",
+                "msg-steering-1",
+                "msg-fallback-assistant-2",
+                "msg-steering-2",
+                "msg-fallback-assistant-3"
+            ),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest(
+            "session-1",
+            "start",
+            Optional.empty(),
+            () -> false,
+            TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+            List.of(),
+            () -> Optional.ofNullable(steering.poll())
+        ));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly(
+                "msg-user",
+                "msg-assistant-1",
+                "msg-steering-1",
+                "msg-assistant-2",
+                "msg-steering-2",
+                "msg-assistant-3"
+            );
+        assertThat(provider.contexts).hasSize(3);
+    }
+
+    @Test
+    void insertsAlreadyQueuedSteeringBeforeFirstModelCall() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        Queue<SteeringMessage> steering = new ConcurrentLinkedQueue<>();
+        steering.add(new SteeringMessage("also inspect README", List.of()));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant-1"),
+            new TextDelta("handled both"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant-2"),
+            new TextDelta("unexpected extra response"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            AgentCoreTestFixtures.minimalContext(session.messages()),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of(),
+            List.of(),
+            List.of(),
+            false
+        );
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed(
+                "turn-1",
+                "msg-user",
+                "msg-steering",
+                "msg-fallback-assistant-1",
+                "msg-fallback-assistant-2"
+            ),
+            clock
+        );
+
+        TurnState state = executor.execute(new TurnRequest(
+            "session-1",
+            "inspect pom",
+            Optional.empty(),
+            () -> false,
+            TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+            List.of(),
+            () -> Optional.ofNullable(steering.poll())
+        ));
+
+        assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(provider.contexts).hasSize(1);
+        assertThat(provider.contexts.getFirst().messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-steering");
+        assertThat(session.messages()).extracting(AgentMessage::id)
+            .containsExactly("msg-user", "msg-steering", "msg-assistant-1");
+    }
+
+    @Test
+    void includesSteeringSkillMentionsInNextContextBuild() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        AgentCoreTestFixtures.StubAiProvider provider = new AgentCoreTestFixtures.StubAiProvider();
+        AgentCoreTestFixtures.StubToolRuntime tools = new AgentCoreTestFixtures.StubToolRuntime();
+        AgentCoreTestFixtures.RecordingEventBus eventBus = new AgentCoreTestFixtures.RecordingEventBus();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        SkillMention initialSkill = new SkillMention("doc", Path.of("/skills/doc/SKILL.md"));
+        SkillMention steeringSkill = new SkillMention("pdf", Path.of("/skills/pdf/SKILL.md"));
+        Queue<SteeringMessage> steering = new ConcurrentLinkedQueue<>();
+        steering.add(new SteeringMessage("also inspect $pdf", List.of(steeringSkill)));
+        provider.enqueue(List.of(
+            new AssistantStart("msg-assistant"),
+            new TextDelta("done"),
+            new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+        ));
+        List<ContextBuildRequest> contextRequests = new ArrayList<>();
+        ContextAssembler assembler = request -> {
+            contextRequests.add(request);
+            return new ContextAssembly(
+                AgentCoreTestFixtures.minimalContext(session.messages()),
+                AgentCoreTestFixtures.emptyResources(),
+                List.of(),
+                List.of(),
+                List.of(),
+                false
+            );
+        };
+        DefaultTurnExecutor executor = new DefaultTurnExecutor(
+            AgentCoreTestFixtures.ports(
+                session,
+                provider,
+                tools,
+                eventBus,
+                assembler,
+                new NoopCompactionCoordinator(),
+                new NoopMemoryExtractionWorker()
+            ),
+            TurnIds.fixed("turn-1", "msg-user", "msg-steering", "msg-fallback-assistant"),
+            clock
+        );
+
+        executor.execute(new TurnRequest(
+            "session-1",
+            "use $doc",
+            Optional.empty(),
+            () -> false,
+            TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+            List.of(initialSkill),
+            () -> Optional.ofNullable(steering.poll())
+        ));
+
+        assertThat(contextRequests).hasSize(1);
+        assertThat(contextRequests.getFirst().skillMentions())
+            .containsExactly(initialSkill, steeringSkill);
     }
 
     @Test

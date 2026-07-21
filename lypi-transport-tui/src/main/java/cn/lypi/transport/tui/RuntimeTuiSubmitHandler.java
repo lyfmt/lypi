@@ -1,6 +1,9 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.agent.SteeringMessage;
 import cn.lypi.contracts.agent.TurnRequest;
+import cn.lypi.contracts.agent.TurnState;
+import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.MessageRole;
@@ -21,6 +24,7 @@ import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -36,7 +40,9 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private final SlashCommandRouter slashCommandRouter;
     private final Consumer<SessionRuntimeState> runtimeStateConsumer;
     private final Supplier<SkillIndex> skillIndexSupplier;
-    private MutableAbortSignal activeSignal;
+    private final Object activeTurnLock = new Object();
+    private volatile MutableAbortSignal activeSignal;
+    private ActiveTurn activeTurn;
     private volatile boolean compactRunning;
 
     RuntimeTuiSubmitHandler(String sessionId, AgentCorePort core, EventBus events) {
@@ -157,18 +163,109 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         List<SkillMention> resolvedSkillMentions = skillMentions == null || skillMentions.isEmpty()
             ? new SkillMentionParser(skillIndexSupplier.get().skills()).explicitMentions(routedInput, List.of(), null)
             : List.copyOf(skillMentions);
-        MutableAbortSignal signal = new MutableAbortSignal();
-        activeSignal = signal;
         String sessionId = currentSessionId;
+        ActiveTurn turn;
+        String conflictingSessionId = null;
+        synchronized (activeTurnLock) {
+            if (activeTurn != null) {
+                if (activeTurn.sessionId.equals(sessionId)) {
+                    activeTurn.steering.addLast(new SteeringMessage(routedInput, resolvedSkillMentions));
+                } else {
+                    conflictingSessionId = activeTurn.sessionId;
+                }
+                turn = null;
+            } else {
+                MutableAbortSignal signal = new MutableAbortSignal();
+                turn = new ActiveTurn(sessionId, signal);
+                activeTurn = turn;
+                activeSignal = signal;
+            }
+        }
+        if (turn == null) {
+            if (conflictingSessionId != null) {
+                publishSlashCommandError("turn is running for session " + conflictingSessionId);
+            }
+            return;
+        }
         TurnRequest request = new TurnRequest(
             sessionId,
             routedInput,
             Optional.empty(),
-            signal,
+            turn.signal,
             TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
-            resolvedSkillMentions
+            resolvedSkillMentions,
+            () -> pollSteering(turn)
         );
-        executor.execute(() -> core.execute(request));
+        executor.execute(() -> runTurn(turn, request));
+    }
+
+    private void runTurn(ActiveTurn turn, TurnRequest request) {
+        try {
+            TurnRequest current = request;
+            while (current != null) {
+                TurnState state = core.execute(current);
+                if (state != null && state.status() != TurnStatus.COMPLETED) {
+                    discardAndFinish(turn);
+                    current = null;
+                } else {
+                    current = nextRequestOrFinish(turn, current.maxToolRounds());
+                }
+            }
+        } finally {
+            synchronized (activeTurnLock) {
+                if (activeTurn == turn) {
+                    clearActiveTurn(turn);
+                }
+            }
+        }
+    }
+
+    private void discardAndFinish(ActiveTurn turn) {
+        synchronized (activeTurnLock) {
+            clearActiveTurn(turn);
+        }
+    }
+
+    private TurnRequest nextRequestOrFinish(ActiveTurn turn, int maxToolRounds) {
+        synchronized (activeTurnLock) {
+            if (activeTurn != turn || turn.signal.aborted()) {
+                clearActiveTurn(turn);
+                return null;
+            }
+            SteeringMessage next = turn.steering.pollFirst();
+            if (next == null) {
+                clearActiveTurn(turn);
+                return null;
+            }
+            return new TurnRequest(
+                turn.sessionId,
+                next.userInput(),
+                Optional.empty(),
+                turn.signal,
+                maxToolRounds,
+                next.skillMentions(),
+                () -> pollSteering(turn)
+            );
+        }
+    }
+
+    private void clearActiveTurn(ActiveTurn turn) {
+        turn.steering.clear();
+        if (activeTurn == turn) {
+            activeTurn = null;
+        }
+        if (activeSignal == turn.signal) {
+            activeSignal = null;
+        }
+    }
+
+    private Optional<SteeringMessage> pollSteering(ActiveTurn turn) {
+        synchronized (activeTurnLock) {
+            if (activeTurn != turn || turn.signal.aborted()) {
+                return Optional.empty();
+            }
+            return Optional.ofNullable(turn.steering.pollFirst());
+        }
     }
 
     private void submitCompact(String input) {
@@ -237,8 +334,13 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
 
     @Override
     public void requestInterrupt(String reason) {
-        if (activeSignal != null) {
-            activeSignal.abort();
+        synchronized (activeTurnLock) {
+            if (activeTurn != null) {
+                activeTurn.steering.clear();
+                activeTurn.signal.abort();
+            } else if (activeSignal != null) {
+                activeSignal.abort();
+            }
         }
         events.publish(new InterruptEvent(
             currentSessionId,
@@ -315,5 +417,16 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             metadata,
             now
         ));
+    }
+
+    private static final class ActiveTurn {
+        private final String sessionId;
+        private final MutableAbortSignal signal;
+        private final ArrayDeque<SteeringMessage> steering = new ArrayDeque<>();
+
+        private ActiveTurn(String sessionId, MutableAbortSignal signal) {
+            this.sessionId = sessionId;
+            this.signal = signal;
+        }
     }
 }
