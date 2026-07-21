@@ -9,6 +9,10 @@ final class InlineTerminalRenderer {
     private static final String SYNC_START = "\033[?2026h";
     private static final String SYNC_END = "\033[?2026l";
     private static final String RESET_SCROLL_REGION = "\033[r";
+    private static final String RESET_STYLE = "\033[0m";
+    private static final String CURSOR_HOME = "\033[H";
+    private static final String CLEAR_VISIBLE_SCREEN = "\033[2J";
+    private static final String CLEAR_SCROLLBACK = "\033[3J";
     private static final String CLEAR_LINE = "\033[2K";
     private static final String REVERSE_INDEX = "\033M";
     private static final TerminalLine EMPTY_LINE = new TerminalLine("");
@@ -47,13 +51,15 @@ final class InlineTerminalRenderer {
             throw new IllegalArgumentException("mutable surface must contain at least one line");
         }
         InlineViewport nextViewport = viewport.withSurfaceHeight(surface.lines().size());
-        boolean commitStartupBanner = startupBannerEnabled && !startupBannerCommitted;
+        boolean replaceSession = batch.intent() == TuiRenderIntent.REPLACE_SESSION;
+        boolean commitStartupBanner = startupBannerEnabled && !startupBannerCommitted && !replaceSession;
         List<TerminalLine> history = prepareHistory(
             pendingHistory(batch, nextViewport, commitStartupBanner),
             nextViewport.width()
         );
 
-        if (history.isEmpty()
+        if (!replaceSession
+            && history.isEmpty()
             && renderedViewport != null
             && !geometryDirty
             && sameGeometry(renderedViewport, nextViewport)
@@ -68,11 +74,9 @@ final class InlineTerminalRenderer {
             return;
         }
 
-        InlineViewport finalViewport = writeRenderTransaction(
-            history,
-            surface,
-            nextViewport
-        );
+        InlineViewport finalViewport = replaceSession
+            ? writeSessionReplacementTransaction(history, surface, nextViewport)
+            : writeRenderTransaction(history, surface, nextViewport);
 
         viewport = finalViewport;
         renderedViewport = finalViewport;
@@ -172,6 +176,49 @@ final class InlineTerminalRenderer {
             } else {
                 drawSurfaceDiff(surface.lines(), finalViewport);
             }
+            moveCursor(surface.cursor(), finalViewport);
+        } catch (IOException exception) {
+            failure = exception;
+        }
+        try {
+            io.write(SYNC_END);
+        } catch (IOException exception) {
+            failure = combine(failure, exception);
+        }
+        try {
+            io.flush();
+        } catch (IOException exception) {
+            failure = combine(failure, exception);
+        }
+        if (failure != null) {
+            throw failure;
+        }
+        return finalViewport;
+    }
+
+    private InlineViewport writeSessionReplacementTransaction(
+        List<TerminalLine> history,
+        SurfaceFrame surface,
+        InlineViewport nextViewport
+    ) throws IOException {
+        io.write(SYNC_START);
+        InlineViewport freshViewport = new InlineViewport(
+            Math.max(0, nextViewport.terminalHeight() - nextViewport.surfaceHeight()),
+            nextViewport.surfaceHeight(),
+            nextViewport.width(),
+            nextViewport.terminalHeight()
+        );
+        InlineViewport finalViewport = freshViewport;
+        IOException failure = null;
+        try {
+            io.write(RESET_SCROLL_REGION);
+            io.write(RESET_STYLE);
+            io.write(CURSOR_HOME);
+            io.write(CLEAR_VISIBLE_SCREEN);
+            io.write(CLEAR_SCROLLBACK);
+            io.write(CURSOR_HOME);
+            finalViewport = insertHistory(history, freshViewport);
+            drawFullSurface(surface.lines(), finalViewport);
             moveCursor(surface.cursor(), finalViewport);
         } catch (IOException exception) {
             failure = exception;

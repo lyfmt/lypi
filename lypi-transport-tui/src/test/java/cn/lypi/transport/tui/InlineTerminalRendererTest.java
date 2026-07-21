@@ -62,6 +62,61 @@ class InlineTerminalRendererTest {
     }
 
     @Test
+    void replaceSessionClearsVisibleScreenThenScrollbackAndReplaysFullFrame() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo(80, 8);
+        InlineTerminalRenderer renderer = InlineTerminalRenderer.withStartupBanner(
+            io,
+            new InlineViewport(6, 2, 80, 8)
+        );
+        renderer.render(new TuiRenderBatch(
+            List.of(new TerminalLine("old history")),
+            TuiRenderFrame.fromTextLines(List.of("> old|CURSOR|", "old status"))
+        ));
+        io.resetOutput();
+
+        renderer.render(new TuiRenderBatch(
+            List.of(new TerminalLine("restored history")),
+            TuiRenderFrame.fromTextLines(List.of("> |CURSOR|", "resumed status")),
+            TuiRenderIntent.REPLACE_SESSION
+        ));
+
+        String output = io.output.toString();
+        String prefix = SYNC_START
+            + "\033[r"
+            + "\033[0m"
+            + "\033[H"
+            + "\033[2J"
+            + "\033[3J"
+            + "\033[H";
+        assertTrue(output.startsWith(prefix));
+        assertTrue(output.endsWith(SYNC_END));
+        assertTrue(output.contains("restored history"));
+        assertTrue(output.contains("> "));
+        assertTrue(output.contains("resumed status"));
+        assertFalse(output.contains("old history"));
+        assertFalse(stripAnsi(output).contains("LY-PI"));
+        assertEquals(1, io.flushCount);
+    }
+
+    @Test
+    void replaceSessionBypassesUnchangedSurfaceFastPath() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo(40, 6);
+        InlineTerminalRenderer renderer = new InlineTerminalRenderer(
+            io,
+            new InlineViewport(4, 2, 40, 6)
+        );
+        TuiRenderFrame surface = TuiRenderFrame.fromTextLines(List.of("> |CURSOR|", "status"));
+        renderer.render(new TuiRenderBatch(List.of(), surface));
+        io.resetOutput();
+
+        renderer.render(new TuiRenderBatch(List.of(), surface, TuiRenderIntent.REPLACE_SESSION));
+
+        assertTrue(io.output.toString().contains("\033[2J\033[3J"));
+        assertTrue(io.output.toString().contains("\033[5;1H\033[2K> "));
+        assertEquals(1, io.flushCount);
+    }
+
+    @Test
     void firstBatchCommitsHistoryAndSurfaceInOneSynchronizedFlush() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo(80, 12);
         InlineTerminalRenderer renderer = new InlineTerminalRenderer(
@@ -368,6 +423,39 @@ class InlineTerminalRendererTest {
         renderer.finish();
 
         assertTrue(io.output.toString().startsWith(SYNC_START + "\033[r"));
+        assertTrue(io.output.toString().endsWith(SYNC_END));
+        assertEquals(1, io.flushCount);
+    }
+
+    @Test
+    void failedSessionReplacementEndsSynchronizedUpdateAndCanRetrySameBatch() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo(80, 8);
+        InlineTerminalRenderer renderer = new InlineTerminalRenderer(
+            io,
+            new InlineViewport(6, 2, 80, 8)
+        );
+        renderer.render(new TuiRenderBatch(
+            List.of(new TerminalLine("old history")),
+            TuiRenderFrame.fromTextLines(List.of("> old|CURSOR|", "old status"))
+        ));
+        io.resetOutput();
+        TuiRenderBatch replacement = new TuiRenderBatch(
+            List.of(new TerminalLine("restored history")),
+            TuiRenderFrame.fromTextLines(List.of("> |CURSOR|", "resumed status")),
+            TuiRenderIntent.REPLACE_SESSION
+        );
+        io.failNextWriteOf("\033[2J");
+
+        assertThrows(IOException.class, () -> renderer.render(replacement));
+
+        assertTrue(io.output.toString().endsWith(SYNC_END));
+        assertEquals(1, io.flushCount);
+        io.resetOutput();
+
+        renderer.render(replacement);
+
+        assertTrue(io.output.toString().contains("\033[2J\033[3J"));
+        assertTrue(io.output.toString().contains("restored history"));
         assertTrue(io.output.toString().endsWith(SYNC_END));
         assertEquals(1, io.flushCount);
     }
