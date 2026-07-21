@@ -220,7 +220,7 @@ class TuiRendererTest {
     }
 
     @Test
-    void statusBarWithApprovalProjectionTruncatesOnNarrowWidth() {
+    void statusBarDoesNotRenderApprovalProjectionAndFitsNarrowWidth() {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(
             List.of(),
@@ -241,10 +241,12 @@ class TuiRendererTest {
             Optional.empty()
         );
 
-        List<String> lines = render(renderer, view, new TuiLayout(20, 3), "");
+        List<String> wideLines = render(renderer, view, new TuiLayout(120, 3), "");
+        List<String> narrowLines = render(renderer, view, new TuiLayout(20, 3), "");
 
-        assertTrue(AnsiWidth.displayWidth(lines.getLast()) <= 20);
-        assertFalse(lines.getLast().contains("\n"));
+        assertEquals("ses_1 gpt-5.4 EXECUTE ASK", wideLines.getLast());
+        assertTrue(AnsiWidth.displayWidth(narrowLines.getLast()) <= 20);
+        assertFalse(narrowLines.getLast().contains("\n"));
     }
 
     @Test
