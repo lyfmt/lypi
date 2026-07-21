@@ -5,6 +5,9 @@ import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 public final class TerminalSession implements AutoCloseable {
+    static final String SAVE_CURSOR = "\0337";
+    static final String RESTORE_CURSOR = "\0338";
+    static final String RESET_SCROLL_REGION = "\033[r";
     static final String ENABLE_BRACKETED_PASTE = "\033[?2004h";
     static final String DISABLE_BRACKETED_PASTE = "\033[?2004l";
     static final String HIDE_CURSOR = "\033[?25l";
@@ -17,7 +20,6 @@ public final class TerminalSession implements AutoCloseable {
     private final AutoCloseable resizeHandler;
     private final AutoCloseable interruptHandler;
     private boolean closed;
-    private int renderedRows;
 
     private TerminalSession(TerminalIo io, AutoCloseable rawMode, AutoCloseable resizeHandler, AutoCloseable interruptHandler) {
         this.io = io;
@@ -68,13 +70,9 @@ public final class TerminalSession implements AutoCloseable {
             io.flush();
             return new TerminalSession(io, rawMode, resizeHandler, interruptHandler);
         } catch (IOException | RuntimeException exception) {
-            restoreAfterOpenFailure(interruptHandler, resizeHandler, rawMode);
+            restoreAfterOpenFailure(io, interruptHandler, resizeHandler, rawMode);
             throw exception;
         }
-    }
-
-    void updateRenderedRows(int renderedRows) {
-        this.renderedRows = Math.max(0, renderedRows);
     }
 
     @Override
@@ -84,13 +82,12 @@ public final class TerminalSession implements AutoCloseable {
         }
         closed = true;
         try {
+            io.write(SAVE_CURSOR);
+            io.write(RESET_SCROLL_REGION);
             io.write(DISABLE_MODIFY_OTHER_KEYS);
-            io.write(SHOW_CURSOR);
             io.write(DISABLE_BRACKETED_PASTE);
-            if (renderedRows > 0) {
-                io.write("\033[" + renderedRows + ";1H");
-            }
-            io.write("\n");
+            io.write(RESTORE_CURSOR);
+            io.write(SHOW_CURSOR);
             io.flush();
         } finally {
             closeQuietly(interruptHandler);
@@ -108,13 +105,37 @@ public final class TerminalSession implements AutoCloseable {
     }
 
     private static void restoreAfterOpenFailure(
+        TerminalIo io,
         AutoCloseable interruptHandler,
         AutoCloseable resizeHandler,
         AutoCloseable rawMode
     ) {
+        writeStaticQuietly(io, SAVE_CURSOR);
+        writeStaticQuietly(io, RESET_SCROLL_REGION);
+        writeStaticQuietly(io, DISABLE_MODIFY_OTHER_KEYS);
+        writeStaticQuietly(io, DISABLE_BRACKETED_PASTE);
+        writeStaticQuietly(io, RESTORE_CURSOR);
+        writeStaticQuietly(io, SHOW_CURSOR);
+        flushStaticQuietly(io);
         closeStaticQuietly(interruptHandler);
         closeStaticQuietly(resizeHandler);
         closeStaticQuietly(rawMode);
+    }
+
+    private static void writeStaticQuietly(TerminalIo io, String value) {
+        try {
+            io.write(value);
+        } catch (IOException | RuntimeException ignored) {
+            // NOTE: 打开失败时每个恢复序列都独立尝试，避免一次写失败阻断终端恢复。
+        }
+    }
+
+    private static void flushStaticQuietly(TerminalIo io) {
+        try {
+            io.flush();
+        } catch (IOException | RuntimeException ignored) {
+            // NOTE: 打开失败回滚不能覆盖原始异常。
+        }
     }
 
     private static void closeStaticQuietly(AutoCloseable closeable) {

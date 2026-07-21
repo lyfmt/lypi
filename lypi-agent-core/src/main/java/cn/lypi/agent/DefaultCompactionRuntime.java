@@ -6,16 +6,26 @@ import cn.lypi.agent.compact.ManualCompactionPlanner;
 import cn.lypi.contracts.runtime.CompactionRequest;
 import cn.lypi.contracts.runtime.CompactionResult;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
+import cn.lypi.contracts.runtime.ToolRuntimePort;
 import java.util.Objects;
-import java.util.Optional;
 
 public final class DefaultCompactionRuntime implements CompactionRuntimePort {
     private final ContextAssembler contextAssembler;
     private final CompactionCoordinator compactionCoordinator;
+    private final ToolRuntimePort toolRuntime;
 
     public DefaultCompactionRuntime(ContextAssembler contextAssembler, CompactionCoordinator compactionCoordinator) {
+        this(contextAssembler, compactionCoordinator, null);
+    }
+
+    public DefaultCompactionRuntime(
+        ContextAssembler contextAssembler,
+        CompactionCoordinator compactionCoordinator,
+        ToolRuntimePort toolRuntime
+    ) {
         this.contextAssembler = Objects.requireNonNull(contextAssembler, "contextAssembler must not be null");
         this.compactionCoordinator = Objects.requireNonNull(compactionCoordinator, "compactionCoordinator must not be null");
+        this.toolRuntime = toolRuntime;
     }
 
     public static ManualCompactionPlanner manualPlanner() {
@@ -38,6 +48,7 @@ public final class DefaultCompactionRuntime implements CompactionRuntimePort {
             request.cwd(),
             buildRequest,
             assembly,
+            toolRuntime == null ? null : toolRuntime.snapshot(),
             request.abortSignal()
         ));
         return new CompactionResult(decision.compacted(), decision.compactionEntryId(), decision.reason());

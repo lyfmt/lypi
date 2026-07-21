@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -19,8 +20,13 @@ class PermissionRuntimeStateTest {
         .findAndRegisterModules();
 
     @Test
-    void mapsLegacyDefaultExecuteToWorkspaceRuntimeBehavior() {
-        PermissionRuntimeState state = PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
+    void exposesOnlyThreePermissionModes() {
+        assertEquals(List.of(PermissionMode.ASK, PermissionMode.AUTO, PermissionMode.BYPASS), Arrays.asList(PermissionMode.values()));
+    }
+
+    @Test
+    void mapsAskToWorkspaceRuntimeBehavior() {
+        PermissionRuntimeState state = PermissionRuntimeState.forMode(PermissionMode.ASK);
 
         assertEquals(":workspace", state.activePermissionProfile().id());
         assertEquals(PermissionProfiles.workspace(), state.permissionProfile());
@@ -28,12 +34,12 @@ class PermissionRuntimeStateTest {
         assertFalse(state.legacyBehavior().defaultBashRequiresEscalation());
         assertFalse(state.legacyBehavior().allowExplicitEscalationWithoutPrompt());
         assertTrue(state.legacyBehavior().hardSafetyEnabled());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, state.legacyPermissionMode());
+        assertEquals(PermissionMode.ASK, state.mode());
     }
 
     @Test
-    void mapsLegacyAcceptEditsToFullRuntimeBehavior() {
-        PermissionRuntimeState state = PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS);
+    void mapsAutoToWorkspaceRuntimeBehavior() {
+        PermissionRuntimeState state = PermissionRuntimeState.forMode(PermissionMode.AUTO);
 
         assertEquals(":workspace", state.activePermissionProfile().id());
         assertEquals(PermissionProfiles.workspace(), state.permissionProfile());
@@ -41,12 +47,12 @@ class PermissionRuntimeStateTest {
         assertTrue(state.legacyBehavior().defaultBashRequiresEscalation());
         assertFalse(state.legacyBehavior().allowExplicitEscalationWithoutPrompt());
         assertTrue(state.legacyBehavior().hardSafetyEnabled());
-        assertEquals(PermissionMode.ACCEPT_EDITS, state.legacyPermissionMode());
+        assertEquals(PermissionMode.AUTO, state.mode());
     }
 
     @Test
-    void mapsLegacyBypassToDangerousRuntimeBehaviorWithoutDisablingHardSafety() {
-        PermissionRuntimeState state = PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS);
+    void mapsBypassToDangerousRuntimeBehavior() {
+        PermissionRuntimeState state = PermissionRuntimeState.forMode(PermissionMode.BYPASS);
 
         assertEquals(":danger-full-access", state.activePermissionProfile().id());
         assertEquals(PermissionProfiles.dangerFullAccess(), state.permissionProfile());
@@ -54,7 +60,7 @@ class PermissionRuntimeStateTest {
         assertFalse(state.legacyBehavior().defaultBashRequiresEscalation());
         assertTrue(state.legacyBehavior().allowExplicitEscalationWithoutPrompt());
         assertTrue(state.legacyBehavior().hardSafetyEnabled());
-        assertEquals(PermissionMode.BYPASS, state.legacyPermissionMode());
+        assertEquals(PermissionMode.BYPASS, state.mode());
     }
 
     @Test
@@ -83,7 +89,7 @@ class PermissionRuntimeStateTest {
 
     @Test
     void runtimeStateRoundTripKeepsCanonicalFields() throws Exception {
-        PermissionRuntimeState state = PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS);
+        PermissionRuntimeState state = PermissionRuntimeState.forMode(PermissionMode.BYPASS);
 
         String json = mapper.writeValueAsString(state);
         PermissionRuntimeState restored = mapper.readValue(json, PermissionRuntimeState.class);
@@ -92,11 +98,21 @@ class PermissionRuntimeStateTest {
         assertTrue(json.contains("\"activePermissionProfile\""));
         assertTrue(json.contains("\"permissionProfile\""));
         assertTrue(json.contains("\"legacyBehavior\""));
+        assertTrue(json.contains("\"legacyPermissionMode\":\"bypass\""));
         assertEquals(ApprovalMode.NEVER, restored.approvalPolicy().mode());
         assertEquals(":danger-full-access", restored.activePermissionProfile().id());
         assertEquals(PermissionProfiles.dangerFullAccess(), restored.permissionProfile());
         assertTrue(restored.legacyBehavior().allowExplicitEscalationWithoutPrompt());
         assertEquals(PermissionMode.BYPASS, restored.legacyPermissionMode());
+    }
+
+    @Test
+    void readsCanonicalAndLegacyPermissionModeStrings() throws Exception {
+        assertEquals(PermissionMode.ASK, mapper.readValue("\"ask\"", PermissionMode.class));
+        assertEquals(PermissionMode.AUTO, mapper.readValue("\"auto\"", PermissionMode.class));
+        assertEquals(PermissionMode.BYPASS, mapper.readValue("\"bypass\"", PermissionMode.class));
+        assertEquals(PermissionMode.ASK, mapper.readValue("\"DEFAULT_EXECUTE\"", PermissionMode.class));
+        assertEquals(PermissionMode.AUTO, mapper.readValue("\"ACCEPT_EDITS\"", PermissionMode.class));
     }
 
     @Test

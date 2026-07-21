@@ -4,6 +4,7 @@ import cn.lypi.agent.compact.CompactionDecision;
 import cn.lypi.agent.compact.CompactionRequest;
 import cn.lypi.agent.compact.ToolMicroCompactRequest;
 import cn.lypi.agent.compact.ToolMicroCompactResult;
+import cn.lypi.contracts.agent.SteeringMessage;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
 import cn.lypi.contracts.agent.TurnStatus;
@@ -15,14 +16,17 @@ import cn.lypi.contracts.context.MessageKind;
 import cn.lypi.contracts.context.ToolCallContentBlock;
 import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
+import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ToolCallDelta;
+import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
@@ -69,6 +73,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private TurnState executeWithTurnId(TurnRequest request, String turnId) {
         List<AgentMessage> newMessages = new ArrayList<>();
+        List<SkillMention> activeSkillMentions = new ArrayList<>(request.skillMentions());
         ports.sessionManager().openOrCreate(request.sessionId());
         request.parentEntryId().ifPresent(parentEntryId -> ports.sessionManager().switchLeaf(parentEntryId));
         Instant startedAt = clock.instant();
@@ -87,11 +92,18 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         AgentMessage user = messageFactory.userMessage(ids.newMessageId(), request.userInput());
         String contextLeafId = appendNewMessage(request.sessionId(), user);
         newMessages.add(user);
+        BoundaryMessages queuedAtStart = appendBoundaryMessages(
+            request,
+            contextLeafId,
+            activeSkillMentions,
+            newMessages
+        );
+        contextLeafId = queuedAtStart.leafId();
 
         ContextSnapshot context = null;
         int toolRound = 0;
         try {
-            context = buildContext(request, Optional.of(contextLeafId));
+            context = buildContext(request, Optional.of(contextLeafId), activeSkillMentions);
             AgentMessage assistant = runModel(request, context);
             contextLeafId = appendStartedMessage(request.sessionId(), assistant);
             newMessages.add(assistant);
@@ -111,25 +123,38 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     return failedState(turnId, request.sessionId(), context, newMessages, toolRound, startedAt, contextLeafId);
                 }
                 List<ToolUseRequest> toolRequests = toolCallMapper.requestsFrom(assistant);
-                if (toolRequests.isEmpty()) {
-                    break;
-                }
-                toolRound++;
-                List<ToolResult<?>> toolResults = executeTools(
-                    request.sessionId(),
-                    turnId,
-                    contextLeafId,
-                    toolRequests,
-                    context
-                );
-                for (ToolResult<?> toolResult : toolResults) {
-                    for (AgentMessage toolMessage : toolResult.newMessages()) {
-                        AgentMessage pendingToolMessage = ToolResultMessageMarker.markPendingToolOutput(toolMessage);
-                        contextLeafId = appendNewMessage(request.sessionId(), pendingToolMessage);
-                        newMessages.add(pendingToolMessage);
+                if (!toolRequests.isEmpty()) {
+                    toolRound++;
+                    List<ToolResult<?>> toolResults = executeTools(
+                        request.sessionId(),
+                        turnId,
+                        contextLeafId,
+                        toolRequests,
+                        context,
+                        request
+                    );
+                    for (ToolResult<?> toolResult : toolResults) {
+                        for (AgentMessage toolMessage : toolResult.newMessages()) {
+                            AgentMessage pendingToolMessage = ToolResultMessageMarker.markPendingToolOutput(toolMessage);
+                            contextLeafId = appendNewMessage(request.sessionId(), pendingToolMessage);
+                            newMessages.add(pendingToolMessage);
+                        }
                     }
                 }
-                context = buildContext(request, Optional.of(contextLeafId));
+                if (request.abortSignal().aborted()) {
+                    break;
+                }
+                BoundaryMessages boundaryMessages = appendBoundaryMessages(
+                    request,
+                    contextLeafId,
+                    activeSkillMentions,
+                    newMessages
+                );
+                contextLeafId = boundaryMessages.leafId();
+                if (toolRequests.isEmpty() && !boundaryMessages.received()) {
+                    break;
+                }
+                context = buildContext(request, Optional.of(contextLeafId), activeSkillMentions);
                 assistant = runModel(request, context);
                 contextLeafId = appendStartedMessage(request.sessionId(), assistant);
                 newMessages.add(assistant);
@@ -191,14 +216,18 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return state;
     }
 
-    private ContextSnapshot buildContext(TurnRequest request, Optional<String> leafEntryId) {
+    private ContextSnapshot buildContext(
+        TurnRequest request,
+        Optional<String> leafEntryId,
+        List<SkillMention> skillMentions
+    ) {
         ContextBuildRequest contextBuildRequest = new ContextBuildRequest(
             request.sessionId(),
             leafEntryId,
             // NOTE: lypi-resource 负责从 cwd 探索 project root 和资源层级；agent-core 只传入启动层确定的 cwd 起点。
             ports.cwd(),
             true,
-            request.skillMentions()
+            skillMentions
         );
         ContextAssembly assembly = ports.contextAssembler().build(contextBuildRequest);
         ToolMicroCompactResult microCompact = ports.toolMicroCompactor().compact(new ToolMicroCompactRequest(
@@ -225,12 +254,76 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             ports.cwd(),
             contextBuildRequest,
             microCompactedAssembly,
+            ports.toolRuntime().snapshot(),
             request.abortSignal()
         ));
         if (compaction.compacted()) {
             ports.toolMicroCompactor().reset();
         }
         return compaction.context();
+    }
+
+    private String appendSteeringMessage(
+        String sessionId,
+        SteeringMessage steering,
+        List<SkillMention> activeSkillMentions,
+        List<AgentMessage> newMessages
+    ) {
+        AgentMessage message;
+        switch (steering.type()) {
+            case USER -> {
+                mergeSkillMentions(activeSkillMentions, steering.skillMentions());
+                message = messageFactory.userMessage(ids.newMessageId(), steering.content());
+            }
+            case AGENT_COMMUNICATION -> message = messageFactory.systemLocalMessage(
+                ids.newMessageId(),
+                steering.content(),
+                steering.metadata()
+            );
+            default -> throw new IllegalStateException("Unsupported steering message type: " + steering.type());
+        }
+        String leafId = appendNewMessage(sessionId, message);
+        newMessages.add(message);
+        return leafId;
+    }
+
+    private BoundaryMessages appendBoundaryMessages(
+        TurnRequest request,
+        String currentLeafId,
+        List<SkillMention> activeSkillMentions,
+        List<AgentMessage> newMessages
+    ) {
+        String leafId = currentLeafId;
+        boolean received = false;
+        Optional<SteeringMessage> userSteering = request.steeringMessages().poll();
+        if (userSteering.isPresent()) {
+            leafId = appendSteeringMessage(
+                request.sessionId(),
+                userSteering.orElseThrow(),
+                activeSkillMentions,
+                newMessages
+            );
+            received = true;
+        }
+        Optional<SteeringMessage> agentCommunication = ports.agentCommunication().poll(request.sessionId());
+        if (agentCommunication.isPresent()) {
+            leafId = appendSteeringMessage(
+                request.sessionId(),
+                agentCommunication.orElseThrow(),
+                activeSkillMentions,
+                newMessages
+            );
+            received = true;
+        }
+        return new BoundaryMessages(leafId, received);
+    }
+
+    private static void mergeSkillMentions(List<SkillMention> target, List<SkillMention> additions) {
+        for (SkillMention mention : additions) {
+            if (!target.contains(mention)) {
+                target.add(mention);
+            }
+        }
     }
 
     private ContextSnapshot reestimateBudget(ContextSnapshot context, ContextBudget previousBudget) {
@@ -261,7 +354,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         String sessionId = request.sessionId();
         final boolean[] assistantStarted = {false};
         final MessageKind[] startedKind = {MessageKind.TEXT};
-        Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
+        ProviderAttemptLifecycles providerLifecycles = new ProviderAttemptLifecycles(sessionId);
         ProviderConversationStateHolder providerConversationState = new ProviderConversationStateHolder();
         try (AssistantEventStream stream = ports.aiProvider().stream(
             context,
@@ -270,18 +363,21 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             request.abortSignal()
         )) {
             for (AssistantStreamEvent event : stream) {
-                if (event instanceof ProviderRetryNotice notice) {
-                    pendingRetry.ifPresent(previous -> eventPublisher.publishRetryEnd(request.sessionId(), previous, false));
-                    eventPublisher.publishRetryStart(request.sessionId(), notice);
-                    pendingRetry = Optional.of(notice);
+                if (event instanceof ProviderFallbackNotice notice) {
+                    providerLifecycles.startFallback(notice);
                     continue;
                 }
-                if (pendingRetry.isPresent()) {
-                    ProviderRetryNotice notice = pendingRetry.get();
-                    eventPublisher.publishRetryEnd(request.sessionId(), notice, !(event instanceof cn.lypi.contracts.model.AssistantError));
-                    pendingRetry = Optional.empty();
+                if (event instanceof ProviderRetryNotice notice) {
+                    providerLifecycles.startRetry(notice);
+                    continue;
                 }
                 accumulator.accept(event);
+                boolean abortRequested = request.abortSignal().aborted();
+                if (abortRequested || event instanceof AssistantError) {
+                    providerLifecycles.close(false);
+                } else if (completesProviderLifecycleSuccessfully(event)) {
+                    providerLifecycles.close(true);
+                }
                 if (event instanceof TextDelta delta) {
                     String messageId = currentAssistantId(accumulator);
                     ensureAssistantMessageStart(sessionId, messageId, MessageKind.TEXT, assistantStarted, startedKind);
@@ -338,15 +434,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                         Map.of("errorId", error.errorId())
                     ));
                 }
-                if (request.abortSignal().aborted()) {
-                    pendingRetry.ifPresent(notice -> eventPublisher.publishRetryEnd(request.sessionId(), notice, false));
-                    pendingRetry = Optional.empty();
+                if (abortRequested) {
                     break;
                 }
             }
             providerConversationState.value = stream.result().providerConversationState();
         } catch (RuntimeException failure) {
-            pendingRetry.ifPresent(notice -> eventPublisher.publishRetryEnd(sessionId, notice, false));
+            providerLifecycles.close(false);
             accumulator.messageId()
                 .ifPresent(messageId -> {
                     ensureAssistantMessageStart(sessionId, messageId, MessageKind.TEXT, assistantStarted, startedKind);
@@ -354,7 +448,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                 });
             throw failure;
         }
-        pendingRetry.ifPresent(notice -> eventPublisher.publishRetryEnd(request.sessionId(), notice, false));
+        providerLifecycles.close(false);
 
         AgentMessage message = accumulator.toMessage(
             ids.newMessageId(),
@@ -365,12 +459,23 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         return message;
     }
 
+    private boolean completesProviderLifecycleSuccessfully(AssistantStreamEvent event) {
+        return switch (event) {
+            case TextDelta delta -> delta.text() != null && !delta.text().isEmpty();
+            case ThinkingDelta delta -> delta.text() != null && !delta.text().isEmpty();
+            case ToolCallDelta ignored -> true;
+            case AssistantDone ignored -> true;
+            default -> false;
+        };
+    }
+
     private List<ToolResult<?>> executeTools(
         String sessionId,
         String turnId,
         String parentEntryId,
         List<ToolUseRequest> toolRequests,
-        ContextSnapshot context
+        ContextSnapshot context,
+        TurnRequest turnRequest
     ) {
         ensureToolRuntimeCwdMatches();
         List<ToolResult<?>> results;
@@ -378,7 +483,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
             results = ports.toolRuntime().execute(
                 toolRequests,
                 context,
-                new ToolRuntimeInvocation(sessionId, turnId, parentEntryId)
+                new ToolRuntimeInvocation(
+                    sessionId,
+                    turnId,
+                    parentEntryId,
+                    turnRequest.abortSignal(),
+                    turnRequest.steeringMessages()
+                )
             );
             if (results.size() != toolRequests.size()) {
                 throw new IllegalStateException(
@@ -435,5 +546,45 @@ public final class DefaultTurnExecutor implements TurnExecutor {
 
     private static final class ProviderConversationStateHolder {
         private Optional<cn.lypi.contracts.model.ProviderConversationState> value = Optional.empty();
+    }
+
+    private record BoundaryMessages(String leafId, boolean received) {}
+
+    private final class ProviderAttemptLifecycles {
+        private final String sessionId;
+        private Optional<ProviderRetryNotice> pendingRetry = Optional.empty();
+        private Optional<ProviderFallbackNotice> pendingFallback = Optional.empty();
+
+        private ProviderAttemptLifecycles(String sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        private void startRetry(ProviderRetryNotice notice) {
+            closeRetry(false);
+            eventPublisher.publishRetryStart(sessionId, notice);
+            pendingRetry = Optional.of(notice);
+        }
+
+        private void startFallback(ProviderFallbackNotice notice) {
+            closeRetry(false);
+            closeFallback(false);
+            eventPublisher.publishProviderFallbackStart(sessionId, notice);
+            pendingFallback = Optional.of(notice);
+        }
+
+        private void close(boolean success) {
+            closeRetry(success);
+            closeFallback(success);
+        }
+
+        private void closeRetry(boolean success) {
+            pendingRetry.ifPresent(notice -> eventPublisher.publishRetryEnd(sessionId, notice, success));
+            pendingRetry = Optional.empty();
+        }
+
+        private void closeFallback(boolean success) {
+            pendingFallback.ifPresent(notice -> eventPublisher.publishProviderFallbackEnd(sessionId, notice, success));
+            pendingFallback = Optional.empty();
+        }
     }
 }

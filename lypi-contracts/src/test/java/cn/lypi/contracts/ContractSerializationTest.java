@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ToolProgressKind;
+import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.agent.SteeringMessageType;
 import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContentBlockKind;
@@ -29,6 +31,8 @@ import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.ProviderFallbackEndEvent;
+import cn.lypi.contracts.event.ProviderFallbackStartEvent;
 import cn.lypi.contracts.event.SessionStateEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
@@ -37,9 +41,11 @@ import cn.lypi.contracts.event.TurnEndEvent;
 import cn.lypi.contracts.event.TurnStartEvent;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.memory.MemoryScope;
+import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.resource.MemorySource;
 import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
@@ -74,7 +80,6 @@ import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
 import cn.lypi.contracts.security.PermissionUpdate;
-import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
 import cn.lypi.contracts.session.CompactionKind;
@@ -85,20 +90,21 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.skill.SkillMention;
+import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
+import cn.lypi.contracts.subagent.ExpertAgentDefinition;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
-import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
+import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
-import cn.lypi.contracts.subagent.SubagentContinueRequest;
-import cn.lypi.contracts.subagent.SubagentContinueResult;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
+import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
+import cn.lypi.contracts.subagent.SubagentWaitOutcome;
 import cn.lypi.contracts.subagent.SubagentWaitRequest;
 import cn.lypi.contracts.subagent.SubagentWaitResult;
-import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
@@ -136,7 +142,7 @@ class ContractSerializationTest {
     void modeContractsExposeOnlySeparatedStageAndPermissionValues() {
         assertEquals(List.of(AgentMode.PLAN, AgentMode.EXECUTE), List.of(AgentMode.values()));
         assertEquals(
-            List.of(PermissionMode.DEFAULT_EXECUTE, PermissionMode.ACCEPT_EDITS, PermissionMode.BYPASS),
+            List.of(PermissionMode.ASK, PermissionMode.AUTO, PermissionMode.BYPASS),
             List.of(PermissionMode.values())
         );
     }
@@ -436,7 +442,7 @@ class ContractSerializationTest {
         SessionHeader restored = mapper.readValue(json, SessionHeader.class);
 
         assertTrue(json.contains("\"initialPermissionRuntimeState\""));
-        assertTrue(json.contains("\"initialPermissionMode\":\"BYPASS\""));
+        assertTrue(json.contains("\"initialPermissionMode\":\"bypass\""));
         assertEquals(runtimeState, restored.initialPermissionRuntimeState());
         assertEquals(Optional.of(PermissionMode.BYPASS), restored.initialPermissionMode());
     }
@@ -449,7 +455,7 @@ class ContractSerializationTest {
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             Instant.parse("2026-06-11T00:00:00Z")
         );
 
@@ -462,7 +468,7 @@ class ContractSerializationTest {
         assertEquals(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH), state.model());
         assertEquals(ThinkingLevel.HIGH, state.thinkingLevel());
         assertEquals(AgentMode.PLAN, state.agentMode());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, state.permissionMode());
+        assertEquals(PermissionMode.ASK, state.permissionMode());
     }
 
     @Test
@@ -487,34 +493,20 @@ class ContractSerializationTest {
     }
 
     @Test
-    void subagentContractsRoundTripKeepSessionRelationsAndMailboxStatus() throws Exception {
+    void subagentContractsRoundTripKeepDistinctIdentitiesAndMailboxStatus() throws Exception {
         Instant now = Instant.parse("2026-06-09T00:00:00Z");
-        SessionEntry entry = new AgentLifecycleEntry(
-            "entry_spawn",
-            "entry_parent",
-            "agent_01",
-            "ses_child",
-            "ses_parent",
-            "spawned",
-            Map.of("agentName", "reviewer"),
-            now
-        );
-
-        String entryJson = mapper.writeValueAsString(entry);
-        SessionEntry restoredEntry = mapper.readValue(entryJson, SessionEntry.class);
-
-        assertTrue(entryJson.contains("\"type\":\"agent_lifecycle\""));
-        assertInstanceOf(AgentLifecycleEntry.class, restoredEntry);
-        assertEquals(entry, restoredEntry);
-
         MailboxMessage message = new MailboxMessage(
             "mail_01",
+            "inspect-contracts",
             "agent_01",
             "ses_child",
+            "run_01",
             "ses_parent",
             "entry_spawn",
+            SubagentRunStatus.SUCCEEDED,
             "完成摘要",
-            new SubagentResultRef("ses_child", "entry_final", Optional.empty()),
+            Optional.of("entry_final"),
+            Optional.empty(),
             MailboxStatus.PENDING,
             now,
             now
@@ -525,138 +517,130 @@ class ContractSerializationTest {
 
         assertEquals(message, restoredMessage);
         assertTrue(messageJson.contains("\"status\":\"PENDING\""));
+        assertTrue(messageJson.contains("\"runId\":\"run_01\""));
     }
 
     @Test
-    void headlessSubagentInputRoundTripKeepsRunModeToolPolicyAndSkills() throws Exception {
+    void headlessSubagentProtocolRoundTripKeepsAgentAndRunIdentity() throws Exception {
         HeadlessSubagentInput input = new HeadlessSubagentInput(
+            "inspect-contracts",
+            "agent_01",
             "ses_child",
+            "run_01",
             "ses_parent",
             "entry_spawn",
-            "继续检查",
+            "检查 contracts",
             Path.of("/tmp/project/.ly-pi"),
             Path.of("/tmp/project"),
             new SubagentToolPolicy(List.of("read", "grep", "read"), List.of("read", "grep", "glob")),
-            PermissionMode.DEFAULT_EXECUTE,
-            30,
-            HeadlessSubagentRunMode.CONTINUE,
-            List.of(new SkillMention("doc", Path.of("/tmp/project/.ly-pi/skills/doc/SKILL.md")))
+            PermissionRuntimeState.fromLegacy(PermissionMode.AUTO),
+            30
         );
-
-        String json = mapper.writeValueAsString(input);
-        HeadlessSubagentInput restored = mapper.readValue(json, HeadlessSubagentInput.class);
-
-        assertEquals(input, restored);
-        assertTrue(json.contains("\"runMode\":\"CONTINUE\""));
-        assertTrue(json.contains("\"requestedTools\""));
-        assertTrue(json.contains("\"effectiveTools\""));
-        assertTrue(json.contains("\"skillMentions\""));
-    }
-
-    @Test
-    void subagentSpawnRequestRoundTripKeepsToolsCompatibilityFields() throws Exception {
-        SubagentSpawnRequest request = new SubagentSpawnRequest(
-            "ses_parent",
-            "entry_parent",
-            "请检查 contracts",
-            Path.of("/tmp/project"),
-            List.of("bash", "read"),
-            List.of("read"),
-            PermissionMode.DEFAULT_EXECUTE,
-            120,
-            Optional.of("reviewer"),
-            Optional.of("contracts")
-        );
-
-        String json = mapper.writeValueAsString(request);
-        SubagentSpawnRequest restored = mapper.readValue(json, SubagentSpawnRequest.class);
-
-        assertEquals(request, restored);
-        assertTrue(json.contains("\"tools\""));
-        assertTrue(json.contains("\"allowedTools\""));
-    }
-
-    @Test
-    void subagentSpawnRequestRoundTripKeepsExplicitModelContext() throws Exception {
-        SubagentSpawnRequest request = new SubagentSpawnRequest(
-            "ses_parent",
-            "entry_parent",
-            "请检查 contracts",
-            Path.of("/tmp/project"),
-            List.of("read"),
-            new SubagentToolPolicy(List.of("read"), List.of("read", "grep", "glob")),
-            PermissionMode.ACCEPT_EDITS,
-            120,
-            Optional.of("reviewer"),
-            Optional.of("contracts"),
-            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
-            Optional.of(ThinkingLevel.HIGH),
-            Optional.of(AgentMode.PLAN)
-        );
-
-        String json = mapper.writeValueAsString(request);
-        SubagentSpawnRequest restored = mapper.readValue(json, SubagentSpawnRequest.class);
-
-        assertEquals(request, restored);
-        assertTrue(json.contains("\"model\""));
-        assertTrue(json.contains("\"thinkingLevel\":\"HIGH\""));
-        assertTrue(json.contains("\"agentMode\":\"PLAN\""));
-        assertTrue(json.contains("\"permissionMode\":\"ACCEPT_EDITS\""));
-    }
-
-    @Test
-    void subagentSpawnLegacyPermissionModeConstructorMarksPermissionExplicit() {
-        SubagentSpawnRequest request = new SubagentSpawnRequest(
-            "ses_parent",
-            "entry_parent",
-            "请检查 contracts",
-            Path.of("/tmp/project"),
-            List.of("read"),
-            PermissionMode.ACCEPT_EDITS,
-            120,
-            Optional.empty(),
+        HeadlessSubagentOutput output = new HeadlessSubagentOutput(
+            "inspect-contracts",
+            "agent_01",
+            "ses_child",
+            "run_01",
+            SubagentRunStatus.SUCCEEDED,
+            "检查完成",
+            Optional.of("entry_final"),
             Optional.empty()
         );
 
-        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS), request.permissionRuntimeState());
-        assertTrue(request.permissionModeSpecified());
+        String inputJson = mapper.writeValueAsString(input);
+        String outputJson = mapper.writeValueAsString(output);
+
+        assertEquals(input, mapper.readValue(inputJson, HeadlessSubagentInput.class));
+        assertEquals(output, mapper.readValue(outputJson, HeadlessSubagentOutput.class));
+        assertTrue(inputJson.contains("\"runId\":\"run_01\""));
+        assertFalse(inputJson.contains("runMode"));
+        assertFalse(inputJson.contains("skillMentions"));
+        assertTrue(outputJson.contains("\"agentId\":\"agent_01\""));
     }
 
     @Test
-    void subagentSpawnRequestJsonWithCanonicalPermissionStateMarksPermissionExplicit() throws Exception {
-        String json = """
-            {
-              "parentSessionId": "ses_parent",
-              "parentEntryId": "entry_parent",
-              "prompt": "请检查 contracts",
-              "cwd": "/tmp/project",
-              "allowedTools": ["read"],
-              "toolPolicy": {
-                "requestedTools": ["read"],
-                "effectiveTools": ["read", "grep"]
-              },
-              "permissionRuntimeState": {
-                "approvalPolicy": {
-                  "mode": "NEVER"
-                },
-                "activePermissionProfile": {
-                  "id": ":danger-full-access"
-                },
-                "legacyBehavior": {
-                  "defaultBashRequiresEscalation": false,
-                  "allowExplicitEscalationWithoutPrompt": true,
-                  "hardSafetyEnabled": true
-                },
-                "legacyPermissionMode": "BYPASS"
-              },
-              "timeoutSeconds": 120
-            }
-            """;
+    void subagentSpawnContractsRoundTripKeepOnlyExplicitChildConfiguration() throws Exception {
+        SubagentSpawnRequest request = new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "inspect-contracts",
+            "请检查 contracts",
+            List.of("bash", "read"),
+            Optional.of("openai"),
+            Optional.of("gpt-5.4"),
+            Optional.of(ThinkingLevel.HIGH)
+        );
+        SubagentSpawnResult result = new SubagentSpawnResult(
+            "inspect-contracts",
+            "agent_01",
+            "ses_child",
+            "run_01",
+            SubagentRunStatus.STARTED,
+            Optional.of("subagent started")
+        );
 
-        SubagentSpawnRequest restored = mapper.readValue(json, SubagentSpawnRequest.class);
+        String requestJson = mapper.writeValueAsString(request);
+        String resultJson = mapper.writeValueAsString(result);
 
-        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), restored.permissionRuntimeState());
-        assertTrue(restored.permissionModeSpecified());
+        assertEquals(request, mapper.readValue(requestJson, SubagentSpawnRequest.class));
+        assertEquals(result, mapper.readValue(resultJson, SubagentSpawnResult.class));
+        assertTrue(requestJson.contains("\"provider\":\"openai\""));
+        assertTrue(requestJson.contains("\"model\":\"gpt-5.4\""));
+        assertTrue(requestJson.contains("\"thinkingLevel\":\"HIGH\""));
+        assertFalse(requestJson.contains("cwd"));
+        assertFalse(requestJson.contains("permission"));
+        assertFalse(requestJson.contains("agentMode"));
+    }
+
+    @Test
+    void subagentSpawnRequestRoundTripKeepsExpertIdentityAndPrompt() throws Exception {
+        SubagentSpawnRequest request = new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "review-auth",
+            "Review auth",
+            List.of("read", "grep", "glob", "bash"),
+            Optional.of("openai"),
+            Optional.of("gpt-5.4"),
+            Optional.empty(),
+            Optional.of("code-reviewer"),
+            Optional.of("Review code precisely.")
+        );
+
+        String json = mapper.writeValueAsString(request);
+
+        assertEquals(request, mapper.readValue(json, SubagentSpawnRequest.class));
+        assertTrue(json.contains("\"agentRole\":\"code-reviewer\""));
+        assertTrue(json.contains("\"initialSystemPrompt\":\"Review code precisely.\""));
+    }
+
+    @Test
+    void expertAgentDefinitionIsImmutableAndIncludedInResourceSnapshot() throws Exception {
+        List<String> tools = new java.util.ArrayList<>(List.of("bash"));
+        ExpertAgentDefinition expert = new ExpertAgentDefinition(
+            "code-reviewer",
+            "openai",
+            "gpt-5.4",
+            "Review code precisely.",
+            tools,
+            Path.of("/repo/./.ly-pi/agents/code-reviewer.yaml")
+        );
+        ResourceSnapshot snapshot = new ResourceSnapshot(
+            List.of(),
+            List.of(),
+            new SkillIndex(List.of(), List.of()),
+            List.of(),
+            List.of(),
+            List.of(expert),
+            List.of()
+        );
+
+        tools.add("write");
+
+        assertEquals(List.of("bash"), expert.tools());
+        assertEquals(Path.of("/repo/.ly-pi/agents/code-reviewer.yaml"), expert.sourceFile());
+        assertEquals(List.of(expert), snapshot.expertAgents());
+        assertEquals(expert, mapper.readValue(mapper.writeValueAsString(expert), ExpertAgentDefinition.class));
     }
 
     @Test
@@ -673,7 +657,7 @@ class ContractSerializationTest {
             Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
             Optional.of(ThinkingLevel.HIGH),
             Optional.of(AgentMode.EXECUTE),
-            Optional.of(PermissionMode.DEFAULT_EXECUTE),
+            Optional.of(PermissionMode.ASK),
             new SubagentToolPolicy(List.of("read", "bash"), List.of("read", "grep", "glob", "bash"))
         );
 
@@ -686,122 +670,146 @@ class ContractSerializationTest {
     }
 
     @Test
-    void subagentWaitContractsRoundTripKeepLocatorAndStatus() throws Exception {
-        SubagentWaitRequest request = new SubagentWaitRequest(
-            Optional.of("agent_01"),
-            Optional.of("ses_child"),
-            Optional.of("run_01"),
-            600,
-            true
-        );
-        SubagentWaitResult result = new SubagentWaitResult(
-            "agent_01",
+    void childSessionRequestRoundTripKeepsInitialExpertPrompt() throws Exception {
+        ChildSessionRequest request = new ChildSessionRequest(
             "ses_child",
-            "run_01",
-            SubagentRunStatus.RUNNING,
-            Optional.of("处理中"),
-            Optional.empty(),
-            Optional.empty()
-        );
-
-        String requestJson = mapper.writeValueAsString(request);
-        String resultJson = mapper.writeValueAsString(result);
-
-        assertEquals(request, mapper.readValue(requestJson, SubagentWaitRequest.class));
-        assertEquals(result, mapper.readValue(resultJson, SubagentWaitResult.class));
-        assertTrue(requestJson.contains("\"timeoutSeconds\":600"));
-        assertTrue(resultJson.contains("\"status\":\"RUNNING\""));
-    }
-
-    @Test
-    void subagentContinueContractsRoundTripKeepPromptAndResultRef() throws Exception {
-        SubagentContinueRequest request = new SubagentContinueRequest(
-            "ses_child",
-            "继续完成剩余检查",
-            List.of("bash", "read"),
-            90
-        );
-        SubagentContinueResult result = new SubagentContinueResult(
-            "agent_01",
-            "ses_child",
-            "run_02",
-            SubagentRunStatus.STARTED,
-            Optional.of("entry_continue")
-        );
-
-        String requestJson = mapper.writeValueAsString(request);
-        String resultJson = mapper.writeValueAsString(result);
-
-        assertEquals(request, mapper.readValue(requestJson, SubagentContinueRequest.class));
-        assertEquals(result, mapper.readValue(resultJson, SubagentContinueResult.class));
-        assertTrue(requestJson.contains("\"tools\""));
-        assertTrue(resultJson.contains("\"runId\":\"run_02\""));
-    }
-
-    @Test
-    void subagentContinueRequestRoundTripKeepsExplicitModelContext() throws Exception {
-        SubagentContinueRequest request = new SubagentContinueRequest(
             "ses_parent",
-            "entry_continue_parent",
-            "ses_child",
-            "继续完成剩余检查",
+            "entry_spawn",
+            Path.of("/tmp/project/.ly-pi"),
             Path.of("/tmp/project"),
-            List.of("bash", "read"),
-            new SubagentToolPolicy(List.of("bash", "read"), List.of("read", "grep", "glob", "bash")),
-            PermissionMode.ACCEPT_EDITS,
-            90,
+            2,
+            Optional.of("review-auth"),
+            Optional.of("code-reviewer"),
+            Optional.of("Review code precisely."),
             Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
             Optional.of(ThinkingLevel.HIGH),
-            Optional.of(AgentMode.EXECUTE)
+            Optional.of(AgentMode.EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
+            new SubagentToolPolicy(List.of("read", "bash"), List.of("read", "grep", "glob", "bash"))
         );
 
         String json = mapper.writeValueAsString(request);
-        SubagentContinueRequest restored = mapper.readValue(json, SubagentContinueRequest.class);
+        ChildSessionRequest restored = mapper.readValue(json, ChildSessionRequest.class);
 
         assertEquals(request, restored);
-        assertTrue(json.contains("\"model\""));
-        assertTrue(json.contains("\"thinkingLevel\":\"HIGH\""));
-        assertTrue(json.contains("\"agentMode\":\"EXECUTE\""));
-        assertTrue(json.contains("\"permissionMode\":\"ACCEPT_EDITS\""));
+        assertEquals(Optional.of("Review code precisely."), restored.initialSystemPrompt());
     }
 
     @Test
-    void subagentContinueRequestPrefersCanonicalPermissionStateWhenLegacyFieldAlsoExists() throws Exception {
-        String json = """
+    void oldSubagentJsonDefaultsNewExpertFieldsToEmpty() throws Exception {
+        SubagentSpawnRequest spawn = mapper.readValue(
+            """
             {
               "parentSessionId": "ses_parent",
-              "parentEntryId": "entry_continue_parent",
-              "childSessionId": "ses_child",
-              "prompt": "继续完成剩余检查",
-              "cwd": "/tmp/project",
-              "allowedTools": ["read"],
-              "toolPolicy": {
-                "requestedTools": ["read"],
-                "effectiveTools": ["read", "grep"]
-              },
-              "permissionMode": "DEFAULT_EXECUTE",
-              "permissionRuntimeState": {
-                "approvalPolicy": {
-                  "mode": "NEVER"
-                },
-                "activePermissionProfile": {
-                  "id": ":danger-full-access"
-                },
-                "legacyBehavior": {
-                  "defaultBashRequiresEscalation": false,
-                  "allowExplicitEscalationWithoutPrompt": true,
-                  "hardSafetyEnabled": true
-                },
-                "legacyPermissionMode": "BYPASS"
-              },
-              "timeoutSeconds": 90
+              "parentEntryId": "entry_parent",
+              "taskName": "review-auth",
+              "message": "Review auth",
+              "tools": [],
+              "provider": null,
+              "model": null,
+              "thinkingLevel": null
             }
-            """;
+            """,
+            SubagentSpawnRequest.class
+        );
+        ChildSessionRequest child = mapper.readValue(
+            """
+            {
+              "childSessionId": "ses_child",
+              "parentSessionId": "ses_parent",
+              "parentSpawnEntryId": "entry_spawn",
+              "sessionCwd": "/tmp/project/.ly-pi",
+              "cwd": "/tmp/project",
+              "depth": 2,
+              "agentName": null,
+              "agentRole": null,
+              "initialModel": null,
+              "initialThinkingLevel": null,
+              "initialAgentMode": null,
+              "initialPermissionRuntimeState": null,
+              "initialPermissionMode": null,
+              "toolPolicy": {"requestedTools": [], "effectiveTools": []}
+            }
+            """,
+            ChildSessionRequest.class
+        );
 
-        SubagentContinueRequest restored = mapper.readValue(json, SubagentContinueRequest.class);
+        assertEquals(Optional.empty(), spawn.agentRole());
+        assertEquals(Optional.empty(), spawn.initialSystemPrompt());
+        assertEquals(Optional.empty(), child.initialSystemPrompt());
+    }
 
-        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), restored.permissionRuntimeState());
-        assertEquals(PermissionMode.BYPASS, restored.permissionMode());
+    @Test
+    void subagentSpawnRequestRejectsPartialExpertConfiguration() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "review-auth",
+            "Review auth",
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.of("code-reviewer"),
+            Optional.empty()
+        ));
+    }
+
+    @Test
+    void subagentWaitContractsDistinguishAllOutcomes() throws Exception {
+        SubagentWaitRequest request = new SubagentWaitRequest("ses_parent", 600_000);
+        SubagentWaitResult completed = SubagentWaitResult.completed(
+            "inspect-contracts",
+            "agent_01",
+            "ses_child",
+            "run_01",
+            SubagentRunStatus.SUCCEEDED,
+            "完成"
+        );
+        SubagentWaitResult steered = SubagentWaitResult.steered();
+        SubagentWaitResult aborted = SubagentWaitResult.aborted();
+        SubagentWaitResult timedOut = SubagentWaitResult.timedOut();
+
+        String requestJson = mapper.writeValueAsString(request);
+        String completedJson = mapper.writeValueAsString(completed);
+        String steeredJson = mapper.writeValueAsString(steered);
+        String abortedJson = mapper.writeValueAsString(aborted);
+        String timedOutJson = mapper.writeValueAsString(timedOut);
+
+        SubagentWaitRequest restoredRequest = mapper.readValue(requestJson, SubagentWaitRequest.class);
+        assertEquals(request.parentSessionId(), restoredRequest.parentSessionId());
+        assertEquals(request.timeoutMillis(), restoredRequest.timeoutMillis());
+        assertEquals(completed, mapper.readValue(completedJson, SubagentWaitResult.class));
+        assertTrue(requestJson.contains("\"timeoutMillis\":600000"));
+        assertEquals(SubagentWaitOutcome.COMPLETED, completed.outcome());
+        assertEquals(Optional.of(SubagentRunStatus.SUCCEEDED), completed.status());
+        assertEquals(SubagentWaitOutcome.STEERED, steered.outcome());
+        assertEquals(SubagentWaitOutcome.ABORTED, aborted.outcome());
+        assertEquals(SubagentWaitOutcome.TIMED_OUT, timedOut.outcome());
+        assertTrue(completedJson.contains("\"outcome\":\"COMPLETED\""));
+        assertTrue(steeredJson.contains("\"outcome\":\"STEERED\""));
+        assertTrue(abortedJson.contains("\"outcome\":\"ABORTED\""));
+        assertTrue(timedOutJson.contains("\"outcome\":\"TIMED_OUT\""));
+        assertTrue(completed.received());
+        assertFalse(timedOut.received());
+        assertTrue(timedOut.status().isEmpty());
+    }
+
+    @Test
+    void steeringMessageUsesExplicitAgentCommunicationType() throws Exception {
+        SteeringMessage message = SteeringMessage.agentCommunication(
+            "subagent completed",
+            Map.of("agentId", "agent_01", "runId", "run_01")
+        );
+
+        String json = mapper.writeValueAsString(message);
+        SteeringMessage restored = mapper.readValue(json, SteeringMessage.class);
+
+        assertEquals(message, restored);
+        assertEquals(SteeringMessageType.AGENT_COMMUNICATION, message.type());
+        assertTrue(json.contains("\"type\":\"AGENT_COMMUNICATION\""));
+        assertTrue(json.contains("\"content\":\"subagent completed\""));
+        assertFalse(json.contains("userInput"));
     }
 
     @Test
@@ -910,6 +918,76 @@ class ContractSerializationTest {
         assertEquals(2, notice.attempt());
         assertEquals(java.time.Duration.ofMillis(1_000), notice.delay());
         assertEquals("provider.rate_limit", notice.retryableErrorId());
+    }
+
+    @Test
+    void providerFallbackNoticeRoundTripUsesTypeDiscriminator() throws Exception {
+        AssistantStreamEvent event = new ProviderFallbackNotice(
+            "openai",
+            1,
+            2,
+            "responses/websocket",
+            "responses/sse",
+            "fallback_candidate",
+            "provider.fallback_candidate",
+            "WebSocket handshake failed"
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AssistantStreamEvent restored = mapper.readValue(json, AssistantStreamEvent.class);
+
+        assertTrue(json.contains("\"type\":\"provider_fallback\""));
+        ProviderFallbackNotice notice = assertInstanceOf(ProviderFallbackNotice.class, restored);
+        assertEquals("openai", notice.provider());
+        assertEquals(1, notice.fromAttempt());
+        assertEquals(2, notice.toAttempt());
+        assertEquals("responses/websocket", notice.fromMode());
+        assertEquals("responses/sse", notice.toMode());
+        assertEquals("provider.fallback_candidate", notice.errorId());
+    }
+
+    @Test
+    void providerFallbackStartEventRoundTripUsesTypeDiscriminator() throws Exception {
+        Instant timestamp = Instant.parse("2026-06-01T12:00:00Z");
+        AgentEvent event = new ProviderFallbackStartEvent(
+            "ses_01",
+            "responses/websocket",
+            "responses/sse",
+            "fallback_candidate",
+            timestamp
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"provider_fallback_start\""));
+        ProviderFallbackStartEvent start = assertInstanceOf(ProviderFallbackStartEvent.class, restored);
+        assertEquals("ses_01", start.sessionId());
+        assertEquals("responses/websocket", start.fromMode());
+        assertEquals("responses/sse", start.toMode());
+        assertEquals("fallback_candidate", start.reason());
+        assertEquals(timestamp, start.timestamp());
+    }
+
+    @Test
+    void providerFallbackEndEventRoundTripUsesTypeDiscriminator() throws Exception {
+        Instant timestamp = Instant.parse("2026-06-01T12:00:00Z");
+        AgentEvent event = new ProviderFallbackEndEvent(
+            "ses_01",
+            "responses/sse",
+            true,
+            timestamp
+        );
+
+        String json = mapper.writeValueAsString(event);
+        AgentEvent restored = mapper.readValue(json, AgentEvent.class);
+
+        assertTrue(json.contains("\"type\":\"provider_fallback_end\""));
+        ProviderFallbackEndEvent end = assertInstanceOf(ProviderFallbackEndEvent.class, restored);
+        assertEquals("ses_01", end.sessionId());
+        assertEquals("responses/sse", end.toMode());
+        assertTrue(end.success());
+        assertEquals(timestamp, end.timestamp());
     }
 
     @Test

@@ -184,7 +184,7 @@ class PermissionDecisionPipelineTest {
         PermissionDecision decision = pipeline.decide(
             request("bash", Map.of("command", "git push origin feature/security")),
             context(
-                PermissionMode.DEFAULT_EXECUTE,
+                PermissionMode.ASK,
                 Map.of("permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS))
             )
         );
@@ -198,13 +198,13 @@ class PermissionDecisionPipelineTest {
         PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
         PermissionRuntimeState bypassBehaviorWithDefaultLegacyMode = runtimeStateWithLegacyMode(
             PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
 
         PermissionDecision decision = pipeline.decide(
             request("bash", Map.of("command", "git push origin feature/security")),
             context(
-                PermissionMode.DEFAULT_EXECUTE,
+                PermissionMode.ASK,
                 Map.of("permissionRuntimeState", bypassBehaviorWithDefaultLegacyMode)
             )
         );
@@ -219,7 +219,7 @@ class PermissionDecisionPipelineTest {
 
         PermissionDecision decision = pipeline.decide(
             request("write", Map.of("path", "/approved/outside.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+            context(PermissionMode.ASK, Map.of(
                 "additionalPermissions",
                 additionalFileSystem("/approved", FileSystemAccessMode.WRITE),
                 "approvedAdditionalPermissions",
@@ -238,7 +238,7 @@ class PermissionDecisionPipelineTest {
         PermissionDecision decision = pipeline.decide(
             request("write", Map.of("path", "/outside-workspace/out.txt")),
             context(
-                PermissionMode.DEFAULT_EXECUTE,
+                PermissionMode.ASK,
                 Map.of("permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS))
             )
         );
@@ -253,7 +253,7 @@ class PermissionDecisionPipelineTest {
 
         PermissionDecision decision = pipeline.decide(
             request("write", Map.of("path", "/tmp/cache/a.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+            context(PermissionMode.ASK, Map.of(
                 "permissionRuntimeState",
                 runtimeStateWithProfile("dev", managedProfile("/tmp/cache", FileSystemAccessMode.WRITE))
             ))
@@ -269,7 +269,7 @@ class PermissionDecisionPipelineTest {
 
         PermissionDecision decision = pipeline.decide(
             request("write", Map.of("path", "/tmp/cache/a.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+            context(PermissionMode.ASK, Map.of(
                 "permissionRuntimeState",
                 runtimeStateWithProfile("dev", PermissionProfiles.readOnly())
             ))
@@ -285,7 +285,7 @@ class PermissionDecisionPipelineTest {
 
         PermissionDecision decision = pipeline.decide(
             request("write", Map.of("path", "/approved/outside.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+            context(PermissionMode.ASK, Map.of(
                 "additionalPermissions",
                 additionalFileSystem("/approved", FileSystemAccessMode.WRITE)
             ))
@@ -301,7 +301,7 @@ class PermissionDecisionPipelineTest {
 
         PermissionDecision unrestricted = pipeline.decide(
             request("write", Map.of("path", "/approved/outside.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+            context(PermissionMode.ASK, Map.of(
                 "additionalPermissions",
                 new AdditionalPermissionProfile(Optional.of(FileSystemPermissionPolicy.unrestricted()), Optional.empty()),
                 "approvedAdditionalPermissions",
@@ -310,7 +310,7 @@ class PermissionDecisionPipelineTest {
         );
         PermissionDecision specialRoot = pipeline.decide(
             request("write", Map.of("path", "/approved/outside.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE, Map.of(
+            context(PermissionMode.ASK, Map.of(
                 "additionalPermissions",
                 additionalRootFileSystem(FileSystemAccessMode.WRITE),
                 "approvedAdditionalPermissions",
@@ -440,11 +440,11 @@ class PermissionDecisionPipelineTest {
 
     private PermissionRuntimeState runtimeStateWithProfile(String id, ManagedPermissionProfile profile) {
         return new PermissionRuntimeState(
-            ApprovalPolicy.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            ApprovalPolicy.fromLegacy(PermissionMode.ASK),
             new ActivePermissionProfile(id),
             profile,
             new LegacyPermissionBehavior(false, false, true),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 

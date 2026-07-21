@@ -4,7 +4,9 @@ import cn.lypi.agent.compact.CompactionCoordinator;
 import cn.lypi.agent.compact.DefaultToolMicroCompactor;
 import cn.lypi.agent.compact.ToolMicroCompactor;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.runtime.AgentCommunicationPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -23,6 +25,8 @@ public record AgentCoreRuntimePorts(
     ContextAssembler contextAssembler,
     ToolMicroCompactor toolMicroCompactor,
     CompactionCoordinator compactionCoordinator,
+    CompactStateBackfillPort compactStateBackfill,
+    AgentCommunicationPort agentCommunication,
     MemoryExtractionWorker memoryExtractionWorker
 ) {
     public AgentCoreRuntimePorts {
@@ -30,5 +34,72 @@ public record AgentCoreRuntimePorts(
         if (toolMicroCompactor == null) {
             toolMicroCompactor = new DefaultToolMicroCompactor();
         }
+        if (compactStateBackfill == null) {
+            compactStateBackfill = CompactStateBackfillPort.none();
+        }
+        if (agentCommunication == null) {
+            agentCommunication = AgentCommunicationPort.none();
+        }
+    }
+
+    public AgentCoreRuntimePorts(
+        Path cwd,
+        SessionManagerPort sessionManager,
+        AiProviderRuntimePort aiProvider,
+        ToolRuntimePort toolRuntime,
+        SecurityRuntimePort securityRuntime,
+        ResourceRuntimePort resourceRuntime,
+        EventBus eventBus,
+        ContextAssembler contextAssembler,
+        ToolMicroCompactor toolMicroCompactor,
+        CompactionCoordinator compactionCoordinator,
+        CompactStateBackfillPort compactStateBackfill,
+        MemoryExtractionWorker memoryExtractionWorker
+    ) {
+        this(
+            cwd,
+            sessionManager,
+            aiProvider,
+            toolRuntime,
+            securityRuntime,
+            resourceRuntime,
+            eventBus,
+            contextAssembler,
+            toolMicroCompactor,
+            compactionCoordinator,
+            compactStateBackfill,
+            AgentCommunicationPort.none(),
+            memoryExtractionWorker
+        );
+    }
+
+    public AgentCoreRuntimePorts(
+        Path cwd,
+        SessionManagerPort sessionManager,
+        AiProviderRuntimePort aiProvider,
+        ToolRuntimePort toolRuntime,
+        SecurityRuntimePort securityRuntime,
+        ResourceRuntimePort resourceRuntime,
+        EventBus eventBus,
+        ContextAssembler contextAssembler,
+        ToolMicroCompactor toolMicroCompactor,
+        CompactionCoordinator compactionCoordinator,
+        MemoryExtractionWorker memoryExtractionWorker
+    ) {
+        this(
+            cwd,
+            sessionManager,
+            aiProvider,
+            toolRuntime,
+            securityRuntime,
+            resourceRuntime,
+            eventBus,
+            contextAssembler,
+            toolMicroCompactor,
+            compactionCoordinator,
+            CompactStateBackfillPort.none(),
+            AgentCommunicationPort.none(),
+            memoryExtractionWorker
+        );
     }
 }

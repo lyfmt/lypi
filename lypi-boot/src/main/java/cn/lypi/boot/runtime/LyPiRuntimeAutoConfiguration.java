@@ -9,20 +9,22 @@ import cn.lypi.boot.tool.ToolRuntimeFactoryPort;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentCommunicationPort;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AppEntry;
 import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
-import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionProfileSelection;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
@@ -38,14 +40,11 @@ import cn.lypi.runtime.memory.MemoryConsolidationTurnEndListener;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.DefaultMailboxService;
 import cn.lypi.runtime.subagent.JsonlMailboxStore;
-import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
-import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.security.PermissionProfileConfigCompiler;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
-import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import java.time.Clock;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -54,8 +53,10 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.ConfigurationPropertiesBinding;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.convert.converter.Converter;
 
 @AutoConfiguration(after = {
     cn.lypi.boot.ai.LyPiAiAutoConfiguration.class,
@@ -67,6 +68,12 @@ import org.springframework.context.annotation.Bean;
     LyPiPermissionsProperties.class
 })
 public class LyPiRuntimeAutoConfiguration {
+    @Bean
+    @ConfigurationPropertiesBinding
+    public static Converter<String, PermissionMode> permissionModeConverter() {
+        return PermissionMode::fromJson;
+    }
+
     /**
      * 创建默认事件总线。
      */
@@ -176,13 +183,15 @@ public class LyPiRuntimeAutoConfiguration {
         SessionManagerPort sessionManager,
         ContextAssembler contextAssembler,
         EventBus eventBus,
-        CompactionSummarizer summarizer
+        CompactionSummarizer summarizer,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill
     ) {
         return RuntimeBeanFactories.compactionCoordinator(
             sessionManager,
             contextAssembler,
             eventBus,
             summarizer,
+            compactStateBackfill.getIfAvailable(CompactStateBackfillPort::none),
             Clock.systemUTC()
         );
     }
@@ -196,13 +205,17 @@ public class LyPiRuntimeAutoConfiguration {
         SessionManagerPort sessionManager,
         ContextAssembler contextAssembler,
         EventBus eventBus,
-        CompactionSummarizer summarizer
+        ObjectProvider<ToolRuntimePort> toolRuntime,
+        CompactionSummarizer summarizer,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill
     ) {
         return RuntimeBeanFactories.compactionRuntime(
             sessionManager,
             contextAssembler,
             eventBus,
+            toolRuntime.getIfAvailable(),
             summarizer,
+            compactStateBackfill.getIfAvailable(CompactStateBackfillPort::none),
             Clock.systemUTC()
         );
     }
@@ -222,7 +235,9 @@ public class LyPiRuntimeAutoConfiguration {
         ResourceRuntimePort resourceRuntime,
         EventBus eventBus,
         ContextAssembler contextAssembler,
-        CompactionCoordinator compactionCoordinator
+        CompactionCoordinator compactionCoordinator,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill,
+        ObjectProvider<AgentCommunicationPort> agentCommunication
     ) {
         return RuntimeBeanFactories.agentCore(
             properties,
@@ -234,6 +249,8 @@ public class LyPiRuntimeAutoConfiguration {
             eventBus,
             contextAssembler,
             compactionCoordinator,
+            compactStateBackfill.getIfAvailable(CompactStateBackfillPort::none),
+            agentCommunication.getIfAvailable(AgentCommunicationPort::none),
             Clock.systemUTC()
         );
     }
@@ -254,6 +271,7 @@ public class LyPiRuntimeAutoConfiguration {
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         EventBus eventBus,
         ObjectProvider<CompactionSummarizer> compactionSummarizer,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill,
         ObjectProvider<ModelCatalogPort> modelCatalog,
         Clock clock
     ) {
@@ -265,6 +283,7 @@ public class LyPiRuntimeAutoConfiguration {
             resourceRuntime,
             eventBus,
             compactionSummarizer,
+            compactStateBackfill,
             modelCatalog,
             clock
         );
@@ -574,54 +593,9 @@ public class LyPiRuntimeAutoConfiguration {
      * 创建默认 mailbox 服务。
      */
     @Bean
-    @ConditionalOnMissingBean(MailboxPort.class)
-    public DefaultMailboxService mailboxPort(JsonlMailboxStore store, SessionManagerPort sessionManager, Clock clock) {
-        return RuntimeBeanFactories.mailboxPort(store, sessionManager, clock);
-    }
-
-    /**
-     * 创建默认 mailbox 投递守卫。
-     *
-     * NOTE: 默认保守不自动投递，由 TUI/headless 空闲检测后替换。
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    public MailboxDeliveryGuard mailboxDeliveryGuard(ObjectProvider<SessionRuntimeState> state, SessionManagerPort sessionManager) {
-        return RuntimeBeanFactories.mailboxDeliveryGuard(state::getIfAvailable, sessionManager);
-    }
-
-    /**
-     * 创建 mailbox 投递服务。
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnBean(DefaultMailboxService.class)
-    public MailboxDeliveryService mailboxDeliveryService(DefaultMailboxService mailbox, MailboxDeliveryGuard guard) {
-        return RuntimeBeanFactories.mailboxDeliveryService(mailbox, guard);
-    }
-
-    /**
-     * 创建 /mailbox slash command handler。
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnBean(MailboxPort.class)
-    public MailboxSlashCommandHandler mailboxSlashCommandHandler(
-        MailboxPort mailbox,
-        ObjectProvider<SessionRuntimeState> state,
-        SessionManagerPort sessionManager
-    ) {
-        return RuntimeBeanFactories.mailboxSlashCommandHandler(mailbox, state::getIfAvailable, sessionManager);
-    }
-
-    /**
-     * 创建 /mailbox slash command 定义。
-     */
-    @Bean
-    @ConditionalOnMissingBean(name = "mailboxSlashCommand")
-    @ConditionalOnBean(MailboxSlashCommandHandler.class)
-    public SlashCommand mailboxSlashCommand(MailboxSlashCommandHandler handler) {
-        return handler.command();
+    @ConditionalOnMissingBean(DefaultMailboxService.class)
+    public DefaultMailboxService mailboxPort(JsonlMailboxStore store, Clock clock) {
+        return RuntimeBeanFactories.mailboxPort(store, clock);
     }
 
     /**
@@ -643,6 +617,16 @@ public class LyPiRuntimeAutoConfiguration {
             runningAgentSnapshotProvider(runningAgents, agentCenter),
             childAgents
         );
+    }
+
+    /**
+     * 创建 compact 后运行态回填端口。
+     */
+    @Bean
+    @ConditionalOnMissingBean(CompactStateBackfillPort.class)
+    @ConditionalOnBean(AgentRegistryPort.class)
+    public CompactStateBackfillPort compactStateBackfill(AgentRegistryPort registry) {
+        return RuntimeBeanFactories.compactStateBackfill(registry);
     }
 
     /**
@@ -717,24 +701,22 @@ public class LyPiRuntimeAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(AgentCenterPort.class)
-    @ConditionalOnBean({DefaultMailboxService.class, MailboxDeliveryService.class})
+    @ConditionalOnBean(DefaultMailboxService.class)
     public AgentCenterPort agentCenter(
         ChildSessionPort childSessions,
         SessionManagerPort parentSession,
-        SessionManagerFactoryPort sessionManagerFactory,
         SubagentProcessRunner processRunner,
         DefaultMailboxService mailbox,
-        MailboxDeliveryService deliveryService,
+        ObjectProvider<ModelCatalogPort> modelCatalog,
         SubagentCommandResolver subagentCommandResolver,
         Clock clock
     ) {
         return RuntimeBeanFactories.agentCenter(
             childSessions,
             parentSession,
-            sessionManagerFactory,
             processRunner,
             mailbox,
-            deliveryService,
+            modelCatalog.getIfAvailable(),
             subagentCommandResolver,
             clock
         );

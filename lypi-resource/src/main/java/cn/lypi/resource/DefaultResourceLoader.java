@@ -7,6 +7,7 @@ import cn.lypi.contracts.resource.MemorySource;
 import cn.lypi.contracts.resource.ResourceDiagnostic;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.skill.SkillIndex;
+import cn.lypi.contracts.subagent.ExpertAgentDefinition;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +24,7 @@ public class DefaultResourceLoader implements ResourceLoader {
     private final MemorySourceScanner memorySourceScanner;
     private final SkillScanner skillScanner;
     private final PromptTemplateScanner promptTemplateScanner;
+    private final ExpertAgentScanner expertAgentScanner;
     private final McpConfigScanner mcpConfigScanner;
 
     public DefaultResourceLoader() {
@@ -41,6 +43,7 @@ public class DefaultResourceLoader implements ResourceLoader {
             new MemorySourceScanner(),
             new SkillScanner(),
             new PromptTemplateScanner(),
+            new ExpertAgentScanner(),
             new McpConfigScanner()
         );
     }
@@ -52,6 +55,7 @@ public class DefaultResourceLoader implements ResourceLoader {
         MemorySourceScanner memorySourceScanner,
         SkillScanner skillScanner,
         PromptTemplateScanner promptTemplateScanner,
+        ExpertAgentScanner expertAgentScanner,
         McpConfigScanner mcpConfigScanner
     ) {
         this.projectRootResolver = projectRootResolver;
@@ -60,6 +64,7 @@ public class DefaultResourceLoader implements ResourceLoader {
         this.memorySourceScanner = memorySourceScanner;
         this.skillScanner = skillScanner;
         this.promptTemplateScanner = promptTemplateScanner;
+        this.expertAgentScanner = expertAgentScanner;
         this.mcpConfigScanner = mcpConfigScanner;
     }
 
@@ -78,6 +83,7 @@ public class DefaultResourceLoader implements ResourceLoader {
         List<MemorySource> memorySources = memorySourceScanner.scan(discoveryPlan.locations(), diagnostics);
         SkillIndex skillIndex = skillScanner.scan(discoveryPlan.locations(), diagnostics);
         List<PromptTemplate> promptTemplates = promptTemplateScanner.scan(discoveryPlan.locations(), diagnostics);
+        List<ExpertAgentDefinition> expertAgents = expertAgentScanner.scan(discoveryPlan.locations(), diagnostics);
         List<McpServerConfig> mcpServers = mcpConfigScanner.scan(discoveryPlan.locations(), diagnostics);
 
         return new ResourceSnapshot(
@@ -86,6 +92,7 @@ public class DefaultResourceLoader implements ResourceLoader {
             skillIndex,
             promptTemplates,
             mcpServers,
+            expertAgents,
             List.copyOf(diagnostics)
         );
     }

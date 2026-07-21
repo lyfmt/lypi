@@ -3,7 +3,6 @@ package cn.lypi.session;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.context.MessageRole;
-import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.LabelEntry;
 import cn.lypi.contracts.session.MessageEntry;
@@ -34,10 +33,9 @@ final class SessionLeafSelector {
         return null;
     }
 
-    private static boolean advancesNavigableLeaf(SessionEntry entry) {
+    static boolean advancesNavigableLeaf(SessionEntry entry) {
         return !isToolCallAssistant(entry)
             && !isToolResult(entry)
-            && !(entry instanceof AgentLifecycleEntry)
             && !(entry instanceof ModelChangeEntry)
             && !(entry instanceof ThinkingChangeEntry)
             && !(entry instanceof ModeChangeEntry)

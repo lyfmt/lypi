@@ -11,6 +11,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
     @JsonSubTypes.Type(value = ToolCallDelta.class, name = "tool_call_delta"),
     @JsonSubTypes.Type(value = AssistantDone.class, name = "assistant_done"),
     @JsonSubTypes.Type(value = AssistantError.class, name = "assistant_error"),
+    @JsonSubTypes.Type(value = ProviderFallbackNotice.class, name = "provider_fallback"),
     @JsonSubTypes.Type(value = ProviderRetryNotice.class, name = "provider_retry")
 })
 public sealed interface AssistantStreamEvent permits
@@ -20,5 +21,6 @@ public sealed interface AssistantStreamEvent permits
     ToolCallDelta,
     AssistantDone,
     AssistantError,
+    ProviderFallbackNotice,
     ProviderRetryNotice {
 }

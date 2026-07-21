@@ -2,14 +2,26 @@ package cn.lypi.session;
 
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.CodingErrorAction;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.StringJoiner;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
 
 /**
@@ -19,6 +31,7 @@ import java.util.stream.Stream;
  */
 final class JsonlSessionStore {
     private static final int SUPPORTED_SESSION_VERSION = 1;
+    private static final int MAX_CONCURRENT_SESSION_INFO_LOADS = 10;
     private final Path sessionsDir;
     private final SessionJsonMapper mapper;
 
@@ -96,25 +109,27 @@ final class JsonlSessionStore {
      */
     SessionFile read(String sessionId) {
         Path file = sessionFile(sessionId);
-        List<String> lines;
-        try {
-            lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String headerLine = reader.readLine();
+            if (headerLine == null) {
+                throw new SessionEngineException("Session file is empty: " + file);
+            }
+            SessionHeader header = readHeaderLine(file, headerLine);
+            validateHeader(header);
+            validateSessionFileHeader(file, header);
+            List<SessionEntry> entries = new ArrayList<>();
+            String line;
+            int lineNumber = 1;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (!line.isBlank()) {
+                    entries.add(readEntryLine(file, line, lineNumber));
+                }
+            }
+            return new SessionFile(header, List.copyOf(entries));
         } catch (IOException e) {
             throw new SessionEngineException("Failed to read session file: " + file, e);
         }
-        if (lines.isEmpty()) {
-            throw new SessionEngineException("Session file is empty: " + file);
-        }
-        SessionHeader header = readHeaderLine(file, lines.get(0));
-        validateHeader(header);
-        List<SessionEntry> entries = new ArrayList<>();
-        for (int i = 1; i < lines.size(); i++) {
-            String line = lines.get(i);
-            if (!line.isBlank()) {
-                entries.add(readEntryLine(file, line, i + 1));
-            }
-        }
-        return new SessionFile(header, List.copyOf(entries));
     }
 
     /**
@@ -128,10 +143,73 @@ final class JsonlSessionStore {
             return files
                 .filter(file -> file.getFileName().toString().endsWith(".jsonl"))
                 .sorted()
-                .map(this::readHeaderFile)
+                .map(this::tryReadHeaderFile)
+                .flatMap(Optional::stream)
                 .toList();
         } catch (IOException e) {
             throw new SessionEngineException("Failed to list session headers: " + sessionsDir, e);
+        }
+    }
+
+    /**
+     * 逐文件扫描 resume 所需的轻量 metadata。
+     */
+    List<SessionResumeScan> resumeScans() {
+        if (!Files.isDirectory(sessionsDir)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.list(sessionsDir)) {
+            List<Path> sessionFiles = files
+                .filter(file -> file.getFileName().toString().endsWith(".jsonl"))
+                .sorted()
+                .toList();
+            return scanResumeFiles(sessionFiles);
+        } catch (IOException e) {
+            throw new SessionEngineException("Failed to list session resume metadata: " + sessionsDir, e);
+        }
+    }
+
+    Optional<SessionResumeScan> resumeScan(Path file) {
+        try {
+            return Optional.of(readResumeScan(file));
+        } catch (SessionEngineException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private List<SessionResumeScan> scanResumeFiles(List<Path> files) {
+        if (files.isEmpty()) {
+            return List.of();
+        }
+        ExecutorService executor = Executors.newFixedThreadPool(MAX_CONCURRENT_SESSION_INFO_LOADS);
+        boolean completed = false;
+        try {
+            List<Future<Optional<SessionResumeScan>>> futures = files.stream()
+                .map(file -> executor.submit(() -> resumeScan(file)))
+                .toList();
+            List<SessionResumeScan> scans = new ArrayList<>();
+            for (Future<Optional<SessionResumeScan>> future : futures) {
+                futureResult(future).ifPresent(scans::add);
+            }
+            completed = true;
+            return List.copyOf(scans);
+        } finally {
+            if (completed) {
+                executor.shutdown();
+            } else {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    static Optional<SessionResumeScan> futureResult(Future<Optional<SessionResumeScan>> future) {
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SessionEngineException("Interrupted while scanning session resume metadata", e);
+        } catch (ExecutionException e) {
+            throw new SessionEngineException("Unexpected failure while scanning session resume metadata", e.getCause());
         }
     }
 
@@ -172,15 +250,102 @@ final class JsonlSessionStore {
 
     private SessionHeader readHeaderFile(Path file) {
         try {
-            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            if (lines.isEmpty()) {
+            String line = readFirstLine(file);
+            if (line == null) {
                 throw new SessionEngineException("Session file is empty: " + file);
             }
-            SessionHeader header = readHeaderLine(file, lines.getFirst());
+            SessionHeader header = readHeaderLine(file, line);
             validateHeader(header);
+            validateSessionFileHeader(file, header);
             return header;
         } catch (IOException e) {
             throw new SessionEngineException("Failed to read session header: " + file, e);
+        }
+    }
+
+    private Optional<SessionHeader> tryReadHeaderFile(Path file) {
+        try {
+            return Optional.of(readHeaderFile(file));
+        } catch (SessionEngineException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private SessionResumeScan readResumeScan(Path file) {
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String headerLine = reader.readLine();
+            if (headerLine == null) {
+                throw new SessionEngineException("Session file is empty: " + file);
+            }
+            SessionHeader header = readHeaderLine(file, headerLine);
+            validateHeader(header);
+            validateSessionFileHeader(file, header);
+            String leafId = null;
+            Instant modified = null;
+            int messageCount = 0;
+            String firstMessage = null;
+            StringJoiner allMessagesText = new StringJoiner(" ");
+            String line;
+            int lineNumber = 1;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (line.isBlank()) {
+                    continue;
+                }
+                SessionEntry entry = readEntryLine(file, line, lineNumber);
+                if (SessionLeafSelector.advancesNavigableLeaf(entry)) {
+                    leafId = entry.id();
+                }
+                if (entry.timestamp() != null && (modified == null || entry.timestamp().isAfter(modified))) {
+                    modified = entry.timestamp();
+                }
+                String text = SessionEntryDisplayText.text(entry);
+                if (!text.isBlank()) {
+                    messageCount++;
+                    if (firstMessage == null) {
+                        firstMessage = text;
+                    }
+                    allMessagesText.add(text);
+                }
+            }
+            return new SessionResumeScan(
+                header,
+                file,
+                leafId,
+                modified == null ? header.timestamp() : modified,
+                messageCount,
+                firstMessage == null ? "(no messages)" : firstMessage,
+                allMessagesText.toString()
+            );
+        } catch (IOException e) {
+            throw new SessionEngineException("Failed to scan session resume metadata: " + file, e);
+        }
+    }
+
+    private String readFirstLine(Path file) throws IOException {
+        try (InputStream input = Files.newInputStream(file)) {
+            ByteArrayOutputStream line = new ByteArrayOutputStream();
+            int value;
+            while ((value = input.read()) != -1) {
+                if (value == '\n') {
+                    break;
+                }
+                line.write(value);
+            }
+            if (value == -1 && line.size() == 0) {
+                return null;
+            }
+            byte[] bytes = line.toByteArray();
+            int length = bytes.length;
+            if (length > 0 && bytes[length - 1] == '\r') {
+                length--;
+            }
+            return StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes, 0, length))
+                .toString();
         }
     }
 
@@ -198,6 +363,16 @@ final class JsonlSessionStore {
     private void validateHeader(SessionHeader header) {
         if (header.version() != SUPPORTED_SESSION_VERSION) {
             throw new SessionEngineException("Unsupported session version: " + header.version());
+        }
+        if (header.id() == null || header.cwd() == null || header.timestamp() == null) {
+            throw new SessionEngineException("Session header is missing required fields: " + header.id());
+        }
+    }
+
+    private void validateSessionFileHeader(Path file, SessionHeader header) {
+        Path expected = sessionFile(header.id());
+        if (!expected.equals(file.toAbsolutePath().normalize())) {
+            throw new SessionEngineException("Session header id does not match file: " + file);
         }
     }
 }

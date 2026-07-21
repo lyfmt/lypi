@@ -54,13 +54,13 @@ public final class ProviderRetryCoordinator {
     public Optional<ProviderRetryNotice> planRetry(
         RuntimeException exception,
         AbortSignal signal,
-        boolean outputStarted,
+        boolean visibleOutputStarted,
         int retryAttempt
     ) {
-        ProviderErrorClassification classification = classifier.classify(exception, outputStarted);
+        ProviderErrorClassification classification = classifier.classify(exception, visibleOutputStarted);
         if (signal.aborted()
             || !classification.retryable()
-            || outputStarted
+            || visibleOutputStarted
             || retryAttempt > policy.maxRetries()) {
             return Optional.empty();
         }
@@ -101,14 +101,14 @@ public final class ProviderRetryCoordinator {
     public <T> T execute(
         Supplier<T> operation,
         AbortSignal signal,
-        boolean outputStarted,
+        boolean visibleOutputStarted,
         Consumer<ProviderRetryNotice> retryNoticeConsumer
     ) {
         for (int attempt = 1; ; attempt++) {
             try {
                 return operation.get();
             } catch (RuntimeException exception) {
-                Optional<ProviderRetryNotice> notice = planRetry(exception, signal, outputStarted, attempt);
+                Optional<ProviderRetryNotice> notice = planRetry(exception, signal, visibleOutputStarted, attempt);
                 if (notice.isEmpty()) {
                     throw exception;
                 }

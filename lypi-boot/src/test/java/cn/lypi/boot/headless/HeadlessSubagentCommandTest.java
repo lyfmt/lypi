@@ -16,9 +16,11 @@ import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.transport.headless.HeadlessSubagentJsonCodec;
 import java.io.ByteArrayInputStream;
@@ -125,16 +127,7 @@ class HeadlessSubagentCommandTest {
     void applicationRunnerRunsHeadlessSubagentCommandWhenFlagIsPresent() {
         HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
         ByteArrayOutputStream input = new ByteArrayOutputStream();
-        codec.writeInput(new HeadlessSubagentInput(
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            "执行检查",
-            tempDir,
-            List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
-            30
-        ), input);
+        codec.writeInput(input(), input);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         HeadlessSubagentCommand command = new HeadlessSubagentCommand(
             (cwd, sessionManager) -> request -> completedTurn(request, sessionManager),
@@ -162,16 +155,7 @@ class HeadlessSubagentCommandTest {
     void headlessSpringApplicationStdoutContainsOnlySubagentJson() {
         HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
         ByteArrayOutputStream input = new ByteArrayOutputStream();
-        codec.writeInput(new HeadlessSubagentInput(
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            "执行检查",
-            tempDir,
-            List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
-            30
-        ), input);
+        codec.writeInput(input(), input);
         InputStream previousIn = System.in;
         PrintStream previousOut = System.out;
         String previousLoggingSystem = System.getProperty(LoggingSystem.SYSTEM_PROPERTY);
@@ -201,7 +185,7 @@ class HeadlessSubagentCommandTest {
         assertThat(text).doesNotContain("Spring").doesNotContain("Started");
         HeadlessSubagentOutput result = codec.readOutput(new ByteArrayInputStream(stdout.toByteArray()));
         assertThat(result.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
-        assertThat(result.summary()).isEqualTo("子任务完成");
+        assertThat(result.content()).isEqualTo("子任务完成");
         assertThat(result.finalEntryId()).isPresent();
     }
 
@@ -232,16 +216,7 @@ class HeadlessSubagentCommandTest {
         );
         HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
         ByteArrayOutputStream input = new ByteArrayOutputStream();
-        codec.writeInput(new HeadlessSubagentInput(
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            "执行检查",
-            tempDir,
-            List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
-            30
-        ), input);
+        codec.writeInput(input(), input);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
         int exitCode = command.run(new ByteArrayInputStream(input.toByteArray()), output);
@@ -249,9 +224,28 @@ class HeadlessSubagentCommandTest {
         assertThat(exitCode).isEqualTo(0);
         HeadlessSubagentOutput result = codec.readOutput(new ByteArrayInputStream(output.toByteArray()));
         assertThat(result.childSessionId()).isEqualTo("ses_child");
+        assertThat(result.agentId()).isEqualTo("agent_1");
+        assertThat(result.runId()).isEqualTo("run_1");
         assertThat(result.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
-        assertThat(result.summary()).isEqualTo("子任务完成");
+        assertThat(result.content()).isEqualTo("子任务完成");
         assertThat(result.finalEntryId()).isPresent();
+    }
+
+    private HeadlessSubagentInput input() {
+        return new HeadlessSubagentInput(
+            "execution-check",
+            "agent_1",
+            "ses_child",
+            "run_1",
+            "ses_parent",
+            "entry_spawn",
+            "执行检查",
+            tempDir,
+            tempDir,
+            SubagentToolPolicy.empty(),
+            PermissionRuntimeState.forMode(PermissionMode.AUTO),
+            30
+        );
     }
 
     private TurnState completedTurn(TurnRequest request) {

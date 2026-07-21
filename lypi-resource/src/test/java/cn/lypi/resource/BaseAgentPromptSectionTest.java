@@ -26,6 +26,12 @@ class BaseAgentPromptSectionTest {
             "## Workflow",
             "Do not claim success without verification evidence",
             "If verification cannot be run, say exactly what was not run and why",
+            "## Subagents",
+            "continue useful independent work after spawning",
+            "Subagent completion is delivered automatically at a later model boundary",
+            "Call `wait_agent` only when the next step depends on the completion and no useful independent work remains",
+            "If the user asks you not to wait or to continue working, do not call `wait_agent`",
+            "Automatic delivery does not start a new model turn after the current turn ends",
             "Include blockers or residual risk only when they affect the user's next step",
             "## Final Response"
         );

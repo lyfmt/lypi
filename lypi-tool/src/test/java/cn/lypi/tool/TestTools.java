@@ -142,6 +142,21 @@ final class TestTools {
         };
     }
 
+    static Tool<Map<String, Object>, String> permissionProbeTool(
+        String name,
+        boolean readOnly,
+        PermissionBehavior behavior,
+        AtomicInteger permissionCalls
+    ) {
+        return new EchoTool(name, List.of(), readOnly, readOnly, !readOnly, Duration.ZERO) {
+            @Override
+            public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
+                permissionCalls.incrementAndGet();
+                return decision(behavior, "tool permission");
+            }
+        };
+    }
+
     static Tool<Map<String, Object>, String> permissionAndExecutionCountingTool(
         String name,
         PermissionBehavior behavior,

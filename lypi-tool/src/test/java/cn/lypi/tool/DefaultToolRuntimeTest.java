@@ -11,6 +11,7 @@ import cn.lypi.contracts.common.JsonSchema;
 import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgressKind;
 import cn.lypi.contracts.common.ValidationResult;
+import cn.lypi.contracts.agent.SteeringMessageSource;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.AttachmentContentBlock;
 import cn.lypi.contracts.context.ToolResultContentBlock;
@@ -24,6 +25,7 @@ import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
+import cn.lypi.contracts.mcp.McpToolSchema;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
@@ -31,6 +33,7 @@ import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.BashRiskAnalysis;
@@ -45,6 +48,7 @@ import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionGrantScope;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionProfiles;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
@@ -61,6 +65,9 @@ import cn.lypi.tool.builtin.BashTool;
 import cn.lypi.tool.builtin.ReadTool;
 import cn.lypi.tool.builtin.RequestPermissionsTool;
 import cn.lypi.tool.builtin.WriteTool;
+import cn.lypi.tool.mcp.McpToolAdapter;
+import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
+import cn.lypi.tool.shell.SandboxPolicyOptions;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -70,6 +77,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -86,7 +94,7 @@ class DefaultToolRuntimeTest {
 
         List<ToolResult<?>> results = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "say", Map.of("text", "hello"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         );
 
         assertEquals(1, results.size());
@@ -108,7 +116,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "read", Map.of("path", "image.png"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -125,7 +133,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "missing", Map.of(), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -135,10 +143,19 @@ class DefaultToolRuntimeTest {
     void publishesLifecycleForUnknownTool() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        String content = "TOP-SECRET" + "x".repeat(1_048_576 - "TOP-SECRET".length());
+        Map<String, Object> input = Map.of(
+            "zzMode", "safe",
+            "nested", Map.of("first", 1, "second", 2),
+            "content", content,
+            "path", "none",
+            "zzItems", List.of("a", "b", "c"),
+            "zzEnabled", true
+        );
 
         ToolResult<?> result = runtime.execute(
-            List.of(new ToolUseRequest("toolu_1", "missing", Map.of("path", "none"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            List.of(new ToolUseRequest("toolu_1", "missing", input, "msg_1")),
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -150,8 +167,10 @@ class DefaultToolRuntimeTest {
         assertEquals("msg_1", start.parentMessageId());
         assertEquals("turn_1", start.turnId());
         assertEquals("missing", start.toolName());
-        assertEquals("missing {path=none}", start.inputSummary());
+        assertEquals("missing content=<1048576 chars> nested=<2 fields> path=none", start.inputSummary());
+        assertFalse(start.inputSummary().contains("TOP-SECRET"));
         assertEquals("none", start.inputMetadata().get("path"));
+        assertEquals(content, start.inputMetadata().get("content"));
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, lifecycle.get(1));
         assertEquals("toolu_1", end.toolUseId());
         assertEquals(ToolExecutionStatus.FAILED, end.status());
@@ -161,18 +180,92 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void publishesWriteSummaryWithoutContentBody() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(new WriteTool());
+        String path = tempDir.resolve("notes.txt").toString();
+        String content = "PRIVATE-CONTENT\n".repeat(10_000);
+
+        runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_1",
+                "write",
+                Map.of("path", path, "content", content),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.ASK)
+        );
+
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, lifecycleEvents(events).getFirst());
+        assertEquals("write " + path, start.inputSummary());
+        assertFalse(start.inputSummary().contains("PRIVATE-CONTENT"));
+        assertEquals(content, start.inputMetadata().get("content"));
+    }
+
+    @Test
+    void publishesBoundedSingleLineBashSummary() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()))));
+        String command = "printf 'one\ntwo'\r\n" + "🙂".repeat(200);
+
+        runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of("command", command), "msg_1")),
+            TestTools.context(PermissionMode.ASK)
+        );
+
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, lifecycleEvents(events).getFirst());
+        assertSingleLineInputSummary(start);
+        assertTrue(start.inputSummary().startsWith("bash printf 'one two'"));
+        assertEquals(command, start.inputMetadata().get("command"));
+    }
+
+    @Test
+    void publishesBoundedSingleLineMcpSummaryForNestedInput() {
+        RecordingEventBus events = new RecordingEventBus();
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
+        runtime.register(new McpToolAdapter(
+            new McpToolSchema("filesystem", "read_file", "", new JsonSchema(Map.of()), ""),
+            (serverName, toolName, arguments, context, progress) -> "ok"
+        ));
+        Map<String, Object> nested = Map.of(
+            "content", "line-one\nline-two " + "x".repeat(300),
+            "options", List.of(Map.of("enabled", true))
+        );
+
+        runtime.execute(
+            List.of(new ToolUseRequest(
+                "toolu_1",
+                "mcp__filesystem__read_file",
+                Map.of("path", "README.md", "nested", nested),
+                "msg_1"
+            )),
+            TestTools.context(PermissionMode.ASK)
+        );
+
+        ToolStartEvent start = assertInstanceOf(ToolStartEvent.class, lifecycleEvents(events).getFirst());
+        assertSingleLineInputSummary(start);
+        assertTrue(start.inputSummary().startsWith("mcp read_file "));
+        assertEquals(nested, start.inputMetadata().get("nested"));
+    }
+
+    @Test
     void passesCanonicalToolNameToSecurityRuntimeWhenCalledByAlias() {
         AtomicReference<String> securityToolName = new AtomicReference<>();
         SecurityRuntimePort security = (request, context) -> {
             securityToolName.set(request.toolName());
             return TestTools.decision(PermissionBehavior.ALLOW, "allowed");
         };
-        DefaultToolRuntime runtime = new DefaultToolRuntime(security);
-        runtime.register(TestTools.echo("bash", List.of("sh"), true, true, false));
+        DefaultToolRuntime runtime = runtimeWithGate(
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
+            security
+        );
+        runtime.register(TestTools.echo("bash", List.of("sh"), false, false, false));
 
         runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "sh", Map.of("text", "hello"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         );
 
         assertEquals("bash", securityToolName.get());
@@ -186,7 +279,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "sh", Map.of("text", "hello"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -208,7 +301,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "hello"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("session-dynamic", "turn-dynamic")
         ).getFirst();
 
@@ -230,7 +323,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "schema", input, "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -247,7 +340,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of(), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -255,7 +348,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void sandboxAutoAllowBashToolPermissionDoesNotInvokeDenyingGate() {
+    void askReviewsDefaultBashEvenWhenSecurityAndToolAllow() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "done", "", false, Optional.empty()));
         SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
             List.of(Path.of("/usr")),
@@ -269,20 +362,56 @@ class DefaultToolRuntimeTest {
         DefaultToolRuntime runtime = new DefaultToolRuntime(
             ToolRuntimeOptions.builder().cwd(tempDir).build(),
             allowAllSecurity(),
-            PermissionGate.denying(),
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
             null
         );
         runtime.register(new BashTool(executor, (workspace, cwd) -> policy));
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("command", "echo done"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
         assertEquals(1, executor.calls.get());
         assertEquals(List.of("bash", "-lc", "echo done"), executor.request.get().command());
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("stdout:\ndone"));
+    }
+
+    @Test
+    void nextBashExecutionUsesChangedPermissionRuntimeProfile() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "done", "", false, Optional.empty()));
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(tempDir).build(),
+            allowAllSecurity(),
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
+            null
+        );
+        runtime.register(new BashTool(
+            executor,
+            new PermissionProfileSandboxPolicyResolver(
+                PermissionProfiles.workspace(),
+                SandboxPolicyOptions.defaults(),
+                false
+            )
+        ));
+        ToolUseRequest request = new ToolUseRequest(
+            "toolu_1",
+            "bash",
+            Map.of("command", "echo done"),
+            "msg_1"
+        );
+
+        ToolResult<?> askResult = runtime.execute(List.of(request), TestTools.context(PermissionMode.ASK)).getFirst();
+        SandboxRuntimePolicy askPolicy = executor.request.get().sandboxPolicy();
+        ToolResult<?> bypassResult = runtime.execute(List.of(request), TestTools.context(PermissionMode.BYPASS)).getFirst();
+        SandboxRuntimePolicy bypassPolicy = executor.request.get().sandboxPolicy();
+
+        assertFalse(askResult.isError());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, askPolicy.kind());
+        assertFalse(bypassResult.isError());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, bypassPolicy.kind());
+        assertEquals(2, executor.calls.get());
     }
 
     @Test
@@ -297,7 +426,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -318,7 +447,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -363,12 +492,12 @@ class DefaultToolRuntimeTest {
             "msg_1"
         );
 
-        ToolResult<?> firstResult = runtime.execute(List.of(first), TestTools.context(PermissionMode.DEFAULT_EXECUTE)).getFirst();
-        ToolResult<?> secondResult = runtime.execute(List.of(second), TestTools.context(PermissionMode.DEFAULT_EXECUTE)).getFirst();
+        ToolResult<?> firstResult = runtime.execute(List.of(first), TestTools.context(PermissionMode.ASK)).getFirst();
+        ToolResult<?> secondResult = runtime.execute(List.of(second), TestTools.context(PermissionMode.ASK)).getFirst();
 
         assertFalse(firstResult.isError());
         assertFalse(secondResult.isError());
-        assertEquals(1, gateCalls.get());
+        assertEquals(2, gateCalls.get());
         assertEquals(2, executeCalls.get());
         assertEquals(List.of(prefixUpdate("go test")), amendmentStore.readPermissionUpdates(PermissionGrantScope.SESSION));
         assertFalse(Files.exists(tempDir.resolve("rules/default.rules")));
@@ -414,12 +543,12 @@ class DefaultToolRuntimeTest {
 
         runtime.execute(
             List.of(first),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1")
         );
         runtime.execute(
             List.of(second),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_2", "turn_2")
         );
 
@@ -429,7 +558,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void rememberedPrefixAllowSkipsBashToolAskForRepeatedPrefixRuleRequest() {
+    void explicitPrefixAllowStillRequiresAskReview() {
         AtomicInteger gateCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
             gateCalls.incrementAndGet();
@@ -478,11 +607,11 @@ class DefaultToolRuntimeTest {
             "msg_1"
         );
 
-        ToolResult<?> result = runtime.execute(List.of(request), TestTools.context(PermissionMode.DEFAULT_EXECUTE)).getFirst();
+        ToolResult<?> result = runtime.execute(List.of(request), TestTools.context(PermissionMode.ASK)).getFirst();
 
-        assertFalse(result.isError());
-        assertEquals(0, gateCalls.get());
-        assertEquals(1, executor.calls.get());
+        assertTrue(result.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(0, executor.calls.get());
     }
 
     @Test
@@ -513,7 +642,7 @@ class DefaultToolRuntimeTest {
             "msg_1"
         );
 
-        ToolResult<?> result = runtime.execute(List.of(request), TestTools.context(PermissionMode.DEFAULT_EXECUTE)).getFirst();
+        ToolResult<?> result = runtime.execute(List.of(request), TestTools.context(PermissionMode.ASK)).getFirst();
 
         assertFalse(result.isError());
         assertEquals(1, gateCalls.get());
@@ -521,7 +650,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void defaultSandboxBashSkipsUserApprovalAndExecutesInSandboxPath() {
+    void askReviewsDefaultSandboxBash() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger permissionCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
@@ -540,18 +669,17 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "sandbox"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
-        assertFalse(result.isError());
-        assertEquals("sandbox", result.newMessages().getFirst().content().getFirst().text());
-        assertEquals(0, gateCalls.get());
-        assertEquals(0, permissionCalls.get());
-        assertEquals(1, executeCalls.get());
+        assertTrue(result.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(1, permissionCalls.get());
+        assertEquals(0, executeCalls.get());
     }
 
     @Test
-    void defaultSandboxBashNonDangerousRiskAskSkipsUserApprovalAndExecutesInSandboxPath() {
+    void askReviewsDefaultSandboxBashWithRiskContext() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.HIGH, "git push");
@@ -564,12 +692,12 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "sandbox"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
-        assertFalse(result.isError());
-        assertEquals(0, gateCalls.get());
-        assertEquals(1, executeCalls.get());
+        assertTrue(result.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(0, executeCalls.get());
     }
 
     @Test
@@ -590,7 +718,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "sandbox"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -599,7 +727,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void defaultExecuteDeniesDangerousDefaultBashBeforeGateAndExecutor() {
+    void askAllowsDangerousDefaultBashWhenUserApproves() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.DESTRUCTIVE, "rm -f 洗车店.md");
@@ -612,13 +740,12 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
-        assertTrue(result.isError());
-        assertSandboxRetryHint(result);
-        assertEquals(0, gateCalls.get());
-        assertEquals(0, executeCalls.get());
+        assertFalse(result.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
@@ -630,7 +757,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -650,7 +777,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -670,7 +797,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -700,7 +827,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
         String text = result.newMessages().getFirst().content().getFirst().text();
@@ -711,7 +838,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void defaultExecuteDoesNotDenyNonCodexDangerousDefaultBash() {
+    void askStillReviewsNonCodexDangerousDefaultBash() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.DESTRUCTIVE, "rm 洗车店.md");
@@ -724,16 +851,16 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "sandbox"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
-        assertFalse(result.isError());
-        assertEquals(0, gateCalls.get());
-        assertEquals(1, executeCalls.get());
+        assertTrue(result.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(0, executeCalls.get());
     }
 
     @Test
-    void acceptEditsDeniesDefaultBashBeforeGateAndExecutor() {
+    void autoUsesReviewerInsteadOfUserGateForDefaultBash() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -745,11 +872,11 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "ignored"), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.ACCEPT_EDITS)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.AUTO)
         ).getFirst();
 
         assertTrue(result.isError());
-        assertSandboxRetryHint(result);
+        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("AUTO 权限复核器不可用"));
         assertEquals(0, gateCalls.get());
         assertEquals(0, executeCalls.get());
     }
@@ -794,7 +921,7 @@ class DefaultToolRuntimeTest {
                 "sandboxPermissions", "requireEscalated",
                 "justification", "用户明确要求删除当前目录下的文件。"
             ), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -816,11 +943,11 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "read", Map.of("text", "ok"), "msg_1")),
-            TestTools.context(AgentMode.PLAN, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.PLAN, PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(1, securityCalls.get());
+        assertEquals(0, securityCalls.get());
         assertEquals("ok", result.newMessages().getFirst().content().getFirst().text());
     }
 
@@ -899,7 +1026,7 @@ class DefaultToolRuntimeTest {
                 "sandboxPermissions", "requireEscalated",
                 "justification", "Need host access."
             ), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -950,7 +1077,7 @@ class DefaultToolRuntimeTest {
                 "sandboxPermissions", "requireEscalated",
                 "justification", "Need host access."
             ), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -961,7 +1088,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void acceptEditsAsksForExplicitSandboxEscalation() {
+    void autoDoesNotUseUserGateForExplicitSandboxEscalation() {
         AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         PermissionGate gate = (request, tool, context, decision) -> {
             requestedDecision.set(decision);
@@ -976,15 +1103,15 @@ class DefaultToolRuntimeTest {
                 "sandboxPermissions", "requireEscalated",
                 "justification", "Need host access."
             ), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.ACCEPT_EDITS)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.AUTO)
         ).getFirst();
 
-        assertFalse(result.isError());
-        assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
+        assertTrue(result.isError());
+        assertNull(requestedDecision.get());
     }
 
     @Test
-    void securityDenyOverridesExplicitSandboxEscalationRequest() {
+    void askCanApproveSecurityDenyForExplicitSandboxEscalation() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -1001,13 +1128,12 @@ class DefaultToolRuntimeTest {
                 "sandboxPermissions", "requireEscalated",
                 "justification", "Need host access."
             ), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
-        assertTrue(result.isError());
-        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("security denied"));
-        assertEquals(0, gateCalls.get());
-        assertEquals(0, executeCalls.get());
+        assertFalse(result.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
@@ -1022,7 +1148,7 @@ class DefaultToolRuntimeTest {
                 "sandboxPermissions", "requireEscalated",
                 "justification", "Need host access."
             ), "msg_1")),
-            TestTools.context(AgentMode.EXECUTE, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.EXECUTE, PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1038,7 +1164,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ignored"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1047,7 +1173,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void neverApprovalPolicyDeniesToolSpecificAskWithoutPermissionGate() {
+    void bypassAllowsToolSpecificAskWithoutPermissionGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -1062,14 +1188,13 @@ class DefaultToolRuntimeTest {
             TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
         ).getFirst();
 
-        assertTrue(result.isError());
+        assertFalse(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(0, executeCalls.get());
-        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("never policy"));
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
-    void neverApprovalPolicyDeniesSecurityAskWithoutPermissionGate() {
+    void bypassAllowsSecurityAskWithoutPermissionGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -1085,14 +1210,13 @@ class DefaultToolRuntimeTest {
             TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
         ).getFirst();
 
-        assertTrue(result.isError());
+        assertFalse(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(0, executeCalls.get());
-        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("never policy"));
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
-    void bypassDoesNotAutoAllowDenyDecision() {
+    void bypassAllowsDenyDecision() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -1108,13 +1232,13 @@ class DefaultToolRuntimeTest {
             TestTools.context(AgentMode.EXECUTE, PermissionMode.BYPASS)
         ).getFirst();
 
-        assertTrue(result.isError());
+        assertFalse(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(0, executeCalls.get());
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
-    void securityDenyShortCircuitsBeforeToolAskPermissionGate() {
+    void askRoutesSecurityDenyToPermissionGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.DENY, "hard deny");
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -1126,12 +1250,11 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "edit", Map.of("path", ".git/config"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
-        assertTrue(result.isError());
-        assertEquals(0, gateCalls.get());
-        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("hard deny"));
+        assertFalse(result.isError());
+        assertEquals(1, gateCalls.get());
     }
 
     @Test
@@ -1143,7 +1266,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "nope"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1158,7 +1281,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ignored"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1177,7 +1300,7 @@ class DefaultToolRuntimeTest {
         List<ToolResult<?>> results = runtime.execute(List.of(
             new ToolUseRequest("toolu_1", "first", Map.of("text", "one"), "msg_1"),
             new ToolUseRequest("toolu_2", "second", Map.of("text", "two"), "msg_1")
-        ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
+        ), TestTools.context(PermissionMode.ASK));
         long elapsedMillis = Duration.ofNanos(System.nanoTime() - started).toMillis();
 
         assertTrue(elapsedMillis < 300);
@@ -1199,7 +1322,7 @@ class DefaultToolRuntimeTest {
         runtime.execute(List.of(
             new ToolUseRequest("toolu_1", "first", Map.of("text", "one"), "msg_1"),
             new ToolUseRequest("toolu_2", "second", Map.of("text", "two"), "msg_1")
-        ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
+        ), TestTools.context(PermissionMode.ASK));
 
         assertEquals(1, maxActive.get());
     }
@@ -1228,7 +1351,7 @@ class DefaultToolRuntimeTest {
 
         List<ToolResult<?>> results = runtime.execute(
             List.of(request, request),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         );
 
         assertEquals(2, results.size());
@@ -1254,7 +1377,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "echo", Map.of("text", "hello"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1282,7 +1405,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "throwing", Map.of(), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertEquals(1, afterCalls.get());
@@ -1298,7 +1421,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "done"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -1348,7 +1471,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_public", "bash", Map.of("text", "done"), "msg_parent")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -1387,7 +1510,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_public", "write", Map.of("text", "done"), "msg_parent")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -1429,7 +1552,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_public", "write", Map.of("text", "done"), "msg_parent")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -1468,7 +1591,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_public", "write", Map.of("text", "done"), "msg_parent")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -1485,7 +1608,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "throwing", Map.of(), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1508,7 +1631,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "echo", Map.of("text", "done"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1532,7 +1655,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "throwing", Map.of(), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -1562,7 +1685,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "0123456789abcdef"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertFalse(result.isError());
@@ -1576,7 +1699,7 @@ class DefaultToolRuntimeTest {
         assertEquals("", end.resultRef().location());
         assertEquals(16L, end.resultRef().byteLength());
         assertTrue(end.resultRef().contentHash().startsWith("sha256:"));
-        assertEquals("0123456789ab", end.resultRef().metadata().get("preview"));
+        assertEquals("0123456789abcdef", end.resultRef().metadata().get("preview"));
         assertEquals("budgeted", end.resultRef().metadata().get("truncationReason"));
         assertFalse(end.resultRef().metadata().containsKey("replacementPath"));
         assertFalse(end.resultRef().metadata().containsKey("replacementPreview"));
@@ -1587,11 +1710,11 @@ class DefaultToolRuntimeTest {
         RecordingEventBus events = new RecordingEventBus();
         SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.DENY, "hard deny");
         DefaultToolRuntime runtime = runtimeWithEvents(events, security);
-        runtime.register(TestTools.progressEcho("bash", "executor progress"));
+        runtime.register(TestTools.echo("bash", List.of(), false, false, true));
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("text", "done"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1613,7 +1736,7 @@ class DefaultToolRuntimeTest {
         List<ToolResult<?>> results = runtime.execute(List.of(
             new ToolUseRequest("toolu_1", "first", Map.of("text", "one"), "msg_1"),
             new ToolUseRequest("toolu_2", "second", Map.of("text", "two"), "msg_1")
-        ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
+        ), TestTools.context(PermissionMode.BYPASS));
 
         assertEquals("one", results.get(0).newMessages().getFirst().content().getFirst().text());
         assertEquals("two", results.get(1).newMessages().getFirst().content().getFirst().text());
@@ -1638,7 +1761,7 @@ class DefaultToolRuntimeTest {
         List<ToolResult<?>> results = runtime.execute(List.of(
             new ToolUseRequest("toolu_slow", "slow", Map.of("text", "one"), "msg_1"),
             new ToolUseRequest("toolu_fast", "fast", Map.of("text", "two"), "msg_1")
-        ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
+        ), TestTools.context(PermissionMode.ASK));
 
         assertEquals("one", results.get(0).newMessages().getFirst().content().getFirst().text());
         assertEquals("two", results.get(1).newMessages().getFirst().content().getFirst().text());
@@ -1667,7 +1790,7 @@ class DefaultToolRuntimeTest {
         List<ToolResult<?>> results = runtime.execute(List.of(
             new ToolUseRequest("toolu_schema", "schema", Map.of(), "msg_1"),
             new ToolUseRequest("toolu_input", "input", Map.of("text", "bad"), "msg_1")
-        ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
+        ), TestTools.context(PermissionMode.ASK));
 
         assertTrue(results.get(0).isError());
         assertTrue(results.get(1).isError());
@@ -1694,7 +1817,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "echo", Map.of("text", "hello"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1725,7 +1848,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "echo", Map.of("text", "hello"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1736,6 +1859,34 @@ class DefaultToolRuntimeTest {
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
         assertEquals(ToolExecutionStatus.CANCELLED, end.status());
         assertTrue(end.resultSummary().error());
+    }
+
+    @Test
+    void publishesCancelledEndWhenCancelToolReceivesAbortDuringExecution() {
+        RecordingEventBus events = new RecordingEventBus();
+        AtomicBoolean aborted = new AtomicBoolean();
+        ToolExecutionInterceptor interceptor = ToolExecutionInterceptor.after((request, tool, context, result) -> {
+            aborted.set(true);
+            return result;
+        });
+        DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity(), interceptor);
+        runtime.register(TestTools.echo("echo", List.of(), true, true, false));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "echo", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation(
+                "ses_1",
+                "turn_1",
+                "entry_1",
+                aborted::get,
+                SteeringMessageSource.none()
+            )
+        ).getFirst();
+
+        assertFalse(result.isError());
+        ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
+        assertEquals(ToolExecutionStatus.CANCELLED, end.status());
     }
 
     @Test
@@ -1760,7 +1911,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ignored"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
         assertTrue(result.isError());
@@ -1788,7 +1939,7 @@ class DefaultToolRuntimeTest {
         List<ToolResult<?>> results = runtime.execute(List.of(
             new ToolUseRequest("toolu_1", "cancel", Map.of("text", "cancel"), "msg_1"),
             new ToolUseRequest("toolu_2", "block", Map.of("text", "block"), "msg_1")
-        ), TestTools.context(PermissionMode.DEFAULT_EXECUTE));
+        ), TestTools.context(PermissionMode.ASK));
 
         assertEquals(0, cancelCalls.get());
         assertEquals(1, blockCalls.get());
@@ -1826,12 +1977,12 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> firstRound = runtime.execute(
             List.of(new ToolUseRequest("toolu_perm", "request_permissions", strictAutoReviewRequest(), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             invocation
         ).getFirst();
         ToolResult<?> secondRound = runtime.execute(
             List.of(new ToolUseRequest("toolu_probe", "probe", Map.of("text", "ok"), "msg_2")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             invocation
         ).getFirst();
 
@@ -1867,13 +2018,13 @@ class DefaultToolRuntimeTest {
 
         runtime.execute(
             List.of(new ToolUseRequest("toolu_perm", "request_permissions", strictAutoReviewRequest(), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             invocation
         );
         runtime.clearTurnState(invocation);
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_probe", "probe", Map.of("text", "ok"), "msg_2")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             invocation
         ).getFirst();
 
@@ -1902,17 +2053,17 @@ class DefaultToolRuntimeTest {
 
         runtime.execute(
             List.of(new ToolUseRequest("toolu_perm", "request_permissions", fileSystemRequest("TURN"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
         );
         runtime.execute(
             List.of(new ToolUseRequest("toolu_probe", "probe", Map.of("text", "ok"), "msg_2")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1", "entry_2")
         );
         runtime.execute(
             List.of(new ToolUseRequest("toolu_probe_2", "probe", Map.of("text", "ok"), "msg_3")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_2", "entry_3")
         );
 
@@ -1941,17 +2092,17 @@ class DefaultToolRuntimeTest {
 
         runtime.execute(
             List.of(new ToolUseRequest("toolu_perm", "request_permissions", fileSystemRequest("SESSION"), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
         );
         runtime.execute(
             List.of(new ToolUseRequest("toolu_probe", "probe", Map.of("text", "ok"), "msg_2")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
         );
         runtime.execute(
             List.of(new ToolUseRequest("toolu_probe_2", "probe", Map.of("text", "ok"), "msg_3")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_2", "turn_1", "entry_3")
         );
 
@@ -1999,7 +2150,7 @@ class DefaultToolRuntimeTest {
                 fileSystemRequest("SESSION", approved),
                 "msg_1"
             )),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
         ).getFirst();
         ToolResult<?> writeResult = runtime.execute(
@@ -2009,7 +2160,7 @@ class DefaultToolRuntimeTest {
                 Map.of("path", approved.resolve("outside.txt").toString(), "content", "approved"),
                 "msg_2"
             )),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
         ).getFirst();
 
@@ -2065,7 +2216,7 @@ class DefaultToolRuntimeTest {
                 ),
                 "msg_1"
             )),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
         ).getFirst();
         ToolResult<?> writeResult = runtime.execute(
@@ -2075,7 +2226,7 @@ class DefaultToolRuntimeTest {
                 Map.of("path", approved.resolve("outside.txt").toString(), "content", "approved"),
                 "msg_2"
             )),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
         ).getFirst();
 
@@ -2118,7 +2269,7 @@ class DefaultToolRuntimeTest {
                 ),
                 "msg_1"
             )),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
         ).getFirst();
         ToolResult<?> nextResult = runtime.execute(
@@ -2128,7 +2279,7 @@ class DefaultToolRuntimeTest {
                 Map.of("command", "true", "sandboxPermissions", "withAdditionalPermissions"),
                 "msg_2"
             )),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
         ).getFirst();
 
@@ -2175,7 +2326,7 @@ class DefaultToolRuntimeTest {
                 Map.of("path", approved.resolve("outside.txt").toString(), "content", "blocked"),
                 "msg_1"
             )),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
         ).getFirst();
 
@@ -2211,7 +2362,7 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> fakeResult = runtime.execute(
             List.of(new ToolUseRequest("toolu_fake", "fake_permissions", Map.of(), "msg_1")),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_1", "entry_1")
         ).getFirst();
         ToolResult<?> writeResult = runtime.execute(
@@ -2221,7 +2372,7 @@ class DefaultToolRuntimeTest {
                 Map.of("path", approved.resolve("outside.txt").toString(), "content", "blocked"),
                 "msg_2"
             )),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("ses_1", "turn_2", "entry_2")
         ).getFirst();
 
@@ -2467,6 +2618,15 @@ class DefaultToolRuntimeTest {
         return events.events.stream()
             .filter(event -> event instanceof ToolStartEvent || event instanceof ToolEndEvent)
             .toList();
+    }
+
+    private void assertSingleLineInputSummary(ToolStartEvent start) {
+        assertFalse(start.inputSummary().contains("\r"));
+        assertFalse(start.inputSummary().contains("\n"));
+        assertTrue(
+            start.inputSummary().codePointCount(0, start.inputSummary().length())
+                <= ToolEventSummaryFormatter.INPUT_MAX_CODE_POINTS
+        );
     }
 
     private <T extends AgentEvent> T assertToolLifecycle(AgentEvent event, Class<T> type, String toolUseId) {

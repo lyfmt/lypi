@@ -44,6 +44,7 @@ class ContextSnapshotRequestFactoryTest {
         assertThat(request.messages().getFirst().role()).isEqualTo(LypiRole.USER);
         assertThat(request.messages().getFirst().content())
             .containsExactly(new LypiTextBlock("hello model", Map.of()));
+        assertThat(request.metadata()).containsEntry("permissionMode", "ask");
     }
 
     @Test
@@ -149,7 +150,7 @@ class ContextSnapshotRequestFactoryTest {
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
         );
     }

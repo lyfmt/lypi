@@ -4,6 +4,7 @@ import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
@@ -24,8 +25,17 @@ final class BashPermissionPolicy {
         this.sandboxPolicyResolver = Objects.requireNonNull(sandboxPolicyResolver, "sandboxPolicyResolver must not be null");
     }
 
-    PermissionDecision decide(Map<String, Object> input, ToolUseContext context, Path cwd) {
-        SandboxRuntimePolicy sandboxPolicy = sandboxPolicyResolver.resolve(context.cwd(), cwd);
+    PermissionDecision decide(
+        Map<String, Object> input,
+        ToolUseContext context,
+        Path cwd,
+        PermissionRuntimeState permissionRuntimeState
+    ) {
+        SandboxRuntimePolicy sandboxPolicy = sandboxPolicyResolver.resolve(
+            context.cwd(),
+            cwd,
+            permissionRuntimeState
+        );
         if (sandboxPolicy.autoAllowBashIfSandboxed() && sandboxPolicy.failIfUnavailable()) {
             return new PermissionDecision(
                 PermissionBehavior.ALLOW,

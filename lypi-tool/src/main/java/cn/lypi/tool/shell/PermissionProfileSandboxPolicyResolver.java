@@ -17,6 +17,7 @@ import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.security.NetworkPolicyMode;
 import cn.lypi.contracts.security.PermissionProfile;
 import cn.lypi.contracts.security.PermissionProfiles;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,17 +31,32 @@ import java.util.Optional;
  * 将 Codex 风格 permission profile 投影为 ly-pi 命令沙盒运行时策略。
  */
 public final class PermissionProfileSandboxPolicyResolver implements SandboxPolicyResolver {
-    private final PermissionProfile permissionProfile;
+    private final PermissionProfile configuredPermissionProfile;
     private final SandboxPolicyOptions options;
+    private final boolean configuredProfileOverridesRuntimeState;
 
     public PermissionProfileSandboxPolicyResolver(PermissionProfile permissionProfile, SandboxPolicyOptions options) {
-        this.permissionProfile = permissionProfile == null ? PermissionProfiles.workspace() : permissionProfile;
+        this(permissionProfile, options, true);
+    }
+
+    public PermissionProfileSandboxPolicyResolver(
+        PermissionProfile permissionProfile,
+        SandboxPolicyOptions options,
+        boolean configuredProfileOverridesRuntimeState
+    ) {
+        this.configuredPermissionProfile = permissionProfile == null ? PermissionProfiles.workspace() : permissionProfile;
         this.options = options == null ? SandboxPolicyOptions.defaults() : options;
+        this.configuredProfileOverridesRuntimeState = configuredProfileOverridesRuntimeState;
     }
 
     @Override
     public SandboxRuntimePolicy resolve(Path workspace, Path cwd) {
-        return resolve(workspace, cwd, AdditionalPermissionProfile.empty());
+        return resolveProfile(
+            workspace,
+            cwd,
+            configuredPermissionProfile,
+            AdditionalPermissionProfile.empty()
+        );
     }
 
     /**
@@ -50,6 +66,44 @@ public final class PermissionProfileSandboxPolicyResolver implements SandboxPoli
      */
     @Override
     public SandboxRuntimePolicy resolve(Path workspace, Path cwd, AdditionalPermissionProfile additionalPermissions) {
+        return resolveProfile(workspace, cwd, configuredPermissionProfile, additionalPermissions);
+    }
+
+    @Override
+    public SandboxRuntimePolicy resolve(
+        Path workspace,
+        Path cwd,
+        PermissionRuntimeState permissionRuntimeState
+    ) {
+        return resolveProfile(
+            workspace,
+            cwd,
+            effectivePermissionProfile(permissionRuntimeState),
+            AdditionalPermissionProfile.empty()
+        );
+    }
+
+    @Override
+    public SandboxRuntimePolicy resolve(
+        Path workspace,
+        Path cwd,
+        PermissionRuntimeState permissionRuntimeState,
+        AdditionalPermissionProfile additionalPermissions
+    ) {
+        return resolveProfile(
+            workspace,
+            cwd,
+            effectivePermissionProfile(permissionRuntimeState),
+            additionalPermissions
+        );
+    }
+
+    private SandboxRuntimePolicy resolveProfile(
+        Path workspace,
+        Path cwd,
+        PermissionProfile permissionProfile,
+        AdditionalPermissionProfile additionalPermissions
+    ) {
         Objects.requireNonNull(cwd, "cwd must not be null");
         Path realWorkspace = realPath(workspace, "workspace");
         realPath(cwd, "cwd");
@@ -79,6 +133,13 @@ public final class PermissionProfileSandboxPolicyResolver implements SandboxPoli
                 true
             );
         };
+    }
+
+    private PermissionProfile effectivePermissionProfile(PermissionRuntimeState permissionRuntimeState) {
+        if (configuredProfileOverridesRuntimeState || permissionRuntimeState == null) {
+            return configuredPermissionProfile;
+        }
+        return permissionRuntimeState.permissionProfile();
     }
 
     private SandboxRuntimePolicy managedPolicy(

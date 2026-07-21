@@ -1,5 +1,8 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.tui.TuiBlock;
+import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
@@ -8,6 +11,7 @@ import cn.lypi.contracts.tui.TuiViewModel;
 import cn.lypi.contracts.skill.SkillDescriptor;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.skill.SkillMention;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -15,9 +19,6 @@ import java.util.function.Supplier;
 
 final class TuiInputLoop {
     private final TuiSubmitHandler submitHandler;
-    private final FrameSink frameSink;
-    private final TuiRenderer renderer;
-    private TuiScreen screen;
     private TuiLayout layout;
     private final Supplier<TuiViewModel> viewSupplier;
     private final InputEditor editor = new InputEditor();
@@ -25,6 +26,7 @@ final class TuiInputLoop {
     private final TerminalInputPolicy inputPolicy = new TerminalInputPolicy();
     private final Supplier<SlashCommandPicker> slashPickerSupplier;
     private final Supplier<SkillIndex> skillIndexSupplier;
+    private final Runnable renderRequest;
     private final ResumeSessionController resumeController;
     private final ResumeOverlayController resumeOverlayController;
     private SlashCommandPicker slashPicker;
@@ -41,69 +43,57 @@ final class TuiInputLoop {
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, null);
+        this(submitHandler, renderRequest, layout, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, null);
+        this(submitHandler, renderRequest, layout, viewSupplier, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier,
         Supplier<SlashCommandPicker> slashPickerSupplier
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, null);
+        this(submitHandler, renderRequest, layout, viewSupplier, slashPickerSupplier, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier,
         Supplier<SlashCommandPicker> slashPickerSupplier,
         ResumeSessionController resumeController
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, resumeController, null);
+        this(submitHandler, renderRequest, layout, viewSupplier, slashPickerSupplier, resumeController, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier,
         Supplier<SlashCommandPicker> slashPickerSupplier,
         ResumeSessionController resumeController,
         Consumer<SessionRuntimeState> resumeStateConsumer
     ) {
-        this(submitHandler, frameSink, renderer, screen, layout, viewSupplier, slashPickerSupplier, resumeController, resumeStateConsumer, null);
+        this(submitHandler, renderRequest, layout, viewSupplier, slashPickerSupplier, resumeController, resumeStateConsumer, null);
     }
 
     TuiInputLoop(
         TuiSubmitHandler submitHandler,
-        FrameSink frameSink,
-        TuiRenderer renderer,
-        TuiScreen screen,
+        Runnable renderRequest,
         TuiLayout layout,
         Supplier<TuiViewModel> viewSupplier,
         Supplier<SlashCommandPicker> slashPickerSupplier,
@@ -112,15 +102,14 @@ final class TuiInputLoop {
         Supplier<SkillIndex> skillIndexSupplier
     ) {
         this.submitHandler = submitHandler;
-        this.frameSink = frameSink;
-        this.renderer = renderer;
-        this.screen = screen;
         this.layout = layout;
         this.viewSupplier = viewSupplier == null ? this::emptyView : viewSupplier;
         this.slashPickerSupplier = slashPickerSupplier == null
             ? () -> SlashCommandPicker.withTemplates(List.of())
             : slashPickerSupplier;
         this.skillIndexSupplier = skillIndexSupplier == null ? () -> new SkillIndex(List.of(), List.of()) : skillIndexSupplier;
+        this.renderRequest = renderRequest == null ? () -> {
+        } : renderRequest;
         this.resumeController = resumeController;
         this.resumeOverlayController = resumeController == null ? null : new ResumeOverlayController(
             resumeController,
@@ -192,6 +181,13 @@ final class TuiInputLoop {
                 render();
                 return;
             }
+        }
+        if ((key == TerminalKey.ESC || key == TerminalKey.CTRL_C)
+            && interruptibleRunning
+            && submitHandler.hasPendingSteeringMessages()) {
+            submitHandler.requestInterrupt(key == TerminalKey.ESC ? "esc" : "ctrl-c");
+            render();
+            return;
         }
         TerminalInputDecision decision = inputPolicy.decide(key, inputContext(prompt));
         if (decision.action() == TerminalInputAction.SUBMIT_PERMISSION_OPTION) {
@@ -265,6 +261,17 @@ final class TuiInputLoop {
             handleCtrlC();
             return;
         }
+        if (key == TerminalKey.UP && editor.text().isBlank()) {
+            Optional<SteeringMessage> recalled = submitHandler.recallPendingSteering();
+            if (recalled.isPresent()) {
+                editor.replaceDraft(recalled.orElseThrow().userInput());
+                slashOverlayClosed = false;
+                skillBindings.clear();
+                skillSuppressions.clear();
+                render();
+                return;
+            }
+        }
         if (key == TerminalKey.UP && editor.canMoveVisualUp(layout.width())) {
             editor.moveVisualUp(layout.width());
             render();
@@ -310,8 +317,7 @@ final class TuiInputLoop {
         return exitRequested;
     }
 
-    void updateViewport(TuiScreen screen, TuiLayout layout) {
-        this.screen = screen;
+    void updateLayout(TuiLayout layout) {
         this.layout = layout;
     }
 
@@ -382,28 +388,27 @@ final class TuiInputLoop {
         render();
     }
 
-    void renderCurrentFrame() {
-        render();
+    private void render() {
+        renderRequest.run();
     }
 
-    private void render() {
-        frameSink.render(renderer.renderFrame(
-            currentView(),
-            screen,
-            layout,
-            editor.text(),
-            editor.cursor(),
-            overlayLines(),
-            toolOutputExpanded
-        ));
+    TuiViewModel viewForRender() {
+        return currentView();
     }
 
     private TuiViewModel currentView() {
         TuiViewModel view = viewSupplier.get();
         Optional<PermissionPromptView> prompt = view.permissionPrompt();
         syncPermissionSelection(prompt);
+        List<TuiBlock> blocks = new ArrayList<>(view.blocks());
+        List<SteeringMessage> pending = submitHandler.pendingSteeringMessages();
+        for (int index = 0; index < pending.size(); index++) {
+            SteeringMessage message = pending.get(index);
+            String id = "pending-steering:" + index;
+            blocks.add(new TuiMessageBlock(id, id, "steering", message.userInput(), true));
+        }
         return new TuiViewModel(
-            view.blocks(),
+            blocks,
             view.statusBar(),
             view.runtimeLine(),
             view.files(),
@@ -535,7 +540,7 @@ final class TuiInputLoop {
         return lines;
     }
 
-    private List<String> overlayLines() {
+    List<String> overlayLines() {
         if (resumeOverlayController != null) {
             List<String> resumeLines = resumeOverlayController.overlayLines(layout.width());
             if (!resumeLines.isEmpty()) {
@@ -586,6 +591,10 @@ final class TuiInputLoop {
             return List.of();
         }
         return new SkillMentionParser(skillIndexSupplier.get().skills()).matches(skillToken.prefix());
+    }
+
+    boolean toolOutputExpanded() {
+        return toolOutputExpanded;
     }
 
     private List<String> skillOverlayLines() {

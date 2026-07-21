@@ -49,7 +49,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
@@ -71,12 +71,12 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.LOW,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
         router.route("/plan");
-        router.route("/permission-mode accept-edits");
+        router.route("/permission-mode auto");
         router.route("/model anthropic/claude-sonnet-4");
 
         ModeChangeEntry mode = assertInstanceOf(ModeChangeEntry.class, session.entries.get(0));
@@ -86,8 +86,8 @@ class SlashCommandRouterTest {
         );
         ModelChangeEntry model = assertInstanceOf(ModelChangeEntry.class, session.entries.get(2));
         assertEquals(AgentMode.PLAN, mode.agentMode());
-        assertEquals(PermissionMode.ACCEPT_EDITS, permission.permissionMode());
-        assertEquals(PermissionMode.ACCEPT_EDITS, permission.permissionRuntimeState().legacyPermissionMode());
+        assertEquals(PermissionMode.AUTO, permission.permissionMode());
+        assertEquals(PermissionMode.AUTO, permission.permissionRuntimeState().legacyPermissionMode());
         assertEquals(new ModelSelection("anthropic", "claude-sonnet-4", ThinkingLevel.LOW), model.model());
     }
 
@@ -97,7 +97,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.PLAN,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
@@ -118,7 +118,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
@@ -134,7 +134,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
@@ -152,7 +152,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
@@ -161,8 +161,38 @@ class SlashCommandRouterTest {
 
         assertEquals("usage: /plan", modeResult.message().orElseThrow());
         assertEquals(
-            "usage: /permission-mode <default-execute|accept-edits|bypass>",
+            "usage: /permission-mode <ask|auto|bypass>",
             permissionModeResult.message().orElseThrow()
+        );
+    }
+
+    @Test
+    void permissionModeCommandAcceptsOnlyAskAutoAndBypass() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.ASK
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
+
+        SlashCommandResult ask = router.route("/permission-mode ask");
+        SlashCommandResult auto = router.route("/permission-mode auto");
+        SlashCommandResult bypass = router.route("/permission-mode bypass");
+        SlashCommandResult legacyDefault = router.route("/permission-mode default-execute");
+        SlashCommandResult legacyAcceptEdits = router.route("/permission-mode accept-edits");
+
+        assertEquals("permission-mode: ASK", ask.notice().orElseThrow());
+        assertEquals("permission-mode: AUTO", auto.notice().orElseThrow());
+        assertEquals("permission-mode: BYPASS", bypass.notice().orElseThrow());
+        assertTrue(legacyDefault.message().orElseThrow().contains("unknown permission mode"));
+        assertTrue(legacyAcceptEdits.message().orElseThrow().contains("unknown permission mode"));
+        assertEquals(
+            List.of(PermissionMode.ASK, PermissionMode.AUTO, PermissionMode.BYPASS),
+            session.entries.stream()
+                .map(PermissionRuntimeStateChangeEntry.class::cast)
+                .map(PermissionRuntimeStateChangeEntry::permissionMode)
+                .toList()
         );
     }
 
@@ -172,7 +202,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
@@ -190,7 +220,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         session.leafId = "selected";
         session.openLeafId = "latest";
@@ -210,7 +240,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
@@ -227,7 +257,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
@@ -244,7 +274,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         RecordingCompactionRuntime compaction = new RecordingCompactionRuntime(new CompactionResult(
             true,
@@ -271,7 +301,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter(
             "ses_1",
@@ -297,7 +327,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SessionRuntimeState newState = runtimeState("ses_new", "leaf_new");
         RecordingNewSessionController newSession = new RecordingNewSessionController(newState);
@@ -327,7 +357,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         RecordingNewSessionController newSession = new RecordingNewSessionController(runtimeState("ses_new", "leaf_new"));
         SlashCommandRouter router = new SlashCommandRouter(
@@ -354,7 +384,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
 
@@ -373,7 +403,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         PromptTemplate memory = new PromptTemplate(
             "memory",
@@ -399,7 +429,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter(
             "ses_1",
@@ -422,7 +452,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter(
             "ses_1",
@@ -444,7 +474,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         PromptTemplate template = new PromptTemplate(
             "/review",
@@ -470,7 +500,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         ));
         SlashCommandRouter router = new SlashCommandRouter(
             "ses_1",
@@ -496,7 +526,7 @@ class SlashCommandRouterTest {
                 new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
                 ThinkingLevel.MEDIUM,
                 AgentMode.EXECUTE,
-                PermissionMode.DEFAULT_EXECUTE
+                PermissionMode.ASK
             )),
             emptyResources()
         );
@@ -607,7 +637,7 @@ class SlashCommandRouterTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0, 0, BigDecimal.ZERO),
             false,
             false,

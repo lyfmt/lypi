@@ -23,15 +23,16 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentCommunicationPort;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AppEntry;
 import cn.lypi.contracts.runtime.ChildSessionPort;
+import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
-import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
@@ -41,7 +42,6 @@ import cn.lypi.contracts.runtime.ToolRuntimePort;
 import cn.lypi.contracts.security.PermissionProfileSelection;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
-import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.transport.TransportAdapter;
 import cn.lypi.contracts.tui.DiffViewProvider;
@@ -58,6 +58,7 @@ import cn.lypi.runtime.memory.MemoryConsolidationRunner;
 import cn.lypi.runtime.memory.MemoryConsolidationTrigger;
 import cn.lypi.runtime.memory.MemoryConsolidationTurnEndListener;
 import cn.lypi.runtime.memory.QuietEventBus;
+import cn.lypi.runtime.subagent.AgentCompactStateBackfill;
 import cn.lypi.runtime.subagent.ChildAgentSnapshot;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.DefaultAgentCenter;
@@ -65,8 +66,6 @@ import cn.lypi.runtime.subagent.DefaultAgentRegistry;
 import cn.lypi.runtime.subagent.DefaultMailboxService;
 import cn.lypi.runtime.subagent.JsonSubagentProcessRunner;
 import cn.lypi.runtime.subagent.JsonlMailboxStore;
-import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
-import cn.lypi.runtime.subagent.MailboxDeliveryService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.security.ExecPolicyRuleFileReader;
@@ -80,7 +79,6 @@ import cn.lypi.session.SessionTreeQuery;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransport;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
-import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import cn.lypi.tool.FilePermissionAmendmentStore;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -119,12 +117,16 @@ final class RuntimeBeanFactories {
         LyPiPermissionsProperties permissionsProperties,
         PermissionProfileSelection selection
     ) {
-        PermissionRuntimeState legacyState = PermissionRuntimeState.fromLegacy(properties.getPermissionMode());
+        PermissionRuntimeState modeState = PermissionRuntimeState.forMode(properties.getPermissionMode());
+        boolean configuredProfileOverridesMode = permissionsProperties.hasExplicitProfileConfig()
+            || !":workspace".equals(selection.activePermissionProfile().id());
         PermissionRuntimeState runtimeState = new PermissionRuntimeState(
-            permissionsProperties.getApprovalPolicy().toApprovalPolicy(),
-            selection.activePermissionProfile(),
-            selection.permissionProfile(),
-            legacyState.legacyBehavior(),
+            permissionsProperties.hasExplicitApprovalPolicyConfig()
+                ? permissionsProperties.getApprovalPolicy().toApprovalPolicy()
+                : modeState.approvalPolicy(),
+            configuredProfileOverridesMode ? selection.activePermissionProfile() : modeState.activePermissionProfile(),
+            configuredProfileOverridesMode ? selection.permissionProfile() : modeState.permissionProfile(),
+            modeState.legacyBehavior(),
             properties.getPermissionMode()
         );
         return sessionManager(properties, runtimeState);
@@ -176,12 +178,24 @@ final class RuntimeBeanFactories {
         CompactionSummarizer summarizer,
         Clock clock
     ) {
+        return compactionCoordinator(sessionManager, contextAssembler, eventBus, summarizer, CompactStateBackfillPort.none(), clock);
+    }
+
+    static CompactionCoordinator compactionCoordinator(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionSummarizer summarizer,
+        CompactStateBackfillPort compactStateBackfill,
+        Clock clock
+    ) {
         return new DefaultCompactionCoordinator(
             sessionManager,
             contextAssembler,
             eventBus,
             new DefaultCompactionPlanner(),
             summarizer,
+            compactStateBackfill,
             clock
         );
     }
@@ -190,7 +204,28 @@ final class RuntimeBeanFactories {
         SessionManagerPort sessionManager,
         ContextAssembler contextAssembler,
         EventBus eventBus,
+        ToolRuntimePort toolRuntime,
         CompactionSummarizer summarizer,
+        Clock clock
+    ) {
+        return compactionRuntime(
+            sessionManager,
+            contextAssembler,
+            eventBus,
+            toolRuntime,
+            summarizer,
+            CompactStateBackfillPort.none(),
+            clock
+        );
+    }
+
+    static CompactionRuntimePort compactionRuntime(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        ToolRuntimePort toolRuntime,
+        CompactionSummarizer summarizer,
+        CompactStateBackfillPort compactStateBackfill,
         Clock clock
     ) {
         return new DefaultCompactionRuntime(
@@ -201,8 +236,10 @@ final class RuntimeBeanFactories {
                 eventBus,
                 DefaultCompactionRuntime.manualPlanner(),
                 summarizer,
+                compactStateBackfill,
                 clock
-            )
+            ),
+            toolRuntime
         );
     }
 
@@ -218,6 +255,64 @@ final class RuntimeBeanFactories {
         CompactionCoordinator compactionCoordinator,
         Clock clock
     ) {
+        return agentCore(
+            properties,
+            sessionManager,
+            aiProvider,
+            toolRuntime,
+            securityRuntime,
+            resourceRuntime,
+            eventBus,
+            contextAssembler,
+            compactionCoordinator,
+            CompactStateBackfillPort.none(),
+            clock
+        );
+    }
+
+    static AgentCorePort agentCore(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        AiProviderRuntimePort aiProvider,
+        ToolRuntimePort toolRuntime,
+        SecurityRuntimePort securityRuntime,
+        ResourceRuntimePort resourceRuntime,
+        EventBus eventBus,
+        ContextAssembler contextAssembler,
+        CompactionCoordinator compactionCoordinator,
+        CompactStateBackfillPort compactStateBackfill,
+        Clock clock
+    ) {
+        return agentCore(
+            properties,
+            sessionManager,
+            aiProvider,
+            toolRuntime,
+            securityRuntime,
+            resourceRuntime,
+            eventBus,
+            contextAssembler,
+            compactionCoordinator,
+            compactStateBackfill,
+            AgentCommunicationPort.none(),
+            clock
+        );
+    }
+
+    static AgentCorePort agentCore(
+        LyPiRuntimeProperties properties,
+        SessionManagerPort sessionManager,
+        AiProviderRuntimePort aiProvider,
+        ToolRuntimePort toolRuntime,
+        SecurityRuntimePort securityRuntime,
+        ResourceRuntimePort resourceRuntime,
+        EventBus eventBus,
+        ContextAssembler contextAssembler,
+        CompactionCoordinator compactionCoordinator,
+        CompactStateBackfillPort compactStateBackfill,
+        AgentCommunicationPort agentCommunication,
+        Clock clock
+    ) {
         AgentCoreRuntimePorts ports = new AgentCoreRuntimePorts(
             properties.getCwd(),
             sessionManager,
@@ -229,6 +324,8 @@ final class RuntimeBeanFactories {
             contextAssembler,
             null,
             compactionCoordinator,
+            compactStateBackfill,
+            agentCommunication,
             new NoopMemoryExtractionWorker()
         );
         return new DefaultTurnExecutor(ports, TurnIds.random(), clock);
@@ -242,6 +339,7 @@ final class RuntimeBeanFactories {
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         EventBus eventBus,
         ObjectProvider<CompactionSummarizer> compactionSummarizer,
+        ObjectProvider<CompactStateBackfillPort> compactStateBackfill,
         ObjectProvider<ModelCatalogPort> modelCatalog,
         Clock clock
     ) {
@@ -280,6 +378,7 @@ final class RuntimeBeanFactories {
                 SecurityRuntimePort resolvedSecurityRuntime = securityRuntime.getObject();
                 ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getObject();
                 CompactionSummarizer resolvedCompactionSummarizer = compactionSummarizer.getObject();
+                CompactStateBackfillPort resolvedCompactStateBackfill = compactStateBackfill.getIfAvailable(CompactStateBackfillPort::none);
                 DefaultContextAssembler assembler = new DefaultContextAssembler(
                     sessionManager,
                     resolvedResourceRuntime,
@@ -291,6 +390,7 @@ final class RuntimeBeanFactories {
                     resolvedEventBus,
                     new DefaultCompactionPlanner(),
                     resolvedCompactionSummarizer,
+                    resolvedCompactStateBackfill,
                     clock
                 );
                 return new DefaultTurnExecutor(
@@ -305,6 +405,8 @@ final class RuntimeBeanFactories {
                         assembler,
                         null,
                         compactionCoordinator,
+                        resolvedCompactStateBackfill,
+                        AgentCommunicationPort.none(),
                         new NoopMemoryExtractionWorker()
                     ),
                     TurnIds.random(),
@@ -375,6 +477,7 @@ final class RuntimeBeanFactories {
         var handle = properties.isSessionIdConfigured()
             ? sessionManager.openOrCreate(properties.getSessionId())
             : sessionManager.openTemporary(properties.getSessionId());
+        var sessionContext = sessionManager.context(handle.leafId());
         return new SessionRuntimeState(
             handle.sessionId(),
             properties.getCwd(),
@@ -382,8 +485,9 @@ final class RuntimeBeanFactories {
             new ModelSelection(properties.getDefaultProvider(), properties.getDefaultModel(), properties.getThinkingLevel()),
             properties.getThinkingLevel(),
             properties.getAgentMode(),
-            properties.getPermissionMode(),
+            sessionContext.permissionRuntimeState(),
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, BigDecimal.ZERO),
+            List.of(),
             false,
             false,
             false,
@@ -557,47 +661,8 @@ final class RuntimeBeanFactories {
         return new JsonlMailboxStore(sessionStorageRoot(sessionManager));
     }
 
-    static DefaultMailboxService mailboxPort(JsonlMailboxStore store, SessionManagerPort sessionManager, Clock clock) {
-        return new DefaultMailboxService(store, sessionManager, clock);
-    }
-
-    static MailboxDeliveryGuard mailboxDeliveryGuard(
-        Supplier<SessionRuntimeState> runtimeStateSupplier,
-        SessionManagerPort sessionManager
-    ) {
-        return message -> {
-            if (message == null) {
-                return false;
-            }
-            SessionRuntimeState runtimeState = runtimeStateSupplier.get();
-            if (runtimeState == null
-                || runtimeState.hasInterruptibleTool()
-                || runtimeState.hasActiveTurn()
-                || runtimeState.hasPendingPermission()
-                || runtimeState.hasPendingInput()) {
-                return false;
-            }
-            return message.parentSessionId().equals(runtimeState.sessionId())
-                && currentBranchContainsSpawnEntry(sessionManager, runtimeState, message.parentSpawnEntryId());
-        };
-    }
-
-    static MailboxDeliveryService mailboxDeliveryService(DefaultMailboxService mailbox, MailboxDeliveryGuard guard) {
-        return new MailboxDeliveryService(mailbox, guard);
-    }
-
-    static MailboxSlashCommandHandler mailboxSlashCommandHandler(
-        MailboxPort mailbox,
-        Supplier<SessionRuntimeState> runtimeStateSupplier,
-        SessionManagerPort sessionManager
-    ) {
-        return new MailboxSlashCommandHandler(mailbox, () -> {
-            SessionRuntimeState runtimeState = runtimeStateSupplier.get();
-            if (runtimeState != null) {
-                return runtimeState.sessionId();
-            }
-            return sessionManager.currentView().sessionId();
-        });
+    static DefaultMailboxService mailboxPort(JsonlMailboxStore store, Clock clock) {
+        return new DefaultMailboxService(store, clock);
     }
 
     static AgentRegistryPort agentRegistry(
@@ -607,6 +672,10 @@ final class RuntimeBeanFactories {
         ChildAgentSnapshotProvider childAgents
     ) {
         return new DefaultAgentRegistry(parentSession, mailbox, runningAgents, childAgents);
+    }
+
+    static CompactStateBackfillPort compactStateBackfill(AgentRegistryPort registry) {
+        return registry == null ? CompactStateBackfillPort.none() : new AgentCompactStateBackfill(registry);
     }
 
     static AgentSlashCommandHandler agentSlashCommandHandler(
@@ -655,10 +724,9 @@ final class RuntimeBeanFactories {
     static AgentCenterPort agentCenter(
         ChildSessionPort childSessions,
         SessionManagerPort parentSession,
-        SessionManagerFactoryPort sessionManagerFactory,
         SubagentProcessRunner processRunner,
         DefaultMailboxService mailbox,
-        MailboxDeliveryService deliveryService,
+        ModelCatalogPort modelCatalog,
         SubagentCommandResolver subagentCommandResolver,
         Clock clock
     ) {
@@ -668,10 +736,9 @@ final class RuntimeBeanFactories {
             childSessions,
             parentSession,
             sessionStorageRoot(parentSession),
-            sessionManagerFactory,
             processRunner,
             mailbox,
-            deliveryService,
+            modelCatalog,
             clock
         );
     }
@@ -703,20 +770,4 @@ final class RuntimeBeanFactories {
         );
     }
 
-    private static boolean currentBranchContainsSpawnEntry(
-        SessionManagerPort sessionManager,
-        SessionRuntimeState runtimeState,
-        String parentSpawnEntryId
-    ) {
-        if (parentSpawnEntryId == null || parentSpawnEntryId.isBlank()) {
-            return false;
-        }
-        try {
-            return sessionManager.branch(runtimeState.currentBranchLeafId()).stream()
-                .map(SessionEntry::id)
-                .anyMatch(parentSpawnEntryId::equals);
-        } catch (RuntimeException exception) {
-            return false;
-        }
-    }
 }

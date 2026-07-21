@@ -11,9 +11,12 @@ import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
+import cn.lypi.contracts.event.ProviderFallbackEndEvent;
+import cn.lypi.contracts.event.ProviderFallbackStartEvent;
 import cn.lypi.contracts.event.RetryEndEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.TurnEndEvent;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.ToolCallDelta;
 import java.time.Clock;
@@ -64,6 +67,25 @@ final class TurnEventPublisher {
         eventBus.publish(new RetryEndEvent(
             sessionId,
             notice.attempt(),
+            success,
+            clock.instant()
+        ));
+    }
+
+    void publishProviderFallbackStart(String sessionId, ProviderFallbackNotice notice) {
+        eventBus.publish(new ProviderFallbackStartEvent(
+            sessionId,
+            notice.fromMode(),
+            notice.toMode(),
+            notice.reason(),
+            clock.instant()
+        ));
+    }
+
+    void publishProviderFallbackEnd(String sessionId, ProviderFallbackNotice notice, boolean success) {
+        eventBus.publish(new ProviderFallbackEndEvent(
+            sessionId,
+            notice.toMode(),
             success,
             clock.instant()
         ));

@@ -25,6 +25,8 @@ import cn.lypi.contracts.event.MemoryWriteEvent;
 import cn.lypi.contracts.event.PermissionDecisionEvent;
 import cn.lypi.contracts.event.PermissionRequestEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
+import cn.lypi.contracts.event.ProviderFallbackEndEvent;
+import cn.lypi.contracts.event.ProviderFallbackStartEvent;
 import cn.lypi.contracts.event.RetryEndEvent;
 import cn.lypi.contracts.event.RetryStartEvent;
 import cn.lypi.contracts.event.SessionStartEvent;
@@ -282,6 +284,54 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void toolProgressRetainsBoundedTailAndFinalSummary() {
+        TuiEventReducer reducer = new TuiEventReducer();
+        reducer.reduce(new ToolStartEvent(
+            "ses_1",
+            "toolu_1",
+            "msg_1",
+            "turn_1",
+            "bash",
+            "Bash",
+            "large output",
+            Map.of(),
+            NOW,
+            NOW
+        ));
+        for (int index = 0; index < 300; index++) {
+            String line = "line-%03d %s\n".formatted(index, "x".repeat(1014));
+            reducer.reduce(new ToolProgressEvent(
+                "ses_1",
+                "toolu_1",
+                ToolProgress.output("stdout", line),
+                NOW.plusMillis(index)
+            ));
+        }
+        reducer.reduce(new ToolEndEvent(
+            "ses_1",
+            "toolu_1",
+            ToolExecutionStatus.SUCCEEDED,
+            0,
+            new ToolResultSummary("bash succeeded", "all output captured", false, 0, false, 307_200L, Map.of()),
+            null,
+            NOW,
+            NOW.plusSeconds(1),
+            1_000L,
+            Map.of(),
+            NOW.plusSeconds(1)
+        ));
+
+        TuiToolBlock tool = assertInstanceOf(TuiToolBlock.class, reducer.view().blocks().getFirst());
+        assertTrue(tool.details().length() <= 17 * 1024);
+        assertTrue(tool.details().contains("line-299"));
+        assertFalse(tool.details().contains("line-000"));
+        assertTrue(tool.details().contains("earlier output omitted"));
+        assertTrue(tool.details().contains("exit 0"));
+        assertTrue(tool.details().contains("all output captured"));
+        assertFalse(tool.active());
+    }
+
+    @Test
     void toolLifecyclePreservesInputSummaryMetadataPreviewAndResultSummary() {
         TuiEventReducer reducer = new TuiEventReducer();
 
@@ -402,6 +452,76 @@ class TuiEventReducerTest {
     }
 
     @Test
+    void providerFallbackEventsUpdateEphemeralRuntimeLineWithExistingPriorities() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+        reducer.reduce(new TurnStartEvent("ses_1", "turn_1", NOW));
+
+        reducer.reduce(new ProviderFallbackStartEvent(
+            "ses_1",
+            "responses/websocket",
+            "responses/sse",
+            "provider.fallback_candidate",
+            NOW
+        ));
+        assertEquals(
+            "fallback responses/websocket -> responses/sse provider.fallback_candidate",
+            reducer.view().runtimeLine()
+        );
+        assertEquals(0, reducer.view().blocks().size());
+
+        reducer.reduce(new CompactStartEvent("ses_1", "session", NOW));
+        assertEquals("compacting session", reducer.view().runtimeLine());
+        reducer.reduce(new CompactEndEvent("ses_1", "compact_1", NOW));
+        assertEquals(
+            "fallback responses/websocket -> responses/sse provider.fallback_candidate",
+            reducer.view().runtimeLine()
+        );
+
+        reducer.reduce(new RetryStartEvent("ses_1", 2, "rate limit", NOW));
+        assertEquals("retrying attempt 2 rate limit", reducer.view().runtimeLine());
+        reducer.reduce(new RetryEndEvent("ses_1", 2, true, NOW));
+        assertEquals(
+            "fallback responses/websocket -> responses/sse provider.fallback_candidate",
+            reducer.view().runtimeLine()
+        );
+
+        reducer.reduce(new ProviderFallbackEndEvent("ses_1", "responses/sse", true, NOW));
+        assertEquals("working (0s)", reducer.view().runtimeLine());
+    }
+
+    @Test
+    void failedProviderFallbackLineIsReplacedByErrorAndClearedByRuntimeBoundaries() {
+        TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
+        reducer.reduce(new TurnStartEvent("ses_1", "turn_1", NOW));
+        ProviderFallbackStartEvent start = new ProviderFallbackStartEvent(
+            "ses_1",
+            "responses/websocket",
+            "responses/sse",
+            "provider.fallback_candidate",
+            NOW
+        );
+
+        reducer.reduce(start);
+        reducer.reduce(new ProviderFallbackEndEvent("ses_1", "responses/sse", false, NOW));
+        assertEquals("fallback failed responses/sse", reducer.view().runtimeLine());
+
+        reducer.reduce(new ErrorEvent("ses_1", "provider.request_failed", "request failed", NOW));
+        assertEquals("working (0s)", reducer.view().runtimeLine());
+
+        reducer.reduce(start);
+        reducer.reduce(new InterruptEvent("ses_1", "esc", NOW));
+        assertEquals("interrupted esc", reducer.view().runtimeLine());
+
+        reducer.reduce(start);
+        reducer.reduce(new TurnEndEvent("ses_1", "turn_1", "FAILED", NOW));
+        assertEquals("worked 0s", reducer.view().runtimeLine());
+
+        reducer.reduce(start);
+        reducer.configureRuntimeState(TestRuntimeStates.basic("ses_2"));
+        assertEquals("", reducer.view().runtimeLine());
+    }
+
+    @Test
     void turnRuntimeLineShowsWorkingElapsedTime() {
         TuiEventReducer reducer = TuiEventReducer.withRuntimeState(TestRuntimeStates.basic("ses_1"));
         Instant startedAt = Instant.parse("2026-06-01T12:00:00Z");
@@ -462,10 +582,10 @@ class TuiEventReducerTest {
         assertEquals("ses_1", reducer.view().statusBar().sessionId());
         assertEquals("gpt-5.4", reducer.view().statusBar().model());
         assertEquals("EXECUTE", reducer.view().statusBar().mode());
-        assertEquals("DEFAULT_EXECUTE", reducer.view().statusBar().permissionMode());
+        assertEquals("ASK", reducer.view().statusBar().permissionMode());
         assertEquals("ON_REQUEST", reducer.view().statusBar().approvalMode());
         assertEquals(":workspace", reducer.view().statusBar().activePermissionProfileId());
-        assertEquals("ly-pi", reducer.view().statusBar().cwd());
+        assertEquals("/workspace/ly-pi", reducer.view().statusBar().cwd());
         assertEquals("leaf_1", reducer.view().statusBar().branchLeafId());
         assertEquals("1234/200000tok", reducer.view().statusBar().budget());
         assertFalse(reducer.view().statusBar().hasInterruptibleTool());
@@ -494,8 +614,8 @@ class TuiEventReducerTest {
                 new ApprovalPolicy(ApprovalMode.ON_FAILURE),
                 new ActivePermissionProfile("project-dev", Optional.of(":workspace")),
                 cn.lypi.contracts.security.PermissionProfiles.workspace(),
-                PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS).legacyBehavior(),
-                PermissionMode.ACCEPT_EDITS
+                PermissionRuntimeState.fromLegacy(PermissionMode.AUTO).legacyBehavior(),
+                PermissionMode.AUTO
             ),
             TestRuntimeStates.basic("ses_1").budget(),
             List.of(),
@@ -507,7 +627,7 @@ class TuiEventReducerTest {
 
         TuiEventReducer reducer = TuiEventReducer.withRuntimeState(runtimeState);
 
-        assertEquals("ACCEPT_EDITS", reducer.view().statusBar().permissionMode());
+        assertEquals("AUTO", reducer.view().statusBar().permissionMode());
         assertEquals("ON_FAILURE", reducer.view().statusBar().approvalMode());
         assertEquals("project-dev", reducer.view().statusBar().activePermissionProfileId());
     }
@@ -521,7 +641,7 @@ class TuiEventReducerTest {
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             TestRuntimeStates.basic("ses_old").budget(),
             List.of(
                 new AgentMessage(
@@ -589,7 +709,7 @@ class TuiEventReducerTest {
                     List.of(new ToolCallContentBlock("call_1", "read", "", Map.of(
                         "input", Map.of("path", "AGENTS.md"),
                         "complete", true,
-                        "inputSummary", "read {path=AGENTS.md}"
+                        "inputSummary", "read AGENTS.md"
                     ))),
                     NOW.plusMillis(1),
                     Optional.empty(),
@@ -629,6 +749,11 @@ class TuiEventReducerTest {
             .orElseThrow();
         assertEquals("call_1", tool.toolUseId());
         assertEquals("read", tool.toolName());
+        assertEquals(TuiToolState.DONE, tool.state());
+        assertFalse(tool.active());
+        assertEquals("read AGENTS.md", tool.label());
+        assertTrue(tool.details().contains("File: AGENTS.md"));
+        assertTrue(tool.details().contains("用户名字叫末声"));
     }
 
     @Test
@@ -1171,8 +1296,8 @@ class TuiEventReducerTest {
         assertEquals("ses_1", status.sessionId());
         assertEquals("gpt-5.4", status.model());
         assertEquals("EXECUTE", status.mode());
-        assertEquals("DEFAULT_EXECUTE", status.permissionMode());
-        assertEquals("ly-pi", status.cwd());
+        assertEquals("ASK", status.permissionMode());
+        assertEquals("/workspace/ly-pi", status.cwd());
         assertEquals("leaf_1", status.branchLeafId());
         assertEquals("1234/200000tok", status.budget());
         assertTrue(reducer.view().blocks().isEmpty(), "new session transcript stays empty");

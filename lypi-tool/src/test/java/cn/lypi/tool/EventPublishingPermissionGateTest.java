@@ -49,7 +49,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "write requires approval")
         );
 
@@ -104,7 +104,7 @@ class EventPublishingPermissionGateTest {
         gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             new cn.lypi.contracts.security.PermissionDecision(
                 PermissionBehavior.ASK,
                 cn.lypi.contracts.security.PermissionDecisionReason.TOOL_SPECIFIC,
@@ -131,7 +131,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "write requires approval")
         );
 
@@ -152,7 +152,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "write requires approval")
         );
 
@@ -173,7 +173,7 @@ class EventPublishingPermissionGateTest {
         gate.request(
             new ToolUseRequest("toolu_1", "bash", Map.of("command", "rm -rf target"), "msg_1"),
             TestTools.echo("bash", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             new PermissionDecision(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.BASH_RISK,
@@ -207,7 +207,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             new PermissionDecision(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.TOOL_SPECIFIC,
@@ -235,7 +235,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "bash", Map.of("command", "rm target"), "msg_1"),
             TestTools.echo("bash", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             new PermissionDecision(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.BASH_RISK,
@@ -261,7 +261,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "write requires approval")
         );
 
@@ -282,7 +282,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "write requires approval")
         );
 
@@ -310,7 +310,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             new PermissionDecision(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.TOOL_SPECIFIC,
@@ -339,7 +339,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "write requires approval")
         );
 
@@ -360,7 +360,7 @@ class EventPublishingPermissionGateTest {
         PermissionGateResult result = gate.request(
             new ToolUseRequest("toolu_1", "write", Map.of("path", "a.txt"), "msg_1"),
             TestTools.echo("write", List.of(), false, false, true),
-            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(cn.lypi.contracts.security.PermissionMode.ASK),
             TestTools.decision(PermissionBehavior.ASK, "write requires approval")
         );
 

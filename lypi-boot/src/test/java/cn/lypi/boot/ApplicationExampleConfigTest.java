@@ -8,6 +8,7 @@ import cn.lypi.boot.ai.LyPiAiProperties;
 import cn.lypi.boot.runtime.LyPiRuntimeProperties;
 import cn.lypi.boot.tool.LyPiPermissionsProperties;
 import cn.lypi.boot.tool.LyPiToolProperties;
+import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.security.ApprovalMode;
 import cn.lypi.contracts.security.FileSystemAccessMode;
@@ -36,6 +37,17 @@ class ApplicationExampleConfigTest {
     }
 
     @Test
+    void applicationExamplePointsToUserRootConfiguration() throws IOException {
+        String example = new ClassPathResource("application.yml.example")
+            .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(example)
+            .contains("~/.ly-pi/application.yml")
+            .contains("运行目录中的 application.yml")
+            .doesNotContain("复制本文件为 application.yml");
+    }
+
+    @Test
     void applicationExampleDoesNotAdvertiseCwdAsYamlKey() throws IOException {
         String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
 
@@ -47,8 +59,11 @@ class ApplicationExampleConfigTest {
         String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
 
         assertThat(example).contains("#     # 可选值：plan、execute。");
-        assertThat(example).contains("#     # 可选值：default_execute、accept_edits、bypass。");
-        assertThat(example).doesNotContain("#     # 可选值：plan、default_execute、accept_edits、dont_ask、bypass。");
+        assertThat(example).contains("#     # 可选值：ask、auto、bypass。");
+        assertThat(example).contains("#     permission-mode: ask");
+        assertThat(example).doesNotContain("default_execute").doesNotContain("accept_edits");
+        assertThat(example).contains("最终复核路由由 runtime.permission-mode 决定");
+        assertThat(example).doesNotContain("审批策略决定运行时是否可以询问用户");
         assertThat(example).doesNotContain("允许回退到宿主机执行器");
         assertThat(example).contains("不会自动回退到宿主机执行器");
     }
@@ -60,6 +75,38 @@ class ApplicationExampleConfigTest {
         assertThat(example).contains("#   subagent:");
         assertThat(example).contains("#     command:");
         assertThat(example).contains("headless-subagent");
+    }
+
+    @Test
+    void applicationExampleDocumentsAnthropicProviderConfiguration() throws IOException {
+        String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
+        String anthropicBlock = example.substring(
+            example.indexOf("#       anthropic:"),
+            example.indexOf("#   tool:")
+        );
+
+        assertThat(anthropicBlock).contains("#       anthropic:");
+        assertThat(anthropicBlock).contains("#         api-style: anthropic");
+        assertThat(anthropicBlock).contains("#         base-url: https://api.anthropic.com/v1");
+        assertThat(anthropicBlock).contains("#         api-key: \"${ANTHROPIC_API_KEY:}\"");
+        assertThat(anthropicBlock).contains("#         anthropic-version: 2023-06-01");
+        assertThat(anthropicBlock).contains("#             model-id: claude-sonnet-4-5");
+        assertThat(anthropicBlock).contains("Anthropic extended thinking 需要保留并回放 signature");
+        assertThat(anthropicBlock).contains("runtime.thinking-level: off");
+        assertThat(anthropicBlock).contains("#             supports-thinking: false");
+        assertThat(anthropicBlock).doesNotContain("#             supports-thinking: true");
+    }
+
+    @Test
+    void applicationExampleKeepsOpenAiThinkingSupportSeparateFromAnthropicLimitation() throws IOException {
+        String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
+        String openAiBlock = example.substring(
+            example.indexOf("#       openai:"),
+            example.indexOf("#       fixture:")
+        );
+
+        assertThat(openAiBlock).contains("#             supports-thinking: true");
+        assertThat(openAiBlock).doesNotContain("Anthropic extended thinking");
     }
 
     @Test
@@ -110,6 +157,17 @@ class ApplicationExampleConfigTest {
             Map.entry("lypi.ai.providers.fixture.models[0].model-id", "fixture-model"),
             Map.entry("lypi.ai.providers.fixture.models[0].context-window", "64000"),
             Map.entry("lypi.ai.providers.fixture.models[0].max-output-tokens", "8192"),
+            Map.entry("lypi.ai.providers.anthropic.enabled", "true"),
+            Map.entry("lypi.ai.providers.anthropic.api-style", "anthropic"),
+            Map.entry("lypi.ai.providers.anthropic.base-url", "https://api.anthropic.test/v1"),
+            Map.entry("lypi.ai.providers.anthropic.api-key", "${ANTHROPIC_API_KEY:}"),
+            Map.entry("lypi.ai.providers.anthropic.anthropic-version", "2023-06-01"),
+            Map.entry("lypi.ai.providers.anthropic.timeout", "45s"),
+            Map.entry("lypi.ai.providers.anthropic.max-retries", "2"),
+            Map.entry("lypi.ai.providers.anthropic.models[0].model-id", "claude-sonnet-4-5"),
+            Map.entry("lypi.ai.providers.anthropic.models[0].context-window", "200000"),
+            Map.entry("lypi.ai.providers.anthropic.models[0].max-output-tokens", "64000"),
+            Map.entry("lypi.ai.providers.anthropic.models[0].supports-thinking", "false"),
             Map.entry("lypi.tool.sandbox.enabled", "true"),
             Map.entry("lypi.tool.sandbox.network-mode", "disabled"),
             Map.entry("lypi.tool.sandbox.fail-if-unavailable", "false"),
@@ -134,7 +192,7 @@ class ApplicationExampleConfigTest {
 
         assertThat(runtime.getDefaultProvider()).isEqualTo("fixture");
         assertThat(runtime.getDefaultModel()).isEqualTo("fixture-model");
-        assertThat(ai.getProviders()).containsOnlyKeys("openai", "fixture");
+        assertThat(ai.getProviders()).containsOnlyKeys("openai", "fixture", "anthropic");
         assertThat(ai.getProviders().get("openai").isEnabled()).isTrue();
         assertThat(ai.getProviders().get("openai").getRequestStyle()).isEqualTo(RequestStyle.RESPONSES);
         assertThat(ai.getProviders().get("openai").getFallbackRequestStyle()).isEqualTo(RequestStyle.CHAT_COMPLETIONS);
@@ -165,6 +223,19 @@ class ApplicationExampleConfigTest {
             assertThat(model.getModelId()).isEqualTo("fixture-model");
             assertThat(model.getContextWindow()).isEqualTo(64000);
             assertThat(model.getMaxOutputTokens()).isEqualTo(8192);
+        });
+        assertThat(ai.getProviders().get("anthropic").isEnabled()).isTrue();
+        assertThat(ai.getProviders().get("anthropic").getApiStyle()).isEqualTo(ApiStyle.ANTHROPIC);
+        assertThat(ai.getProviders().get("anthropic").getBaseUrl().toString()).isEqualTo("https://api.anthropic.test/v1");
+        assertThat(ai.getProviders().get("anthropic").getApiKey()).isEqualTo("${ANTHROPIC_API_KEY:}");
+        assertThat(ai.getProviders().get("anthropic").getAnthropicVersion()).isEqualTo("2023-06-01");
+        assertThat(ai.getProviders().get("anthropic").getTimeout()).isEqualTo(Duration.ofSeconds(45));
+        assertThat(ai.getProviders().get("anthropic").getMaxRetries()).isEqualTo(2);
+        assertThat(ai.getProviders().get("anthropic").getModels()).singleElement().satisfies(model -> {
+            assertThat(model.getModelId()).isEqualTo("claude-sonnet-4-5");
+            assertThat(model.getContextWindow()).isEqualTo(200000);
+            assertThat(model.getMaxOutputTokens()).isEqualTo(64000);
+            assertThat(model.isSupportsThinking()).isFalse();
         });
         assertThat(tool.getSandbox().isEnabled()).isTrue();
         assertThat(tool.getSandbox().getNetworkMode()).isEqualTo(NetworkMode.DISABLED);

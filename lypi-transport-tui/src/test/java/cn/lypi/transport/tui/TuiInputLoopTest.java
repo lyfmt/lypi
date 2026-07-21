@@ -2,10 +2,16 @@ package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.event.MessageBlockSnapshot;
+import cn.lypi.contracts.event.MessageEndEvent;
+import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.tui.BranchSummaryOffer;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.ResumeSessionController;
@@ -14,6 +20,8 @@ import cn.lypi.contracts.tui.SessionResumeInfo;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SessionTreeNodeView;
 import cn.lypi.contracts.tui.StatusBarState;
+import cn.lypi.contracts.tui.TuiBlock;
+import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.TuiToolBlock;
 import cn.lypi.contracts.tui.TuiToolState;
 import cn.lypi.contracts.tui.TuiViewModel;
@@ -30,6 +38,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.nio.file.Path;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -39,15 +49,142 @@ class TuiInputLoopTest {
     private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
     private static final String ANSI_RESET = "\033[0m";
 
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout
+    ) {
+        return testLoop(submitHandler, frameConsumer, layout, null);
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier
+    ) {
+        return testLoop(submitHandler, frameConsumer, layout, viewSupplier, null);
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier
+    ) {
+        return testLoop(submitHandler, frameConsumer, layout, viewSupplier, slashPickerSupplier, null);
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController
+    ) {
+        return testLoop(
+            submitHandler,
+            frameConsumer,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            null
+        );
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer
+    ) {
+        return testLoop(
+            submitHandler,
+            frameConsumer,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            null
+        );
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier
+    ) {
+        TestRenderRequest renderRequest = new TestRenderRequest(frameConsumer, layout);
+        TuiInputLoop loop = new TuiInputLoop(
+            submitHandler,
+            renderRequest,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            skillIndexSupplier
+        );
+        renderRequest.bind(loop);
+        return loop;
+    }
+
+    private static final class TestRenderRequest implements Runnable {
+        private final Consumer<List<String>> frameConsumer;
+        private final TuiLayout layout;
+        private final TuiRenderer renderer = new TuiRenderer();
+        private final TuiTranscriptPartitioner partitioner = new TuiTranscriptPartitioner();
+        private TuiInputLoop loop;
+
+        private TestRenderRequest(Consumer<List<String>> frameConsumer, TuiLayout layout) {
+            this.frameConsumer = frameConsumer;
+            this.layout = layout;
+        }
+
+        private void bind(TuiInputLoop loop) {
+            this.loop = loop;
+        }
+
+        @Override
+        public void run() {
+            TuiViewModel view = loop.viewForRender();
+            TuiTranscriptPartition partition = partitioner.partition(view.blocks());
+            List<String> lines = new ArrayList<>();
+            renderer.renderCommittedBlocks(partition.history(), layout.width()).stream()
+                .map(TerminalLine::text)
+                .forEach(lines::add);
+            lines.addAll(renderer.renderSurface(
+                view,
+                partition.live(),
+                layout,
+                loop.draft(),
+                loop.cursor(),
+                loop.overlayLines(),
+                loop.toolOutputExpanded()
+            ).lines());
+            frameConsumer.accept(List.copyOf(lines));
+        }
+    }
+
     @Test
     void enterSubmitsDraftAndRerendersClearedInput() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(20, 4)
         );
 
@@ -62,16 +199,14 @@ class TuiInputLoopTest {
     @Test
     void compactRuntimeLineBlocksTypingAndSubmit() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(20, 4),
             () -> new TuiViewModel(
                 List.of(),
-                new StatusBarState("ses_1", "gpt-5.4-mini", "running", "DEFAULT_EXECUTE"),
+                new StatusBarState("ses_1", "gpt-5.4-mini", "running", "ASK"),
                 "compacting MANUAL",
                 List.of(),
                 Optional.empty(),
@@ -89,16 +224,14 @@ class TuiInputLoopTest {
     @Test
     void escapeInterruptsCompactRuntimeLine() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(20, 4),
             () -> new TuiViewModel(
                 List.of(),
-                new StatusBarState("ses_1", "gpt-5.4-mini", "running", "DEFAULT_EXECUTE"),
+                new StatusBarState("ses_1", "gpt-5.4-mini", "running", "ASK"),
                 "compacting MANUAL",
                 List.of(),
                 Optional.empty(),
@@ -116,11 +249,9 @@ class TuiInputLoopTest {
     void rendersCursorAtCurrentEditorPosition() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(30, 4)
         );
 
@@ -132,14 +263,40 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void otherKeyDoesNotChangeInputOrRenderedProjection() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<List<String>> frames = new ArrayList<>();
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(List.copyOf(lines)),
+            new TuiLayout(40, 6),
+            () -> view
+        );
+        loop.acceptText("draft");
+        int cursor = loop.cursor();
+        List<String> beforeOtherKey = frames.getLast();
+
+        loop.acceptKey(TerminalKey.OTHER);
+
+        assertEquals("draft", loop.draft());
+        assertEquals(cursor, loop.cursor());
+        assertEquals(beforeOtherKey, frames.getLast());
+    }
+
+    @Test
     void backspaceDeletesPreviousCharacterAndRerendersInput() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(30, 4)
         );
 
@@ -156,11 +313,9 @@ class TuiInputLoopTest {
     void pasteWithNewlineKeepsDraftRendersRowsAndSubmitsOriginalText() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(20, 6)
         );
 
@@ -178,8 +333,8 @@ class TuiInputLoopTest {
     @Test
     void modifiedEnterInsertsNewlineInsteadOfSubmitting() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
-        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
 
         loop.acceptText("hello");
         loop.acceptKey(TerminalKey.MODIFIED_ENTER);
@@ -192,8 +347,8 @@ class TuiInputLoopTest {
     @Test
     void ctrlCClearsDraftBeforeInterruptingActiveTool() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
-        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
 
         loop.acceptText("draft");
         loop.acceptKey(TerminalKey.CTRL_C);
@@ -205,10 +360,27 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void ctrlCWithDraftAndPendingSteeringInterruptsTurnBeforeClearingDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        SteeringMessage pending = new SteeringMessage("pending", List.of());
+        submit.pendingSteering.add(pending);
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+        loop.acceptText("draft");
+        loop.setInterruptibleRunning(true);
+
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals(List.of("ctrl-c"), submit.interruptReasons);
+        assertEquals("draft", loop.draft());
+        assertEquals(List.of(pending), submit.pendingSteering);
+    }
+
+    @Test
     void escapeInterruptsActiveToolWithoutRequiringInputFocus() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
-        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
 
         loop.setToolRunning(true);
         loop.acceptKey(TerminalKey.ESC);
@@ -220,12 +392,10 @@ class TuiInputLoopTest {
     @Test
     void escapeInterruptsActiveToolBeforeClosingSlashOverlay() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(3),
             new TuiLayout(40, 5),
             null,
             () -> new SlashCommandPicker(List.of("/model"))
@@ -243,8 +413,8 @@ class TuiInputLoopTest {
     @Test
     void ctrlCRequestsExitWhenInputIsEmptyAndNoToolIsRunning() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
-        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
 
         loop.acceptKey(TerminalKey.CTRL_C);
 
@@ -253,7 +423,7 @@ class TuiInputLoopTest {
     }
 
     @Test
-    void ctrlOTogglesToolOutputExpandedWithoutChangingDraft() {
+    void ctrlODoesNotExpandHistoricalToolOrChangeDraft() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
         TuiViewModel view = new TuiViewModel(
@@ -274,11 +444,9 @@ class TuiInputLoopTest {
             Optional.empty(),
             Optional.empty()
         );
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(30),
             new TuiLayout(80, 30),
             () -> view
         );
@@ -289,13 +457,13 @@ class TuiInputLoopTest {
 
         assertEquals("draft", loop.draft());
         assertTrue(frames.get(0).contains("tools: read x1 (Ctrl+O details)"));
-        assertTrue(frames.get(1).contains("done read src/Large.java:1-20"));
+        assertTrue(frames.get(1).contains("tools: read x1 (Ctrl+O details)"));
         assertTrue(!frames.get(1).contains("11 | line 11"));
         assertTrue(frames.get(2).contains("tools: read x1 (Ctrl+O details)"));
     }
 
     @Test
-    void toolOutputToggleAppliesToHistoricalAndRunningToolBlocksTogether() {
+    void toolOutputToggleAppliesOnlyToRunningToolBlock() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
         TuiViewModel view = new TuiViewModel(
@@ -330,11 +498,9 @@ class TuiInputLoopTest {
             Optional.empty(),
             Optional.empty()
         );
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(40),
             new TuiLayout(80, 40),
             () -> view
         );
@@ -342,7 +508,7 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.CTRL_O);
         loop.acceptKey(TerminalKey.CTRL_O);
 
-        assertTrue(frames.get(0).contains("done read src/Large.java:1-20"));
+        assertTrue(frames.get(0).contains("tools: read x1 (Ctrl+O details)"));
         assertTrue(!frames.get(0).contains("11 | line 11"));
         assertTrue(frames.get(0).contains("stdout: line 1"));
         assertTrue(frames.get(1).contains("tools: read x1 (Ctrl+O details)"));
@@ -352,7 +518,7 @@ class TuiInputLoopTest {
     }
 
     @Test
-    void expandToolsActionTogglesToolOutputExpanded() {
+    void expandToolsActionLeavesHistoricalToolCollapsed() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
         TuiViewModel view = new TuiViewModel(
@@ -373,30 +539,26 @@ class TuiInputLoopTest {
             Optional.empty(),
             Optional.empty()
         );
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(30),
             new TuiLayout(80, 30),
             () -> view
         );
 
         loop.acceptKey(TerminalKey.EXPAND_TOOLS);
 
-        assertTrue(frames.getFirst().contains("done read src/Large.java:1-20"));
+        assertTrue(frames.getFirst().contains("tools: read x1 (Ctrl+O details)"));
         assertTrue(!frames.getFirst().contains("11 | line 11"));
     }
 
     @Test
     void enterSubmitsPermissionDefaultOptionWhenPromptIsOpen() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4),
             () -> permissionView("allow_once", "cancel")
         );
@@ -411,11 +573,9 @@ class TuiInputLoopTest {
     void upAndDownSelectPermissionOptionAndEnterSubmitsSelectedOption() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(4),
             new TuiLayout(40, 6),
             () -> permissionViewWithOptions("allow_once", "escape_cancel")
         );
@@ -434,11 +594,9 @@ class TuiInputLoopTest {
     void permissionPromptTakesPriorityOverSlashOverlayNavigation() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(5),
             new TuiLayout(40, 9),
             () -> permissionViewWithOptions("allow_once", "escape_cancel"),
             () -> new SlashCommandPicker(List.of("/model", "/plan"))
@@ -458,12 +616,10 @@ class TuiInputLoopTest {
     @Test
     void escapeAndCtrlCInterruptPermissionPromptInsteadOfSubmittingPermissionOption() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(40, 4),
             () -> permissionViewWithOptions("allow_once", "escape_cancel")
         );
@@ -478,10 +634,90 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void pendingSteeringIsProjectedAsLiveSpecialMessageUntilConsumed() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        submit.pendingSteering.add(new SteeringMessage("second", List.of()));
+        TuiEventReducer reducer = new TuiEventReducer();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 6),
+            reducer::view
+        );
+
+        TuiMessageBlock pending = assertInstanceOf(
+            TuiMessageBlock.class,
+            loop.viewForRender().blocks().getLast()
+        );
+        assertEquals("pending-steering:0", pending.blockId());
+        assertEquals("pending-steering:0", pending.messageId());
+        assertEquals("steering", pending.role());
+        assertEquals("second", pending.content());
+        assertTrue(pending.streaming());
+
+        submit.pendingSteering.clear();
+        reducer.reduce(new MessageStartEvent(
+            "ses_1", "msg_user", MessageRole.USER, MessageKind.TEXT, Map.of(), Instant.EPOCH
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot("msg_user:text:0", ContentBlockKind.TEXT, "second", Map.of())),
+            Optional.empty(),
+            Optional.empty(),
+            Map.of(),
+            Instant.EPOCH
+        ));
+
+        List<TuiBlock> settledBlocks = loop.viewForRender().blocks();
+        assertEquals(1, settledBlocks.size());
+        TuiMessageBlock settled = assertInstanceOf(TuiMessageBlock.class, settledBlocks.getFirst());
+        assertEquals("user", settled.role());
+        assertEquals("second", settled.content());
+        assertFalse(settled.streaming());
+    }
+
+    @Test
+    void upOnEmptyDraftRecallsAndCancelsAllPendingSteering() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        submit.pendingSteering.add(new SteeringMessage("second", List.of()));
+        submit.pendingSteering.add(new SteeringMessage("third", List.of()));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("second\nthird", loop.draft());
+        assertEquals(List.of(), submit.pendingSteering);
+    }
+
+    @Test
+    void upKeepsVisualCursorNavigationAheadOfRecallForMultilineDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        SteeringMessage pending = new SteeringMessage("pending", List.of());
+        submit.pendingSteering.add(pending);
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 6));
+        loop.acceptPaste("abcde\nxy\n123456");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("abcde\nxy\n123456", loop.draft());
+        assertEquals(8, loop.cursor());
+        assertEquals(List.of(pending), submit.pendingSteering);
+    }
+
+    @Test
     void upAndDownNavigateSubmittedHistory() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
-        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
 
         loop.acceptText("first");
         loop.acceptKey(TerminalKey.ENTER);
@@ -501,8 +737,8 @@ class TuiInputLoopTest {
     @Test
     void upDoesNotReplaceNonEmptyDraftWithHistoryUntilHistoryNavigationStartsFromEmptyInput() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
-        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(20, 4));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
 
         loop.acceptText("first");
         loop.acceptKey(TerminalKey.ENTER);
@@ -522,11 +758,9 @@ class TuiInputLoopTest {
     void upAndDownMoveCursorInsideMultilineDraftBeforeHistoryNavigation() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(20, 6)
         );
 
@@ -551,11 +785,9 @@ class TuiInputLoopTest {
     void upAndDownMoveCursorAcrossSoftWrappedInputRowsBeforeHistoryNavigation() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(2),
             new TuiLayout(8, 6)
         );
 
@@ -579,11 +811,9 @@ class TuiInputLoopTest {
     void slashOverlayShowsCandidatesAndAcceptsSelection() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(6),
             new TuiLayout(40, 9),
             null,
             () -> SlashCommandPicker.withTemplates(List.of("review"))
@@ -606,12 +836,10 @@ class TuiInputLoopTest {
     @Test
     void slashOverlayUsesArrowKeysAndEscWithoutHistoryNavigation() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(3),
             new TuiLayout(40, 5),
             null,
             () -> new SlashCommandPicker(List.of("/model", "/plan", "/compact"))
@@ -636,12 +864,10 @@ class TuiInputLoopTest {
     @Test
     void removedModeCommandIsNotAcceptedAsModelPrefix() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(3),
             new TuiLayout(40, 5),
             null,
             () -> new SlashCommandPicker(List.of("/model", "/plan", "/compact"))
@@ -658,11 +884,9 @@ class TuiInputLoopTest {
     void skillOverlayShowsCandidatesAcceptsSelectionAndSubmitsBinding() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(6),
             new TuiLayout(60, 9),
             null,
             () -> new SlashCommandPicker(List.of()),
@@ -688,11 +912,9 @@ class TuiInputLoopTest {
     void skillOverlayOpensWhenOnlyDollarIsTyped() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(6),
             new TuiLayout(60, 9),
             null,
             () -> new SlashCommandPicker(List.of()),
@@ -709,12 +931,10 @@ class TuiInputLoopTest {
     @Test
     void escapeClosesSkillOverlayAndSuppressesCurrentTokenBinding() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(4),
             new TuiLayout(60, 7),
             null,
             () -> new SlashCommandPicker(List.of()),
@@ -735,11 +955,9 @@ class TuiInputLoopTest {
     void slashOverlayScrollsSelectedCandidateIntoVisibleWindow() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(6),
             new TuiLayout(40, 9),
             null,
             () -> new SlashCommandPicker(List.of(
@@ -768,12 +986,10 @@ class TuiInputLoopTest {
     @Test
     void unknownSlashWithNoOverlayCandidatesSubmitsAsNormalInput() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(3),
             new TuiLayout(40, 5),
             null,
             () -> new SlashCommandPicker(List.of("/model"))
@@ -850,11 +1066,9 @@ class TuiInputLoopTest {
             }
         };
         TuiRenderState renderState = new TuiRenderState();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(8),
             new TuiLayout(80, 10),
             renderState::view,
             () -> new SlashCommandPicker(List.of("/resume")),
@@ -902,12 +1116,10 @@ class TuiInputLoopTest {
                 Instant.EPOCH
             )
         );
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(8),
             new TuiLayout(80, 10),
             null,
             () -> new SlashCommandPicker(List.of("/resume")),
@@ -994,11 +1206,9 @@ class TuiInputLoopTest {
                 );
             }
         };
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(8),
             new TuiLayout(80, 10),
             null,
             () -> new SlashCommandPicker(List.of("/resume")),
@@ -1080,12 +1290,10 @@ class TuiInputLoopTest {
                 return runtimeState(sessionId, "summary_leaf");
             }
         };
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             ignored -> {
             },
-            new TuiRenderer(),
-            new TuiScreen(8),
             new TuiLayout(80, 10),
             null,
             () -> new SlashCommandPicker(List.of("/resume")),
@@ -1108,11 +1316,9 @@ class TuiInputLoopTest {
     void resumeControllerAddsResumeToSlashPickerCandidates() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         List<String> frames = new ArrayList<>();
-        TuiInputLoop loop = new TuiInputLoop(
+        TuiInputLoop loop = testLoop(
             submit,
             lines -> frames.add(String.join("\n", lines)),
-            new TuiRenderer(),
-            new TuiScreen(5),
             new TuiLayout(80, 8),
             null,
             () -> new SlashCommandPicker(List.of("/review")),
@@ -1128,8 +1334,8 @@ class TuiInputLoopTest {
     @Test
     void editingKeysMoveCursorDeleteLineUndoAndYank() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
-        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(30, 4));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(30, 4));
 
         loop.acceptText("alpha beta gamma");
         loop.acceptKey(TerminalKey.LEFT);
@@ -1148,8 +1354,8 @@ class TuiInputLoopTest {
     @Test
     void altYRotatesKillRingAfterYank() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
-        TuiInputLoop loop = new TuiInputLoop(submit, ignored -> {
-        }, new TuiRenderer(), new TuiScreen(2), new TuiLayout(30, 4));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(30, 4));
 
         loop.acceptText("alpha beta gamma");
         loop.acceptKey(TerminalKey.ALT_BACKSPACE);
@@ -1237,7 +1443,7 @@ class TuiInputLoopTest {
             new cn.lypi.contracts.model.ModelSelection("openai", "gpt-5.4", cn.lypi.contracts.model.ThinkingLevel.MEDIUM),
             cn.lypi.contracts.model.ThinkingLevel.MEDIUM,
             cn.lypi.contracts.security.AgentMode.EXECUTE,
-            cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE,
+            cn.lypi.contracts.security.PermissionMode.ASK,
             new cn.lypi.contracts.context.ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, java.math.BigDecimal.ZERO),
             transcript,
             false,
@@ -1250,6 +1456,7 @@ class TuiInputLoopTest {
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
         private final List<List<SkillMention>> skillMentions = new ArrayList<>();
+        private final List<SteeringMessage> pendingSteering = new ArrayList<>();
         private final List<String> permissionOptions = new ArrayList<>();
         private final List<String> resumes = new ArrayList<>();
         private final List<String> interruptReasons = new ArrayList<>();
@@ -1266,6 +1473,27 @@ class TuiInputLoopTest {
         public void submitUserInput(String input, List<SkillMention> skillMentions) {
             submitted.add(input);
             this.skillMentions.add(skillMentions);
+        }
+
+        @Override
+        public List<SteeringMessage> pendingSteeringMessages() {
+            return List.copyOf(pendingSteering);
+        }
+
+        @Override
+        public Optional<SteeringMessage> recallPendingSteering() {
+            if (pendingSteering.isEmpty()) {
+                return Optional.empty();
+            }
+            String userInput = pendingSteering.stream()
+                .map(SteeringMessage::userInput)
+                .collect(java.util.stream.Collectors.joining("\n"));
+            List<SkillMention> mentions = pendingSteering.stream()
+                .flatMap(message -> message.skillMentions().stream())
+                .distinct()
+                .toList();
+            pendingSteering.clear();
+            return Optional.of(new SteeringMessage(userInput, mentions));
         }
 
         @Override

@@ -60,6 +60,10 @@ class DefaultSystemPromptBuilderTest {
         assertThat(prompt.content()).contains("## General");
         assertThat(prompt.content()).contains("## Editing Constraints");
         assertThat(prompt.content()).contains("## Workflow");
+        assertThat(prompt.content()).contains("## Subagents");
+        assertThat(prompt.content()).contains("Subagent completion is delivered automatically at a later model boundary");
+        assertThat(prompt.content()).contains("Call `wait_agent` only when the next step depends on the completion");
+        assertThat(prompt.content()).contains("If the user asks you not to wait or to continue working");
         assertThat(prompt.content()).contains("## AGENTS.md");
         assertThat(prompt.content()).contains("Follow project rules.");
         assertThat(prompt.content()).contains("L0 index body");
@@ -142,20 +146,22 @@ class DefaultSystemPromptBuilderTest {
             new ActivePermissionProfile("project-dev", Optional.of(":workspace")),
             cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, false),
-            PermissionMode.ACCEPT_EDITS
+            PermissionMode.AUTO
         );
 
         SystemPrompt prompt = new DefaultSystemPromptBuilder().build(emptySnapshot(), runtimeState);
 
         assertThat(prompt.content()).contains("## Permissions");
-        assertThat(prompt.content()).contains("approval policy: ON_FAILURE");
+        assertThat(prompt.content()).contains("Current permission mode: AUTO");
+        assertThat(prompt.content()).contains("independent model reviewer");
+        assertThat(prompt.content()).contains("approval policy metadata: ON_FAILURE");
         assertThat(prompt.content()).contains("active sandbox profile: project-dev");
         assertThat(prompt.content()).contains("request_permissions");
         assertThat(prompt.content()).contains("strictAutoReview");
         assertThat(prompt.content()).contains("sandboxPermissions=requireEscalated");
         assertThat(prompt.content()).contains("sandboxPermissions=withAdditionalPermissions");
-        assertThat(prompt.content()).contains("approval policy decides whether a prompt is shown");
-        assertThat(prompt.content()).doesNotContain("ACCEPT_EDITS");
+        assertThat(prompt.content()).contains("permission mode above is the final review route");
+        assertThat(prompt.content()).doesNotContain("DEFAULT_EXECUTE").doesNotContain("ACCEPT_EDITS");
         assertThat(prompt.sourceNames()).contains("permission-runtime-state");
     }
 

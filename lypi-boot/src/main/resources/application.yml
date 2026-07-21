@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:file:${user.home}/.ly-pi/application.yml
   main:
     banner-mode: off
 

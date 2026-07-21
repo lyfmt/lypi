@@ -283,7 +283,7 @@ class BootMemoryConsolidationRunnerTest {
                     new ModelSelection("test", "model", ThinkingLevel.LOW),
                     ThinkingLevel.LOW,
                     AgentMode.EXECUTE,
-                    PermissionMode.DEFAULT_EXECUTE,
+                    PermissionMode.ASK,
                     null
                 ),
                 new ArrayList<>(List.of(message)),

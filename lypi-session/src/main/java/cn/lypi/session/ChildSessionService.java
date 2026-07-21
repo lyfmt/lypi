@@ -2,6 +2,7 @@ package cn.lypi.session;
 
 import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.session.ChildSessionRequest;
+import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
@@ -63,6 +64,18 @@ public final class ChildSessionService implements ChildSessionPort {
         );
         index.add(info);
         store.append(request.childSessionId(), info);
+        request.initialSystemPrompt()
+            .filter(prompt -> !prompt.isBlank())
+            .ifPresent(prompt -> {
+                CustomMessageEntry instruction = new CustomMessageEntry(
+                    SessionEntryIds.newEntryId(),
+                    index.leafId(),
+                    prompt,
+                    now
+                );
+                index.add(instruction);
+                store.append(request.childSessionId(), instruction);
+            });
         return new SessionHandle(
             request.childSessionId(),
             store.sessionFile(request.childSessionId()),
@@ -85,6 +98,7 @@ public final class ChildSessionService implements ChildSessionPort {
         metadata.put("parentSpawnEntryId", request.parentSpawnEntryId());
         metadata.put("depth", depth);
         request.agentName().ifPresent(value -> metadata.put("agentName", value));
+        request.agentName().ifPresent(value -> metadata.put("taskName", value));
         request.agentRole().ifPresent(value -> metadata.put("agentRole", value));
         return Map.copyOf(metadata);
     }

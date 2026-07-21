@@ -25,10 +25,12 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.ThinkingLevel;
+import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AiStreamOptions;
@@ -50,6 +52,9 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -361,6 +366,102 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     @Test
+    void fallsBackAfterAssistantStartWithoutVisibleOutput() {
+        RecordingTransport websocket = RecordingTransport.eventsThenFail(
+            "WebSocket handshake failed after response.created",
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-first\"}}"
+        );
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-fallback\"}}",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"fallback ok\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-fallback\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            RecordingTransport.events()
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
+
+        assertThat(websocket.requests).hasSize(1);
+        assertThat(sse.requests).hasSize(1);
+        assertThat(events).contains(new TextDelta("fallback ok"));
+        assertThat(events).noneMatch(cn.lypi.contracts.model.AssistantError.class::isInstance);
+    }
+
+    @Test
+    void emitsFallbackNoticeBeforeOpeningNextProviderAttempt() {
+        RecordingTransport websocket = RecordingTransport.eventsThenFail(
+            "WebSocket handshake failed after response.created",
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-first\"}}"
+        );
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-fallback\"}}",
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"fallback ok\"}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-fallback\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config(TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            RecordingTransport.events()
+        );
+
+        try (AssistantEventStream stream = adapter.stream(context(), descriptor(), () -> false)) {
+            Iterator<AssistantStreamEvent> iterator = stream.iterator();
+
+            assertThat(iterator.next()).isInstanceOf(cn.lypi.contracts.model.AssistantStart.class);
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(sse.requests).isEmpty();
+            assertThat(iterator.next()).isEqualTo(new ProviderFallbackNotice(
+                "openai",
+                1,
+                2,
+                "responses/websocket",
+                "responses/sse",
+                "fallback_candidate",
+                "provider.fallback_candidate",
+                "WebSocket handshake failed after response.created"
+            ));
+            assertThat(sse.requests).isEmpty();
+
+            assertThat(iterator.hasNext()).isTrue();
+            assertThat(sse.requests).hasSize(1);
+            assertThat(iterator.next()).isInstanceOf(cn.lypi.contracts.model.AssistantStart.class);
+        }
+    }
+
+    @Test
+    void fallbackNoticeUsesConfiguredProviderAndFallbackClassification() {
+        RecordingTransport websocket = RecordingTransport.fail(
+            "Provider HTTP 400: previous_response_id is unsupported"
+        );
+        RecordingTransport sse = RecordingTransport.events(
+            "{\"type\":\"response.created\",\"response\":{\"id\":\"resp-fallback\"}}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-fallback\"}}"
+        );
+        OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
+            config("gateway", TransportMode.AUTO, "test-key"),
+            websocket,
+            sse,
+            RecordingTransport.events()
+        );
+
+        List<AssistantStreamEvent> events = collect(adapter.stream(context(), descriptor(), () -> false));
+
+        assertThat(events)
+            .filteredOn(ProviderFallbackNotice.class::isInstance)
+            .singleElement()
+            .isInstanceOfSatisfying(ProviderFallbackNotice.class, notice -> {
+                assertThat(notice.provider()).isEqualTo("gateway");
+                assertThat(notice.reason()).isEqualTo("fallback_candidate");
+                assertThat(notice.errorId()).isEqualTo("provider.fallback_candidate");
+            });
+    }
+
+    @Test
     void reportsErrorWhenAttemptClosesAfterOutputWithoutAssistantDone() {
         RecordingTransport websocket = RecordingTransport.events(
             "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
@@ -389,16 +490,21 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(chat.requests).isEmpty();
     }
 
-    @Test
-    void doesNotFallbackAfterAnyOutputStarted() {
+    @ParameterizedTest(name = "does not fall back after visible {0}")
+    @MethodSource("visibleOutputEvents")
+    void doesNotFallbackAfterAnyOutputStarted(
+        String ignoredName,
+        String rawEvent,
+        Class<? extends AssistantStreamEvent> eventType
+    ) {
         RecordingTransport websocket = RecordingTransport.eventsThenFail(
             "Provider stream failed after output",
-            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
+            rawEvent
         );
         RecordingTransport sse = RecordingTransport.events();
         RecordingTransport chat = RecordingTransport.events();
         OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
-            config(TransportMode.WEBSOCKET, "test-key"),
+            config(TransportMode.AUTO, "test-key"),
             websocket,
             sse,
             chat
@@ -408,17 +514,37 @@ class OpenAiCompatibleProviderAdapterTest {
             Iterator<AssistantStreamEvent> iterator = stream.iterator();
 
             assertThat(iterator.hasNext()).isTrue();
-            assertThat(iterator.next()).isEqualTo(new TextDelta("hello"));
+            assertThat(iterator.next()).isInstanceOf(eventType);
             assertThatThrownBy(iterator::hasNext)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Provider stream failed after output");
-            assertThat(stream.result().events()).containsExactly(new TextDelta("hello"));
+            assertThat(stream.result().events()).singleElement().isInstanceOf(eventType);
             assertThat(stream.result().events()).noneMatch(ProviderRetryNotice.class::isInstance);
             assertThat(stream.result().error()).isPresent();
             assertThat(stream.result().completed()).isFalse();
         }
         assertThat(sse.requests).isEmpty();
         assertThat(chat.requests).isEmpty();
+    }
+
+    private static Stream<Arguments> visibleOutputEvents() {
+        return Stream.of(
+            Arguments.of(
+                "text",
+                "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+                TextDelta.class
+            ),
+            Arguments.of(
+                "thinking",
+                "{\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thinking\"}",
+                ThinkingDelta.class
+            ),
+            Arguments.of(
+                "tool call",
+                "{\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item-1\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\\\"pom.xml\\\"}\"}",
+                ToolCallDelta.class
+            )
+        );
     }
 
     @Test
@@ -676,6 +802,10 @@ class OpenAiCompatibleProviderAdapterTest {
         return config(transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS);
     }
 
+    private static OpenAiProviderConfig config(String provider, TransportMode transportMode, String apiKey) {
+        return config(provider, transportMode, apiKey, RequestStyle.RESPONSES, RequestStyle.CHAT_COMPLETIONS, 0);
+    }
+
     private static List<AssistantStreamEvent> collect(AssistantEventStream stream) {
         try (stream) {
             return StreamSupport.stream(stream.spliterator(), false).toList();
@@ -698,8 +828,19 @@ class OpenAiCompatibleProviderAdapterTest {
         RequestStyle fallbackRequestStyle,
         int maxRetries
     ) {
+        return config("openai", transportMode, apiKey, requestStyle, fallbackRequestStyle, maxRetries);
+    }
+
+    private static OpenAiProviderConfig config(
+        String provider,
+        TransportMode transportMode,
+        String apiKey,
+        RequestStyle requestStyle,
+        RequestStyle fallbackRequestStyle,
+        int maxRetries
+    ) {
         return new OpenAiProviderConfig(
-            "openai",
+            provider,
             URI.create("https://api.openai.test/v1"),
             Optional.empty(),
             "/v1/responses",
@@ -743,7 +884,7 @@ class OpenAiCompatibleProviderAdapterTest {
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
         );
     }
@@ -790,7 +931,7 @@ class OpenAiCompatibleProviderAdapterTest {
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
         );
     }
@@ -847,7 +988,7 @@ class OpenAiCompatibleProviderAdapterTest {
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
         );
     }

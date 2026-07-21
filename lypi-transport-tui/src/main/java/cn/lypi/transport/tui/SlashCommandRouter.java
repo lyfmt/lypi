@@ -338,9 +338,6 @@ final class SlashCommandRouter {
     private Map<String, String> externalArguments(SlashCommand command, SlashCommandArguments parsed) {
         Map<String, String> arguments = new LinkedHashMap<>(parsed.named());
         List<String> tokens = parsed.tokens();
-        if (applyMailboxShorthand(command.name(), tokens, arguments)) {
-            return Map.copyOf(arguments);
-        }
         if (applyAgentShorthand(command.name(), tokens, arguments)) {
             return Map.copyOf(arguments);
         }
@@ -350,18 +347,6 @@ final class SlashCommandRouter {
             arguments.putIfAbsent(parameters.get(index).name(), positionals.get(index));
         }
         return Map.copyOf(arguments);
-    }
-
-    private boolean applyMailboxShorthand(String commandName, List<String> tokens, Map<String, String> arguments) {
-        if (!"mailbox".equals(commandName) || tokens.size() < 3 || tokens.get(1).contains("=") || tokens.get(2).contains("=")) {
-            return false;
-        }
-        if (isMailboxCommandAction(tokens.get(1))) {
-            arguments.put("action", tokens.get(1));
-            arguments.put("mailId", tokens.get(2));
-            return true;
-        }
-        return false;
     }
 
     private boolean applyAgentShorthand(String commandName, List<String> tokens, Map<String, String> arguments) {
@@ -374,10 +359,6 @@ final class SlashCommandRouter {
             return true;
         }
         return false;
-    }
-
-    private boolean isMailboxCommandAction(String action) {
-        return "accept".equals(action) || "stash".equals(action) || "discard".equals(action);
     }
 
     private SlashCommandResult routeModel(SlashCommandArguments arguments, String reason) {
@@ -431,7 +412,7 @@ final class SlashCommandRouter {
 
     private SlashCommandResult routePermissionMode(SlashCommandArguments arguments, String reason) {
         if (arguments.positionals().size() != 1) {
-            return SlashCommandResult.error("usage: /permission-mode <default-execute|accept-edits|bypass>");
+            return SlashCommandResult.error("usage: /permission-mode <ask|auto|bypass>");
         }
         PermissionMode mode = parseEnum(PermissionMode.class, arguments.positionals().getFirst());
         if (mode == null) {

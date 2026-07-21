@@ -12,6 +12,7 @@ import cn.lypi.contracts.context.TextContentBlock;
 import cn.lypi.contracts.event.CompactEndEvent;
 import cn.lypi.contracts.event.CompactStartEvent;
 import cn.lypi.contracts.event.EventBus;
+import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.session.BranchSummaryEntry;
 import cn.lypi.contracts.session.CompactionEntry;
@@ -32,7 +33,7 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
     private final CompactionPlanner planner;
     private final CompactionSummarizer summarizer;
     private final ContextBudgetEstimator budgetEstimator;
-    private final CompactResourceBackfillPlanner resourceBackfillPlanner;
+    private final CompactStateBackfillPlanner stateBackfillPlanner;
     private final Clock clock;
 
     public DefaultCompactionCoordinator(
@@ -43,12 +44,24 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
         CompactionSummarizer summarizer,
         Clock clock
     ) {
+        this(sessionManager, contextAssembler, eventBus, planner, summarizer, CompactStateBackfillPort.none(), clock);
+    }
+
+    public DefaultCompactionCoordinator(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionPlanner planner,
+        CompactionSummarizer summarizer,
+        CompactStateBackfillPort stateBackfillPort,
+        Clock clock
+    ) {
         this.sessionManager = sessionManager;
         this.eventBus = eventBus;
         this.planner = planner;
         this.summarizer = summarizer;
         this.budgetEstimator = new ContextBudgetEstimator();
-        this.resourceBackfillPlanner = new CompactResourceBackfillPlanner(clock);
+        this.stateBackfillPlanner = new CompactStateBackfillPlanner(clock, stateBackfillPort);
         this.clock = clock;
     }
 
@@ -78,11 +91,12 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
             String summary = summaryText(result);
             String compactionId = "entry-compact-" + UUID.randomUUID();
             Instant compactionTimestamp = clock.instant();
-            Optional<MessageEntry> backfillEntry = resourceBackfillPlanner.plan(
+            List<MessageEntry> backfillEntries = stateBackfillPlanner.plan(
                 branchEntries,
                 compactionPlan,
                 compactionId,
-                compactionTimestamp
+                compactionTimestamp,
+                request
             );
             List<AgentMessage> baseCompactedMessages = compactedMessages(
                 assembly.snapshot(),
@@ -101,7 +115,7 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
                 summary,
                 compactionId,
                 compactionTimestamp,
-                backfillEntry.map(MessageEntry::message).stream().toList()
+                backfillEntries.stream().map(MessageEntry::message).toList()
             );
             int tokensAfter = estimateCompactedTokens(assembly.snapshot(), compactedMessages);
             ContextSnapshot compactedContext = compactedContext(
@@ -121,14 +135,17 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
             );
             sessionManager.append(compactionEntry);
             compactionEntryId = compactionEntry.id();
-            Optional<String> backfillFailure = appendResourceBackfill(backfillEntry);
-            if (backfillFailure.isPresent()) {
-                ContextSnapshot fallbackContext = compactedContext(assembly.snapshot(), baseCompactedMessages, baseTokensAfter);
+            BackfillAppendResult backfillAppendResult = appendBackfill(backfillEntries);
+            if (backfillAppendResult.failure().isPresent()) {
+                List<AgentMessage> persistedMessages = new ArrayList<>(baseCompactedMessages);
+                persistedMessages.addAll(backfillAppendResult.appendedEntries().stream().map(MessageEntry::message).toList());
+                int persistedTokensAfter = estimateCompactedTokens(assembly.snapshot(), persistedMessages);
+                ContextSnapshot fallbackContext = compactedContext(assembly.snapshot(), persistedMessages, persistedTokensAfter);
                 return new CompactionDecision(
                     fallbackContext,
                     plan,
                     true,
-                    "compacted; resource backfill failed: " + backfillFailure.orElseThrow(),
+                    "compacted; state backfill failed: " + backfillAppendResult.failure().orElseThrow(),
                     Optional.of(compactionEntry.id())
                 );
             }
@@ -280,16 +297,23 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
         );
     }
 
-    private Optional<String> appendResourceBackfill(Optional<MessageEntry> backfillEntry) {
-        if (backfillEntry.isEmpty()) {
-            return Optional.empty();
+    private BackfillAppendResult appendBackfill(List<MessageEntry> backfillEntries) {
+        if (backfillEntries == null || backfillEntries.isEmpty()) {
+            return new BackfillAppendResult(List.of(), Optional.empty());
         }
+        List<MessageEntry> appendedEntries = new ArrayList<>();
         try {
-            sessionManager.append(backfillEntry.orElseThrow());
-            return Optional.empty();
+            for (MessageEntry entry : backfillEntries) {
+                sessionManager.append(entry);
+                appendedEntries.add(entry);
+            }
         } catch (RuntimeException exception) {
-            return Optional.ofNullable(exception.getMessage()).or(() -> Optional.of(exception.getClass().getSimpleName()));
+            return new BackfillAppendResult(
+                List.copyOf(appendedEntries),
+                Optional.ofNullable(exception.getMessage()).or(() -> Optional.of(exception.getClass().getSimpleName()))
+            );
         }
+        return new BackfillAppendResult(List.copyOf(appendedEntries), Optional.empty());
     }
 
     private void publishCompactEnd(CompactionRequest request, String compactionEntryId) {
@@ -297,6 +321,13 @@ public final class DefaultCompactionCoordinator implements CompactionCoordinator
             eventBus.publish(new CompactEndEvent(request.sessionId(), compactionEntryId, clock.instant()));
         } catch (RuntimeException ignored) {
             // NOTE: Event delivery failure must not alter the already computed compaction decision.
+        }
+    }
+
+    private record BackfillAppendResult(List<MessageEntry> appendedEntries, Optional<String> failure) {
+        private BackfillAppendResult {
+            appendedEntries = appendedEntries == null ? List.of() : List.copyOf(appendedEntries);
+            failure = failure == null ? Optional.empty() : failure;
         }
     }
 

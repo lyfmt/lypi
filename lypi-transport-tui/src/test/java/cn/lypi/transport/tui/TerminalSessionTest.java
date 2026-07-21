@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,13 +21,16 @@ class TerminalSessionTest {
             "\033[?2004h\033[?25l\033[>4;2m",
             io.output.toString()
         );
+        assertFalse(io.output.toString().contains("\033[?1049"));
+        assertFalse(io.output.toString().contains("\033[?1000"));
+        assertFalse(io.output.toString().contains("\033[?1006"));
 
         session.close();
 
         assertTrue(io.rawModeRestored);
         assertEquals(
             "\033[?2004h\033[?25l\033[>4;2m"
-                + "\033[>4m\033[?25h\033[?2004l\n",
+                + "\0337\033[r\033[>4m\033[?2004l\0338\033[?25h",
             io.output.toString()
         );
     }
@@ -39,17 +43,6 @@ class TerminalSessionTest {
         session.close();
 
         assertTrue(!io.output.toString().contains("\033[?u"));
-    }
-
-    @Test
-    void closeMovesBelowRenderedContentWhenRendererReportedRows() throws Exception {
-        RecordingTerminalIo io = new RecordingTerminalIo();
-        TerminalSession session = TerminalSession.open(io);
-
-        session.updateRenderedRows(3);
-        session.close();
-
-        assertTrue(io.output.toString().endsWith("\033[3;1H\n"));
     }
 
     @Test
@@ -80,11 +73,18 @@ class TerminalSessionTest {
     }
 
     @Test
-    void openFailureRestoresRawModeAndResizeHandler() {
-        FailingTerminalIo io = new FailingTerminalIo();
+    void openFailureRestoresTerminalResourcesWithoutAlternateScreenModes() {
+        FailingTerminalIo io = new FailingTerminalIo(2);
 
         assertThrows(IOException.class, () -> TerminalSession.open(io));
 
+        assertEquals(
+            "\033[?2004h\0337\033[r\033[>4m\033[?2004l\0338\033[?25h",
+            io.output.toString()
+        );
+        assertFalse(io.output.toString().contains("\033[?1049"));
+        assertFalse(io.output.toString().contains("\033[?1000"));
+        assertFalse(io.output.toString().contains("\033[?1006"));
         assertTrue(io.rawModeRestored);
         assertTrue(io.resizeHandlerRestored);
         assertTrue(io.interruptHandlerRestored);
@@ -141,9 +141,16 @@ class TerminalSessionTest {
     }
 
     private static final class FailingTerminalIo implements TerminalIo {
+        private final StringBuilder output = new StringBuilder();
+        private final int failingWrite;
         private boolean rawModeRestored;
         private boolean resizeHandlerRestored;
         private boolean interruptHandlerRestored;
+        private int writeCount;
+
+        private FailingTerminalIo(int failingWrite) {
+            this.failingWrite = failingWrite;
+        }
 
         @Override
         public AutoCloseable enterRawMode() {
@@ -152,7 +159,11 @@ class TerminalSessionTest {
 
         @Override
         public void write(String value) throws IOException {
-            throw new IOException("write failed");
+            writeCount++;
+            if (writeCount == failingWrite) {
+                throw new IOException("write failed");
+            }
+            output.append(value);
         }
 
         @Override

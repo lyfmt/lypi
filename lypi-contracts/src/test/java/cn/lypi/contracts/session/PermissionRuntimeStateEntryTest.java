@@ -36,7 +36,7 @@ class PermissionRuntimeStateEntryTest {
         SessionEntry entry = new PermissionRuntimeStateChangeEntry(
             "entry_permission_runtime",
             "entry_parent",
-            PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS),
+            PermissionRuntimeState.fromLegacy(PermissionMode.AUTO),
             Instant.parse("2026-06-17T00:00:00Z")
         );
 
@@ -45,8 +45,8 @@ class PermissionRuntimeStateEntryTest {
 
         assertTrue(json.contains("\"type\":\"permission_runtime_state_change\""));
         PermissionRuntimeStateChangeEntry stateEntry = assertInstanceOf(PermissionRuntimeStateChangeEntry.class, restored);
-        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS), stateEntry.permissionRuntimeState());
-        assertEquals(PermissionMode.ACCEPT_EDITS, stateEntry.permissionMode());
+        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.AUTO), stateEntry.permissionRuntimeState());
+        assertEquals(PermissionMode.AUTO, stateEntry.permissionMode());
     }
 
     @Test

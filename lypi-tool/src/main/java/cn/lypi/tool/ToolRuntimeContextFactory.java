@@ -47,9 +47,9 @@ public final class ToolRuntimeContextFactory {
         Map<String, Object> metadata = new LinkedHashMap<>();
         AgentMode agentMode = context == null ? AgentMode.EXECUTE : context.mode();
         PermissionRuntimeState permissionRuntimeState = context == null
-            ? PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE)
+            ? PermissionRuntimeState.forMode(PermissionMode.ASK)
             : context.permissionRuntimeState();
-        PermissionMode permissionMode = permissionRuntimeState.legacyPermissionMode();
+        PermissionMode permissionMode = permissionRuntimeState.mode();
         metadata.putAll(options.metadata());
         metadata.put(METADATA_AGENT_MODE, agentMode);
         metadata.put(METADATA_PERMISSION_RUNTIME_STATE, permissionRuntimeState);
@@ -61,6 +61,10 @@ public final class ToolRuntimeContextFactory {
         String parentEntryId = invocation == null ? null : invocation.parentEntryId();
         if (parentEntryId != null && !parentEntryId.isBlank()) {
             metadata.put("parentEntryId", parentEntryId);
+        }
+        if (invocation != null) {
+            metadata.put(ToolAbortSupport.METADATA_ABORT_SIGNAL, invocation.abortSignal());
+            metadata.put(ToolSteeringSupport.METADATA_STEERING_MESSAGES, invocation.steeringMessages());
         }
         return new ToolUseContext(
             sessionId(invocation),

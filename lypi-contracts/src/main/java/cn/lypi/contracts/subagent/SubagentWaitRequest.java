@@ -1,22 +1,22 @@
 package cn.lypi.contracts.subagent;
 
-import java.util.Optional;
+import cn.lypi.contracts.agent.SteeringMessageSource;
+import cn.lypi.contracts.common.AbortSignal;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 public record SubagentWaitRequest(
-    Optional<String> agentId,
-    Optional<String> childSessionId,
-    Optional<String> runId,
-    int timeoutSeconds,
-    boolean returnCompletedResult
+    String parentSessionId,
+    long timeoutMillis,
+    @JsonIgnore AbortSignal abortSignal,
+    @JsonIgnore SteeringMessageSource steeringMessages
 ) {
-    public SubagentWaitRequest {
-        agentId = agentId == null ? Optional.empty() : agentId;
-        childSessionId = childSessionId == null ? Optional.empty() : childSessionId;
-        runId = runId == null ? Optional.empty() : runId;
-        timeoutSeconds = timeoutSeconds <= 0 ? 600 : timeoutSeconds;
+    public SubagentWaitRequest(String parentSessionId, long timeoutMillis) {
+        this(parentSessionId, timeoutMillis, AbortSignal.none(), SteeringMessageSource.none());
     }
 
-    public SubagentWaitRequest(Optional<String> agentId, Optional<String> childSessionId, int timeoutSeconds) {
-        this(agentId, childSessionId, Optional.empty(), timeoutSeconds, true);
+    public SubagentWaitRequest {
+        timeoutMillis = Math.max(0, timeoutMillis);
+        abortSignal = abortSignal == null ? AbortSignal.none() : abortSignal;
+        steeringMessages = steeringMessages == null ? SteeringMessageSource.none() : steeringMessages;
     }
 }

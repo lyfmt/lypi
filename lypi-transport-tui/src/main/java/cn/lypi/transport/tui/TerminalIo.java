@@ -1,6 +1,8 @@
 package cn.lypi.transport.tui;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.util.Optional;
 
 interface TerminalIo {
     /**
@@ -27,6 +29,13 @@ interface TerminalIo {
      * 返回当前终端高度。
      */
     int height();
+
+    /**
+     * 有界查询 resize 后的硬件 cursor，并返回查询期间读到的普通输入。
+     */
+    default CursorProbeResult queryCursor(Duration timeout) throws IOException {
+        return new CursorProbeResult(Optional.empty(), "");
+    }
 
     /**
      * 注册 resize 回调，并返回用于恢复原信号处理器的句柄。

@@ -39,7 +39,7 @@ public record PermissionRuntimeStateChangeEntry(
      */
     @JsonGetter("permissionMode")
     public PermissionMode permissionMode() {
-        return permissionRuntimeState.legacyPermissionMode();
+        return permissionRuntimeState.mode();
     }
 
     @JsonCreator
@@ -54,7 +54,7 @@ public record PermissionRuntimeStateChangeEntry(
             id,
             parentId,
             permissionRuntimeState == null
-                ? PermissionRuntimeState.fromLegacy(permissionMode == null ? PermissionMode.DEFAULT_EXECUTE : permissionMode)
+                ? PermissionRuntimeState.fromLegacy(permissionMode == null ? PermissionMode.ASK : permissionMode)
                 : permissionRuntimeState,
             timestamp
         );

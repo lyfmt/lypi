@@ -2,17 +2,22 @@ package cn.lypi.transport.tui;
 
 import java.util.List;
 
-record TuiRenderFrame(List<String> lines, int chromeLineCount) {
+record TuiRenderFrame(List<TerminalLine> terminalLines) {
+    static final String CURSOR_MARKER = "|CURSOR|";
+
     TuiRenderFrame {
-        lines = List.copyOf(lines);
-        chromeLineCount = Math.max(0, Math.min(chromeLineCount, lines.size()));
+        terminalLines = List.copyOf(terminalLines);
     }
 
-    static TuiRenderFrame transcriptOnly(List<String> lines) {
-        return new TuiRenderFrame(lines, 0);
+    static TuiRenderFrame fromTextLines(List<String> lines) {
+        return new TuiRenderFrame(toTerminalLines(lines));
     }
 
-    int transcriptLineCount() {
-        return lines.size() - chromeLineCount;
+    List<String> lines() {
+        return terminalLines.stream().map(TerminalLine::text).toList();
+    }
+
+    private static List<TerminalLine> toTerminalLines(List<String> lines) {
+        return lines.stream().map(TerminalLine::new).toList();
     }
 }

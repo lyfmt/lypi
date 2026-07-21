@@ -43,9 +43,15 @@ import cn.lypi.contracts.security.RequestPermissionProfile;
 import cn.lypi.contracts.security.RequestPermissionsResponse;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import cn.lypi.contracts.web.WebSearchResponse;
+import cn.lypi.contracts.web.WebSearchResult;
 import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.PermissionResponseGate;
 import cn.lypi.tool.ToolRuntimeOptions;
+import cn.lypi.tool.web.WebProviderRegistry;
+import cn.lypi.tool.web.WebSearchProvider;
+import cn.lypi.tool.web.WebSearchRequest;
+import cn.lypi.tool.web.WebSearchTool;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -97,7 +103,9 @@ class RequestPermissionsToolTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> networkMode = (Map<String, Object>) networkProperties.get("mode");
 
-        assertTrue(tool.description().contains("approval policy"));
+        assertTrue(tool.description().contains("ASK"));
+        assertTrue(tool.description().contains("AUTO"));
+        assertTrue(tool.description().contains("BYPASS"));
         assertTrue(properties.get("permissions").toString().contains("additional filesystem or network permissions"));
         assertTrue(permissionProperties.containsKey("fileSystem"));
         assertTrue(permissionProperties.containsKey("filesystem"));
@@ -153,7 +161,7 @@ class RequestPermissionsToolTest {
     }
 
     @Test
-    void neverApprovalPolicyDeniesWithoutPrompt() {
+    void askModePromptsRegardlessOfLegacyApprovalPolicy() {
         AtomicInteger prompts = new AtomicInteger();
         DefaultToolRuntime runtime = runtime(
             context -> allow(),
@@ -166,9 +174,8 @@ class RequestPermissionsToolTest {
 
         ToolResult<?> result = executeOne(runtime, AgentMode.EXECUTE, runtimeState(ApprovalMode.NEVER), input(fileSystemRequest()));
 
-        assertTrue(result.isError());
-        assertTextContains(result, "request_permissions approval is disabled by never policy");
-        assertEquals(0, prompts.get());
+        assertFalse(result.isError());
+        assertEquals(1, prompts.get());
     }
 
     @Test
@@ -474,6 +481,37 @@ class RequestPermissionsToolTest {
         assertTrue(events.get(1).message().contains("strictAutoReview"));
     }
 
+    @Test
+    void approvedNetworkPermissionStillReviewsLaterNonReadOnlyWebSearch() {
+        AtomicInteger prompts = new AtomicInteger();
+        AtomicInteger searches = new AtomicInteger();
+        DefaultToolRuntime runtime = runtime(context -> allow(), requestEvent -> {
+            prompts.incrementAndGet();
+            return approve(requestEvent);
+        });
+        runtime.register(new RequestPermissionsTool());
+        runtime.register(new WebSearchTool(
+            new WebProviderRegistry(
+                "tavily",
+                Map.of("tavily", new CountingSearchProvider(searches))
+            )
+        ));
+
+        List<ToolResult<?>> results = runtime.execute(
+            List.of(
+                new ToolUseRequest("toolu_perm", "request_permissions", input(networkRequest()), "msg_1"),
+                new ToolUseRequest("toolu_search", "web_search", Map.of("query", "java"), "msg_1")
+            ),
+            context(AgentMode.EXECUTE, runtimeState(ApprovalMode.ON_REQUEST)),
+            new cn.lypi.contracts.runtime.ToolRuntimeInvocation("ses_1", "turn_1")
+        );
+
+        assertFalse(results.get(0).isError());
+        assertFalse(results.get(1).isError());
+        assertEquals(2, prompts.get());
+        assertEquals(1, searches.get());
+    }
+
     private Map<String, Object> input(Map<String, Object> request) {
         return request;
     }
@@ -524,6 +562,13 @@ class RequestPermissionsToolTest {
                 ))),
                 Optional.empty()
             ))
+        );
+    }
+
+    private Map<String, Object> networkRequest() {
+        return Map.of(
+            "reason", "need network",
+            "permissions", Map.of("network", Map.of("mode", "ENABLED"))
         );
     }
 
@@ -631,7 +676,7 @@ class RequestPermissionsToolTest {
             new ActivePermissionProfile(":workspace"),
             cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, true),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 
@@ -675,6 +720,40 @@ class RequestPermissionsToolTest {
         public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
             return () -> {
             };
+        }
+    }
+
+    private static final class CountingSearchProvider implements WebSearchProvider {
+        private final AtomicInteger searches;
+
+        private CountingSearchProvider(AtomicInteger searches) {
+            this.searches = searches;
+        }
+
+        @Override
+        public String name() {
+            return "tavily";
+        }
+
+        @Override
+        public WebSearchResponse search(WebSearchRequest request) {
+            searches.incrementAndGet();
+            return new WebSearchResponse(
+                "tavily",
+                request.query(),
+                Optional.empty(),
+                List.of(new WebSearchResult(
+                    "Example",
+                    "https://example.com",
+                    Optional.of("snippet"),
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty()
+                )),
+                Optional.empty()
+            );
         }
     }
 }

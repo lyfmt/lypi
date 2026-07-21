@@ -1,13 +1,13 @@
 package cn.lypi.tool;
 
 import cn.lypi.contracts.runtime.SandboxPermissions;
+import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.FileSystemPermissionEntry;
 import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.FileSystemPolicyKind;
 import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.security.NetworkPolicyMode;
-import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolUseContext;
@@ -35,15 +35,13 @@ final class InlineAdditionalPermissionsAuthorizer {
         ToolUseRequest request,
         Tool<Map<String, Object>, ?> tool,
         ToolUseContext context,
+        ContextSnapshot contextSnapshot,
         PermissionDecision securityDecision
     ) {
         if (!appliesTo(request)) {
             return Optional.empty();
         }
         Optional<AdditionalPermissionProfile> preapproved = approvedAdditionalPermissions(context);
-        if (isDeny(securityDecision)) {
-            return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(decisionMessage(securityDecision))));
-        }
         Object rawPermissions = request.input() == null ? null : request.input().get(INPUT_ADDITIONAL_PERMISSIONS);
         if (rawPermissions == null) {
             return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(
@@ -68,6 +66,7 @@ final class InlineAdditionalPermissionsAuthorizer {
             request,
             tool,
             context,
+            contextSnapshot,
             reason,
             additionalPermissions
         );
@@ -78,6 +77,40 @@ final class InlineAdditionalPermissionsAuthorizer {
             permissionResult,
             mergeAdditionalPermissions(preapproved.orElse(AdditionalPermissionProfile.empty()), additionalPermissions)
         ));
+    }
+
+    Optional<ToolPermissionCoordinator.Result> authorizeBypass(
+        ToolUseRequest request,
+        ToolUseContext context
+    ) {
+        if (!appliesTo(request)) {
+            return Optional.empty();
+        }
+        Object rawPermissions = request.input() == null ? null : request.input().get(INPUT_ADDITIONAL_PERMISSIONS);
+        if (rawPermissions == null) {
+            return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(
+                "sandboxPermissions=withAdditionalPermissions 时 additionalPermissions 不能为空。"
+            )));
+        }
+        try {
+            AdditionalPermissionProfile additionalPermissions = AdditionalPermissionsInputParser.parse(
+                rawPermissions,
+                INPUT_ADDITIONAL_PERMISSIONS
+            );
+            if (AdditionalPermissionsInputParser.isEmpty(additionalPermissions)) {
+                return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(
+                    "sandboxPermissions=withAdditionalPermissions 时 additionalPermissions 不能为空。"
+                )));
+            }
+            AdditionalPermissionProfile preapproved = approvedAdditionalPermissions(context)
+                .orElse(AdditionalPermissionProfile.empty());
+            return Optional.of(ToolPermissionCoordinator.Result.allowed(
+                PermissionGateResult.allow(),
+                mergeAdditionalPermissions(preapproved, additionalPermissions)
+            ));
+        } catch (IllegalArgumentException exception) {
+            return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(exception.getMessage())));
+        }
     }
 
     private boolean appliesTo(ToolUseRequest request) {
@@ -152,19 +185,9 @@ final class InlineAdditionalPermissionsAuthorizer {
         return left.network();
     }
 
-    private boolean isDeny(PermissionDecision decision) {
-        return decision == null || decision.behavior() == PermissionBehavior.DENY;
-    }
-
     private String stringInput(Map<String, Object> input, String key) {
         Object value = input == null ? null : input.get(key);
         return value == null ? "" : value.toString();
     }
 
-    private String decisionMessage(PermissionDecision decision) {
-        if (decision == null || decision.message() == null || decision.message().isBlank()) {
-            return "未提供原因。";
-        }
-        return decision.message();
-    }
 }

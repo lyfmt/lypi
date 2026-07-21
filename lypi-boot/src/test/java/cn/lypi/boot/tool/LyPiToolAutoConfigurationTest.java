@@ -1,6 +1,7 @@
 package cn.lypi.boot.tool;
 
 import cn.lypi.contracts.common.ProgressSink;
+import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextBudget;
@@ -20,6 +21,11 @@ import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.AssistantDone;
+import cn.lypi.contracts.model.AssistantEventStream;
+import cn.lypi.contracts.model.AssistantStreamEvent;
+import cn.lypi.contracts.model.AssistantStreamResult;
+import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.mcp.McpServerConfig;
 import cn.lypi.contracts.mcp.McpStdioServerConfig;
@@ -28,10 +34,9 @@ import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
+import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.AgentCenterPort;
-import cn.lypi.contracts.runtime.AgentRegistryPort;
 import cn.lypi.contracts.runtime.Executor;
-import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
@@ -44,20 +49,20 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.tool.Tool;
+import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
-import cn.lypi.contracts.subagent.SubagentToolPolicy;
-import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
-import cn.lypi.contracts.subagent.AgentRunStatus;
-import cn.lypi.contracts.subagent.AgentView;
+import cn.lypi.contracts.subagent.ExpertAgentDefinition;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
-import cn.lypi.contracts.subagent.MailboxMessage;
-import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
+import cn.lypi.contracts.subagent.SubagentWaitRequest;
+import cn.lypi.contracts.subagent.SubagentWaitResult;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
 import cn.lypi.tool.mcp.McpClient;
@@ -75,12 +80,14 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -106,6 +113,37 @@ class LyPiToolAutoConfigurationTest {
                 assertThat(runtime.resolve("bash")).isPresent();
                 assertThat(runtime.resolve("read")).isPresent();
                 assertThat(runtime.resolve("glob")).isPresent();
+            });
+    }
+
+    @Test
+    void defaultSandboxResolverFollowsRuntimePermissionMode() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+                Path cwd = Path.of(".").toAbsolutePath();
+
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.ASK)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.MANAGED);
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.BYPASS)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.DISABLED);
+            });
+    }
+
+    @Test
+    void explicitDefaultPermissionsProfileOverridesRuntimeMode() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues("lypi.permissions.default-permissions=:workspace")
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+                Path cwd = Path.of(".").toAbsolutePath();
+
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.BYPASS)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.MANAGED);
             });
     }
 
@@ -354,6 +392,32 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
+    void autoRuntimeUsesModelPermissionReviewerWithoutUserGate() {
+        RecordingPermissionReviewProvider provider = new RecordingPermissionReviewProvider(
+            "{\"decision\":\"allow\",\"reason\":\"matches request\"}"
+        );
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(AiProviderRuntimePort.class, () -> provider)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+                runtime.register(new AskTool());
+
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest("toolu_1", "ask-test", Map.of("text", "approved"), "msg_1")),
+                    context(PermissionMode.AUTO)
+                ).getFirst();
+
+                assertThat(result.isError()).isFalse();
+                assertThat(provider.calls).isEqualTo(1);
+                assertThat(provider.tools.tools()).isEmpty();
+                assertThat(provider.context.model()).isEqualTo(context(PermissionMode.AUTO).model());
+            });
+    }
+
+    @Test
     void headlessTransportDeniesAskPermissionWithoutWaitingForResponse() throws Exception {
         InMemoryEventBus eventBus = new InMemoryEventBus();
         List<AgentEvent> events = new ArrayList<>();
@@ -472,15 +536,15 @@ class LyPiToolAutoConfigurationTest {
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
             .withBean(AgentCenterPort.class, LyPiToolAutoConfigurationTest::agentCenter)
-            .withBean(MailboxPort.class, LyPiToolAutoConfigurationTest::mailbox)
-            .withBean(AgentRegistryPort.class, LyPiToolAutoConfigurationTest::agentRegistry)
             .run(context -> {
                 ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
 
                 assertThat(runtime.resolve("spawn_agent")).isPresent();
-                assertThat(runtime.resolve("read_agent_result")).isPresent();
-                assertThat(runtime.resolve("read_mailbox")).isPresent();
-                assertThat(runtime.resolve("list_agents")).isPresent();
+                assertThat(runtime.resolve("wait_agent")).isPresent();
+                assertThat(runtime.resolve("continue_agent")).isEmpty();
+                assertThat(runtime.resolve("read_agent_result")).isEmpty();
+                assertThat(runtime.resolve("read_mailbox")).isEmpty();
+                assertThat(runtime.resolve("list_agents")).isEmpty();
             });
     }
 
@@ -498,6 +562,68 @@ class LyPiToolAutoConfigurationTest {
 
                 assertThat(runtime.resolve("mcp__fake__echo")).isPresent();
                 assertThat(mcpClients.connectedConfigs).extracting(McpServerConfig::name).containsExactly("fake");
+            });
+    }
+
+    @Test
+    void loadsResourcesOnceForExpertAndMcpToolRegistration() {
+        RecordingMcpClientFactory mcpClients = new RecordingMcpClientFactory();
+        AtomicInteger loadCalls = new AtomicInteger();
+        ResourceSnapshot resources = resourceSnapshot(
+            List.of(mcpServerConfig()),
+            List.of(new ExpertAgentDefinition(
+                "code-reviewer",
+                "openai",
+                "gpt-5.4",
+                "Review code precisely.",
+                List.of("bash"),
+                Path.of("agents", "code-reviewer.yaml")
+            ))
+        );
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(AgentCenterPort.class, LyPiToolAutoConfigurationTest::agentCenter)
+            .withBean(ResourceRuntimePort.class, () -> resourceRuntimeWith(resources, loadCalls))
+            .withBean(McpClientManagerFactory.class, () -> cwd -> mcpClients.manager(cwd))
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(loadCalls).hasValue(1);
+                assertThat(expertAgentNames(runtime)).containsExactly("code-reviewer");
+                assertThat(runtime.resolve("mcp__fake__echo")).isPresent();
+            });
+    }
+
+    @Test
+    void resourceLoadFailureKeepsDefaultAndGenericSubagentToolsAvailable() {
+        AtomicInteger loadCalls = new AtomicInteger();
+        ResourceRuntimePort failingResources = new ResourceRuntimePort() {
+            @Override
+            public ResourceSnapshot load(Path cwd) {
+                loadCalls.incrementAndGet();
+                throw new IllegalStateException("resource unavailable");
+            }
+
+            @Override
+            public SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
+                throw new AssertionError("system prompt must not be built during tool registration");
+            }
+        };
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(AgentCenterPort.class, LyPiToolAutoConfigurationTest::agentCenter)
+            .withBean(ResourceRuntimePort.class, () -> failingResources)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(loadCalls).hasValue(1);
+                assertThat(runtime.resolve("bash")).isPresent();
+                assertThat(runtime.resolve("spawn_agent")).isPresent();
+                assertThat(expertAgentNames(runtime)).isEmpty();
             });
     }
 
@@ -643,29 +769,31 @@ class LyPiToolAutoConfigurationTest {
     }
 
     private static ContextSnapshot context() {
+        return context(PermissionMode.ASK);
+    }
+
+    private static ContextSnapshot context(PermissionMode permissionMode) {
         return new ContextSnapshot(
             new SystemPrompt("system", List.of(), "hash"),
             List.of(),
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            permissionMode,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO)
         );
     }
 
     private static ResourceRuntimePort resourceRuntimeWith(McpServerConfig config) {
+        return resourceRuntimeWith(resourceSnapshot(List.of(config), List.of()), new AtomicInteger());
+    }
+
+    private static ResourceRuntimePort resourceRuntimeWith(ResourceSnapshot snapshot, AtomicInteger loadCalls) {
         return new ResourceRuntimePort() {
             @Override
             public ResourceSnapshot load(Path cwd) {
-                return new ResourceSnapshot(
-                    List.of(),
-                    List.of(),
-                    new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()),
-                    List.of(),
-                    List.of(config),
-                    List.of()
-                );
+                loadCalls.incrementAndGet();
+                return snapshot;
             }
 
             @Override
@@ -673,6 +801,35 @@ class LyPiToolAutoConfigurationTest {
                 return new SystemPrompt("system", List.of(), "hash");
             }
         };
+    }
+
+    private static ResourceSnapshot resourceSnapshot(
+        List<McpServerConfig> mcpServers,
+        List<ExpertAgentDefinition> expertAgents
+    ) {
+        return new ResourceSnapshot(
+            List.of(),
+            List.of(),
+            new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()),
+            List.of(),
+            mcpServers,
+            expertAgents,
+            List.of()
+        );
+    }
+
+    private static List<String> expertAgentNames(ToolRuntimePort runtime) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) runtime.resolve("spawn_agent")
+            .orElseThrow()
+            .inputSchema()
+            .value()
+            .get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> agent = (Map<String, Object>) properties.get("agent");
+        @SuppressWarnings("unchecked")
+        List<String> names = (List<String>) agent.get("enum");
+        return names;
     }
 
     private static McpServerConfig mcpServerConfig() {
@@ -709,41 +866,8 @@ class LyPiToolAutoConfigurationTest {
             }
 
             @Override
-            public Optional<HeadlessSubagentOutput> readResult(String childSessionId) {
-                throw new UnsupportedOperationException("not used");
-            }
-        };
-    }
-
-    private static MailboxPort mailbox() {
-        return new MailboxPort() {
-            @Override
-            public List<MailboxMessage> read(String sessionId, java.util.Set<MailboxStatus> statuses) {
-                throw new UnsupportedOperationException("not used");
-            }
-
-            @Override
-            public MailboxCommandResult accept(String sessionId, String mailId) {
-                throw new UnsupportedOperationException("not used");
-            }
-
-            @Override
-            public MailboxCommandResult stash(String sessionId, String mailId) {
-                throw new UnsupportedOperationException("not used");
-            }
-
-            @Override
-            public MailboxCommandResult discard(String sessionId, String mailId) {
-                throw new UnsupportedOperationException("not used");
-            }
-        };
-    }
-
-    private static AgentRegistryPort agentRegistry() {
-        return new AgentRegistryPort() {
-            @Override
-            public List<AgentView> list(String parentSessionId, java.util.Set<AgentRunStatus> statuses) {
-                throw new UnsupportedOperationException("not used");
+            public SubagentWaitResult waitFor(SubagentWaitRequest request) {
+                return SubagentWaitResult.timedOut();
             }
         };
     }
@@ -772,6 +896,60 @@ class LyPiToolAutoConfigurationTest {
         @Override
         public EventSubscription subscribe(EventFilter filter, EventConsumer consumer) {
             return () -> {
+            };
+        }
+    }
+
+    private static final class RecordingPermissionReviewProvider implements AiProviderRuntimePort {
+        private final String output;
+        private ContextSnapshot context;
+        private ToolRegistrySnapshot tools;
+        private int calls;
+
+        private RecordingPermissionReviewProvider(String output) {
+            this.output = output;
+        }
+
+        @Override
+        public AssistantEventStream stream(ContextSnapshot context, AbortSignal signal) {
+            throw new AssertionError("reviewer must provide an explicit empty tool snapshot");
+        }
+
+        @Override
+        public AssistantEventStream stream(
+            ContextSnapshot context,
+            ToolRegistrySnapshot tools,
+            AbortSignal signal
+        ) {
+            this.context = context;
+            this.tools = tools;
+            calls++;
+            List<AssistantStreamEvent> events = List.of(
+                new TextDelta(output),
+                new AssistantDone(Optional.empty(), Optional.of("stop"))
+            );
+            return new AssistantEventStream() {
+                @Override
+                public Iterator<AssistantStreamEvent> iterator() {
+                    return events.iterator();
+                }
+
+                @Override
+                public AssistantStreamResult result() {
+                    return new AssistantStreamResult(
+                        "review",
+                        events,
+                        Optional.empty(),
+                        Optional.of("stop"),
+                        true,
+                        false,
+                        Optional.empty()
+                    );
+                }
+
+                @Override
+                public void close() {
+                }
             };
         }
     }

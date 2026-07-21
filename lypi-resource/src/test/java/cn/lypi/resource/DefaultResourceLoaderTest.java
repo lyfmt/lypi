@@ -235,6 +235,42 @@ class DefaultResourceLoaderTest {
     }
 
     @Test
+    void loadDiscoversLayeredExpertAgentsThroughCurrentWorkingDirectory() throws Exception {
+        Path root = Files.createDirectories(tempDir.resolve("repo"));
+        Path module = Files.createDirectories(root.resolve("module"));
+        Files.writeString(root.resolve(".git"), "gitdir: /tmp/repo.git");
+        Path projectAgent = root.resolve(".ly-pi/agents/code-reviewer.yaml");
+        Files.createDirectories(projectAgent.getParent());
+        Files.writeString(projectAgent, """
+            name: code-reviewer
+            provider: openai
+            model: project-model
+            prompt: Project prompt
+            """);
+        Path nestedAgent = module.resolve(".ly-pi/agents/code-reviewer.yml");
+        Files.createDirectories(nestedAgent.getParent());
+        Files.writeString(nestedAgent, """
+            name: code-reviewer
+            provider: anthropic
+            model: nested-model
+            prompt: Nested prompt
+            tools:
+              - bash
+            """);
+
+        ResourceSnapshot snapshot = new DefaultResourceLoader(List.of(), List.of()).load(module);
+
+        assertThat(snapshot.expertAgents()).singleElement().satisfies(agent -> {
+            assertThat(agent.provider()).isEqualTo("anthropic");
+            assertThat(agent.model()).isEqualTo("nested-model");
+            assertThat(agent.tools()).containsExactly("bash");
+            assertThat(agent.sourceFile()).isEqualTo(nestedAgent.toAbsolutePath().normalize());
+        });
+        assertThat(snapshot.diagnostics())
+            .anySatisfy(diagnostic -> assertThat(diagnostic.message()).isEqualTo("expert agent override: code-reviewer"));
+    }
+
+    @Test
     void loadReportsDiagnosticsForInvalidResourcesWithoutFailingSnapshot() throws Exception {
         Path root = Files.createDirectories(tempDir.resolve("repo"));
         Files.writeString(root.resolve(".git"), "gitdir: /tmp/repo.git");

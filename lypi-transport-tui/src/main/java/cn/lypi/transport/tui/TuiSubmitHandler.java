@@ -1,7 +1,9 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.agent.SteeringMessage;
 import cn.lypi.contracts.skill.SkillMention;
 import java.util.List;
+import java.util.Optional;
 
 interface TuiSubmitHandler {
     /**
@@ -14,6 +16,18 @@ interface TuiSubmitHandler {
      */
     default void submitUserInput(String input, List<SkillMention> skillMentions) {
         submitUserInput(input);
+    }
+
+    default List<SteeringMessage> pendingSteeringMessages() {
+        return List.of();
+    }
+
+    default boolean hasPendingSteeringMessages() {
+        return !pendingSteeringMessages().isEmpty();
+    }
+
+    default Optional<SteeringMessage> recallPendingSteering() {
+        return Optional.empty();
     }
 
     /**

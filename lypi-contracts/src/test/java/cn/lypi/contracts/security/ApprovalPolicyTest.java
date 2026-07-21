@@ -8,14 +8,14 @@ import org.junit.jupiter.api.Test;
 class ApprovalPolicyTest {
     @Test
     void mapsLegacyDefaultExecuteToOnRequestApprovalPolicy() {
-        ApprovalPolicy policy = ApprovalPolicy.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
+        ApprovalPolicy policy = ApprovalPolicy.fromLegacy(PermissionMode.ASK);
 
         assertEquals(ApprovalMode.ON_REQUEST, policy.mode());
     }
 
     @Test
     void mapsLegacyAcceptEditsToOnRequestApprovalPolicy() {
-        ApprovalPolicy policy = ApprovalPolicy.fromLegacy(PermissionMode.ACCEPT_EDITS);
+        ApprovalPolicy policy = ApprovalPolicy.fromLegacy(PermissionMode.AUTO);
 
         assertEquals(ApprovalMode.ON_REQUEST, policy.mode());
     }

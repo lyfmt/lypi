@@ -156,7 +156,7 @@ class OpenAiProviderFixtureEndToEndTest {
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.OFF),
             ThinkingLevel.OFF,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 16_384, 8_192, 0, 0, BigDecimal.ZERO)
         );
     }

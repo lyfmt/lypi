@@ -105,6 +105,30 @@ class McpToolAdapterTest {
         assertFalse(adapter.isConcurrencySafe(Map.of()));
     }
 
+    @Test
+    void rendersOnlyThreeFiniteInputShapes() {
+        McpToolAdapter adapter = new McpToolAdapter(
+            new McpToolSchema("filesystem", "read_file", "", new JsonSchema(Map.of()), ""),
+            (serverName, toolName, arguments, context, progress) -> "ok"
+        );
+        String content = "SENSITIVE" + "x".repeat(4_096 - "SENSITIVE".length());
+
+        String rendered = adapter.renderForUser(Map.of(
+            "zzItems", List.of("one", "two"),
+            "path", "README.md",
+            "nested", Map.of("first", 1, "second", 2),
+            "content", content
+        ));
+
+        assertEquals(
+            "mcp read_file content=<4096 chars> nested=<2 fields> path=README.md",
+            rendered
+        );
+        assertFalse(rendered.contains("SENSITIVE"));
+        assertFalse(rendered.contains("zzItems"));
+        assertFalse(rendered.contains("{"));
+    }
+
     private ToolUseContext context() {
         return new ToolUseContext("ses_1", "msg_1", Path.of("."), Map.of("toolUseId", "toolu_1"));
     }

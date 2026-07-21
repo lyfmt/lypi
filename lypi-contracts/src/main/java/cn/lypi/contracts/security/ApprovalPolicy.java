@@ -22,15 +22,17 @@ public record ApprovalPolicy(
         this(mode, Optional.empty());
     }
 
-    /**
-     * 从旧权限模式派生审批策略。
-     *
-     * NOTE: 该映射只用于兼容旧入口；新代码应读取 PermissionRuntimeState。
-     */
-    public static ApprovalPolicy fromLegacy(PermissionMode legacyPermissionMode) {
-        return switch (Objects.requireNonNull(legacyPermissionMode, "legacyPermissionMode")) {
-            case DEFAULT_EXECUTE, ACCEPT_EDITS -> new ApprovalPolicy(ApprovalMode.ON_REQUEST);
+    public static ApprovalPolicy forMode(PermissionMode mode) {
+        return switch (Objects.requireNonNull(mode, "mode")) {
+            case ASK, AUTO -> new ApprovalPolicy(ApprovalMode.ON_REQUEST);
             case BYPASS -> new ApprovalPolicy(ApprovalMode.NEVER);
         };
+    }
+
+    /**
+     * 兼容旧数据入口。旧枚举字符串已由 PermissionMode 归一化为三种公开模式。
+     */
+    public static ApprovalPolicy fromLegacy(PermissionMode legacyPermissionMode) {
+        return forMode(legacyPermissionMode);
     }
 }

@@ -42,18 +42,40 @@ PTY_OUTPUT="$TMP_DIR/pty-output.log"
 printf -v PTY_COMMAND 'TERM=xterm-256color java -cp %q TuiPtyProbe' "$TMP_DIR:$PROBE_CLASSPATH"
 timeout 15 script -q -e -c "$PTY_COMMAND" "$PTY_OUTPUT" >/dev/null
 
-for expected in \
-  $'\033[?2004h' \
-  $'\033[?25l' \
-  "LYPI_TUI_PTY_OPEN" \
-  $'\033[?25h' \
-  $'\033[?2004l' \
+expected_sequences=(
+  $'\033[?2004h'
+  $'\033[?25l'
+  $'\033[>4;2m'
+  "LYPI_TUI_PTY_OPEN"
+  $'\033[>4m'
+  $'\033[?2004l'
+  $'\033[?25h'
   "LYPI_TUI_PTY_CLOSED"
-do
-  if ! grep -Fq "$expected" "$PTY_OUTPUT"; then
+)
+previous_offset=-1
+for expected in "${expected_sequences[@]}"; do
+  match="$(LC_ALL=C grep -aFbo -m1 "$expected" "$PTY_OUTPUT" || true)"
+  if [[ -z "$match" ]]; then
     echo "missing expected PTY smoke output: $(printf '%q' "$expected")" >&2
     exit 1
   fi
+  offset="${match%%:*}"
+  if (( offset <= previous_offset )); then
+    echo "PTY mode sequence is out of order at: $(printf '%q' "$expected")" >&2
+    exit 1
+  fi
+  previous_offset="$offset"
 done
+
+for forbidden in $'\033[?1049h' $'\033[?1049l' \
+                 $'\033[?1000h' $'\033[?1006h'; do
+  if LC_ALL=C grep -aFq "$forbidden" "$PTY_OUTPUT"; then
+    echo "forbidden PTY mode sequence found: $(printf '%q' "$forbidden")" >&2
+    exit 1
+  fi
+done
+
+bash "$ROOT/lypi-transport-tui/src/test/resources/run-tui-frame-pty.sh"
+bash "$ROOT/lypi-transport-tui/src/test/resources/run-tui-interaction-pty.sh"
 
 echo "tui smoke passed"

@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
-import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
@@ -125,8 +124,10 @@ class AgentSlashCommandHandlerTest {
         }
 
         @Override
-        public Optional<HeadlessSubagentOutput> readResult(String childSessionId) {
-            return Optional.empty();
+        public cn.lypi.contracts.subagent.SubagentWaitResult waitFor(
+            cn.lypi.contracts.subagent.SubagentWaitRequest request
+        ) {
+            return cn.lypi.contracts.subagent.SubagentWaitResult.timedOut();
         }
     }
 }

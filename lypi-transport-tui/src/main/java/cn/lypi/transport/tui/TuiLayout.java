@@ -2,8 +2,6 @@ package cn.lypi.transport.tui;
 
 record TuiLayout(int width, int height) {
     private static final int STATUS_BAR_HEIGHT = 1;
-    private static final int INPUT_BORDER_HEIGHT = 2;
-    private static final int MIN_INPUT_CONTENT_HEIGHT = 1;
 
     TuiLayout {
         if (width <= 0) {
@@ -14,24 +12,27 @@ record TuiLayout(int width, int height) {
         }
     }
 
-    int transcriptHeight() {
-        return transcriptHeight(MIN_INPUT_CONTENT_HEIGHT + INPUT_BORDER_HEIGHT);
+    int maxSurfaceHeight() {
+        return Math.max(1, height - 1);
     }
 
-    int transcriptHeight(int inputBlockHeight) {
-        int boundedInputBlockHeight = Math.min(maxInputBlockHeight(), Math.max(1, inputBlockHeight));
-        return Math.max(0, height - STATUS_BAR_HEIGHT - boundedInputBlockHeight);
+    TuiRegionLayout allocateSurface(int desiredLiveHeight, int desiredInputHeight, int desiredOverlayHeight) {
+        int budget = maxSurfaceHeight();
+        int inputHeight = 1;
+        int statusHeight = budget > 1 ? STATUS_BAR_HEIGHT : 0;
+        int remainingHeight = budget - inputHeight - statusHeight;
+
+        int boundedOverlayHeight = Math.max(0, desiredOverlayHeight);
+        int overlayHeight = Math.min(boundedOverlayHeight, remainingHeight);
+        remainingHeight -= overlayHeight;
+
+        int boundedInputHeight = Math.max(1, desiredInputHeight);
+        int additionalInputHeight = Math.min(boundedInputHeight - inputHeight, remainingHeight);
+        inputHeight += additionalInputHeight;
+        remainingHeight -= additionalInputHeight;
+
+        int liveHeight = Math.min(Math.max(0, desiredLiveHeight), remainingHeight);
+        return new TuiRegionLayout(liveHeight, inputHeight, overlayHeight, statusHeight);
     }
 
-    int maxInputBlockHeight() {
-        return Math.max(1, height - STATUS_BAR_HEIGHT);
-    }
-
-    int maxInputContentHeight() {
-        int maxInputBlockHeight = maxInputBlockHeight();
-        if (maxInputBlockHeight <= INPUT_BORDER_HEIGHT) {
-            return MIN_INPUT_CONTENT_HEIGHT;
-        }
-        return Math.max(MIN_INPUT_CONTENT_HEIGHT, maxInputBlockHeight - INPUT_BORDER_HEIGHT);
-    }
 }

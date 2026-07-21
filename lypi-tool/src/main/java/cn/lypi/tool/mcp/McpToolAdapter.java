@@ -17,6 +17,7 @@ import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import cn.lypi.tool.ToolEventSummaryFormatter;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -114,7 +115,7 @@ public final class McpToolAdapter implements Tool<Map<String, Object>, Object> {
 
     @Override
     public String renderForUser(Map<String, Object> input) {
-        return name + " " + (input == null ? Map.of() : input);
+        return ToolEventSummaryFormatter.genericInputSummary("mcp " + schema.toolName(), input);
     }
 
     @Override

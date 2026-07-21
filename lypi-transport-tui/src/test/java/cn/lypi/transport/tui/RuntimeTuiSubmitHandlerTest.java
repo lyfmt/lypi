@@ -6,8 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.agent.SteeringMessage;
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
+import cn.lypi.contracts.agent.TurnStatus;
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.event.AgentEvent;
@@ -61,6 +63,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -150,23 +153,24 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
-    void interruptOnlyAbortsCurrentActiveTurnAndPublishesEvent() {
-        RecordingCore core = new RecordingCore();
+    void interruptAbortsOnlyActiveTurnAfterBusySteeringSubmit() throws Exception {
+        BlockingCore core = new BlockingCore();
         RecordingEventBus events = new RecordingEventBus();
-        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, Runnable::run);
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
 
         handler.submitUserInput("first");
+        assertTrue(core.started.await(2, TimeUnit.SECONDS));
         TurnRequest first = core.requests.getFirst();
         handler.submitUserInput("second");
-        TurnRequest second = core.requests.get(1);
 
         handler.requestInterrupt("ctrl-c");
 
-        assertFalse(first.abortSignal().aborted());
-        assertTrue(second.abortSignal().aborted());
+        assertTrue(first.abortSignal().aborted());
+        assertEquals(1, core.requests.size());
         InterruptEvent event = assertInstanceOf(InterruptEvent.class, events.published.getFirst());
         assertEquals("ses_1", event.sessionId());
         assertEquals("ctrl-c", event.reason());
+        core.release.countDown();
     }
 
     @Test
@@ -180,6 +184,256 @@ class RuntimeTuiSubmitHandlerTest {
         assertTrue(core.started.await(2, TimeUnit.SECONDS));
         assertEquals(1, core.requests.size());
         core.release.countDown();
+    }
+
+    @Test
+    void submitWhileTurnIsBusyQueuesSteeringInsteadOfStartingSecondTurn() {
+        SteeringRecordingCore core = new SteeringRecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+        SkillMention skill = new SkillMention("doc", Path.of("/tmp/doc/SKILL.md"));
+
+        handler.submitUserInput("first");
+        handler.submitUserInput("change course with $doc", List.of(skill));
+
+        assertEquals(1, executor.size());
+        executor.runNext();
+        assertEquals(1, core.requests.size());
+        assertEquals(new SteeringMessage("change course with $doc", List.of(skill)), core.steering);
+    }
+
+    @Test
+    void inputSubmittedDuringCoreExecutionIsDeliveredAsSteering() throws Exception {
+        BlockingCore core = new BlockingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+
+        handler.submitUserInput("first");
+        assertTrue(core.started.await(2, TimeUnit.SECONDS));
+        handler.submitUserInput("busy steering");
+        assertEquals(1, core.requests.size());
+        core.release.countDown();
+
+        assertTrue(core.finished.await(2, TimeUnit.SECONDS));
+        assertEquals(new SteeringMessage("busy steering", List.of()), core.steering);
+    }
+
+    @Test
+    void activeTurnSteeringSubmissionNotifiesWithoutConsumingMessage() throws Exception {
+        SubscribingSteeringCore core = new SubscribingSteeringCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+
+        handler.submitUserInput("first");
+        assertTrue(core.subscribed.await(1, TimeUnit.SECONDS));
+        handler.submitUserInput("wake wait");
+
+        assertTrue(core.notified.await(1, TimeUnit.SECONDS));
+        core.release.countDown();
+        assertTrue(core.finished.await(1, TimeUnit.SECONDS));
+        assertEquals(new SteeringMessage("wake wait", List.of()), core.steering);
+    }
+
+    @Test
+    void requestInterruptNotifiesActiveAbortSubscriber() throws Exception {
+        SubscribingAbortCore core = new SubscribingAbortCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+
+        handler.submitUserInput("first");
+        assertTrue(core.subscribed.await(1, TimeUnit.SECONDS));
+        handler.requestInterrupt("ctrl-c");
+
+        assertTrue(core.notified.await(1, TimeUnit.SECONDS));
+        assertTrue(core.request.abortSignal().aborted());
+        core.release.countDown();
+        assertTrue(core.finished.await(1, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void alreadyAbortedSignalNotifiesLateSubscriber() {
+        MutableAbortSignal signal = new MutableAbortSignal();
+        AtomicBoolean notified = new AtomicBoolean();
+        signal.abort();
+
+        try (var ignored = signal.subscribe(() -> notified.set(true))) {
+            assertTrue(notified.get());
+        }
+    }
+
+    @Test
+    void requestInterruptNotifiesAbortSubscriberOutsideActiveTurnLock() throws Exception {
+        SubscribingAbortCore core = new SubscribingAbortCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+        AtomicBoolean lockAvailable = new AtomicBoolean();
+        core.onAbort = () -> {
+            Thread probe = Thread.ofVirtual().start(() -> handler.pendingSteeringMessages());
+            try {
+                probe.join(1_000);
+                lockAvailable.set(!probe.isAlive());
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+        };
+
+        handler.submitUserInput("first");
+        assertTrue(core.subscribed.await(1, TimeUnit.SECONDS));
+        try {
+            handler.requestInterrupt("ctrl-c");
+            assertTrue(lockAvailable.get());
+        } finally {
+            core.release.countDown();
+        }
+        assertTrue(core.finished.await(1, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void busySteeringSourceMergesAllPendingMessagesWithNewlines() {
+        DrainingSteeringCore core = new DrainingSteeringCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+
+        handler.submitUserInput("first");
+        handler.submitUserInput("second");
+        handler.submitUserInput("third");
+        executor.runNext();
+
+        assertEquals(List.of(new SteeringMessage("second\nthird", List.of())), core.steering);
+    }
+
+    @Test
+    void mergedSteeringMentionsKeepFirstSeenOrderWithoutDuplicates() {
+        SteeringRecordingCore core = new SteeringRecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+        SkillMention doc = new SkillMention("doc", Path.of("/tmp/doc/SKILL.md"));
+        SkillMention pdf = new SkillMention("pdf", Path.of("/tmp/pdf/SKILL.md"));
+
+        handler.submitUserInput("first");
+        handler.submitUserInput("second", List.of(doc));
+        handler.submitUserInput("third", List.of(doc, pdf));
+        executor.runNext();
+
+        assertEquals(new SteeringMessage("second\nthird", List.of(doc, pdf)), core.steering);
+    }
+
+    @Test
+    void recallPendingSteeringDrainsQueueAndPreventsCoreDelivery() {
+        DrainingSteeringCore core = new DrainingSteeringCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+        SteeringMessage second = new SteeringMessage("second", List.of());
+        SteeringMessage third = new SteeringMessage("third", List.of());
+
+        handler.submitUserInput("first");
+        handler.submitUserInput(second.userInput());
+        handler.submitUserInput(third.userInput());
+
+        assertEquals(List.of(second, third), handler.pendingSteeringMessages());
+        assertTrue(handler.hasPendingSteeringMessages());
+        assertEquals(
+            Optional.of(new SteeringMessage("second\nthird", List.of())),
+            handler.recallPendingSteering()
+        );
+        assertEquals(List.of(), handler.pendingSteeringMessages());
+        assertFalse(handler.hasPendingSteeringMessages());
+
+        executor.runNext();
+        assertEquals(List.of(), core.steering);
+    }
+
+    @Test
+    void steeringSubmittedAfterFinalPollIsPromotedWithoutBeingLost() {
+        LateSteeringCore core = new LateSteeringCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, Runnable::run);
+        core.handler = handler;
+
+        handler.submitUserInput("first");
+
+        assertEquals(List.of("first", "late steering"), core.requests.stream().map(TurnRequest::userInput).toList());
+    }
+
+    @Test
+    void interruptWithPendingSteeringStartsMergedFreshTurnAfterAbort() {
+        AbortAwareCore core = new AbortAwareCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+
+        handler.submitUserInput("first");
+        handler.submitUserInput("second");
+        handler.submitUserInput("third");
+        handler.requestInterrupt("ctrl-c");
+        executor.runNext();
+
+        assertEquals(List.of("first", "second\nthird"), core.requests.stream().map(TurnRequest::userInput).toList());
+        assertTrue(core.requests.getFirst().abortSignal().aborted());
+        assertNotSame(core.requests.getFirst().abortSignal(), core.requests.get(1).abortSignal());
+        assertFalse(core.requests.get(1).abortSignal().aborted());
+        InterruptEvent event = assertInstanceOf(InterruptEvent.class, events.published.getFirst());
+        assertEquals("ctrl-c", event.reason());
+    }
+
+    @Test
+    void steeringSubmittedAfterInterruptBeforeCoreReturnsStartsFreshTurn() throws Exception {
+        BlockingAbortAwareCore core = new BlockingAbortAwareCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+
+        handler.submitUserInput("first");
+        assertTrue(core.started.await(2, TimeUnit.SECONDS));
+        TurnRequest first = core.requests.getFirst();
+        handler.requestInterrupt("ctrl-c");
+        handler.submitUserInput("submitted after interrupt");
+
+        assertTrue(first.abortSignal().aborted());
+        assertTrue(first.steeringMessages().poll().isEmpty());
+        assertEquals(List.of("first"), core.requests.stream().map(TurnRequest::userInput).toList());
+
+        core.release.countDown();
+        assertTrue(core.secondStarted.await(2, TimeUnit.SECONDS));
+        assertEquals(
+            List.of("first", "submitted after interrupt"),
+            core.requests.stream().map(TurnRequest::userInput).toList()
+        );
+        assertNotSame(first.abortSignal(), core.requests.get(1).abortSignal());
+        assertFalse(core.requests.get(1).abortSignal().aborted());
+    }
+
+    @Test
+    void interruptWithoutPendingSteeringDoesNotStartAnotherTurn() {
+        AbortAwareCore core = new AbortAwareCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+
+        handler.submitUserInput("first");
+        handler.requestInterrupt("ctrl-c");
+        executor.runNext();
+
+        assertEquals(List.of("first"), core.requests.stream().map(TurnRequest::userInput).toList());
+        assertTrue(core.requests.getFirst().abortSignal().aborted());
+        assertFalse(handler.hasPendingSteeringMessages());
+    }
+
+    @Test
+    void failedTurnDiscardsQueuedSteeringInsteadOfStartingAnotherTurn() {
+        FailedCore core = new FailedCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+
+        handler.submitUserInput("first");
+        handler.submitUserInput("queued steering");
+        executor.runNext();
+
+        assertEquals(List.of("first"), core.requests.stream().map(TurnRequest::userInput).toList());
     }
 
     @Test
@@ -220,7 +474,7 @@ class RuntimeTuiSubmitHandlerTest {
         assertEquals(ThinkingLevel.HIGH, state.thinkingLevel());
         assertEquals(new ModelSelection("openai", "gpt-5", ThinkingLevel.HIGH), state.model());
         assertEquals(AgentMode.EXECUTE, state.agentMode());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, state.permissionMode());
+        assertEquals(PermissionMode.ASK, state.permissionMode());
         MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(2));
         assertEquals("thinking: HIGH", delta.delta());
     }
@@ -271,24 +525,24 @@ class RuntimeTuiSubmitHandlerTest {
     void externalSlashCommandRunsHandlerAndPublishesLocalOutputWithoutStartingTurn() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
-        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("mailId: mail_1");
+        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("target: item_1");
         RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
             "ses_1",
             core,
             events,
             Runnable::run,
-            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), slash))
+            List.of(new SlashCommand("custom", "测试外部命令", List.of(), slash))
         );
 
-        handler.submitUserInput("/mailbox accept mail_1");
+        handler.submitUserInput("/custom action=inspect target=item_1");
 
         assertTrue(core.requests.isEmpty());
-        assertEquals(Map.of("action", "accept", "mailId", "mail_1"), slash.arguments);
+        assertEquals(Map.of("action", "inspect", "target", "item_1"), slash.arguments);
         MessageStartEvent start = assertInstanceOf(MessageStartEvent.class, events.published.getFirst());
         assertEquals("ses_1", start.sessionId());
         MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
         assertEquals("ses_1", delta.sessionId());
-        assertEquals("mailId: mail_1", delta.delta());
+        assertEquals("target: item_1", delta.delta());
         assertInstanceOf(MessageEndEvent.class, events.published.get(2));
     }
 
@@ -322,7 +576,7 @@ class RuntimeTuiSubmitHandlerTest {
             core,
             events,
             Runnable::run,
-            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+            List.of(new SlashCommand("custom", "测试外部命令", List.of(), new RecordingSlashCommandHandler("")))
         );
 
         handler.submitUserInput("hello");
@@ -346,7 +600,7 @@ class RuntimeTuiSubmitHandlerTest {
                 session,
                 emptyResources(),
                 null,
-                List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+                List.of(new SlashCommand("custom", "测试外部命令", List.of(), new RecordingSlashCommandHandler("")))
             )
         );
 
@@ -575,6 +829,8 @@ class RuntimeTuiSubmitHandlerTest {
         private final List<TurnRequest> requests = new ArrayList<>();
         private final CountDownLatch started = new CountDownLatch(1);
         private final CountDownLatch release = new CountDownLatch(1);
+        private final CountDownLatch finished = new CountDownLatch(1);
+        private SteeringMessage steering;
 
         @Override
         public TurnState execute(TurnRequest request) {
@@ -585,7 +841,147 @@ class RuntimeTuiSubmitHandlerTest {
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
             }
+            steering = request.steeringMessages().poll().orElse(null);
+            finished.countDown();
             return null;
+        }
+    }
+
+    private static final class SteeringRecordingCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+        private SteeringMessage steering;
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            steering = request.steeringMessages().poll().orElse(null);
+            return null;
+        }
+    }
+
+    private static final class SubscribingSteeringCore implements AgentCorePort {
+        private final CountDownLatch subscribed = new CountDownLatch(1);
+        private final CountDownLatch notified = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final CountDownLatch finished = new CountDownLatch(1);
+        private SteeringMessage steering;
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            try (var ignored = request.steeringMessages().subscribe(notified::countDown)) {
+                subscribed.countDown();
+                await(release);
+                steering = request.steeringMessages().poll().orElse(null);
+            } finally {
+                finished.countDown();
+            }
+            return null;
+        }
+    }
+
+    private static final class SubscribingAbortCore implements AgentCorePort {
+        private final CountDownLatch subscribed = new CountDownLatch(1);
+        private final CountDownLatch notified = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final CountDownLatch finished = new CountDownLatch(1);
+        private Runnable onAbort = () -> {
+        };
+        private TurnRequest request;
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            this.request = request;
+            try (var ignored = request.abortSignal().subscribe(() -> {
+                onAbort.run();
+                notified.countDown();
+            })) {
+                subscribed.countDown();
+                await(release);
+            } finally {
+                finished.countDown();
+            }
+            return new TurnState("turn-1", request.sessionId(), null, List.of(), 0, TurnStatus.ABORTED);
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await(2, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static final class AbortAwareCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
+            return new TurnState("turn-" + requests.size(), request.sessionId(), null, List.of(), 0, status);
+        }
+    }
+
+    private static final class BlockingAbortAwareCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final CountDownLatch secondStarted = new CountDownLatch(1);
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            if (requests.size() == 1) {
+                started.countDown();
+                try {
+                    release.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+            } else {
+                secondStarted.countDown();
+            }
+            TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
+            return new TurnState("turn-" + requests.size(), request.sessionId(), null, List.of(), 0, status);
+        }
+    }
+
+    private static final class LateSteeringCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+        private RuntimeTuiSubmitHandler handler;
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            request.steeringMessages().poll();
+            if (requests.size() == 1) {
+                handler.submitUserInput("late steering");
+            }
+            return null;
+        }
+    }
+
+    private static final class DrainingSteeringCore implements AgentCorePort {
+        private final List<SteeringMessage> steering = new ArrayList<>();
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            Optional<SteeringMessage> next;
+            while ((next = request.steeringMessages().poll()).isPresent()) {
+                steering.add(next.orElseThrow());
+            }
+            return null;
+        }
+    }
+
+    private static final class FailedCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            return new TurnState("turn-1", request.sessionId(), null, List.of(), 0, TurnStatus.FAILED);
         }
     }
 
@@ -599,6 +995,10 @@ class RuntimeTuiSubmitHandlerTest {
 
         private void runNext() {
             tasks.removeFirst().run();
+        }
+
+        private int size() {
+            return tasks.size();
         }
     }
 
@@ -724,7 +1124,7 @@ class RuntimeTuiSubmitHandlerTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0, 0, BigDecimal.ZERO),
             false,
             false,
@@ -782,7 +1182,7 @@ class RuntimeTuiSubmitHandlerTest {
             ModelSelection model = new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM);
             ThinkingLevel thinkingLevel = ThinkingLevel.MEDIUM;
             AgentMode agentMode = AgentMode.EXECUTE;
-            PermissionMode permissionMode = PermissionMode.DEFAULT_EXECUTE;
+            PermissionMode permissionMode = PermissionMode.ASK;
             for (SessionEntry entry : entries) {
                 if (entry instanceof ModelChangeEntry modelChange) {
                     model = modelChange.model();

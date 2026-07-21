@@ -14,6 +14,7 @@ class KeyBindingRegistryTest {
         assertEquals(TerminalInputAction.DELETE_NEXT_WORD, registry.actionFor(TerminalKey.ALT_DELETE));
         assertEquals(TerminalInputAction.TOGGLE_TOOL_OUTPUT_EXPANDED, registry.actionFor(TerminalKey.CTRL_O));
         assertEquals(TerminalInputAction.INSERT_NEWLINE, registry.actionFor(TerminalKey.MODIFIED_ENTER));
+        assertEquals(TerminalInputAction.NOOP, registry.actionFor(TerminalKey.OTHER));
     }
 
     @Test

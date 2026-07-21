@@ -72,12 +72,12 @@ final class SandboxEscalationPolicy {
         }
         Object value = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_MODE);
         if (value instanceof PermissionMode permissionMode) {
-            return PermissionRuntimeState.fromLegacy(permissionMode);
+            return PermissionRuntimeState.forMode(permissionMode);
         }
         if (value instanceof String permissionMode) {
-            return PermissionRuntimeState.fromLegacy(PermissionMode.valueOf(permissionMode));
+            return PermissionRuntimeState.forMode(PermissionMode.fromJson(permissionMode));
         }
-        return PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
+        return PermissionRuntimeState.forMode(PermissionMode.ASK);
     }
 
     private String stringInput(Map<String, Object> input, String key) {

@@ -19,10 +19,10 @@ import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStreamResult;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentCommunicationPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.runtime.ChildSessionPort;
-import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
@@ -161,13 +161,9 @@ class CommonContractTest {
             () -> assertMethod(ResourceRuntimePort.class, "buildSystemPrompt", 2),
             () -> assertMethod(AgentCorePort.class, "execute", 1),
             () -> assertMethod(AgentCenterPort.class, "spawn", 1),
-            () -> assertMethod(AgentCenterPort.class, "interrupt", 1),
-            () -> assertMethod(AgentCenterPort.class, "readResult", 1),
+            () -> assertMethod(AgentCenterPort.class, "waitFor", 1),
+            () -> assertMethod(AgentCommunicationPort.class, "poll", 1),
             () -> assertMethod(ChildSessionPort.class, "create", 1),
-            () -> assertMethod(MailboxPort.class, "read", 2),
-            () -> assertMethod(MailboxPort.class, "accept", 2),
-            () -> assertMethod(MailboxPort.class, "stash", 2),
-            () -> assertMethod(MailboxPort.class, "discard", 2),
             () -> assertMethod(SessionManagerFactoryPort.class, "open", 2),
             () -> assertMethod(SessionStorageRootPort.class, "sessionStorageRoot", 0),
             () -> assertMethod(ProgressSink.class, "progress", 1),

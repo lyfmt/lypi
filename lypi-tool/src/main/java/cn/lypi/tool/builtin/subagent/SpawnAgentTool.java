@@ -5,6 +5,8 @@ import cn.lypi.contracts.common.ProgressSink;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.common.ValidationResult;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.subagent.ExpertAgentDefinition;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
@@ -18,9 +20,21 @@ import java.util.Objects;
 
 public final class SpawnAgentTool extends AbstractSubagentTool {
     private final AgentCenterPort agentCenter;
+    private final SubagentToolPolicyNormalizer toolPolicyNormalizer;
+    private final ExpertAgentResolver expertAgentResolver;
 
-    public SpawnAgentTool(AgentCenterPort agentCenter) {
+    public SpawnAgentTool(ToolRuntimePort toolRuntime, AgentCenterPort agentCenter) {
+        this(toolRuntime, agentCenter, List.of());
+    }
+
+    public SpawnAgentTool(
+        ToolRuntimePort toolRuntime,
+        AgentCenterPort agentCenter,
+        List<ExpertAgentDefinition> expertAgents
+    ) {
         this.agentCenter = Objects.requireNonNull(agentCenter, "agentCenter must not be null");
+        this.toolPolicyNormalizer = new SubagentToolPolicyNormalizer(toolRuntime);
+        this.expertAgentResolver = new ExpertAgentResolver(expertAgents);
     }
 
     @Override
@@ -30,101 +44,109 @@ public final class SpawnAgentTool extends AbstractSubagentTool {
 
     @Override
     public String description() {
-        return "启动一个 headless subagent，并仅返回启动状态。只读调查默认已有 read/grep/glob，"
-            + "不要默认加入 bash；只有用户明确需要 shell 命令时才加入 bash。"
-            + "permissionRuntimeState 是新协议优先字段，会传递给 child runtime 决定审批和沙盒行为；permissionMode 仅兼容旧入口。"
-            + "启动后必须用 wait_agent 等待，再用 read_agent_result 读取结果。";
+        return "启动一个 prompt-only subagent。可选择已配置的专家 Agent；专家提供 provider、model、prompt 与 tools 默认值，显式参数可覆盖。"
+            + "未选择专家时默认继承当前 Agent 的 provider、model 与 thinking level；仅在明确需要覆盖时填写这些可选参数。"
+            + "read、grep、glob 固定可用，tools 只追加 canonical 工具名。启动后继续执行其他独立工作；completion 会在后续模型边界自动投递。"
+            + "仅当下一步依赖结果且没有其他可执行工作时才调用 wait_agent；用户要求继续时不要调用 wait_agent。";
     }
 
     @Override
     public JsonSchema inputSchema() {
         Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("prompt", Map.of("type", "string"));
-        properties.put("cwd", Map.of("type", "string"));
-        properties.put("timeoutSeconds", timeoutSecondsSchema());
-        properties.put("agentName", Map.of("type", "string"));
-        properties.put("role", Map.of("type", "string"));
-        properties.put("agentRole", Map.of("type", "string"));
+        properties.put("task_name", Map.of("type", "string"));
+        properties.put("message", Map.of("type", "string"));
+        properties.put("agent", Map.of(
+            "type", "string",
+            "enum", expertAgentResolver.names(),
+            "description", "可选专家 Agent 名；使用其 provider、model、prompt 与 tools 默认配置，显式参数可覆盖默认值。"
+        ));
         properties.put("tools", Map.of("type", "array", "items", Map.of("type", "string")));
-        properties.put("allowedTools", Map.of("type", "array", "items", Map.of("type", "string")));
-        properties.put("allowed_tools", Map.of("type", "array", "items", Map.of("type", "string")));
-        properties.put("model", modelSchema());
-        properties.put("modelId", modelSchema());
-        properties.put("thinkingLevel", thinkingLevelSchema());
-        properties.put("thinking", thinkingLevelSchema());
-        properties.put("mode", agentModeSchema());
-        properties.put("agentMode", agentModeSchema());
-        properties.put("permissionRuntimeState", permissionRuntimeStateSchema());
-        properties.put("permission_runtime_state", permissionRuntimeStateSchema());
-        properties.put("permissionMode", permissionModeSchema());
-        properties.put("permission_mode", permissionModeSchema());
+        properties.put("provider", SubagentToolSchemas.providerSchema());
+        properties.put("model", SubagentToolSchemas.modelSchema());
+        properties.put("thinking_level", SubagentToolSchemas.thinkingLevelSchema());
         return new JsonSchema(Map.of(
             "type", "object",
-            "required", List.of("prompt"),
-            "properties", properties
+            "required", List.of("task_name", "message"),
+            "properties", properties,
+            "additionalProperties", false
         ));
     }
 
     @Override
     public ValidationResult validateInput(Map<String, Object> input, ToolUseContext context) {
-        return requireAny(input, "prompt");
+        ValidationResult fields = SubagentToolInputs.validateSpawn(input);
+        if (!fields.valid()) {
+            return fields;
+        }
+        try {
+            resolveInput(input);
+            return fields;
+        } catch (IllegalArgumentException exception) {
+            return new ValidationResult(false, List.of(exception.getMessage()));
+        }
     }
 
     @Override
     public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
         try {
+            ValidationResult fields = SubagentToolInputs.validateSpawn(input);
+            if (!fields.valid()) {
+                return error(context, String.join(" ", fields.messages()));
+            }
+            ResolvedSpawn resolved = resolveInput(input);
             progress.progress(ToolProgress.phase("spawning", "启动 subagent"));
-            SubagentToolPolicy toolPolicy = toolPolicy(input);
             SubagentSpawnResult result = agentCenter.spawn(new SubagentSpawnRequest(
                 context.sessionId(),
                 parentEntryId(context),
-                stringInput(input, "prompt"),
-                cwd(input, context),
-                toolPolicy.effectiveTools(),
-                toolPolicy,
-                permissionRuntimeState(input),
-                timeoutSeconds(input),
-                optionalStringInput(input, "agentName", "agent_name"),
-                optionalStringInput(input, "role", "agentRole", "agent_role"),
-                model(input),
-                thinkingLevel(input),
-                agentMode(input),
-                permissionRuntimeStateSpecified(input)
+                SubagentToolInputs.requiredString(input, "task_name"),
+                SubagentToolInputs.requiredString(input, "message"),
+                resolved.policy().effectiveTools(),
+                resolved.configuration().provider(),
+                resolved.configuration().model(),
+                SubagentToolInputs.thinkingLevel(input),
+                resolved.configuration().agentRole(),
+                resolved.configuration().initialSystemPrompt()
             ));
             if (result.status() == SubagentRunStatus.FAILED) {
                 return error(context, result.message().orElse("subagent 启动失败。"));
             }
             return success(context, """
                 Subagent 已启动。
+                taskName: %s
                 agentId: %s
                 childSessionId: %s
-                parentSessionId: %s
-                parentSpawnEntryId: %s
+                runId: %s
                 status: %s
-                message: %s
+                completion 会在后续模型边界自动投递。请继续执行其他独立工作；仅当下一步依赖该结果且没有其他可执行工作时调用 wait_agent。用户要求继续时不要等待。
                 """.formatted(
+                    result.taskName(),
                     result.agentId(),
                     result.childSessionId(),
-                    result.parentSessionId(),
-                    result.parentSpawnEntryId(),
-                    result.status(),
-                    result.message().orElse("")
+                    result.runId(),
+                    result.status()
                 ).trim());
         } catch (IllegalArgumentException exception) {
             return error(context, exception.getMessage());
         }
     }
 
-    private String parentEntryId(ToolUseContext context) {
-        Object parentEntryId = context.metadata().get("parentEntryId");
-        if (parentEntryId instanceof String value && !value.isBlank()) {
-            return value;
-        }
-        return null;
-    }
-
     @Override
     public boolean isReadOnly(Map<String, Object> input) {
         return false;
     }
+
+    private String parentEntryId(ToolUseContext context) {
+        Object value = context.metadata().get("parentEntryId");
+        return value instanceof String parentEntryId && !parentEntryId.isBlank() ? parentEntryId : null;
+    }
+
+    private ResolvedSpawn resolveInput(Map<String, Object> input) {
+        ExpertAgentResolver.Resolved expert = expertAgentResolver.resolve(input);
+        return new ResolvedSpawn(expert, toolPolicyNormalizer.normalize(expert.requestedTools()));
+    }
+
+    private record ResolvedSpawn(
+        ExpertAgentResolver.Resolved configuration,
+        SubagentToolPolicy policy
+    ) {}
 }

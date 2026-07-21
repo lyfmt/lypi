@@ -25,7 +25,7 @@ public record SessionStateEvent(
 ) implements AgentEvent {
     public SessionStateEvent {
         permissionRuntimeState = permissionRuntimeState == null
-            ? PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE)
+            ? PermissionRuntimeState.fromLegacy(PermissionMode.ASK)
             : permissionRuntimeState;
     }
 
@@ -66,7 +66,7 @@ public record SessionStateEvent(
      */
     @JsonGetter("permissionMode")
     public PermissionMode permissionMode() {
-        return permissionRuntimeState.legacyPermissionMode();
+        return permissionRuntimeState.mode();
     }
 
     @JsonCreator
@@ -87,7 +87,7 @@ public record SessionStateEvent(
             thinkingLevel,
             agentMode,
             permissionRuntimeState == null
-                ? PermissionRuntimeState.fromLegacy(permissionMode == null ? PermissionMode.DEFAULT_EXECUTE : permissionMode)
+                ? PermissionRuntimeState.fromLegacy(permissionMode == null ? PermissionMode.ASK : permissionMode)
                 : permissionRuntimeState,
             timestamp
         );

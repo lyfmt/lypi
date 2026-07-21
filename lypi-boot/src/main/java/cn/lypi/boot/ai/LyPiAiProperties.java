@@ -85,6 +85,8 @@ public class LyPiAiProperties {
         private boolean websocketUrlConfigured;
         private String apiKey;
         private boolean apiKeyConfigured;
+        private String anthropicVersion = "2023-06-01";
+        private boolean anthropicVersionConfigured;
         private Duration timeout = Duration.ofSeconds(30);
         private boolean timeoutConfigured;
         private int maxRetries = 3;
@@ -208,6 +210,19 @@ public class LyPiAiProperties {
 
         boolean isApiKeyConfigured() {
             return apiKeyConfigured;
+        }
+
+        public String getAnthropicVersion() {
+            return anthropicVersion;
+        }
+
+        public void setAnthropicVersion(String anthropicVersion) {
+            this.anthropicVersion = anthropicVersion;
+            this.anthropicVersionConfigured = true;
+        }
+
+        boolean isAnthropicVersionConfigured() {
+            return anthropicVersionConfigured;
         }
 
         public Duration getTimeout() {
