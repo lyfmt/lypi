@@ -3,6 +3,7 @@ package cn.lypi.tool.builtin;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.subagent.ExpertAgentDefinition;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.tool.builtin.subagent.SpawnAgentTool;
 import cn.lypi.tool.builtin.subagent.WaitAgentTool;
@@ -186,10 +187,21 @@ public final class BuiltInTools {
      * 创建模型可见的 subagent 工具集合。
      */
     public static List<Tool<?, ?>> createSubagentTools(ToolRuntimePort runtime, AgentCenterPort agentCenter) {
+        return createSubagentTools(runtime, agentCenter, List.of());
+    }
+
+    /**
+     * 创建带启动时专家目录的 subagent 工具集合。
+     */
+    public static List<Tool<?, ?>> createSubagentTools(
+        ToolRuntimePort runtime,
+        AgentCenterPort agentCenter,
+        List<ExpertAgentDefinition> expertAgents
+    ) {
         Objects.requireNonNull(runtime, "runtime must not be null");
         Objects.requireNonNull(agentCenter, "agentCenter must not be null");
         return List.of(
-            new SpawnAgentTool(runtime, agentCenter),
+            new SpawnAgentTool(runtime, agentCenter, expertAgents),
             new WaitAgentTool(agentCenter)
         );
     }
@@ -198,8 +210,19 @@ public final class BuiltInTools {
      * 注册模型可见的 subagent 工具集合。
      */
     public static void registerSubagentTools(ToolRuntimePort runtime, AgentCenterPort agentCenter) {
+        registerSubagentTools(runtime, agentCenter, List.of());
+    }
+
+    /**
+     * 注册带启动时专家目录的 subagent 工具集合。
+     */
+    public static void registerSubagentTools(
+        ToolRuntimePort runtime,
+        AgentCenterPort agentCenter,
+        List<ExpertAgentDefinition> expertAgents
+    ) {
         Objects.requireNonNull(runtime, "runtime must not be null");
-        for (Tool<?, ?> tool : createSubagentTools(runtime, agentCenter)) {
+        for (Tool<?, ?> tool : createSubagentTools(runtime, agentCenter, expertAgents)) {
             runtime.register(tool);
         }
     }
