@@ -51,6 +51,7 @@ import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.common.ToolProgress;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
@@ -115,6 +116,37 @@ class LyPiToolAutoConfigurationTest {
                 assertThat(runtime.resolve("bash")).isPresent();
                 assertThat(runtime.resolve("read")).isPresent();
                 assertThat(runtime.resolve("glob")).isPresent();
+            });
+    }
+
+    @Test
+    void defaultSandboxResolverFollowsRuntimePermissionMode() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+                Path cwd = Path.of(".").toAbsolutePath();
+
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.ASK)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.MANAGED);
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.BYPASS)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.DISABLED);
+            });
+    }
+
+    @Test
+    void explicitDefaultPermissionsProfileOverridesRuntimeMode() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues("lypi.permissions.default-permissions=:workspace")
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
+                Path cwd = Path.of(".").toAbsolutePath();
+
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.BYPASS)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.MANAGED);
             });
     }
 

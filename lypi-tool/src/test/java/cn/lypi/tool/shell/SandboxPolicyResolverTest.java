@@ -10,6 +10,8 @@ import cn.lypi.contracts.security.FileSystemPath;
 import cn.lypi.contracts.security.FileSystemPermissionEntry;
 import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.NetworkPermissionPolicy;
+import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import java.nio.file.Files;
@@ -67,8 +69,9 @@ class SandboxPolicyResolverTest {
             Optional.of(NetworkPermissionPolicy.enabled())
         );
 
-        SandboxRuntimePolicy widened = resolver.resolve(workspace, workspace, additionalPermissions);
-        SandboxRuntimePolicy next = resolver.resolve(workspace, workspace);
+        PermissionRuntimeState runtimeState = PermissionRuntimeState.forMode(PermissionMode.BYPASS);
+        SandboxRuntimePolicy widened = resolver.resolve(workspace, workspace, runtimeState, additionalPermissions);
+        SandboxRuntimePolicy next = resolver.resolve(workspace, workspace, runtimeState);
 
         assertTrue(widened.allowWrite().contains(cache.toRealPath()));
         assertEquals(NetworkMode.HOST, widened.networkMode());

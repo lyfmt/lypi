@@ -16,14 +16,20 @@ import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.security.FileSystemPath;
 import cn.lypi.contracts.security.FileSystemPermissionEntry;
 import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.PermissionBehavior;
+import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionProfiles;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
+import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
+import cn.lypi.tool.shell.SandboxPolicyOptions;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -114,6 +120,90 @@ class BashToolTest {
             ToolProgress.phase("running", "执行 shell 命令"),
             ToolProgress.status("executor progress", null)
         ), progresses);
+    }
+
+    @Test
+    void sameToolUsesChangedRuntimeModeForNextExecution() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(
+            executor,
+            new PermissionProfileSandboxPolicyResolver(
+                PermissionProfiles.workspace(),
+                SandboxPolicyOptions.defaults(),
+                false
+            )
+        );
+
+        ToolResult<String> askResult = tool.execute(
+            Map.of("command", "true"),
+            context(Map.of("permissionRuntimeState", PermissionRuntimeState.forMode(PermissionMode.ASK))),
+            message -> {
+            }
+        );
+        SandboxRuntimePolicy askPolicy = executor.request.get().sandboxPolicy();
+        ToolResult<String> bypassResult = tool.execute(
+            Map.of("command", "true"),
+            context(Map.of("permissionRuntimeState", PermissionRuntimeState.forMode(PermissionMode.BYPASS))),
+            message -> {
+            }
+        );
+        SandboxRuntimePolicy bypassPolicy = executor.request.get().sandboxPolicy();
+
+        assertFalse(askResult.isError());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, askPolicy.kind());
+        assertEquals(NetworkMode.DISABLED, askPolicy.networkMode());
+        assertFalse(bypassResult.isError());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, bypassPolicy.kind());
+        assertEquals(NetworkMode.HOST, bypassPolicy.networkMode());
+    }
+
+    @Test
+    void canonicalRuntimeStateSupersedesLegacyPermissionModeForExecution() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(
+            executor,
+            new PermissionProfileSandboxPolicyResolver(
+                PermissionProfiles.workspace(),
+                SandboxPolicyOptions.defaults(),
+                false
+            )
+        );
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "true"),
+            context(Map.of(
+                "permissionRuntimeState", PermissionRuntimeState.forMode(PermissionMode.ASK),
+                "permissionMode", PermissionMode.BYPASS
+            )),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, executor.request.get().sandboxPolicy().kind());
+    }
+
+    @Test
+    void legacyPermissionModeIsUsedWhenCanonicalRuntimeStateIsMissing() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(
+            executor,
+            new PermissionProfileSandboxPolicyResolver(
+                PermissionProfiles.workspace(),
+                SandboxPolicyOptions.defaults(),
+                false
+            )
+        );
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "true"),
+            context(Map.of("permissionMode", "bypass")),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, executor.request.get().sandboxPolicy().kind());
     }
 
     @Test
@@ -373,6 +463,30 @@ class BashToolTest {
             PermissionBehavior.ALLOW,
             tool.checkPermissions(Map.of("command", "echo hi"), context(Map.of())).behavior()
         );
+    }
+
+    @Test
+    void toolPermissionUsesTheSameChangedRuntimeModeAsExecution() {
+        BashTool tool = new BashTool(
+            new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())),
+            new PermissionProfileSandboxPolicyResolver(
+                PermissionProfiles.workspace(),
+                new SandboxPolicyOptions(NetworkMode.DISABLED, true, true),
+                false
+            )
+        );
+
+        PermissionBehavior askBehavior = tool.checkPermissions(
+            Map.of("command", "echo hi"),
+            context(Map.of("permissionRuntimeState", PermissionRuntimeState.forMode(PermissionMode.ASK)))
+        ).behavior();
+        PermissionBehavior bypassBehavior = tool.checkPermissions(
+            Map.of("command", "echo hi"),
+            context(Map.of("permissionRuntimeState", PermissionRuntimeState.forMode(PermissionMode.BYPASS)))
+        ).behavior();
+
+        assertEquals(PermissionBehavior.ALLOW, askBehavior);
+        assertEquals(PermissionBehavior.ASK, bypassBehavior);
     }
 
     @Test

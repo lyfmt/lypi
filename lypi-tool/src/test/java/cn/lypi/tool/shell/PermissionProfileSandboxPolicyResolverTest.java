@@ -17,7 +17,9 @@ import cn.lypi.contracts.security.FileSystemPolicyKind;
 import cn.lypi.contracts.security.FileSystemSpecialPath;
 import cn.lypi.contracts.security.ManagedPermissionProfile;
 import cn.lypi.contracts.security.NetworkPermissionPolicy;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionProfiles;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -68,6 +70,62 @@ class PermissionProfileSandboxPolicyResolverTest {
     }
 
     @Test
+    void projectsEachRuntimeModeWhenConfiguredProfileIsOnlyTheDefault() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        PermissionProfileSandboxPolicyResolver resolver = new PermissionProfileSandboxPolicyResolver(
+            PermissionProfiles.workspace(),
+            SandboxPolicyOptions.defaults(),
+            false
+        );
+
+        SandboxRuntimePolicy ask = resolver.resolve(
+            workspace,
+            workspace,
+            PermissionRuntimeState.forMode(PermissionMode.ASK)
+        );
+        SandboxRuntimePolicy auto = resolver.resolve(
+            workspace,
+            workspace,
+            PermissionRuntimeState.forMode(PermissionMode.AUTO)
+        );
+        SandboxRuntimePolicy bypass = resolver.resolve(
+            workspace,
+            workspace,
+            PermissionRuntimeState.forMode(PermissionMode.BYPASS)
+        );
+
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, ask.kind());
+        assertTrue(ask.allowWrite().contains(workspace.toRealPath()));
+        assertEquals(NetworkMode.DISABLED, ask.networkMode());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, auto.kind());
+        assertTrue(auto.allowWrite().contains(workspace.toRealPath()));
+        assertEquals(NetworkMode.DISABLED, auto.networkMode());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, bypass.kind());
+        assertEquals(NetworkMode.HOST, bypass.networkMode());
+    }
+
+    @Test
+    void explicitConfiguredProfileOverridesRuntimeModeDefault() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        PermissionProfileSandboxPolicyResolver resolver = new PermissionProfileSandboxPolicyResolver(
+            PermissionProfiles.readOnly(),
+            SandboxPolicyOptions.defaults(),
+            true
+        );
+
+        SandboxRuntimePolicy policy = resolver.resolve(
+            workspace,
+            workspace,
+            PermissionRuntimeState.forMode(PermissionMode.BYPASS)
+        );
+
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, policy.kind());
+        assertTrue(policy.allowRead().contains(Path.of("/")));
+        assertTrue(policy.allowWrite().isEmpty());
+        assertEquals(NetworkMode.DISABLED, policy.networkMode());
+    }
+
+    @Test
     void projectsExternalProfileToExternalMarkerPolicy() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         PermissionProfileSandboxPolicyResolver resolver = new PermissionProfileSandboxPolicyResolver(
@@ -98,8 +156,9 @@ class PermissionProfileSandboxPolicyResolverTest {
             Optional.empty()
         );
 
-        SandboxRuntimePolicy widened = resolver.resolve(workspace, workspace, additionalPermissions);
-        SandboxRuntimePolicy next = resolver.resolve(workspace, workspace);
+        PermissionRuntimeState runtimeState = PermissionRuntimeState.forMode(PermissionMode.ASK);
+        SandboxRuntimePolicy widened = resolver.resolve(workspace, workspace, runtimeState, additionalPermissions);
+        SandboxRuntimePolicy next = resolver.resolve(workspace, workspace, runtimeState);
 
         assertTrue(widened.allowRead().contains(Path.of("/")));
         assertTrue(widened.allowWrite().contains(cache.toRealPath()));

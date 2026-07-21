@@ -121,12 +121,14 @@ final class RuntimeBeanFactories {
         LyPiPermissionsProperties permissionsProperties,
         PermissionProfileSelection selection
     ) {
-        PermissionRuntimeState legacyState = PermissionRuntimeState.fromLegacy(properties.getPermissionMode());
+        PermissionRuntimeState modeState = PermissionRuntimeState.forMode(properties.getPermissionMode());
+        boolean configuredProfileOverridesMode = permissionsProperties.hasExplicitProfileConfig()
+            || !":workspace".equals(selection.activePermissionProfile().id());
         PermissionRuntimeState runtimeState = new PermissionRuntimeState(
             permissionsProperties.getApprovalPolicy().toApprovalPolicy(),
-            selection.activePermissionProfile(),
-            selection.permissionProfile(),
-            legacyState.legacyBehavior(),
+            configuredProfileOverridesMode ? selection.activePermissionProfile() : modeState.activePermissionProfile(),
+            configuredProfileOverridesMode ? selection.permissionProfile() : modeState.permissionProfile(),
+            modeState.legacyBehavior(),
             properties.getPermissionMode()
         );
         return sessionManager(properties, runtimeState);

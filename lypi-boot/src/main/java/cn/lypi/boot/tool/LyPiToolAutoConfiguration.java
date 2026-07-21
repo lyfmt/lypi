@@ -99,14 +99,17 @@ public class LyPiToolAutoConfiguration {
     @ConditionalOnMissingBean(SandboxPolicyResolver.class)
     public SandboxPolicyResolver sandboxPolicyResolver(
         LyPiToolProperties toolProperties,
+        LyPiPermissionsProperties permissionsProperties,
         PermissionProfileSelection profileSelection
     ) {
         LyPiToolProperties.SandboxProperties sandbox = toolProperties.getSandbox();
+        boolean configuredProfileOverridesRuntimeState = permissionsProperties.hasExplicitProfileConfig()
+            || !":workspace".equals(profileSelection.activePermissionProfile().id());
         return new PermissionProfileSandboxPolicyResolver(profileSelection.permissionProfile(), new SandboxPolicyOptions(
             NetworkMode.DISABLED,
             sandbox.isFailIfUnavailable(),
             sandbox.isEnabled() && sandbox.isAutoAllowBashIfSandboxed()
-        ));
+        ), configuredProfileOverridesRuntimeState);
     }
 
     /**
@@ -131,7 +134,7 @@ public class LyPiToolAutoConfiguration {
         PermissionProfileConfigCompiler profileConfigCompiler
     ) {
         LyPiToolProperties.SandboxProperties sandbox = toolProperties.getSandbox();
-        if (permissionsProperties.hasCustomProfileConfig() || sandbox.getNetworkMode() != NetworkMode.HOST) {
+        if (permissionsProperties.hasExplicitProfileConfig() || sandbox.getNetworkMode() != NetworkMode.HOST) {
             return profileConfigCompiler.compile(
                 permissionsProperties.profileConfigs(),
                 permissionsProperties.getDefaultPermissions()

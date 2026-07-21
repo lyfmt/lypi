@@ -206,6 +206,43 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
+    void defaultRuntimeStateUsesPermissionModeSandboxProfile() {
+        runtimeAutoConfigurations()
+            .withPropertyValues("lypi.runtime.permission-mode=bypass")
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_bypass_profile");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo(":danger-full-access");
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().kind())
+                    .isEqualTo(cn.lypi.contracts.security.PermissionProfile.Kind.DISABLED);
+            });
+    }
+
+    @Test
+    void explicitDefaultPermissionsOverridesPermissionModeSandboxProfile() {
+        runtimeAutoConfigurations()
+            .withPropertyValues(
+                "lypi.runtime.permission-mode=bypass",
+                "lypi.permissions.default-permissions=:workspace"
+            )
+            .run(context -> {
+                SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
+
+                SessionHandle handle = sessionManager.openOrCreate("ses_explicit_workspace_profile");
+                SessionContext sessionContext = sessionManager.context(handle.leafId());
+
+                assertThat(sessionContext.permissionRuntimeState().activePermissionProfile().id())
+                    .isEqualTo(":workspace");
+                assertThat(sessionContext.permissionRuntimeState().permissionProfile().kind())
+                    .isEqualTo(cn.lypi.contracts.security.PermissionProfile.Kind.MANAGED);
+            });
+    }
+
+    @Test
     void sessionManagerStoresCompiledCustomPermissionProfileInRuntimeState() {
         runtimeAutoConfigurations()
             .withPropertyValues(

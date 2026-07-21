@@ -22,6 +22,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "lypi.permissions")
 public class LyPiPermissionsProperties {
     private String defaultPermissions = ":workspace";
+    private boolean defaultPermissionsConfigured;
     private ApprovalPolicyProperties approvalPolicy = new ApprovalPolicyProperties();
     private Map<String, ProfileProperties> profiles = new LinkedHashMap<>();
 
@@ -30,6 +31,7 @@ public class LyPiPermissionsProperties {
     }
 
     public void setDefaultPermissions(String defaultPermissions) {
+        this.defaultPermissionsConfigured = true;
         this.defaultPermissions = defaultPermissions == null || defaultPermissions.isBlank()
             ? ":workspace"
             : defaultPermissions;
@@ -57,8 +59,8 @@ public class LyPiPermissionsProperties {
         return Map.copyOf(configs);
     }
 
-    public boolean hasCustomProfileConfig() {
-        return !profiles.isEmpty() || !":workspace".equals(defaultPermissions);
+    public boolean hasExplicitProfileConfig() {
+        return defaultPermissionsConfigured || !profiles.isEmpty();
     }
 
     public static class ApprovalPolicyProperties {

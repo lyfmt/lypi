@@ -32,6 +32,7 @@ import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.BashRiskAnalysis;
@@ -46,6 +47,7 @@ import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionGrantScope;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionProfiles;
 import cn.lypi.contracts.security.PermissionResponse;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
@@ -63,6 +65,8 @@ import cn.lypi.tool.builtin.ReadTool;
 import cn.lypi.tool.builtin.RequestPermissionsTool;
 import cn.lypi.tool.builtin.WriteTool;
 import cn.lypi.tool.mcp.McpToolAdapter;
+import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
+import cn.lypi.tool.shell.SandboxPolicyOptions;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -370,6 +374,42 @@ class DefaultToolRuntimeTest {
         assertEquals(1, executor.calls.get());
         assertEquals(List.of("bash", "-lc", "echo done"), executor.request.get().command());
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("stdout:\ndone"));
+    }
+
+    @Test
+    void nextBashExecutionUsesChangedPermissionRuntimeProfile() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "done", "", false, Optional.empty()));
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(tempDir).build(),
+            allowAllSecurity(),
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
+            null
+        );
+        runtime.register(new BashTool(
+            executor,
+            new PermissionProfileSandboxPolicyResolver(
+                PermissionProfiles.workspace(),
+                SandboxPolicyOptions.defaults(),
+                false
+            )
+        ));
+        ToolUseRequest request = new ToolUseRequest(
+            "toolu_1",
+            "bash",
+            Map.of("command", "echo done"),
+            "msg_1"
+        );
+
+        ToolResult<?> askResult = runtime.execute(List.of(request), TestTools.context(PermissionMode.ASK)).getFirst();
+        SandboxRuntimePolicy askPolicy = executor.request.get().sandboxPolicy();
+        ToolResult<?> bypassResult = runtime.execute(List.of(request), TestTools.context(PermissionMode.BYPASS)).getFirst();
+        SandboxRuntimePolicy bypassPolicy = executor.request.get().sandboxPolicy();
+
+        assertFalse(askResult.isError());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, askPolicy.kind());
+        assertFalse(bypassResult.isError());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, bypassPolicy.kind());
+        assertEquals(2, executor.calls.get());
     }
 
     @Test
