@@ -44,6 +44,7 @@ class ContextSnapshotRequestFactoryTest {
         assertThat(request.messages().getFirst().role()).isEqualTo(LypiRole.USER);
         assertThat(request.messages().getFirst().content())
             .containsExactly(new LypiTextBlock("hello model", Map.of()));
+        assertThat(request.metadata()).containsEntry("permissionMode", "ask");
     }
 
     @Test

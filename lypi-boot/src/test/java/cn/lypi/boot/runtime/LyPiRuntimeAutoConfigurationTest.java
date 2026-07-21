@@ -202,6 +202,8 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(sessionContext.permissionRuntimeState().approvalPolicy().granularApprovalPolicy().orElseThrow().rules())
                     .isEqualTo(ApprovalMode.NEVER);
                 assertThat(sessionContext.permissionMode()).isEqualTo(PermissionMode.ASK);
+                assertThat(context.getBean(SessionRuntimeState.class).permissionRuntimeState())
+                    .isEqualTo(sessionContext.permissionRuntimeState());
             });
     }
 
@@ -219,7 +221,21 @@ class LyPiRuntimeAutoConfigurationTest {
                     .isEqualTo(":danger-full-access");
                 assertThat(sessionContext.permissionRuntimeState().permissionProfile().kind())
                     .isEqualTo(cn.lypi.contracts.security.PermissionProfile.Kind.DISABLED);
+                assertThat(sessionContext.permissionRuntimeState().approvalPolicy().mode())
+                    .isEqualTo(ApprovalMode.NEVER);
             });
+    }
+
+    @Test
+    void legacyPermissionModeConfigAliasesRemainReadable() {
+        runtimeConfiguration()
+            .withPropertyValues("lypi.runtime.permission-mode=default_execute")
+            .run(context -> assertThat(context.getBean(LyPiRuntimeProperties.class).getPermissionMode())
+                .isEqualTo(PermissionMode.ASK));
+        runtimeConfiguration()
+            .withPropertyValues("lypi.runtime.permission-mode=accept_edits")
+            .run(context -> assertThat(context.getBean(LyPiRuntimeProperties.class).getPermissionMode())
+                .isEqualTo(PermissionMode.AUTO));
     }
 
     @Test
@@ -591,7 +607,7 @@ class LyPiRuntimeAutoConfigurationTest {
                 assertThat(bootstrap.systemPrompt()).isNotNull();
                 assertThat(bootstrap.systemPrompt().content())
                     .contains("## Permissions")
-                    .contains("approval policy: ON_REQUEST")
+                    .contains("approval policy metadata: ON_REQUEST")
                     .contains("active sandbox profile: :workspace")
                     .contains("request_permissions")
                     .contains("sandboxPermissions=requireEscalated")

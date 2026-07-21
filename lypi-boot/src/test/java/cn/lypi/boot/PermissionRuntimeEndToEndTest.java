@@ -102,7 +102,7 @@ class PermissionRuntimeEndToEndTest {
 
             assertThat(bootstrap.systemPrompt().content())
                 .contains("## Permissions")
-                .contains("approval policy: NEVER")
+                .contains("approval policy metadata: NEVER")
                 .contains("active sandbox profile: :danger-full-access")
                 .contains("request_permissions")
                 .contains("sandboxPermissions=requireEscalated")

@@ -25,9 +25,9 @@ final class PermissionPromptSection implements SystemPromptSection {
             .append(". ")
             .append(modeDescription())
             .append("\n");
-        content.append("- Current approval policy: approval policy: ")
+        content.append("- Current approval policy metadata: ")
             .append(runtimeState.approvalPolicy().mode())
-            .append(". The model may request permissions; the approval policy decides whether a prompt is shown.\n");
+            .append(". The permission mode above is the final review route.\n");
         content.append("- Current sandbox profile: active sandbox profile: ")
             .append(runtimeState.activePermissionProfile().id())
             .append(". Do not infer filesystem or network access from legacy permissionMode names.\n");

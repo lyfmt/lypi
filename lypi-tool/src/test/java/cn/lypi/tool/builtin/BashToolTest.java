@@ -57,7 +57,7 @@ class BashToolTest {
         assertEquals(List.of("useDefault", "requireEscalated", "withAdditionalPermissions"), sandboxPermissions.get("enum"));
         assertTrue(sandboxPermissions.get("description").toString().contains("requireEscalated"));
         assertTrue(sandboxPermissions.get("description").toString().contains("withAdditionalPermissions"));
-        assertTrue(sandboxPermissions.get("description").toString().contains("approval policy"));
+        assertTrue(sandboxPermissions.get("description").toString().contains("permission mode"));
         assertTrue(properties.get("additionalPermissions").toString().contains("request_permissions"));
         assertTrue(properties.get("justification").toString().contains("required when sandboxPermissions=requireEscalated"));
     }

@@ -24,6 +24,7 @@ public class LyPiPermissionsProperties {
     private String defaultPermissions = ":workspace";
     private boolean defaultPermissionsConfigured;
     private ApprovalPolicyProperties approvalPolicy = new ApprovalPolicyProperties();
+    private boolean approvalPolicyConfigured;
     private Map<String, ProfileProperties> profiles = new LinkedHashMap<>();
 
     public String getDefaultPermissions() {
@@ -42,7 +43,12 @@ public class LyPiPermissionsProperties {
     }
 
     public void setApprovalPolicy(ApprovalPolicyProperties approvalPolicy) {
+        this.approvalPolicyConfigured = approvalPolicy != null;
         this.approvalPolicy = approvalPolicy == null ? new ApprovalPolicyProperties() : approvalPolicy;
+    }
+
+    public boolean hasExplicitApprovalPolicyConfig() {
+        return approvalPolicyConfigured || approvalPolicy.isConfigured();
     }
 
     public Map<String, ProfileProperties> getProfiles() {
@@ -66,12 +72,14 @@ public class LyPiPermissionsProperties {
     public static class ApprovalPolicyProperties {
         private ApprovalMode mode = ApprovalMode.ON_REQUEST;
         private GranularApprovalPolicyProperties granular = new GranularApprovalPolicyProperties();
+        private boolean configured;
 
         public ApprovalMode getMode() {
             return mode;
         }
 
         public void setMode(ApprovalMode mode) {
+            this.configured = true;
             this.mode = mode == null ? ApprovalMode.ON_REQUEST : mode;
         }
 
@@ -80,7 +88,12 @@ public class LyPiPermissionsProperties {
         }
 
         public void setGranular(GranularApprovalPolicyProperties granular) {
+            this.configured = true;
             this.granular = granular == null ? new GranularApprovalPolicyProperties() : granular;
+        }
+
+        private boolean isConfigured() {
+            return configured || granular.isConfigured();
         }
 
         public ApprovalPolicy toApprovalPolicy() {
@@ -97,12 +110,14 @@ public class LyPiPermissionsProperties {
         private ApprovalMode skillApproval = ApprovalMode.ON_REQUEST;
         private ApprovalMode requestPermissions = ApprovalMode.ON_REQUEST;
         private ApprovalMode mcpElicitations = ApprovalMode.ON_REQUEST;
+        private boolean configured;
 
         public ApprovalMode getSandboxApproval() {
             return sandboxApproval;
         }
 
         public void setSandboxApproval(ApprovalMode sandboxApproval) {
+            this.configured = true;
             this.sandboxApproval = defaultOnRequest(sandboxApproval);
         }
 
@@ -111,6 +126,7 @@ public class LyPiPermissionsProperties {
         }
 
         public void setRules(ApprovalMode rules) {
+            this.configured = true;
             this.rules = defaultOnRequest(rules);
         }
 
@@ -119,6 +135,7 @@ public class LyPiPermissionsProperties {
         }
 
         public void setSkillApproval(ApprovalMode skillApproval) {
+            this.configured = true;
             this.skillApproval = defaultOnRequest(skillApproval);
         }
 
@@ -127,6 +144,7 @@ public class LyPiPermissionsProperties {
         }
 
         public void setRequestPermissions(ApprovalMode requestPermissions) {
+            this.configured = true;
             this.requestPermissions = defaultOnRequest(requestPermissions);
         }
 
@@ -135,7 +153,12 @@ public class LyPiPermissionsProperties {
         }
 
         public void setMcpElicitations(ApprovalMode mcpElicitations) {
+            this.configured = true;
             this.mcpElicitations = defaultOnRequest(mcpElicitations);
+        }
+
+        private boolean isConfigured() {
+            return configured;
         }
 
         private GranularApprovalPolicy toGranularApprovalPolicy() {

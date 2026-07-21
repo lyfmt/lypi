@@ -44,7 +44,7 @@ public final class ContextSnapshotRequestFactory {
     private static Map<String, Object> metadata(ContextSnapshot snapshot) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("mode", snapshot.mode().name());
-        metadata.put("permissionMode", snapshot.permissionMode().name());
+        metadata.put("permissionMode", snapshot.permissionMode().toJson());
         providerConversationState(snapshot).ifPresent(state -> metadata.put("providerConversationState", state));
         return metadata;
     }

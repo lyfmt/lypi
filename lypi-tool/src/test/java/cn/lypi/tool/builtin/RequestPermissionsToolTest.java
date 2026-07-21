@@ -103,7 +103,9 @@ class RequestPermissionsToolTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> networkMode = (Map<String, Object>) networkProperties.get("mode");
 
-        assertTrue(tool.description().contains("approval policy"));
+        assertTrue(tool.description().contains("ASK"));
+        assertTrue(tool.description().contains("AUTO"));
+        assertTrue(tool.description().contains("BYPASS"));
         assertTrue(properties.get("permissions").toString().contains("additional filesystem or network permissions"));
         assertTrue(permissionProperties.containsKey("fileSystem"));
         assertTrue(permissionProperties.containsKey("filesystem"));

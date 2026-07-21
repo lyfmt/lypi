@@ -76,7 +76,7 @@ public final class BashTool extends AbstractFileTool {
                     "enum", List.of("useDefault", "requireEscalated", "withAdditionalPermissions"),
                     "description",
                     "useDefault follows the active sandbox profile. requireEscalated asks to run outside the sandbox; "
-                        + "the approval policy decides whether a prompt is shown. withAdditionalPermissions uses "
+                        + "the current permission mode decides the review route. withAdditionalPermissions uses "
                         + "permissions approved by request_permissions."
                 ),
                 INPUT_ADDITIONAL_PERMISSIONS, Map.of(
