@@ -25,12 +25,14 @@ import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private String currentSessionId;
@@ -232,18 +234,19 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
                 clearActiveTurn(turn);
                 return null;
             }
-            SteeringMessage next = turn.steering.pollFirst();
-            if (next == null) {
+            Optional<SteeringMessage> next = drainMergedSteering(turn);
+            if (next.isEmpty()) {
                 clearActiveTurn(turn);
                 return null;
             }
+            SteeringMessage message = next.orElseThrow();
             return new TurnRequest(
                 turn.sessionId,
-                next.userInput(),
+                message.userInput(),
                 Optional.empty(),
                 turn.signal,
                 maxToolRounds,
-                next.skillMentions(),
+                message.skillMentions(),
                 () -> pollSteering(turn)
             );
         }
@@ -264,8 +267,49 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             if (activeTurn != turn || turn.signal.aborted()) {
                 return Optional.empty();
             }
-            return Optional.ofNullable(turn.steering.pollFirst());
+            return drainMergedSteering(turn);
         }
+    }
+
+    @Override
+    public List<SteeringMessage> pendingSteeringMessages() {
+        synchronized (activeTurnLock) {
+            if (activeTurn == null) {
+                return List.of();
+            }
+            return List.copyOf(activeTurn.steering);
+        }
+    }
+
+    @Override
+    public boolean hasPendingSteeringMessages() {
+        synchronized (activeTurnLock) {
+            return activeTurn != null && !activeTurn.steering.isEmpty();
+        }
+    }
+
+    @Override
+    public Optional<SteeringMessage> recallPendingSteering() {
+        synchronized (activeTurnLock) {
+            if (activeTurn == null) {
+                return Optional.empty();
+            }
+            return drainMergedSteering(activeTurn);
+        }
+    }
+
+    private Optional<SteeringMessage> drainMergedSteering(ActiveTurn turn) {
+        if (turn.steering.isEmpty()) {
+            return Optional.empty();
+        }
+        String input = turn.steering.stream()
+            .map(SteeringMessage::userInput)
+            .collect(Collectors.joining("\n"));
+        LinkedHashSet<SkillMention> skillMentions = turn.steering.stream()
+            .flatMap(message -> message.skillMentions().stream())
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        turn.steering.clear();
+        return Optional.of(new SteeringMessage(input, List.copyOf(skillMentions)));
     }
 
     private void submitCompact(String input) {

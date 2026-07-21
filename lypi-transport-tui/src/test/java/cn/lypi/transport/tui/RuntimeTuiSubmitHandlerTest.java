@@ -220,7 +220,7 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
-    void busySteeringSourcePreservesFifoOrder() {
+    void busySteeringSourceMergesAllPendingMessagesWithNewlines() {
         DrainingSteeringCore core = new DrainingSteeringCore();
         RecordingEventBus events = new RecordingEventBus();
         QueuedExecutor executor = new QueuedExecutor();
@@ -231,7 +231,50 @@ class RuntimeTuiSubmitHandlerTest {
         handler.submitUserInput("third");
         executor.runNext();
 
-        assertEquals(List.of("second", "third"), core.steering.stream().map(SteeringMessage::userInput).toList());
+        assertEquals(List.of(new SteeringMessage("second\nthird", List.of())), core.steering);
+    }
+
+    @Test
+    void mergedSteeringMentionsKeepFirstSeenOrderWithoutDuplicates() {
+        SteeringRecordingCore core = new SteeringRecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+        SkillMention doc = new SkillMention("doc", Path.of("/tmp/doc/SKILL.md"));
+        SkillMention pdf = new SkillMention("pdf", Path.of("/tmp/pdf/SKILL.md"));
+
+        handler.submitUserInput("first");
+        handler.submitUserInput("second", List.of(doc));
+        handler.submitUserInput("third", List.of(doc, pdf));
+        executor.runNext();
+
+        assertEquals(new SteeringMessage("second\nthird", List.of(doc, pdf)), core.steering);
+    }
+
+    @Test
+    void recallPendingSteeringDrainsQueueAndPreventsCoreDelivery() {
+        DrainingSteeringCore core = new DrainingSteeringCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+        SteeringMessage second = new SteeringMessage("second", List.of());
+        SteeringMessage third = new SteeringMessage("third", List.of());
+
+        handler.submitUserInput("first");
+        handler.submitUserInput(second.userInput());
+        handler.submitUserInput(third.userInput());
+
+        assertEquals(List.of(second, third), handler.pendingSteeringMessages());
+        assertTrue(handler.hasPendingSteeringMessages());
+        assertEquals(
+            Optional.of(new SteeringMessage("second\nthird", List.of())),
+            handler.recallPendingSteering()
+        );
+        assertEquals(List.of(), handler.pendingSteeringMessages());
+        assertFalse(handler.hasPendingSteeringMessages());
+
+        executor.runNext();
+        assertEquals(List.of(), core.steering);
     }
 
     @Test
