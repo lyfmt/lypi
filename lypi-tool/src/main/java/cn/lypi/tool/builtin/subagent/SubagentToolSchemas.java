@@ -1,61 +1,34 @@
 package cn.lypi.tool.builtin.subagent;
 
+import cn.lypi.contracts.model.ThinkingLevel;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
 final class SubagentToolSchemas {
-    static final int DEFAULT_TIMEOUT_SECONDS = 1_200;
-    static final int MAX_TIMEOUT_SECONDS = 1_200;
-    static final List<String> PERMISSION_MODE_VALUES = List.of("ask", "auto", "bypass");
-    static final List<String> AGENT_MODE_VALUES = List.of("PLAN", "EXECUTE");
+    static final long DEFAULT_TIMEOUT_MILLIS = 600_000L;
+    static final long MAX_TIMEOUT_MILLIS = 3_600_000L;
+    static final List<String> THINKING_LEVEL_VALUES = Arrays.stream(ThinkingLevel.values())
+        .map(Enum::name)
+        .toList();
 
     private SubagentToolSchemas() {
     }
 
-    static Map<String, Object> timeoutSecondsSchema() {
+    static Map<String, Object> timeoutMillisSchema() {
         return Map.of(
             "type", "integer",
-            "minimum", 1,
-            "maximum", MAX_TIMEOUT_SECONDS,
-            "description", "子 Agent 单次运行/等待最长秒数。默认 1200 秒，最大 1200 秒（20 分钟）。"
-        );
-    }
-
-    static Map<String, Object> permissionModeSchema() {
-        return Map.of(
-            "type", "string",
-            "enum", PERMISSION_MODE_VALUES,
-            "description", "子 Agent 权限模式。可选 ask、auto 或 bypass；默认继承父 session。"
-        );
-    }
-
-    static Map<String, Object> permissionRuntimeStateSchema() {
-        return Map.of(
-            "type", "object",
-            "description", "子 Agent canonical 权限运行态。新协议优先使用该字段；包含 approvalPolicy、activePermissionProfile、permissionProfile、legacyBehavior 和 legacyPermissionMode；permissionMode 仅作为兼容旧入口。"
-        );
-    }
-
-    static Map<String, Object> agentModeSchema() {
-        return Map.of(
-            "type", "string",
-            "enum", AGENT_MODE_VALUES,
-            "description", "子 Agent 模式。通用执行任务请省略或使用 EXECUTE；兼容 general。"
+            "minimum", 0L,
+            "maximum", MAX_TIMEOUT_MILLIS,
+            "description", "等待任意 subagent mailbox 消息的最长毫秒数，默认 600000。"
         );
     }
 
     static Map<String, Object> thinkingLevelSchema() {
         return Map.of(
             "type", "string",
-            "enum", List.of("LOW", "MEDIUM", "HIGH", "MAX"),
-            "description", "推理强度。通常省略以继承父 session；只有用户明确指定时填写。可用值: LOW, MEDIUM, HIGH, MAX。"
-        );
-    }
-
-    static Map<String, Object> modelSchema() {
-        return Map.of(
-            "type", "string",
-            "description", "子 Agent 模型。通常省略以继承父 session 当前模型；只有用户明确要求某个模型时填写。裸模型名使用当前唯一 provider/openai，provider/model 形式仅用于兼容。"
+            "enum", THINKING_LEVEL_VALUES,
+            "description", "推理强度；省略时继承主 Agent，显式值由运行时校验。"
         );
     }
 }

@@ -3,6 +3,7 @@ package cn.lypi.tool;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
@@ -27,7 +28,7 @@ class FilteredToolRuntimeTest {
             runtime.snapshot().tools().stream().map(tool -> tool.name()).toList()
         );
         assertTrue(runtime.resolve("read").isPresent());
-        assertTrue(runtime.resolve("cat").isPresent());
+        assertFalse(runtime.resolve("cat").isPresent());
         assertTrue(runtime.resolve("bash").isPresent());
         assertFalse(runtime.resolve("write").isPresent());
     }
@@ -50,7 +51,7 @@ class FilteredToolRuntimeTest {
     }
 
     @Test
-    void delegatesExecutionForAllowedAliasUsingOriginalRequestName() {
+    void rejectsAliasExecutionEvenWhenCanonicalToolIsAllowed() {
         DefaultToolRuntime delegate = runtimeWithReadGrepGlobAndBash();
         FilteredToolRuntime runtime = new FilteredToolRuntime(
             delegate,
@@ -62,8 +63,22 @@ class FilteredToolRuntimeTest {
             TestTools.context(PermissionMode.ASK)
         ).getFirst();
 
-        assertFalse(result.isError());
-        assertEquals("hello", result.output());
+        assertTrue(result.isError());
+        assertTrue(result.output().toString().contains("canonical"));
+    }
+
+    @Test
+    void rejectsUnknownEffectiveToolAtConstruction() {
+        DefaultToolRuntime delegate = runtimeWithReadGrepGlobAndBash();
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () ->
+            new FilteredToolRuntime(
+                delegate,
+                new SubagentToolPolicy(List.of("missing"), List.of("read", "grep", "glob", "missing"))
+            )
+        );
+
+        assertTrue(exception.getMessage().contains("missing"));
     }
 
     @Test
