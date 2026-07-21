@@ -26,11 +26,15 @@ import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.common.SignalSubscription;
+import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.AssistantStreamResult;
+import cn.lypi.contracts.model.CostProfile;
+import cn.lypi.contracts.model.ModelCatalogPort;
+import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.AgentCommunicationPort;
@@ -58,10 +62,13 @@ import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.runtime.subagent.DefaultMailboxService;
 import cn.lypi.runtime.subagent.SubagentProcessHandle;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
+import cn.lypi.session.SessionTreeQuery;
 import cn.lypi.transport.headless.HeadlessSubagentJsonCodec;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
+import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -152,6 +159,83 @@ class SubagentRuntimeEndToEndTest {
             assertThat(mailbox.read(PARENT_SESSION_ID, Set.of(MailboxStatus.DELIVERED))).hasSize(1);
             assertThat(context.getBean(AgentCommunicationPort.class).poll(PARENT_SESSION_ID)).isEmpty();
         });
+    }
+
+    @Test
+    void configuredExpertAgentFlowsFromYamlIntoChildSession() throws Exception {
+        Path agentDirectory = tempDir.resolve(".ly-pi").resolve("agents");
+        Files.createDirectories(agentDirectory);
+        Files.writeString(agentDirectory.resolve("code-reviewer.yaml"), """
+            name: code-reviewer
+            provider: expert-provider
+            model: expert-model
+            prompt: |
+              Review code precisely.
+              Report concrete findings only.
+            tools:
+              - bash
+            """);
+        CapturingChildAgentCoreFactory childFactory = new CapturingChildAgentCoreFactory();
+        RecordingParentAiProvider parentAi = new RecordingParentAiProvider();
+        ModelCatalogPort modelCatalog = selection -> {
+            if (!"expert-provider".equals(selection.provider())
+                || !"expert-model-override".equals(selection.modelId())) {
+                return Optional.empty();
+            }
+            return Optional.of(new ModelDescriptor(
+                selection.provider(),
+                selection.modelId(),
+                URI.create("https://example.invalid"),
+                ApiStyle.CUSTOM,
+                128_000,
+                8_192,
+                true,
+                false,
+                new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
+                Map.of()
+            ));
+        };
+
+        contextRunner(childFactory, parentAi)
+            .withBean(ModelCatalogPort.class, () -> modelCatalog)
+            .run(context -> {
+                SessionManagerPort sessions = context.getBean(SessionManagerPort.class);
+                String parentEntryId = prepareParentSession(sessions);
+
+                ToolResult<?> spawn = executeTool(
+                    context.getBean(ToolRuntimePort.class),
+                    sessions,
+                    "turn_expert_spawn",
+                    parentEntryId,
+                    new ToolUseRequest(
+                        "toolu_expert_spawn",
+                        "spawn_agent",
+                        Map.of(
+                            "task_name", "review-auth",
+                            "message", "Review the authentication changes.",
+                            "agent", "code-reviewer",
+                            "model", "expert-model-override",
+                            "tools", List.of()
+                        ),
+                        "msg_parent_history"
+                    )
+                );
+
+                assertThat(spawn.isError()).isFalse();
+                assertThat(childFactory.request.get().userInput())
+                    .isEqualTo("Review the authentication changes.");
+                assertThat(childFactory.initialContext.get().messages()).singleElement().satisfies(message -> {
+                    assertThat(message.role()).isEqualTo(MessageRole.SYSTEM_LOCAL);
+                    assertThat(message.content().getFirst().text())
+                        .isEqualTo("Review code precisely.\nReport concrete findings only.");
+                });
+                assertThat(childFactory.initialContext.get().model().provider()).isEqualTo("expert-provider");
+                assertThat(childFactory.initialContext.get().model().modelId()).isEqualTo("expert-model-override");
+                assertThat(childFactory.toolPolicy.get().effectiveTools()).containsExactly("read", "grep", "glob");
+                assertThat(new SessionTreeQuery(tempDir).children(PARENT_SESSION_ID))
+                    .singleElement()
+                    .satisfies(child -> assertThat(child.agentRole()).contains("code-reviewer"));
+            });
     }
 
     @Test

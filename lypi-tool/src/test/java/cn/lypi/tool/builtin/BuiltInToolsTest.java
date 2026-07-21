@@ -11,6 +11,7 @@ import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
+import cn.lypi.contracts.subagent.ExpertAgentDefinition;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
 import cn.lypi.contracts.subagent.SubagentWaitRequest;
@@ -22,6 +23,7 @@ import cn.lypi.tool.web.WebSearchProvider;
 import cn.lypi.contracts.web.WebSearchResponse;
 import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.web.WebStoredResult;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -92,6 +94,29 @@ class BuiltInToolsTest {
         assertTrue(runtime.resolve("continue_agent").isEmpty());
         assertTrue(runtime.resolve("read_agent_result").isEmpty());
         assertTrue(runtime.resolve("read_mailbox").isEmpty());
+    }
+
+    @Test
+    void createsSubagentToolsWithFrozenExpertDirectory() {
+        DefaultToolRuntime runtime = toolRuntime();
+        BuiltInTools.registerDefaults(runtime, executor());
+        ExpertAgentDefinition expert = new ExpertAgentDefinition(
+            "code-reviewer",
+            "openai",
+            "gpt-5.4",
+            "Review code precisely.",
+            List.of("bash"),
+            Path.of("/repo/.ly-pi/agents/code-reviewer.yaml")
+        );
+
+        List<Tool<?, ?>> tools = BuiltInTools.createSubagentTools(runtime, agentCenter(), List.of(expert));
+        Tool<?, ?> spawn = tools.stream().filter(tool -> tool.name().equals("spawn_agent")).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) spawn.inputSchema().value().get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> agentSchema = (Map<String, Object>) properties.get("agent");
+
+        assertEquals(List.of("code-reviewer"), agentSchema.get("enum"));
     }
 
     @Test

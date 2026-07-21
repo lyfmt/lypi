@@ -4,6 +4,7 @@ import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.mcp.McpTransport;
+import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
@@ -229,6 +230,7 @@ public class LyPiToolAutoConfiguration {
                 PermissionPromptPort runtimePromptPort
             ) {
                 Path runtimeCwd = cwd == null ? Path.of(configuredCwd) : cwd;
+                ResourceSnapshot resources = loadResources(resolvedResourceRuntime, runtimeCwd);
                 ToolRuntimeOptions options = ToolRuntimeOptions.builder()
                     .cwd(runtimeCwd)
                     .build();
@@ -258,9 +260,19 @@ public class LyPiToolAutoConfiguration {
                     );
                 AgentCenterPort resolvedAgentCenter = agentCenter.getIfAvailable();
                 if (resolvedAgentCenter != null) {
-                    BuiltInTools.registerSubagentTools(runtime, resolvedAgentCenter);
+                    BuiltInTools.registerSubagentTools(
+                        runtime,
+                        resolvedAgentCenter,
+                        resources == null ? List.of() : resources.expertAgents()
+                    );
                 }
-                registerMcpTools(runtime, runtimeCwd, resolvedResourceRuntime, resolvedMcpClientManagerFactory, mcpClientManagerLifecycle);
+                registerMcpTools(
+                    runtime,
+                    runtimeCwd,
+                    resources,
+                    resolvedMcpClientManagerFactory,
+                    mcpClientManagerLifecycle
+                );
                 return runtime;
             }
 
@@ -426,18 +438,14 @@ public class LyPiToolAutoConfiguration {
     private void registerMcpTools(
         ToolRuntimePort runtime,
         Path cwd,
-        ResourceRuntimePort resourceRuntime,
+        ResourceSnapshot resources,
         McpClientManagerFactory managerFactory,
         McpClientManagerLifecycle managerLifecycle
     ) {
-        if (resourceRuntime == null || managerFactory == null) {
+        if (resources == null || resources.mcpServers().isEmpty() || managerFactory == null) {
             return;
         }
         try {
-            cn.lypi.contracts.resource.ResourceSnapshot resources = resourceRuntime.load(cwd);
-            if (resources == null || resources.mcpServers() == null || resources.mcpServers().isEmpty()) {
-                return;
-            }
             McpClientManager manager = managerFactory.create(cwd);
             managerLifecycle.track(manager);
             manager.connectAll(resources.mcpServers()).forEach(schema ->
@@ -445,6 +453,18 @@ public class LyPiToolAutoConfiguration {
             );
         } catch (RuntimeException exception) {
             // NOTE: MCP 注册失败不能阻断内置工具可用性。
+        }
+    }
+
+    private ResourceSnapshot loadResources(ResourceRuntimePort resourceRuntime, Path cwd) {
+        if (resourceRuntime == null) {
+            return null;
+        }
+        try {
+            return resourceRuntime.load(cwd);
+        } catch (RuntimeException exception) {
+            // NOTE: 资源加载失败不能阻断内置工具和通用 subagent。
+            return null;
         }
     }
 

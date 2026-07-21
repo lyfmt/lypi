@@ -13,6 +13,7 @@ import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
+import cn.lypi.contracts.subagent.ExpertAgentDefinition;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
@@ -39,11 +40,24 @@ class SubagentToolsTest {
         Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
 
         assertEquals(
-            List.of("message", "model", "provider", "task_name", "thinking_level", "tools"),
+            List.of("agent", "message", "model", "provider", "task_name", "thinking_level", "tools"),
             properties.keySet().stream().sorted().toList()
         );
         assertEquals(List.of("task_name", "message"), tool.inputSchema().value().get("required"));
         assertEquals(false, tool.inputSchema().value().get("additionalProperties"));
+    }
+
+    @Test
+    void spawnSchemaListsConfiguredExpertAgents() {
+        SpawnAgentTool tool = new SpawnAgentTool(runtime(), new RecordingAgentCenter(), List.of(expert()));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> agentSchema = (Map<String, Object>) properties.get("agent");
+
+        assertEquals(List.of("code-reviewer"), agentSchema.get("enum"));
+        assertEquals(List.of("task_name", "message"), tool.inputSchema().value().get("required"));
     }
 
     @Test
@@ -107,6 +121,85 @@ class SubagentToolsTest {
         assertTrue(result.output().contains("继续执行"));
         assertTrue(result.output().contains("仅当下一步依赖该结果"));
         assertTrue(result.output().contains("用户要求继续时不要等待"));
+    }
+
+    @Test
+    void spawnUsesSelectedExpertDefaultsAndCarriesInternalPrompt() {
+        RecordingAgentCenter center = new RecordingAgentCenter();
+        SpawnAgentTool tool = new SpawnAgentTool(runtime(), center, List.of(expert()));
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "task_name", "review-auth",
+            "message", "Review auth changes.",
+            "agent", "code-reviewer",
+            "model", "gpt-5.4-mini"
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError(), result.output());
+        assertEquals("Review auth changes.", center.spawnRequest.message());
+        assertEquals(List.of("read", "grep", "glob", "bash"), center.spawnRequest.tools());
+        assertEquals(Optional.of("openai"), center.spawnRequest.provider());
+        assertEquals(Optional.of("gpt-5.4-mini"), center.spawnRequest.model());
+        assertEquals(Optional.of("code-reviewer"), center.spawnRequest.agentRole());
+        assertEquals(Optional.of("Review code precisely."), center.spawnRequest.initialSystemPrompt());
+    }
+
+    @Test
+    void spawnExplicitEmptyToolsAndNonBlankModelValuesOverrideExpertDefaults() {
+        RecordingAgentCenter center = new RecordingAgentCenter();
+        SpawnAgentTool tool = new SpawnAgentTool(runtime(), center, List.of(expert()));
+
+        ToolResult<String> result = tool.execute(Map.of(
+            "task_name", "review-auth",
+            "message", "Review auth changes.",
+            "agent", "code-reviewer",
+            "provider", "anthropic",
+            "model", " ",
+            "tools", List.of()
+        ), context(), ignored -> {
+        });
+
+        assertFalse(result.isError(), result.output());
+        assertEquals(List.of("read", "grep", "glob"), center.spawnRequest.tools());
+        assertEquals(Optional.of("anthropic"), center.spawnRequest.provider());
+        assertEquals(Optional.of("gpt-5.4"), center.spawnRequest.model());
+    }
+
+    @Test
+    void spawnRejectsUnknownExpertsAndInvalidConfiguredToolsBeforeStartingChild() {
+        RecordingAgentCenter unknownCenter = new RecordingAgentCenter();
+        SpawnAgentTool unknownTool = new SpawnAgentTool(runtime(), unknownCenter, List.of(expert()));
+        ExpertAgentDefinition invalidExpert = new ExpertAgentDefinition(
+            "invalid-expert",
+            "openai",
+            "gpt-5.4",
+            "Prompt",
+            List.of("missing_tool"),
+            Path.of("/repo/.ly-pi/agents/invalid-expert.yaml")
+        );
+        RecordingAgentCenter invalidCenter = new RecordingAgentCenter();
+        SpawnAgentTool invalidTool = new SpawnAgentTool(runtime(), invalidCenter, List.of(invalidExpert));
+
+        ToolResult<String> unknown = unknownTool.execute(Map.of(
+            "task_name", "review-auth",
+            "message", "Review auth changes.",
+            "agent", "missing-agent"
+        ), context(), ignored -> {
+        });
+        ToolResult<String> invalid = invalidTool.execute(Map.of(
+            "task_name", "review-auth",
+            "message", "Review auth changes.",
+            "agent", "invalid-expert"
+        ), context(), ignored -> {
+        });
+
+        assertTrue(unknown.isError());
+        assertTrue(unknown.output().contains("missing-agent"));
+        assertTrue(invalid.isError());
+        assertTrue(invalid.output().contains("missing_tool"));
+        assertEquals(null, unknownCenter.spawnRequest);
+        assertEquals(null, invalidCenter.spawnRequest);
     }
 
     @Test
@@ -268,6 +361,17 @@ class SubagentToolsTest {
                 ToolAbortSupport.METADATA_ABORT_SIGNAL, abortSignal,
                 ToolSteeringSupport.METADATA_STEERING_MESSAGES, steeringMessages
             )
+        );
+    }
+
+    private ExpertAgentDefinition expert() {
+        return new ExpertAgentDefinition(
+            "code-reviewer",
+            "openai",
+            "gpt-5.4",
+            "Review code precisely.",
+            List.of("bash"),
+            Path.of("/repo/.ly-pi/agents/code-reviewer.yaml")
         );
     }
 

@@ -60,6 +60,7 @@ class ResourceLocationResolverTest {
             assertThat(userRoot.resolve("memories")).doesNotExist();
             assertThat(userRoot.resolve("skills")).isDirectory();
             assertThat(userRoot.resolve("prompts")).isDirectory();
+            assertThat(userRoot.resolve("agents")).isDirectory().isEmptyDirectory();
             assertThat(userRoot.resolve("skills/memory-settlement/SKILL.md")).exists();
             assertThat(Files.readString(userRoot.resolve("memory.md")))
                 .contains("~/.ly-pi/memory/")

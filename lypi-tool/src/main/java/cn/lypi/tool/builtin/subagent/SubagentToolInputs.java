@@ -15,6 +15,7 @@ final class SubagentToolInputs {
     private static final Set<String> SPAWN_FIELDS = Set.of(
         "task_name",
         "message",
+        "agent",
         "tools",
         "provider",
         "model",
@@ -29,6 +30,7 @@ final class SubagentToolInputs {
         List<String> errors = exactFields(input, SPAWN_FIELDS);
         requireString(input, "task_name", errors);
         requireString(input, "message", errors);
+        validateOptionalString(input, "agent", errors);
         validateOptionalString(input, "provider", errors);
         validateOptionalString(input, "model", errors);
         tryValue(errors, () -> tools(input));

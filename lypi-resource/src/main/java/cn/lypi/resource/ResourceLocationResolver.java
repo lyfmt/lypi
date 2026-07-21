@@ -173,6 +173,7 @@ class ResourceLocationResolver {
             Files.createDirectories(normalized.resolve("memory"));
             Files.createDirectories(normalized.resolve("skills"));
             Files.createDirectories(normalized.resolve("prompts"));
+            Files.createDirectories(normalized.resolve("agents"));
             createFileIfMissing(normalized.resolve("application.yml"), DEFAULT_APPLICATION_YML);
             createFileIfMissing(normalized.resolve("memory.md"), DEFAULT_MEMORY_INDEX);
             createFileIfMissing(
