@@ -18,6 +18,7 @@ import java.util.Map;
 final class TuiRenderer {
     private static final String INPUT_BACKGROUND = "\033[48;5;236m";
     private static final String USER_MESSAGE = "\033[38;5;81m";
+    private static final String STEERING_MESSAGE = "\033[2;38;5;245m";
     private static final String THINKING_MESSAGE = "\033[38;5;244m";
     private static final String INPUT_BORDER = "\033[38;5;240m";
     private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
@@ -111,7 +112,13 @@ final class TuiRenderer {
                 case TuiErrorBlock error -> "error: " + error.message();
             };
             if (block instanceof TuiMessageBlock message) {
-                if ("user".equalsIgnoreCase(message.role())) {
+                if ("steering".equalsIgnoreCase(message.role())) {
+                    appendWithinBudget(
+                        lines,
+                        styledLines(prefixedLines("steering: ", message.content(), width), STEERING_MESSAGE),
+                        lineBudget
+                    );
+                } else if ("user".equalsIgnoreCase(message.role())) {
                     appendWithinBudget(lines, styledLines(prefixedLines("user: ", message.content(), width), USER_MESSAGE), lineBudget);
                 } else {
                     appendWithinBudget(lines, markdownRenderer.render(message.content(), width), lineBudget);

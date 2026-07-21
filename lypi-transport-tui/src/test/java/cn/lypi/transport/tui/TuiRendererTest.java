@@ -316,6 +316,40 @@ class TuiRendererTest {
     }
 
     @Test
+    void rendersPendingSteeringWithDistinctDimStyle() {
+        TuiRenderer renderer = new TuiRenderer();
+        TuiMessageBlock block = new TuiMessageBlock(
+            "pending-steering:0",
+            "pending-steering:0",
+            "steering",
+            "line one\nline two",
+            true
+        );
+
+        List<String> lines = renderer.renderTranscriptBlocks(List.of(block), 40, false, Integer.MAX_VALUE);
+
+        assertEquals("\033[2;38;5;245msteering: line one\033[0m", lines.getFirst());
+        assertEquals("\033[2;38;5;245m          line two\033[0m", lines.get(1));
+        assertTrue(lines.stream().noneMatch(line -> line.contains("\n")));
+        assertFalse(lines.getFirst().startsWith("\033[38;5;81m"));
+
+        List<String> narrow = renderer.renderTranscriptBlocks(
+            List.of(new TuiMessageBlock(
+                "pending-steering:1",
+                "pending-steering:1",
+                "steering",
+                "averylongword\nline two",
+                true
+            )),
+            8,
+            false,
+            Integer.MAX_VALUE
+        );
+        assertTrue(narrow.stream().noneMatch(line -> line.contains("\n")));
+        assertTrue(narrow.stream().allMatch(line -> AnsiWidth.displayWidth(line) <= 8));
+    }
+
+    @Test
     void rendersMultilineThinkingWithoutEmbeddedNewlines() {
         TuiRenderer renderer = new TuiRenderer();
         TuiViewModel view = new TuiViewModel(

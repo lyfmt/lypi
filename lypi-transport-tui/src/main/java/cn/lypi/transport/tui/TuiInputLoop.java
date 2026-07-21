@@ -1,5 +1,8 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.tui.TuiBlock;
+import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.ResumeSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
@@ -8,6 +11,7 @@ import cn.lypi.contracts.tui.TuiViewModel;
 import cn.lypi.contracts.skill.SkillDescriptor;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.skill.SkillMention;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -250,6 +254,17 @@ final class TuiInputLoop {
             handleCtrlC();
             return;
         }
+        if (key == TerminalKey.UP && editor.text().isBlank()) {
+            Optional<SteeringMessage> recalled = submitHandler.recallPendingSteering();
+            if (recalled.isPresent()) {
+                editor.replaceDraft(recalled.orElseThrow().userInput());
+                slashOverlayClosed = false;
+                skillBindings.clear();
+                skillSuppressions.clear();
+                render();
+                return;
+            }
+        }
         if (key == TerminalKey.UP && editor.canMoveVisualUp(layout.width())) {
             editor.moveVisualUp(layout.width());
             render();
@@ -378,8 +393,15 @@ final class TuiInputLoop {
         TuiViewModel view = viewSupplier.get();
         Optional<PermissionPromptView> prompt = view.permissionPrompt();
         syncPermissionSelection(prompt);
+        List<TuiBlock> blocks = new ArrayList<>(view.blocks());
+        List<SteeringMessage> pending = submitHandler.pendingSteeringMessages();
+        for (int index = 0; index < pending.size(); index++) {
+            SteeringMessage message = pending.get(index);
+            String id = "pending-steering:" + index;
+            blocks.add(new TuiMessageBlock(id, id, "steering", message.userInput(), true));
+        }
         return new TuiViewModel(
-            view.blocks(),
+            blocks,
             view.statusBar(),
             view.runtimeLine(),
             view.files(),

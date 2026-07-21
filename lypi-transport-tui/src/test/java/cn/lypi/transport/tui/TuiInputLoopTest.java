@@ -2,10 +2,16 @@ package cn.lypi.transport.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.context.ContentBlockKind;
 import cn.lypi.contracts.security.PermissionOption;
 import cn.lypi.contracts.security.PermissionOptionKind;
+import cn.lypi.contracts.event.MessageBlockSnapshot;
+import cn.lypi.contracts.event.MessageEndEvent;
+import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.tui.BranchSummaryOffer;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.ResumeSessionController;
@@ -608,6 +614,86 @@ class TuiInputLoopTest {
         assertEquals(0, submit.exits);
         assertEquals(2, submit.interrupts);
         assertEquals(List.of("esc", "ctrl-c"), submit.interruptReasons);
+    }
+
+    @Test
+    void pendingSteeringIsProjectedAsLiveSpecialMessageUntilConsumed() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        submit.pendingSteering.add(new SteeringMessage("second", List.of()));
+        TuiEventReducer reducer = new TuiEventReducer();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 6),
+            reducer::view
+        );
+
+        TuiMessageBlock pending = assertInstanceOf(
+            TuiMessageBlock.class,
+            loop.viewForRender().blocks().getLast()
+        );
+        assertEquals("pending-steering:0", pending.blockId());
+        assertEquals("pending-steering:0", pending.messageId());
+        assertEquals("steering", pending.role());
+        assertEquals("second", pending.content());
+        assertTrue(pending.streaming());
+
+        submit.pendingSteering.clear();
+        reducer.reduce(new MessageStartEvent(
+            "ses_1", "msg_user", MessageRole.USER, MessageKind.TEXT, Map.of(), Instant.EPOCH
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot("msg_user:text:0", ContentBlockKind.TEXT, "second", Map.of())),
+            Optional.empty(),
+            Optional.empty(),
+            Map.of(),
+            Instant.EPOCH
+        ));
+
+        List<TuiBlock> settledBlocks = loop.viewForRender().blocks();
+        assertEquals(1, settledBlocks.size());
+        TuiMessageBlock settled = assertInstanceOf(TuiMessageBlock.class, settledBlocks.getFirst());
+        assertEquals("user", settled.role());
+        assertEquals("second", settled.content());
+        assertFalse(settled.streaming());
+    }
+
+    @Test
+    void upOnEmptyDraftRecallsAndCancelsAllPendingSteering() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        submit.pendingSteering.add(new SteeringMessage("second", List.of()));
+        submit.pendingSteering.add(new SteeringMessage("third", List.of()));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("second\nthird", loop.draft());
+        assertEquals(List.of(), submit.pendingSteering);
+    }
+
+    @Test
+    void upKeepsVisualCursorNavigationAheadOfRecallForMultilineDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        SteeringMessage pending = new SteeringMessage("pending", List.of());
+        submit.pendingSteering.add(pending);
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 6));
+        loop.acceptPaste("abcde\nxy\n123456");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("abcde\nxy\n123456", loop.draft());
+        assertEquals(8, loop.cursor());
+        assertEquals(List.of(pending), submit.pendingSteering);
     }
 
     @Test
@@ -1353,6 +1439,7 @@ class TuiInputLoopTest {
     private static final class RecordingSubmitHandler implements TuiSubmitHandler {
         private final List<String> submitted = new ArrayList<>();
         private final List<List<SkillMention>> skillMentions = new ArrayList<>();
+        private final List<SteeringMessage> pendingSteering = new ArrayList<>();
         private final List<String> permissionOptions = new ArrayList<>();
         private final List<String> resumes = new ArrayList<>();
         private final List<String> interruptReasons = new ArrayList<>();
@@ -1369,6 +1456,27 @@ class TuiInputLoopTest {
         public void submitUserInput(String input, List<SkillMention> skillMentions) {
             submitted.add(input);
             this.skillMentions.add(skillMentions);
+        }
+
+        @Override
+        public List<SteeringMessage> pendingSteeringMessages() {
+            return List.copyOf(pendingSteering);
+        }
+
+        @Override
+        public Optional<SteeringMessage> recallPendingSteering() {
+            if (pendingSteering.isEmpty()) {
+                return Optional.empty();
+            }
+            String userInput = pendingSteering.stream()
+                .map(SteeringMessage::userInput)
+                .collect(java.util.stream.Collectors.joining("\n"));
+            List<SkillMention> mentions = pendingSteering.stream()
+                .flatMap(message -> message.skillMentions().stream())
+                .distinct()
+                .toList();
+            pendingSteering.clear();
+            return Optional.of(new SteeringMessage(userInput, mentions));
         }
 
         @Override
