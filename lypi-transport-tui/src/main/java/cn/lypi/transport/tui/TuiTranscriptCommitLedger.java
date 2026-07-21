@@ -26,6 +26,11 @@ final class TuiTranscriptCommitLedger {
         }
         return List.copyOf(newlyCommitted);
     }
+
+    void reset() {
+        projectionKey = null;
+        committedBlockIds.clear();
+    }
 }
 
 record TuiProjectionKey(String sessionId, String leafId) {

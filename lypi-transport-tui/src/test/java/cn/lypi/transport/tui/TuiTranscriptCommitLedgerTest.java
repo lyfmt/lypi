@@ -36,6 +36,20 @@ class TuiTranscriptCommitLedgerTest {
     }
 
     @Test
+    void resetStartsNewCommitEpochForSameProjection() {
+        TuiProjectionKey key = new TuiProjectionKey("ses_1", "leaf_1");
+        TuiTranscriptCommitLedger ledger = new TuiTranscriptCommitLedger();
+        TuiMessageBlock user = message("user");
+
+        assertEquals(List.of(user), ledger.advance(key, List.of(user)));
+        assertEquals(List.of(), ledger.advance(key, List.of(user)));
+
+        ledger.reset();
+
+        assertEquals(List.of(user), ledger.advance(key, List.of(user)));
+    }
+
+    @Test
     void stablePrefixRegressionDoesNotRecommitBlocksOrBlockLaterCommits() {
         TuiProjectionKey key = new TuiProjectionKey("ses_1", "leaf_1");
         TuiTranscriptCommitLedger ledger = new TuiTranscriptCommitLedger();
