@@ -2,6 +2,7 @@ package cn.lypi.boot.tool;
 
 import cn.lypi.contracts.runtime.AgentCenterPort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
+import cn.lypi.contracts.runtime.AiProviderRuntimePort;
 import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.mcp.McpTransport;
 import cn.lypi.contracts.runtime.Executor;
@@ -24,8 +25,10 @@ import cn.lypi.tool.PermissionUpdateStore;
 import cn.lypi.tool.FilteredToolRuntime;
 import cn.lypi.tool.MemoryConsolidationToolRuntime;
 import cn.lypi.tool.MemoryConsolidationWritePolicy;
+import cn.lypi.tool.ModelPermissionReviewer;
 import cn.lypi.tool.PermissionGate;
 import cn.lypi.tool.PermissionPromptPort;
+import cn.lypi.tool.PermissionReviewer;
 import cn.lypi.tool.PermissionResponseGate;
 import cn.lypi.tool.ToolRuntimeOptions;
 import cn.lypi.tool.builtin.BuiltInTools;
@@ -177,6 +180,7 @@ public class LyPiToolAutoConfiguration {
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionResponseGate> responseGate,
         ObjectProvider<PermissionPromptPort> promptPort,
+        ObjectProvider<AiProviderRuntimePort> aiProvider,
         ObjectProvider<ResourceRuntimePort> resourceRuntime,
         ObjectProvider<McpClientManagerFactory> mcpClientManagerFactory,
         McpClientManagerLifecycle mcpClientManagerLifecycle,
@@ -188,6 +192,10 @@ public class LyPiToolAutoConfiguration {
         ResourceRuntimePort resolvedResourceRuntime = resourceRuntime.getIfAvailable();
         McpClientManagerFactory resolvedMcpClientManagerFactory = mcpClientManagerFactory.getIfAvailable();
         ObjectMapper resolvedObjectMapper = objectMapper.getIfAvailable(ObjectMapper::new);
+        AiProviderRuntimePort resolvedAiProvider = aiProvider.getIfAvailable();
+        PermissionReviewer permissionReviewer = resolvedAiProvider == null
+            ? PermissionReviewer.denying()
+            : new ModelPermissionReviewer(resolvedAiProvider);
         String configuredCwd = environment.getProperty("lypi.runtime.cwd", ".");
         return new ToolRuntimeFactoryPort() {
             @Override
@@ -236,7 +244,8 @@ public class LyPiToolAutoConfiguration {
                     securityRuntime,
                     runtimeResponseGate,
                     runtimePromptPort,
-                    new FilePermissionAmendmentStore(runtimeCwd)
+                    new FilePermissionAmendmentStore(runtimeCwd),
+                    permissionReviewer
                 );
                 BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
                 WebResultStore webResultStore = webResultStore(webProperties, runtimeCwd);
@@ -377,7 +386,8 @@ public class LyPiToolAutoConfiguration {
         SecurityRuntimePort securityRuntime,
         PermissionResponseGate responseGate,
         PermissionPromptPort promptPort,
-        PermissionUpdateStore permissionUpdateStore
+        PermissionUpdateStore permissionUpdateStore,
+        PermissionReviewer permissionReviewer
     ) {
         if (eventBus != null && responseGate != null) {
             return new DefaultToolRuntime(
@@ -390,7 +400,8 @@ public class LyPiToolAutoConfiguration {
                 securityRuntime,
                 responseGate,
                 eventBus,
-                permissionUpdateStore
+                permissionUpdateStore,
+                permissionReviewer
             );
         }
         return new DefaultToolRuntime(
@@ -403,7 +414,8 @@ public class LyPiToolAutoConfiguration {
             securityRuntime,
             permissionGate(eventBus, promptPort),
             eventBus,
-            permissionUpdateStore
+            permissionUpdateStore,
+            permissionReviewer
         );
     }
 

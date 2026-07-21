@@ -107,6 +107,29 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     public DefaultToolRuntime(
         ToolRuntimeOptions options,
         SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        EventBus eventBus,
+        PermissionReviewer permissionReviewer
+    ) {
+        this(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(normalizeOptions(options)),
+            ToolExecutionInterceptors.noop(),
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionGate),
+            lifecyclePublisher(eventBus),
+            normalizeOptions(options),
+            PermissionUpdateStore.noop(),
+            permissionReviewer
+        );
+    }
+
+    public DefaultToolRuntime(
+        ToolRuntimeOptions options,
+        SecurityRuntimePort securityRuntime,
         PermissionResponseGate permissionResponseGate,
         EventBus eventBus
     ) {
@@ -171,6 +194,35 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             lifecyclePublisher(eventBus),
             ToolRuntimeOptions.defaults(),
             permissionUpdateStore
+        );
+    }
+
+    public DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionResponseGate permissionResponseGate,
+        EventBus eventBus,
+        PermissionUpdateStore permissionUpdateStore,
+        PermissionReviewer permissionReviewer
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionResponseGate),
+            lifecyclePublisher(eventBus),
+            ToolRuntimeOptions.defaults(),
+            permissionUpdateStore,
+            permissionReviewer
         );
     }
 
@@ -272,6 +324,35 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             lifecyclePublisher(eventBus),
             ToolRuntimeOptions.defaults(),
             permissionUpdateStore
+        );
+    }
+
+    public DefaultToolRuntime(
+        ToolRegistry registry,
+        ToolSchemaValidator schemaValidator,
+        ToolExecutionPlanner executionPlanner,
+        ToolResultBudgeter resultBudgeter,
+        ToolRuntimeContextFactory contextFactory,
+        ToolExecutionInterceptor interceptor,
+        SecurityRuntimePort securityRuntime,
+        PermissionGate permissionGate,
+        EventBus eventBus,
+        PermissionUpdateStore permissionUpdateStore,
+        PermissionReviewer permissionReviewer
+    ) {
+        this(
+            registry,
+            schemaValidator,
+            executionPlanner,
+            resultBudgeter,
+            contextFactory,
+            interceptor,
+            securityRuntime,
+            eventPublishingPermissionGate(eventBus, permissionGate),
+            lifecyclePublisher(eventBus),
+            ToolRuntimeOptions.defaults(),
+            permissionUpdateStore,
+            permissionReviewer
         );
     }
 
