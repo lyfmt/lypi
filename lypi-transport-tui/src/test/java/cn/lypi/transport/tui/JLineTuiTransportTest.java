@@ -620,12 +620,27 @@ class JLineTuiTransportTest {
 
         transport.drainInputForTest();
         transport.renderCurrentFrameUnderUiLock();
+
+        String output = io.output.toString();
+        assertEquals(1, occurrences(output, "\033[2J"));
+        assertEquals(1, occurrences(output, "\033[3J"));
+        assertTrue(output.indexOf("\033[2J") < output.indexOf("\033[3J"));
+        String replacementFrame = output.substring(output.indexOf("\033[3J") + "\033[3J".length());
+        assertTrue(replacementFrame.contains("restored context"));
+        assertTrue(replacementFrame.contains("> "));
+        assertFalse(replacementFrame.contains("old prompt"));
+        assertFalse(replacementFrame.contains("LY-PI"));
+
+        io.output.setLength(0);
         events.emit(new ErrorEvent("ses_1", "err_old", "old", Instant.parse("2026-06-09T00:00:00Z")));
         events.emit(new ErrorEvent("ses_old", "err_new", "new", Instant.parse("2026-06-09T00:00:00Z")));
+        transport.flushPendingFrameForTest();
 
         assertEquals(Optional.of("ses_old"), events.filter.sessionId());
         assertFalse(io.output.toString().contains("error: old"));
-        assertTrue(io.output.toString().contains("restored context"));
+        assertTrue(io.output.toString().contains("error: new"));
+        assertFalse(io.output.toString().contains("\033[2J"));
+        assertFalse(io.output.toString().contains("\033[3J"));
 
         transport.close();
     }
@@ -660,13 +675,79 @@ class JLineTuiTransportTest {
 
         transport.drainInputForTest();
         transport.renderCurrentFrameUnderUiLock();
+
+        String output = io.output.toString();
+        assertEquals(1, occurrences(output, "\033[2J"));
+        assertEquals(1, occurrences(output, "\033[3J"));
+        assertTrue(output.indexOf("\033[2J") < output.indexOf("\033[3J"));
+        String replacementFrame = output.substring(output.indexOf("\033[3J") + "\033[3J".length());
+        assertTrue(replacementFrame.contains("new session context"));
+        assertTrue(replacementFrame.contains("> "));
+        assertFalse(replacementFrame.contains("/new"));
+        assertFalse(replacementFrame.contains("LY-PI"));
+
+        io.output.setLength(0);
         events.emit(new ErrorEvent("ses_1", "err_old", "old", Instant.parse("2026-06-09T00:00:00Z")));
         events.emit(new ErrorEvent("ses_new", "err_new", "new", Instant.parse("2026-06-09T00:00:00Z")));
+        transport.flushPendingFrameForTest();
 
         assertEquals(Optional.of("ses_new"), events.filter.sessionId());
         assertEquals(0, core.requests.size());
         assertFalse(io.output.toString().contains("error: old"));
-        assertTrue(io.output.toString().contains("new session context"));
+        assertTrue(io.output.toString().contains("error: new"));
+        assertFalse(io.output.toString().contains("\033[2J"));
+        assertFalse(io.output.toString().contains("\033[3J"));
+
+        transport.close();
+    }
+
+    @Test
+    void newCommandRetriesSessionReplacementAfterTerminalWriteFailure() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 12;
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingCore core = new RecordingCore();
+        RecordingSessionManager session = new RecordingSessionManager();
+        SessionRuntimeState newState = runtimeStateWithTranscript("ses_new", "leaf_new", "new session context");
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeStateWithTranscript("ses_1", "leaf_1", "old session context"),
+            core,
+            events,
+            io,
+            new QueueInputSource("/new", "\r", "\r"),
+            List.of(),
+            session,
+            emptyResources(),
+            null,
+            NOOP_DIFF_PROVIDER,
+            null,
+            () -> newState,
+            80,
+            8
+        );
+        io.output.setLength(0);
+        io.failNextWriteOf("\033[2J");
+
+        assertThrows(UncheckedIOException.class, transport::drainInputForTest);
+
+        assertTrue(io.output.toString().endsWith("\033[?2026l"));
+        io.output.setLength(0);
+
+        transport.renderCurrentFrameUnderUiLock();
+
+        String retryOutput = io.output.toString();
+        assertTrue(retryOutput.startsWith(
+            "\033[?2026h\033[r\033[0m\033[H\033[2J\033[3J\033[H"
+        ));
+        assertTrue(retryOutput.contains("new session context"));
+        io.output.setLength(0);
+
+        transport.renderCurrentFrameUnderUiLock();
+
+        assertFalse(io.output.toString().contains("\033[2J"));
+        assertFalse(io.output.toString().contains("\033[3J"));
 
         transport.close();
     }
@@ -1105,6 +1186,7 @@ class JLineTuiTransportTest {
         private int height = 4;
         private int cursorProbeQueries;
         private CursorProbeResult cursorProbeResult = new CursorProbeResult(Optional.empty(), "");
+        private String failingValue;
         private Runnable resizeCallback = () -> {
         };
 
@@ -1115,7 +1197,11 @@ class JLineTuiTransportTest {
         }
 
         @Override
-        public void write(String value) {
+        public void write(String value) throws IOException {
+            if (value.equals(failingValue)) {
+                failingValue = null;
+                throw new IOException("write failed");
+            }
             output.append(value);
         }
 
@@ -1150,6 +1236,10 @@ class JLineTuiTransportTest {
         public CursorProbeResult queryCursor(Duration timeout) {
             cursorProbeQueries++;
             return cursorProbeResult;
+        }
+
+        private void failNextWriteOf(String value) {
+            failingValue = value;
         }
     }
 

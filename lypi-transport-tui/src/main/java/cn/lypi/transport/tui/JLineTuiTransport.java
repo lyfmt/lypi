@@ -60,6 +60,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
     private SessionRuntimeState runtimeState;
     private EventSubscription subscription;
     private EventBus attachedEvents;
+    private TuiRenderIntent nextRenderIntent = TuiRenderIntent.UPDATE;
     private boolean lastRenderHeldUiLock;
     private volatile boolean terminalIoFailed;
     private int uiLockEntries;
@@ -186,7 +187,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             reducer::view,
             slashPickerSupplier,
             resumeController,
-            this::resumeRuntimeState,
+            this::replaceRuntimeState,
             skillIndexSupplier
         );
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
@@ -443,7 +444,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             router,
             runtimeState -> {
                 if (holder[0] != null) {
-                    holder[0].resumeRuntimeState(runtimeState);
+                    holder[0].replaceRuntimeState(runtimeState);
                 }
             }
         );
@@ -569,7 +570,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             router,
             runtimeState -> {
                 if (holder[0] != null) {
-                    holder[0].resumeRuntimeState(runtimeState);
+                    holder[0].replaceRuntimeState(runtimeState);
                 }
             }
         );
@@ -989,9 +990,14 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         }
     }
 
-    private void resumeRuntimeState(SessionRuntimeState state) {
-        if (attachedEvents != null) {
+    private void replaceRuntimeState(SessionRuntimeState state) {
+        synchronized (uiMonitor) {
+            if (attachedEvents == null) {
+                return;
+            }
             attach(attachedEvents, state);
+            nextRenderIntent = TuiRenderIntent.REPLACE_SESSION;
+            redrawScheduler.request();
         }
     }
 
@@ -1284,6 +1290,10 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             if (reducer == null) {
                 return;
             }
+            TuiRenderIntent renderIntent = nextRenderIntent;
+            if (renderIntent == TuiRenderIntent.REPLACE_SESSION) {
+                commitLedger.reset();
+            }
             reducer.observeRuntimeAt(clock.instant());
             TuiViewModel view = reducer.view();
             syncInputLoopToolState(view);
@@ -1300,7 +1310,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 inputLoop == null ? List.of() : inputLoop.overlayLines(),
                 inputLoop != null && inputLoop.toolOutputExpanded()
             );
-            frameSink.render(new TuiRenderBatch(historyLines, surface));
+            frameSink.render(new TuiRenderBatch(historyLines, surface, renderIntent));
+            nextRenderIntent = TuiRenderIntent.UPDATE;
         } catch (UncheckedIOException exception) {
             terminalIoFailed = true;
             throw exception;
