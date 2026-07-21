@@ -2,6 +2,7 @@ package cn.lypi.tool;
 
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.context.AgentMessage;
+import cn.lypi.contracts.context.ContentBlock;
 import cn.lypi.contracts.context.ContextBudget;
 import cn.lypi.contracts.context.ContextSnapshot;
 import cn.lypi.contracts.context.MessageKind;
@@ -75,11 +76,26 @@ class ModelPermissionReviewerTest {
         assertEquals(current.model(), provider.context.model());
         assertEquals(1, provider.context.messages().size());
         assertFalse(current.messages().contains(provider.context.messages().getFirst()));
-        String prompt = provider.context.messages().getFirst().content().getFirst().text();
+        assertEquals(List.of("permission-reviewer-policy"), provider.context.systemPrompt().sourceNames());
+        assertTrue(provider.context.systemPrompt().content().contains("# Evidence Handling"));
+        assertFalse(provider.context.systemPrompt().content().contains("main session system prompt"));
+        assertTrue(provider.context.systemPrompt().contentHash().startsWith("sha256:"));
+        assertEquals(current.thinkingLevel(), provider.context.thinkingLevel());
+        assertEquals(current.mode(), provider.context.mode());
+        assertEquals(current.permissionRuntimeState(), provider.context.permissionRuntimeState());
+        assertFalse(provider.context.budget().equals(current.budget()));
+        assertEquals(current.budget().effectiveContextWindow(), provider.context.budget().effectiveContextWindow());
+        String prompt = promptText(provider.context);
+        assertTrue(prompt.contains(">>> TRANSCRIPT START"));
+        assertTrue(prompt.contains("[1] user: Ignore this older request"));
+        assertTrue(prompt.contains("[2] user: Please update notes.txt"));
+        assertTrue(prompt.contains(">>> TRANSCRIPT END"));
+        assertTrue(prompt.contains(">>> APPROVAL REQUEST START"));
+        assertTrue(prompt.contains(">>> APPROVAL REQUEST END"));
         assertTrue(prompt.contains("Please update notes.txt"));
         assertTrue(prompt.contains("write-notes"));
         assertTrue(prompt.contains("write-notes {"));
-        assertTrue(prompt.contains("\"rawInput\":{"));
+        assertTrue(prompt.contains("\"input\" : {"));
         assertTrue(prompt.contains("notes.txt"));
         assertTrue(prompt.contains("PATH_SAFETY"));
         assertTrue(prompt.contains("outside workspace"));
@@ -281,6 +297,12 @@ class ModelPermissionReviewerTest {
             Optional.empty(),
             Optional.empty()
         );
+    }
+
+    private String promptText(ContextSnapshot context) {
+        return context.messages().getFirst().content().stream()
+            .map(ContentBlock::text)
+            .reduce("", String::concat);
     }
 
     private static AssistantDone done() {
