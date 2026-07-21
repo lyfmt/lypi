@@ -45,6 +45,7 @@ import cn.lypi.contracts.model.ProviderFallbackNotice;
 import cn.lypi.contracts.model.ProviderRetryNotice;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.memory.MemoryScope;
+import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.resource.MemorySource;
 import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
@@ -89,8 +90,10 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.skill.SkillMention;
+import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
+import cn.lypi.contracts.subagent.ExpertAgentDefinition;
 import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxMessage;
@@ -590,6 +593,57 @@ class ContractSerializationTest {
     }
 
     @Test
+    void subagentSpawnRequestRoundTripKeepsExpertIdentityAndPrompt() throws Exception {
+        SubagentSpawnRequest request = new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "review-auth",
+            "Review auth",
+            List.of("read", "grep", "glob", "bash"),
+            Optional.of("openai"),
+            Optional.of("gpt-5.4"),
+            Optional.empty(),
+            Optional.of("code-reviewer"),
+            Optional.of("Review code precisely.")
+        );
+
+        String json = mapper.writeValueAsString(request);
+
+        assertEquals(request, mapper.readValue(json, SubagentSpawnRequest.class));
+        assertTrue(json.contains("\"agentRole\":\"code-reviewer\""));
+        assertTrue(json.contains("\"initialSystemPrompt\":\"Review code precisely.\""));
+    }
+
+    @Test
+    void expertAgentDefinitionIsImmutableAndIncludedInResourceSnapshot() throws Exception {
+        List<String> tools = new java.util.ArrayList<>(List.of("bash"));
+        ExpertAgentDefinition expert = new ExpertAgentDefinition(
+            "code-reviewer",
+            "openai",
+            "gpt-5.4",
+            "Review code precisely.",
+            tools,
+            Path.of("/repo/./.ly-pi/agents/code-reviewer.yaml")
+        );
+        ResourceSnapshot snapshot = new ResourceSnapshot(
+            List.of(),
+            List.of(),
+            new SkillIndex(List.of(), List.of()),
+            List.of(),
+            List.of(),
+            List.of(expert),
+            List.of()
+        );
+
+        tools.add("write");
+
+        assertEquals(List.of("bash"), expert.tools());
+        assertEquals(Path.of("/repo/.ly-pi/agents/code-reviewer.yaml"), expert.sourceFile());
+        assertEquals(List.of(expert), snapshot.expertAgents());
+        assertEquals(expert, mapper.readValue(mapper.writeValueAsString(expert), ExpertAgentDefinition.class));
+    }
+
+    @Test
     void childSessionRequestRoundTripKeepsInitialSubagentMetadata() throws Exception {
         ChildSessionRequest request = new ChildSessionRequest(
             "ses_child",
@@ -613,6 +667,92 @@ class ContractSerializationTest {
         assertEquals(request, restored);
         assertTrue(json.contains("\"initialModel\""));
         assertTrue(json.contains("\"toolPolicy\""));
+    }
+
+    @Test
+    void childSessionRequestRoundTripKeepsInitialExpertPrompt() throws Exception {
+        ChildSessionRequest request = new ChildSessionRequest(
+            "ses_child",
+            "ses_parent",
+            "entry_spawn",
+            Path.of("/tmp/project/.ly-pi"),
+            Path.of("/tmp/project"),
+            2,
+            Optional.of("review-auth"),
+            Optional.of("code-reviewer"),
+            Optional.of("Review code precisely."),
+            Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
+            Optional.of(ThinkingLevel.HIGH),
+            Optional.of(AgentMode.EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
+            new SubagentToolPolicy(List.of("read", "bash"), List.of("read", "grep", "glob", "bash"))
+        );
+
+        String json = mapper.writeValueAsString(request);
+        ChildSessionRequest restored = mapper.readValue(json, ChildSessionRequest.class);
+
+        assertEquals(request, restored);
+        assertEquals(Optional.of("Review code precisely."), restored.initialSystemPrompt());
+    }
+
+    @Test
+    void oldSubagentJsonDefaultsNewExpertFieldsToEmpty() throws Exception {
+        SubagentSpawnRequest spawn = mapper.readValue(
+            """
+            {
+              "parentSessionId": "ses_parent",
+              "parentEntryId": "entry_parent",
+              "taskName": "review-auth",
+              "message": "Review auth",
+              "tools": [],
+              "provider": null,
+              "model": null,
+              "thinkingLevel": null
+            }
+            """,
+            SubagentSpawnRequest.class
+        );
+        ChildSessionRequest child = mapper.readValue(
+            """
+            {
+              "childSessionId": "ses_child",
+              "parentSessionId": "ses_parent",
+              "parentSpawnEntryId": "entry_spawn",
+              "sessionCwd": "/tmp/project/.ly-pi",
+              "cwd": "/tmp/project",
+              "depth": 2,
+              "agentName": null,
+              "agentRole": null,
+              "initialModel": null,
+              "initialThinkingLevel": null,
+              "initialAgentMode": null,
+              "initialPermissionRuntimeState": null,
+              "initialPermissionMode": null,
+              "toolPolicy": {"requestedTools": [], "effectiveTools": []}
+            }
+            """,
+            ChildSessionRequest.class
+        );
+
+        assertEquals(Optional.empty(), spawn.agentRole());
+        assertEquals(Optional.empty(), spawn.initialSystemPrompt());
+        assertEquals(Optional.empty(), child.initialSystemPrompt());
+    }
+
+    @Test
+    void subagentSpawnRequestRejectsPartialExpertConfiguration() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> new SubagentSpawnRequest(
+            "ses_parent",
+            "entry_parent",
+            "review-auth",
+            "Review auth",
+            List.of(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.of("code-reviewer"),
+            Optional.empty()
+        ));
     }
 
     @Test

@@ -23,6 +23,7 @@ public record ChildSessionRequest(
     int depth,
     Optional<String> agentName,
     Optional<String> agentRole,
+    Optional<String> initialSystemPrompt,
     Optional<ModelSelection> initialModel,
     Optional<ThinkingLevel> initialThinkingLevel,
     Optional<AgentMode> initialAgentMode,
@@ -52,6 +53,7 @@ public record ChildSessionRequest(
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),
+            null,
             SubagentToolPolicy.empty()
         );
     }
@@ -73,10 +75,44 @@ public record ChildSessionRequest(
         cwd = cwd == null ? sessionCwd : cwd;
         agentName = agentName == null ? Optional.empty() : agentName;
         agentRole = agentRole == null ? Optional.empty() : agentRole;
+        initialSystemPrompt = initialSystemPrompt == null ? Optional.empty() : initialSystemPrompt;
         initialModel = initialModel == null ? Optional.empty() : initialModel;
         initialThinkingLevel = initialThinkingLevel == null ? Optional.empty() : initialThinkingLevel;
         initialAgentMode = initialAgentMode == null ? Optional.empty() : initialAgentMode;
         toolPolicy = toolPolicy == null ? SubagentToolPolicy.empty() : toolPolicy;
+    }
+
+    public ChildSessionRequest(
+        String childSessionId,
+        String parentSessionId,
+        String parentSpawnEntryId,
+        Path sessionCwd,
+        Path cwd,
+        int depth,
+        Optional<String> agentName,
+        Optional<String> agentRole,
+        Optional<ModelSelection> initialModel,
+        Optional<ThinkingLevel> initialThinkingLevel,
+        Optional<AgentMode> initialAgentMode,
+        PermissionRuntimeState initialPermissionRuntimeState,
+        SubagentToolPolicy toolPolicy
+    ) {
+        this(
+            childSessionId,
+            parentSessionId,
+            parentSpawnEntryId,
+            sessionCwd,
+            cwd,
+            depth,
+            agentName,
+            agentRole,
+            Optional.empty(),
+            initialModel,
+            initialThinkingLevel,
+            initialAgentMode,
+            initialPermissionRuntimeState,
+            toolPolicy
+        );
     }
 
     public ChildSessionRequest(
@@ -103,6 +139,7 @@ public record ChildSessionRequest(
             depth,
             agentName,
             agentRole,
+            Optional.empty(),
             initialModel,
             initialThinkingLevel,
             initialAgentMode,
@@ -141,6 +178,7 @@ public record ChildSessionRequest(
         @JsonProperty("depth") int depth,
         @JsonProperty("agentName") Optional<String> agentName,
         @JsonProperty("agentRole") Optional<String> agentRole,
+        @JsonProperty("initialSystemPrompt") Optional<String> initialSystemPrompt,
         @JsonProperty("initialModel") Optional<ModelSelection> initialModel,
         @JsonProperty("initialThinkingLevel") Optional<ThinkingLevel> initialThinkingLevel,
         @JsonProperty("initialAgentMode") Optional<AgentMode> initialAgentMode,
@@ -157,6 +195,7 @@ public record ChildSessionRequest(
             depth,
             agentName,
             agentRole,
+            initialSystemPrompt,
             initialModel,
             initialThinkingLevel,
             initialAgentMode,
