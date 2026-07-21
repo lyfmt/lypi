@@ -4,7 +4,6 @@ import cn.lypi.contracts.session.AgentLifecycleEntry;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
-import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import java.time.Clock;
 import java.time.Instant;
@@ -21,25 +20,17 @@ final class SubagentRunResultProjector {
         this.idSupplier = idSupplier;
     }
 
-    static HeadlessSubagentOutput failedOutput(String childSessionId, Throwable failure) {
-        return new HeadlessSubagentOutput(
-            childSessionId,
-            SubagentRunStatus.FAILED,
-            "",
-            Optional.empty(),
-            Optional.ofNullable(failure == null ? "Subagent failed" : failure.getMessage())
-        );
-    }
-
-    AgentLifecycleEntry lifecycleEntry(DefaultAgentCenter.RunningAgent running, HeadlessSubagentOutput output) {
+    AgentLifecycleEntry lifecycleEntry(RunningSubagentRun running, HeadlessSubagentOutput output) {
         return new AgentLifecycleEntry(
             "entry_agent_" + idSupplier.get(),
-            running.parentSpawnEntryId(),
-            running.agentId(),
-            running.childSessionId(),
-            running.parentSessionId(),
+            running.lifecycleEntryId(),
+            running.agent().agentId(),
+            running.agent().childSessionId(),
+            running.agent().parentSessionId(),
             lifecycle(output.status()),
             Map.of(
+                "taskName", running.agent().taskName(),
+                "runId", running.runId(),
                 "status", output.status().name(),
                 "errorMessage", output.errorMessage().orElse("")
             ),
@@ -47,34 +38,31 @@ final class SubagentRunResultProjector {
         );
     }
 
-    MailboxMessage mailboxMessage(DefaultAgentCenter.RunningAgent running, HeadlessSubagentOutput output) {
+    MailboxMessage mailboxMessage(RunningSubagentRun running, HeadlessSubagentOutput output) {
         Instant now = Instant.now(clock);
         return new MailboxMessage(
             "mail_" + idSupplier.get(),
-            running.agentId(),
-            running.childSessionId(),
-            running.parentSessionId(),
-            running.parentSpawnEntryId(),
-            mailboxSummary(output),
-            new SubagentResultRef(
-                running.childSessionId(),
-                output.finalEntryId().orElse(""),
-                Optional.empty(),
-                Optional.of(output.status())
-            ),
+            running.agent().taskName(),
+            running.agent().agentId(),
+            running.agent().childSessionId(),
+            running.runId(),
+            running.agent().parentSessionId(),
+            running.lifecycleEntryId(),
+            output.status(),
+            completionContent(output),
+            output.finalEntryId(),
+            output.errorMessage(),
             MailboxStatus.PENDING,
             now,
             now
         );
     }
 
-    private String mailboxSummary(HeadlessSubagentOutput output) {
-        if (output.summary() != null && !output.summary().isBlank()) {
-            return output.summary();
+    private String completionContent(HeadlessSubagentOutput output) {
+        if (!output.content().isBlank()) {
+            return output.content();
         }
-        return output.errorMessage()
-            .filter(message -> !message.isBlank())
-            .orElse(output.status().name());
+        return output.errorMessage().filter(message -> !message.isBlank()).orElse(output.status().name());
     }
 
     private String lifecycle(SubagentRunStatus status) {

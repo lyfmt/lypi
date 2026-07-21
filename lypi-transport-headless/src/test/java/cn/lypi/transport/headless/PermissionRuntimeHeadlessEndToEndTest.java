@@ -26,6 +26,7 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
+import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import java.io.ByteArrayInputStream;
@@ -48,83 +49,63 @@ class PermissionRuntimeHeadlessEndToEndTest {
             new CapturingSessionFactory("entry_leaf", customPermissionRuntimeState()),
             codec
         );
-        String json = """
-            {
-              "childSessionId": "ses_child",
-              "parentSessionId": "ses_parent",
-              "parentSpawnEntryId": "entry_spawn",
-              "prompt": "run command",
-              "sessionCwd": "/tmp/project/.ly-pi",
-              "cwd": "/tmp/project",
-              "toolPolicy": {
-                "requestedTools": ["bash"],
-                "effectiveTools": ["bash"]
-              },
-              "permissionRuntimeState": {
-                "approvalPolicy": {
-                  "mode": "UNLESS_TRUSTED"
-                },
-                "activePermissionProfile": {
-                  "id": ":workspace-write"
-                },
-                "legacyBehavior": {
-                  "defaultBashRequiresEscalation": false,
-                  "allowExplicitEscalationWithoutPrompt": false,
-                  "hardSafetyEnabled": true
-                },
-                "legacyPermissionMode": "DEFAULT_EXECUTE"
-              },
-              "timeoutSeconds": 30
-            }
-            """;
+        HeadlessSubagentInput input = input(customPermissionRuntimeState(), "run command");
+        ByteArrayOutputStream request = new ByteArrayOutputStream();
+        codec.writeInput(input, request);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-        assertThat(codec.readInput(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8))).permissionRuntimeState())
+        assertThat(codec.readInput(new ByteArrayInputStream(request.toByteArray())).permissionRuntimeState())
             .isEqualTo(customPermissionRuntimeState());
-        runner.run(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), out);
+        runner.run(new ByteArrayInputStream(request.toByteArray()), out);
         HeadlessSubagentOutput output = codec.readOutput(new ByteArrayInputStream(out.toByteArray()));
 
         assertThat(agentCoreFactory.createdToolPolicy)
             .isEqualTo(new SubagentToolPolicy(List.of("bash"), List.of("bash")));
         assertThat(agentCoreFactory.agentCore.observedPermissionRuntimeState).isEqualTo(customPermissionRuntimeState());
         assertThat(output.status()).isEqualTo(SubagentRunStatus.FAILED);
-        assertThat(output.summary()).isEqualTo("approval denied");
+        assertThat(output.content()).isEqualTo("approval denied");
         assertThat(output.errorMessage()).hasValue("Child turn ended with FAILED: approval denied");
         assertThat(out.toString(StandardCharsets.UTF_8).trim()).startsWith("{").endsWith("}");
     }
 
     @Test
-    void runAcceptsLegacyPermissionModeAsCanonicalRuntimeStateForApprovedChildTurn() {
+    void runUsesCanonicalAutoPermissionRuntimeStateForApprovedChildTurn() {
         HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
         CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "done");
+        PermissionRuntimeState permissionRuntimeState = PermissionRuntimeState.forMode(PermissionMode.AUTO);
         HeadlessSubagentRunner runner = new HeadlessSubagentRunner(
             agentCoreFactory,
-            new CapturingSessionFactory("entry_final", PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS)),
+            new CapturingSessionFactory("entry_final", permissionRuntimeState),
             codec
         );
-        String json = """
-            {
-              "childSessionId": "ses_child",
-              "parentSessionId": "ses_parent",
-              "parentSpawnEntryId": "entry_spawn",
-              "prompt": "finish work",
-              "sessionCwd": "/tmp/project/.ly-pi",
-              "cwd": "/tmp/project",
-              "allowedTools": [],
-              "permissionMode": "BYPASS",
-              "timeoutSeconds": 30
-            }
-            """;
+        ByteArrayOutputStream request = new ByteArrayOutputStream();
+        codec.writeInput(input(permissionRuntimeState, "finish work"), request);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-        runner.run(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), out);
+        runner.run(new ByteArrayInputStream(request.toByteArray()), out);
         HeadlessSubagentOutput output = codec.readOutput(new ByteArrayInputStream(out.toByteArray()));
 
-        assertThat(agentCoreFactory.agentCore.observedPermissionRuntimeState)
-            .isEqualTo(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS));
+        assertThat(agentCoreFactory.agentCore.observedPermissionRuntimeState).isEqualTo(permissionRuntimeState);
         assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
-        assertThat(output.summary()).isEqualTo("done");
+        assertThat(output.content()).isEqualTo("done");
         assertThat(output.finalEntryId()).contains("entry_final");
+    }
+
+    private static HeadlessSubagentInput input(PermissionRuntimeState permissionRuntimeState, String message) {
+        return new HeadlessSubagentInput(
+            "permission-check",
+            "agent_1",
+            "ses_child",
+            "run_1",
+            "ses_parent",
+            "entry_spawn",
+            message,
+            Path.of("/tmp/project/.ly-pi"),
+            Path.of("/tmp/project"),
+            new SubagentToolPolicy(List.of("bash"), List.of("bash")),
+            permissionRuntimeState,
+            30
+        );
     }
 
     private static PermissionRuntimeState customPermissionRuntimeState() {

@@ -85,6 +85,7 @@ public final class ChildSessionService implements ChildSessionPort {
         metadata.put("parentSpawnEntryId", request.parentSpawnEntryId());
         metadata.put("depth", depth);
         request.agentName().ifPresent(value -> metadata.put("agentName", value));
+        request.agentName().ifPresent(value -> metadata.put("taskName", value));
         request.agentRole().ifPresent(value -> metadata.put("agentRole", value));
         return Map.copyOf(metadata);
     }

@@ -45,8 +45,8 @@ class AgentCompactStateBackfillTest {
                 .contains("mailboxStatus: PENDING")
                 .contains("summary: 正在检索资料")
                 .contains("wait_agent")
-                .contains("read_agent_result")
-                .contains("read_mailbox")
+                .doesNotContain("read_agent_result")
+                .doesNotContain("read_mailbox")
                 .contains("不要重复 spawn_agent");
             assertThat(item.metadata()).containsEntry("backfillType", "agent");
         });

@@ -1,6 +1,7 @@
 package cn.lypi.transport.headless;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.contracts.agent.TurnRequest;
 import cn.lypi.contracts.agent.TurnState;
@@ -14,20 +15,15 @@ import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
-import cn.lypi.contracts.security.ActivePermissionProfile;
-import cn.lypi.contracts.security.ApprovalMode;
-import cn.lypi.contracts.security.ApprovalPolicy;
-import cn.lypi.contracts.security.LegacyPermissionBehavior;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
-import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.session.ForkRequest;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.subagent.HeadlessSubagentInput;
 import cn.lypi.contracts.subagent.HeadlessSubagentOutput;
-import cn.lypi.contracts.subagent.HeadlessSubagentRunMode;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import java.io.ByteArrayInputStream;
@@ -42,392 +38,151 @@ import org.junit.jupiter.api.Test;
 
 class HeadlessSubagentRunnerTest {
     @Test
-    void runReadsJsonExecutesChildTurnAndWritesJsonOutput() {
-        CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "child final answer");
-        CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_final");
-        HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
-        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCoreFactory, sessionFactory, codec);
-        String json = """
-            {
-              "childSessionId": "ses_child",
-              "parentSessionId": "ses_parent",
-              "parentSpawnEntryId": "entry_spawn",
-              "prompt": "请审查代码",
-              "sessionCwd": "/tmp/project/.lypi-store",
-              "cwd": "/tmp/project/work",
-              "allowedTools": [],
-              "permissionMode": "DEFAULT_EXECUTE",
-              "timeoutSeconds": 30
-            }
-            """;
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
+    void executesExactlyOnePromptOnlyTurnAndReturnsIdentity() {
+        CapturingCoreFactory coreFactory = new CapturingCoreFactory(TurnStatus.COMPLETED, "inspection complete");
+        CapturingSessionFactory sessions = new CapturingSessionFactory();
+        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(coreFactory, sessions, new HeadlessSubagentJsonCodec());
 
-        runner.run(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), out);
-        HeadlessSubagentOutput output = codec.readOutput(new ByteArrayInputStream(out.toByteArray()));
+        HeadlessSubagentOutput output = runner.execute(input());
 
-        assertThat(sessionFactory.openedCwd).isEqualTo(Path.of("/tmp/project/.lypi-store"));
-        assertThat(sessionFactory.openedSessionId).isEqualTo("ses_child");
-        assertThat(agentCoreFactory.createdCwd).isEqualTo(Path.of("/tmp/project/work"));
-        assertThat(agentCoreFactory.createdSessionManager).isSameAs(sessionFactory.openedSessionManager);
-        assertThat(agentCoreFactory.agentCore.request.sessionId()).isEqualTo("ses_child");
-        assertThat(agentCoreFactory.agentCore.request.userInput()).isEqualTo("请审查代码");
+        assertThat(coreFactory.cwd).isEqualTo(Path.of("/tmp/project"));
+        assertThat(coreFactory.policy.effectiveTools()).containsExactly("read", "grep", "glob");
+        assertThat(coreFactory.request.userInput()).isEqualTo("inspect session");
+        assertThat(coreFactory.request.parentEntryId()).isEmpty();
+        assertThat(coreFactory.request.skillMentions()).isEmpty();
+        assertThat(output.taskName()).isEqualTo("inspect-session");
+        assertThat(output.agentId()).isEqualTo("agent_1");
         assertThat(output.childSessionId()).isEqualTo("ses_child");
+        assertThat(output.runId()).isEqualTo("run_1");
         assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
-        assertThat(output.summary()).isEqualTo("child final answer");
-        assertThat(output.finalEntryId()).contains("entry_final");
-        assertThat(output.finalEntryId()).hasValueSatisfying(id -> assertThat(id).doesNotContain("msg_final"));
+        assertThat(output.content()).isEqualTo("inspection complete");
     }
 
     @Test
-    void runWritesStructuredFailureForInvalidInput() {
-        HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
+    void failedChildTurnReturnsStructuredFailureWithSameIdentity() {
         HeadlessSubagentRunner runner = new HeadlessSubagentRunner(
-            new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "unused"),
-            new CapturingSessionFactory("entry_final"),
-            codec
-        );
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-
-        runner.run(new ByteArrayInputStream("not-json".getBytes(StandardCharsets.UTF_8)), out);
-        HeadlessSubagentOutput output = codec.readOutput(new ByteArrayInputStream(out.toByteArray()));
-
-        assertThat(output.status()).isEqualTo(SubagentRunStatus.FAILED);
-        assertThat(output.errorMessage()).isPresent();
-    }
-
-    @Test
-    void failedChildTurnCarriesLastSummaryInErrorMessage() {
-        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(
-            new CapturingAgentCoreFactory(TurnStatus.FAILED, "权限请求未获允许"),
-            new CapturingSessionFactory("entry_final"),
+            new CapturingCoreFactory(TurnStatus.FAILED, "permission denied"),
+            new CapturingSessionFactory(),
             new HeadlessSubagentJsonCodec()
         );
 
-        HeadlessSubagentOutput output = runner.execute(input("请调查架构"));
+        HeadlessSubagentOutput output = runner.execute(input());
 
         assertThat(output.status()).isEqualTo(SubagentRunStatus.FAILED);
-        assertThat(output.summary()).isEqualTo("权限请求未获允许");
-        assertThat(output.errorMessage()).hasValue("Child turn ended with FAILED: 权限请求未获允许");
+        assertThat(output.runId()).isEqualTo("run_1");
+        assertThat(output.errorMessage()).contains("Child turn ended with FAILED: permission denied");
     }
 
     @Test
-    void executeOpensChildSessionContextWithCanonicalPermissionRuntimeState() {
-        PermissionRuntimeState runtimeState = customPermissionRuntimeState();
-        CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "权限上下文已读取");
-        CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_final", runtimeState);
-        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCoreFactory, sessionFactory, new HeadlessSubagentJsonCodec());
-
-        HeadlessSubagentOutput output = runner.execute(new cn.lypi.contracts.subagent.HeadlessSubagentInput(
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            "验证权限上下文",
-            Path.of("/tmp/project/.lypi-store"),
-            Path.of("/tmp/project/work"),
-            List.of(),
-            new SubagentToolPolicy(List.of(), List.of()),
-            runtimeState,
-            30,
-            HeadlessSubagentRunMode.START,
-            List.of()
-        ));
-
-        assertThat(agentCoreFactory.agentCore.observedPermissionRuntimeState).isEqualTo(runtimeState);
-        assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
-    }
-
-    @Test
-    void runWritesPureJsonStructuredFailureWhenChildPermissionApprovalFails() {
+    void runWritesOnlyStructuredJson() {
         HeadlessSubagentJsonCodec codec = new HeadlessSubagentJsonCodec();
         HeadlessSubagentRunner runner = new HeadlessSubagentRunner(
-            new CapturingAgentCoreFactory(TurnStatus.FAILED, "权限请求未获允许"),
-            new CapturingSessionFactory("entry_final"),
+            new CapturingCoreFactory(TurnStatus.COMPLETED, "done"),
+            new CapturingSessionFactory(),
             codec
         );
-        String json = """
-            {
-              "childSessionId": "ses_child",
-              "parentSessionId": "ses_parent",
-              "parentSpawnEntryId": "entry_spawn",
-              "prompt": "请运行需要审批的命令",
-              "sessionCwd": "/tmp/project/.lypi-store",
-              "cwd": "/tmp/project/work",
-              "allowedTools": ["bash"],
-              "permissionRuntimeState": {
-                "approvalPolicy": {
-                  "mode": "ON_REQUEST"
-                },
-                "activePermissionProfile": {
-                  "id": ":workspace"
-                },
-                "legacyBehavior": {
-                  "defaultBashRequiresEscalation": false,
-                  "allowExplicitEscalationWithoutPrompt": false,
-                  "hardSafetyEnabled": true
-                },
-                "legacyPermissionMode": "DEFAULT_EXECUTE"
-              },
-              "timeoutSeconds": 30
-            }
-            """;
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream request = new ByteArrayOutputStream();
+        codec.writeInput(input(), request);
+        ByteArrayOutputStream response = new ByteArrayOutputStream();
 
-        runner.run(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), out);
-        String stdout = out.toString(StandardCharsets.UTF_8);
-        HeadlessSubagentOutput output = codec.readOutput(new ByteArrayInputStream(out.toByteArray()));
+        runner.run(new ByteArrayInputStream(request.toByteArray()), response);
 
+        String stdout = response.toString(StandardCharsets.UTF_8);
         assertThat(stdout.trim()).startsWith("{").endsWith("}");
-        assertThat(stdout).doesNotContain("Started LyPiApplication");
-        assertThat(output.status()).isEqualTo(SubagentRunStatus.FAILED);
-        assertThat(output.summary()).isEqualTo("权限请求未获允许");
-        assertThat(output.errorMessage()).hasValue("Child turn ended with FAILED: 权限请求未获允许");
+        assertThat(codec.readOutput(new ByteArrayInputStream(response.toByteArray())).content()).isEqualTo("done");
     }
 
     @Test
-    void continueModeUsesCurrentLeafAsTurnParentEntryId() {
-        CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "继续后的结果");
-        CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_previous_leaf");
-        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCoreFactory, sessionFactory, new HeadlessSubagentJsonCodec());
-
-        HeadlessSubagentOutput output = runner.execute(new cn.lypi.contracts.subagent.HeadlessSubagentInput(
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            "继续执行",
-            Path.of("/tmp/project/.lypi-store"),
-            Path.of("/tmp/project/work"),
-            new SubagentToolPolicy(List.of(), List.of()),
-            PermissionMode.ASK,
-            30,
-            HeadlessSubagentRunMode.CONTINUE
-        ));
-
-        assertThat(agentCoreFactory.agentCore.request.parentEntryId()).contains("entry_previous_leaf");
-        assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
-    }
-
-    @Test
-    void passesToolPolicyToAgentCoreFactoryForChildToolFiltering() {
-        CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "工具策略已透传");
-        CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_final");
-        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCoreFactory, sessionFactory, new HeadlessSubagentJsonCodec());
-        SubagentToolPolicy toolPolicy = new SubagentToolPolicy(
-            List.of("read", "bash"),
-            List.of("read", "grep", "glob", "bash")
+    void rejectsMissingRunIdentity() {
+        HeadlessSubagentInput invalid = new HeadlessSubagentInput(
+            "inspect-session", "agent_1", "ses_child", "", "ses_parent", "entry_spawn", "inspect",
+            Path.of("/tmp/project"), Path.of("/tmp/project"), SubagentToolPolicy.empty(),
+            PermissionRuntimeState.forMode(PermissionMode.AUTO), 30
+        );
+        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(
+            new CapturingCoreFactory(TurnStatus.COMPLETED, "done"),
+            new CapturingSessionFactory(),
+            new HeadlessSubagentJsonCodec()
         );
 
-        HeadlessSubagentOutput output = runner.execute(new cn.lypi.contracts.subagent.HeadlessSubagentInput(
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            "验证工具策略",
-            Path.of("/tmp/project/.lypi-store"),
-            Path.of("/tmp/project/work"),
-            toolPolicy,
-            PermissionMode.AUTO,
-            30,
-            HeadlessSubagentRunMode.START
-        ));
-
-        assertThat(agentCoreFactory.createdToolPolicy).isEqualTo(toolPolicy);
-        assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
+        assertThatThrownBy(() -> runner.execute(invalid))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("runId is required");
     }
 
-    @Test
-    void passesSkillMentionsToChildTurnRequest() {
-        CapturingAgentCoreFactory agentCoreFactory = new CapturingAgentCoreFactory(TurnStatus.COMPLETED, "skill 已注入");
-        CapturingSessionFactory sessionFactory = new CapturingSessionFactory("entry_final");
-        HeadlessSubagentRunner runner = new HeadlessSubagentRunner(agentCoreFactory, sessionFactory, new HeadlessSubagentJsonCodec());
-        SkillMention skill = new SkillMention("doc", Path.of("/tmp/project/.ly-pi/skills/doc/SKILL.md"));
-
-        HeadlessSubagentOutput output = runner.execute(new cn.lypi.contracts.subagent.HeadlessSubagentInput(
+    private HeadlessSubagentInput input() {
+        return new HeadlessSubagentInput(
+            "inspect-session",
+            "agent_1",
             "ses_child",
+            "run_1",
             "ses_parent",
             "entry_spawn",
-            "使用 $doc",
-            Path.of("/tmp/project/.lypi-store"),
-            Path.of("/tmp/project/work"),
-            new SubagentToolPolicy(List.of(), List.of()),
-            PermissionMode.ASK,
-            30,
-            HeadlessSubagentRunMode.START,
-            List.of(skill)
-        ));
-
-        assertThat(agentCoreFactory.agentCore.request.skillMentions()).containsExactly(skill);
-        assertThat(output.status()).isEqualTo(SubagentRunStatus.SUCCEEDED);
-    }
-
-    private cn.lypi.contracts.subagent.HeadlessSubagentInput input(String prompt) {
-        return new cn.lypi.contracts.subagent.HeadlessSubagentInput(
-            "ses_child",
-            "ses_parent",
-            "entry_spawn",
-            prompt,
-            Path.of("/tmp/project/.lypi-store"),
-            Path.of("/tmp/project/work"),
-            new SubagentToolPolicy(List.of(), List.of()),
-            PermissionMode.ASK,
-            30,
-            null
+            "inspect session",
+            Path.of("/tmp/sessions"),
+            Path.of("/tmp/project"),
+            new SubagentToolPolicy(List.of(), List.of("read", "grep", "glob")),
+            PermissionRuntimeState.forMode(PermissionMode.AUTO),
+            30
         );
     }
 
-    private PermissionRuntimeState customPermissionRuntimeState() {
-        return new PermissionRuntimeState(
-            new ApprovalPolicy(ApprovalMode.UNLESS_TRUSTED),
-            new ActivePermissionProfile(":workspace-write"),
-            cn.lypi.contracts.security.PermissionProfiles.workspace(),
-            new LegacyPermissionBehavior(false, false, false),
-            PermissionMode.ASK
-        );
-    }
+    private static final class CapturingCoreFactory implements AgentCoreFactoryPort {
+        private final TurnStatus status;
+        private final String text;
+        private Path cwd;
+        private SubagentToolPolicy policy;
+        private TurnRequest request;
 
-    private static final class CapturingAgentCoreFactory implements AgentCoreFactoryPort {
-        private final CapturingAgentCore agentCore;
-        private Path createdCwd;
-        private SessionManagerPort createdSessionManager;
-        private SubagentToolPolicy createdToolPolicy;
-
-        private CapturingAgentCoreFactory(TurnStatus status, String finalText) {
-            this.agentCore = new CapturingAgentCore(status, finalText);
+        private CapturingCoreFactory(TurnStatus status, String text) {
+            this.status = status;
+            this.text = text;
         }
 
         @Override
         public AgentCorePort create(Path cwd, SessionManagerPort sessionManager) {
-            this.createdCwd = cwd;
-            this.createdSessionManager = sessionManager;
-            agentCore.observedPermissionRuntimeState = sessionManager
-                .context(sessionManager.currentView().leafId())
-                .permissionRuntimeState();
-            return agentCore;
+            return create(cwd, sessionManager, SubagentToolPolicy.empty());
         }
 
         @Override
-        public AgentCorePort create(Path cwd, SessionManagerPort sessionManager, SubagentToolPolicy toolPolicy) {
-            this.createdCwd = cwd;
-            this.createdSessionManager = sessionManager;
-            this.createdToolPolicy = toolPolicy;
-            agentCore.observedPermissionRuntimeState = sessionManager
-                .context(sessionManager.currentView().leafId())
-                .permissionRuntimeState();
-            return agentCore;
-        }
-    }
-
-    private static final class CapturingAgentCore implements AgentCorePort {
-        private final TurnStatus status;
-        private final String finalText;
-        private TurnRequest request;
-        private PermissionRuntimeState observedPermissionRuntimeState;
-
-        private CapturingAgentCore(TurnStatus status, String finalText) {
-            this.status = status;
-            this.finalText = finalText;
-        }
-
-        @Override
-        public TurnState execute(TurnRequest request) {
-            this.request = request;
-            AgentMessage message = new AgentMessage(
-                "msg_final",
-                MessageRole.ASSISTANT,
-                MessageKind.TEXT,
-                List.<ContentBlock>of(new TextContentBlock(finalText, Map.of())),
-                Instant.parse("2026-06-09T00:00:00Z"),
-                Optional.empty(),
-                Optional.empty()
-            );
-            return new TurnState("turn_child", request.sessionId(), null, List.of(message), 0, status);
+        public AgentCorePort create(Path cwd, SessionManagerPort sessionManager, SubagentToolPolicy policy) {
+            this.cwd = cwd;
+            this.policy = policy;
+            return request -> {
+                this.request = request;
+                AgentMessage message = new AgentMessage(
+                    "msg_final",
+                    MessageRole.ASSISTANT,
+                    MessageKind.TEXT,
+                    List.<ContentBlock>of(new TextContentBlock(text, Map.of())),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                );
+                return new TurnState("turn_1", request.sessionId(), null, List.of(message), 0, status);
+            };
         }
     }
 
     private static final class CapturingSessionFactory implements SessionManagerFactoryPort {
-        private final String leafId;
-        private final PermissionRuntimeState permissionRuntimeState;
-        private Path openedCwd;
-        private String openedSessionId;
-        private SessionManagerPort openedSessionManager;
-
-        private CapturingSessionFactory(String leafId) {
-            this(leafId, PermissionRuntimeState.fromLegacy(PermissionMode.ASK));
-        }
-
-        private CapturingSessionFactory(String leafId, PermissionRuntimeState permissionRuntimeState) {
-            this.leafId = leafId;
-            this.permissionRuntimeState = permissionRuntimeState;
-        }
-
         @Override
         public SessionManagerPort open(Path cwd, String sessionId) {
-            this.openedCwd = cwd;
-            this.openedSessionId = sessionId;
-            this.openedSessionManager = new MinimalSessionManager(sessionId, leafId, permissionRuntimeState);
-            return openedSessionManager;
+            return new MinimalSession(sessionId);
         }
     }
 
-    private record MinimalSessionManager(
-        String sessionId,
-        String leafId,
-        PermissionRuntimeState permissionRuntimeState
-    ) implements SessionManagerPort {
-        @Override
-        public SessionHandle openOrCreate(String sessionId) {
-            throw new UnsupportedOperationException();
+    private record MinimalSession(String sessionId) implements SessionManagerPort {
+        @Override public SessionHandle openOrCreate(String sessionId) { return null; }
+        @Override public SessionHandle append(SessionEntry entry) { return null; }
+        @Override public SessionHandle switchLeaf(String leafId) { return null; }
+        @Override public List<SessionEntry> branch(String leafId) { return List.of(); }
+        @Override public SessionView currentView() { return new SessionView(sessionId, "entry_final"); }
+        @Override public SessionView view(String leafId) { return currentView(); }
+        @Override public List<AgentMessage> transcript(String leafId) { return List.of(); }
+        @Override public SessionContext context(String leafId) {
+            return new SessionContext(List.of(), List.of(), List.of(), null, null, null, PermissionMode.AUTO);
         }
-
-        @Override
-        public SessionHandle append(SessionEntry entry) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle switchLeaf(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public List<SessionEntry> branch(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionView currentView() {
-            return new SessionView(sessionId, leafId);
-        }
-
-        @Override
-        public SessionView view(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public List<AgentMessage> transcript(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionContext context(String leafId) {
-            return new SessionContext(
-                List.of(),
-                List.of(),
-                List.of(),
-                null,
-                null,
-                null,
-                permissionRuntimeState
-            );
-        }
-
-        @Override
-        public SessionHandle appendMessage(AgentMessage message) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle fork(ForkRequest request) {
-            throw new UnsupportedOperationException();
-        }
+        @Override public SessionHandle appendMessage(AgentMessage message) { return null; }
+        @Override public SessionHandle fork(ForkRequest request) { return null; }
     }
 }

@@ -89,13 +89,14 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
                         lifecycle.childSessionId(),
                         lifecycle.parentSessionId(),
                         lifecycle.id(),
-                        Optional.empty(),
+                        taskName(lifecycle),
                         Optional.empty(),
                         AgentRunStatus.UNKNOWN
                     )
                 );
                 record.childSessionId = lifecycle.childSessionId();
                 record.parentSessionId = lifecycle.parentSessionId();
+                record.agentName = firstPresent(taskName(lifecycle), record.agentName);
                 record.status = status(lifecycle.lifecycle());
             }
         }
@@ -145,16 +146,15 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
                     running.childSessionId(),
                     running.parentSessionId(),
                     running.parentSpawnEntryId(),
-                    running.agentName(),
-                    running.agentRole(),
+                    Optional.ofNullable(running.taskName()),
+                    Optional.empty(),
                     AgentRunStatus.RUNNING
                 )
             );
             record.childSessionId = running.childSessionId();
             record.parentSessionId = running.parentSessionId();
             record.parentSpawnEntryId = running.parentSpawnEntryId();
-            record.agentName = firstPresent(running.agentName(), record.agentName);
-            record.agentRole = firstPresent(running.agentRole(), record.agentRole);
+            record.agentName = firstPresent(Optional.ofNullable(running.taskName()), record.agentName);
             record.status = AgentRunStatus.RUNNING;
         }
     }
@@ -169,12 +169,10 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
 
     private AgentView view(AgentRecord record, MailboxMessage mailboxMessage) {
         Optional<MailboxStatus> mailboxStatus = mailboxMessage == null ? Optional.empty() : Optional.of(mailboxMessage.status());
-        Optional<String> summary = mailboxMessage == null || blank(mailboxMessage.summary())
+        Optional<String> summary = mailboxMessage == null || blank(mailboxMessage.content())
             ? Optional.empty()
-            : Optional.of(mailboxMessage.summary());
-        Optional<String> finalEntryId = mailboxMessage == null || blank(mailboxMessage.contentRef().finalEntryId())
-            ? Optional.empty()
-            : Optional.of(mailboxMessage.contentRef().finalEntryId());
+            : Optional.of(mailboxMessage.content());
+        Optional<String> finalEntryId = mailboxMessage == null ? Optional.empty() : mailboxMessage.finalEntryId();
         return new AgentView(
             record.agentId(),
             label(record),
@@ -207,11 +205,7 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
         if (record.status() != AgentRunStatus.UNKNOWN || mailboxMessage == null) {
             return record.status();
         }
-        Optional<AgentRunStatus> status = mailboxMessage.contentRef().status().map(this::agentRunStatus);
-        if (status.isPresent()) {
-            return status.orElseThrow();
-        }
-        return blank(mailboxMessage.contentRef().finalEntryId()) ? AgentRunStatus.FAILED : AgentRunStatus.SUCCEEDED;
+        return agentRunStatus(mailboxMessage.runStatus());
     }
 
     private AgentRunStatus agentRunStatus(cn.lypi.contracts.subagent.SubagentRunStatus status) {
@@ -238,6 +232,13 @@ public final class DefaultAgentRegistry implements AgentRegistryPort {
             return AgentRunStatus.TIMED_OUT;
         }
         return AgentRunStatus.UNKNOWN;
+    }
+
+    private Optional<String> taskName(AgentLifecycleEntry lifecycle) {
+        Object value = lifecycle.metadata().get("taskName");
+        return value instanceof String taskName && !taskName.isBlank()
+            ? Optional.of(taskName)
+            : Optional.empty();
     }
 
     private Optional<String> firstPresent(Optional<String> preferred, Optional<String> fallback) {
