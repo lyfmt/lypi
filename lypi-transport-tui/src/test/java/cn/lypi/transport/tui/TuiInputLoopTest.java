@@ -360,6 +360,23 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void ctrlCWithDraftAndPendingSteeringInterruptsTurnBeforeClearingDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        SteeringMessage pending = new SteeringMessage("pending", List.of());
+        submit.pendingSteering.add(pending);
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+        loop.acceptText("draft");
+        loop.setInterruptibleRunning(true);
+
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals(List.of("ctrl-c"), submit.interruptReasons);
+        assertEquals("draft", loop.draft());
+        assertEquals(List.of(pending), submit.pendingSteering);
+    }
+
+    @Test
     void escapeInterruptsActiveToolWithoutRequiringInputFocus() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = testLoop(submit, ignored -> {

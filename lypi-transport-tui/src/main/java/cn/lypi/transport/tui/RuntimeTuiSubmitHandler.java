@@ -206,11 +206,12 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
             TurnRequest current = request;
             while (current != null) {
                 TurnState state = core.execute(current);
-                if (state != null && state.status() != TurnStatus.COMPLETED) {
+                TurnStatus status = state == null ? TurnStatus.COMPLETED : state.status();
+                if (status == TurnStatus.COMPLETED || status == TurnStatus.ABORTED) {
+                    current = nextRequestOrFinish(turn, current.maxToolRounds());
+                } else {
                     discardAndFinish(turn);
                     current = null;
-                } else {
-                    current = nextRequestOrFinish(turn, current.maxToolRounds());
                 }
             }
         } finally {
@@ -230,7 +231,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
 
     private TurnRequest nextRequestOrFinish(ActiveTurn turn, int maxToolRounds) {
         synchronized (activeTurnLock) {
-            if (activeTurn != turn || turn.signal.aborted()) {
+            if (activeTurn != turn) {
                 clearActiveTurn(turn);
                 return null;
             }
@@ -240,11 +241,14 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
                 return null;
             }
             SteeringMessage message = next.orElseThrow();
+            MutableAbortSignal signal = new MutableAbortSignal();
+            turn.signal = signal;
+            activeSignal = signal;
             return new TurnRequest(
                 turn.sessionId,
                 message.userInput(),
                 Optional.empty(),
-                turn.signal,
+                signal,
                 maxToolRounds,
                 message.skillMentions(),
                 () -> pollSteering(turn)
@@ -380,7 +384,6 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     public void requestInterrupt(String reason) {
         synchronized (activeTurnLock) {
             if (activeTurn != null) {
-                activeTurn.steering.clear();
                 activeTurn.signal.abort();
             } else if (activeSignal != null) {
                 activeSignal.abort();
@@ -465,7 +468,7 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
 
     private static final class ActiveTurn {
         private final String sessionId;
-        private final MutableAbortSignal signal;
+        private MutableAbortSignal signal;
         private final ArrayDeque<SteeringMessage> steering = new ArrayDeque<>();
 
         private ActiveTurn(String sessionId, MutableAbortSignal signal) {

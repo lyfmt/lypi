@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.agent.SteeringMessage;
@@ -290,37 +289,66 @@ class RuntimeTuiSubmitHandlerTest {
     }
 
     @Test
-    void interruptAbortsActiveTurnAndDiscardsQueuedSteering() {
-        SteeringRecordingCore core = new SteeringRecordingCore();
+    void interruptWithPendingSteeringStartsMergedFreshTurnAfterAbort() {
+        AbortAwareCore core = new AbortAwareCore();
         RecordingEventBus events = new RecordingEventBus();
         QueuedExecutor executor = new QueuedExecutor();
         RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
 
         handler.submitUserInput("first");
-        handler.submitUserInput("queued steering");
+        handler.submitUserInput("second");
+        handler.submitUserInput("third");
         handler.requestInterrupt("ctrl-c");
         executor.runNext();
 
+        assertEquals(List.of("first", "second\nthird"), core.requests.stream().map(TurnRequest::userInput).toList());
         assertTrue(core.requests.getFirst().abortSignal().aborted());
-        assertNull(core.steering);
+        assertNotSame(core.requests.getFirst().abortSignal(), core.requests.get(1).abortSignal());
+        assertFalse(core.requests.get(1).abortSignal().aborted());
         InterruptEvent event = assertInstanceOf(InterruptEvent.class, events.published.getFirst());
         assertEquals("ctrl-c", event.reason());
     }
 
     @Test
-    void steeringSubmittedAfterInterruptIsNotVisibleToAbortedTurn() {
-        SteeringRecordingCore core = new SteeringRecordingCore();
+    void steeringSubmittedAfterInterruptBeforeCoreReturnsStartsFreshTurn() throws Exception {
+        BlockingAbortAwareCore core = new BlockingAbortAwareCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events);
+
+        handler.submitUserInput("first");
+        assertTrue(core.started.await(2, TimeUnit.SECONDS));
+        TurnRequest first = core.requests.getFirst();
+        handler.requestInterrupt("ctrl-c");
+        handler.submitUserInput("submitted after interrupt");
+
+        assertTrue(first.abortSignal().aborted());
+        assertTrue(first.steeringMessages().poll().isEmpty());
+        assertEquals(List.of("first"), core.requests.stream().map(TurnRequest::userInput).toList());
+
+        core.release.countDown();
+        assertTrue(core.secondStarted.await(2, TimeUnit.SECONDS));
+        assertEquals(
+            List.of("first", "submitted after interrupt"),
+            core.requests.stream().map(TurnRequest::userInput).toList()
+        );
+        assertNotSame(first.abortSignal(), core.requests.get(1).abortSignal());
+        assertFalse(core.requests.get(1).abortSignal().aborted());
+    }
+
+    @Test
+    void interruptWithoutPendingSteeringDoesNotStartAnotherTurn() {
+        AbortAwareCore core = new AbortAwareCore();
         RecordingEventBus events = new RecordingEventBus();
         QueuedExecutor executor = new QueuedExecutor();
         RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
 
         handler.submitUserInput("first");
         handler.requestInterrupt("ctrl-c");
-        handler.submitUserInput("submitted after interrupt");
         executor.runNext();
 
-        assertNull(core.steering);
         assertEquals(List.of("first"), core.requests.stream().map(TurnRequest::userInput).toList());
+        assertTrue(core.requests.getFirst().abortSignal().aborted());
+        assertFalse(handler.hasPendingSteeringMessages());
     }
 
     @Test
@@ -757,6 +785,41 @@ class RuntimeTuiSubmitHandlerTest {
             requests.add(request);
             steering = request.steeringMessages().poll().orElse(null);
             return null;
+        }
+    }
+
+    private static final class AbortAwareCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
+            return new TurnState("turn-" + requests.size(), request.sessionId(), null, List.of(), 0, status);
+        }
+    }
+
+    private static final class BlockingAbortAwareCore implements AgentCorePort {
+        private final List<TurnRequest> requests = new ArrayList<>();
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final CountDownLatch secondStarted = new CountDownLatch(1);
+
+        @Override
+        public TurnState execute(TurnRequest request) {
+            requests.add(request);
+            if (requests.size() == 1) {
+                started.countDown();
+                try {
+                    release.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+            } else {
+                secondStarted.countDown();
+            }
+            TurnStatus status = request.abortSignal().aborted() ? TurnStatus.ABORTED : TurnStatus.COMPLETED;
+            return new TurnState("turn-" + requests.size(), request.sessionId(), null, List.of(), 0, status);
         }
     }
 

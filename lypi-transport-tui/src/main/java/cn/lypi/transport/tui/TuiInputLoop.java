@@ -182,6 +182,13 @@ final class TuiInputLoop {
                 return;
             }
         }
+        if ((key == TerminalKey.ESC || key == TerminalKey.CTRL_C)
+            && interruptibleRunning
+            && submitHandler.hasPendingSteeringMessages()) {
+            submitHandler.requestInterrupt(key == TerminalKey.ESC ? "esc" : "ctrl-c");
+            render();
+            return;
+        }
         TerminalInputDecision decision = inputPolicy.decide(key, inputContext(prompt));
         if (decision.action() == TerminalInputAction.SUBMIT_PERMISSION_OPTION) {
             prompt.ifPresent(value -> submitPermissionOption(value, decision.optionId().orElse("")));
