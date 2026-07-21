@@ -1,6 +1,7 @@
 package cn.lypi.contracts.security;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.Objects;
 
@@ -34,34 +35,47 @@ public record PermissionRuntimeState(
     }
 
     /**
-     * 从旧权限模式派生 canonical runtime state。
-     *
-     * NOTE: 新代码不得把 PermissionMode 作为权限判定依据。
+     * 从公开权限模式派生 canonical runtime state。
      */
-    public static PermissionRuntimeState fromLegacy(PermissionMode legacyPermissionMode) {
-        return switch (Objects.requireNonNull(legacyPermissionMode, "legacyPermissionMode")) {
-            case DEFAULT_EXECUTE -> new PermissionRuntimeState(
-                ApprovalPolicy.fromLegacy(legacyPermissionMode),
+    public static PermissionRuntimeState forMode(PermissionMode mode) {
+        return switch (Objects.requireNonNull(mode, "mode")) {
+            case ASK -> new PermissionRuntimeState(
+                ApprovalPolicy.forMode(mode),
                 new ActivePermissionProfile(WORKSPACE_PROFILE_ID),
                 PermissionProfiles.workspace(),
                 new LegacyPermissionBehavior(false, false, true),
-                legacyPermissionMode
+                mode
             );
-            case ACCEPT_EDITS -> new PermissionRuntimeState(
-                ApprovalPolicy.fromLegacy(legacyPermissionMode),
+            case AUTO -> new PermissionRuntimeState(
+                ApprovalPolicy.forMode(mode),
                 new ActivePermissionProfile(WORKSPACE_PROFILE_ID),
                 PermissionProfiles.workspace(),
                 new LegacyPermissionBehavior(true, false, true),
-                legacyPermissionMode
+                mode
             );
             case BYPASS -> new PermissionRuntimeState(
-                ApprovalPolicy.fromLegacy(legacyPermissionMode),
+                ApprovalPolicy.forMode(mode),
                 new ActivePermissionProfile(DANGER_FULL_ACCESS_PROFILE_ID),
                 PermissionProfiles.dangerFullAccess(),
                 new LegacyPermissionBehavior(false, true, true),
-                legacyPermissionMode
+                mode
             );
         };
+    }
+
+    /**
+     * 兼容旧数据入口。旧枚举字符串已由 PermissionMode 归一化为三种公开模式。
+     */
+    public static PermissionRuntimeState fromLegacy(PermissionMode legacyPermissionMode) {
+        return forMode(legacyPermissionMode);
+    }
+
+    /**
+     * 返回权限判定使用的公开模式。
+     */
+    @JsonIgnore
+    public PermissionMode mode() {
+        return legacyPermissionMode;
     }
 
     private static PermissionProfile builtinProfileOrReadOnly(String id) {

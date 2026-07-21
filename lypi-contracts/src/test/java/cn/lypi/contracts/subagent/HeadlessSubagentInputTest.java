@@ -42,8 +42,8 @@ class HeadlessSubagentInputTest {
 
         HeadlessSubagentInput restored = mapper.readValue(json, HeadlessSubagentInput.class);
 
-        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS), restored.permissionRuntimeState());
-        assertEquals(PermissionMode.ACCEPT_EDITS, restored.permissionMode());
+        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.AUTO), restored.permissionRuntimeState());
+        assertEquals(PermissionMode.AUTO, restored.permissionMode());
     }
 
     @Test
@@ -57,7 +57,7 @@ class HeadlessSubagentInputTest {
             Path.of("/tmp/project"),
             List.of("read"),
             new SubagentToolPolicy(List.of("read"), List.of("read", "grep")),
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             30,
             HeadlessSubagentRunMode.CONTINUE,
             List.<SkillMention>of()
@@ -67,9 +67,9 @@ class HeadlessSubagentInputTest {
         HeadlessSubagentInput restored = mapper.readValue(json, HeadlessSubagentInput.class);
 
         assertTrue(json.contains("\"permissionRuntimeState\""));
-        assertTrue(json.contains("\"permissionMode\":\"DEFAULT_EXECUTE\""));
+        assertTrue(json.contains("\"permissionMode\":\"ask\""));
         assertEquals(input.permissionRuntimeState(), restored.permissionRuntimeState());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, restored.permissionMode());
+        assertEquals(PermissionMode.ASK, restored.permissionMode());
     }
 
     @Test

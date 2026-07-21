@@ -139,7 +139,7 @@ class ContractSerializationTest {
     void modeContractsExposeOnlySeparatedStageAndPermissionValues() {
         assertEquals(List.of(AgentMode.PLAN, AgentMode.EXECUTE), List.of(AgentMode.values()));
         assertEquals(
-            List.of(PermissionMode.DEFAULT_EXECUTE, PermissionMode.ACCEPT_EDITS, PermissionMode.BYPASS),
+            List.of(PermissionMode.ASK, PermissionMode.AUTO, PermissionMode.BYPASS),
             List.of(PermissionMode.values())
         );
     }
@@ -439,7 +439,7 @@ class ContractSerializationTest {
         SessionHeader restored = mapper.readValue(json, SessionHeader.class);
 
         assertTrue(json.contains("\"initialPermissionRuntimeState\""));
-        assertTrue(json.contains("\"initialPermissionMode\":\"BYPASS\""));
+        assertTrue(json.contains("\"initialPermissionMode\":\"bypass\""));
         assertEquals(runtimeState, restored.initialPermissionRuntimeState());
         assertEquals(Optional.of(PermissionMode.BYPASS), restored.initialPermissionMode());
     }
@@ -452,7 +452,7 @@ class ContractSerializationTest {
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             Instant.parse("2026-06-11T00:00:00Z")
         );
 
@@ -465,7 +465,7 @@ class ContractSerializationTest {
         assertEquals(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH), state.model());
         assertEquals(ThinkingLevel.HIGH, state.thinkingLevel());
         assertEquals(AgentMode.PLAN, state.agentMode());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, state.permissionMode());
+        assertEquals(PermissionMode.ASK, state.permissionMode());
     }
 
     @Test
@@ -540,7 +540,7 @@ class ContractSerializationTest {
             Path.of("/tmp/project/.ly-pi"),
             Path.of("/tmp/project"),
             new SubagentToolPolicy(List.of("read", "grep", "read"), List.of("read", "grep", "glob")),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30,
             HeadlessSubagentRunMode.CONTINUE,
             List.of(new SkillMention("doc", Path.of("/tmp/project/.ly-pi/skills/doc/SKILL.md")))
@@ -565,7 +565,7 @@ class ContractSerializationTest {
             Path.of("/tmp/project"),
             List.of("bash", "read"),
             List.of("read"),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             120,
             Optional.of("reviewer"),
             Optional.of("contracts")
@@ -588,7 +588,7 @@ class ContractSerializationTest {
             Path.of("/tmp/project"),
             List.of("read"),
             new SubagentToolPolicy(List.of("read"), List.of("read", "grep", "glob")),
-            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.AUTO,
             120,
             Optional.of("reviewer"),
             Optional.of("contracts"),
@@ -604,7 +604,7 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"model\""));
         assertTrue(json.contains("\"thinkingLevel\":\"HIGH\""));
         assertTrue(json.contains("\"agentMode\":\"PLAN\""));
-        assertTrue(json.contains("\"permissionMode\":\"ACCEPT_EDITS\""));
+        assertTrue(json.contains("\"permissionMode\":\"auto\""));
     }
 
     @Test
@@ -615,13 +615,13 @@ class ContractSerializationTest {
             "请检查 contracts",
             Path.of("/tmp/project"),
             List.of("read"),
-            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.AUTO,
             120,
             Optional.empty(),
             Optional.empty()
         );
 
-        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.ACCEPT_EDITS), request.permissionRuntimeState());
+        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.AUTO), request.permissionRuntimeState());
         assertTrue(request.permissionModeSpecified());
     }
 
@@ -676,7 +676,7 @@ class ContractSerializationTest {
             Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
             Optional.of(ThinkingLevel.HIGH),
             Optional.of(AgentMode.EXECUTE),
-            Optional.of(PermissionMode.DEFAULT_EXECUTE),
+            Optional.of(PermissionMode.ASK),
             new SubagentToolPolicy(List.of("read", "bash"), List.of("read", "grep", "glob", "bash"))
         );
 
@@ -751,7 +751,7 @@ class ContractSerializationTest {
             Path.of("/tmp/project"),
             List.of("bash", "read"),
             new SubagentToolPolicy(List.of("bash", "read"), List.of("read", "grep", "glob", "bash")),
-            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.AUTO,
             90,
             Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)),
             Optional.of(ThinkingLevel.HIGH),
@@ -765,7 +765,7 @@ class ContractSerializationTest {
         assertTrue(json.contains("\"model\""));
         assertTrue(json.contains("\"thinkingLevel\":\"HIGH\""));
         assertTrue(json.contains("\"agentMode\":\"EXECUTE\""));
-        assertTrue(json.contains("\"permissionMode\":\"ACCEPT_EDITS\""));
+        assertTrue(json.contains("\"permissionMode\":\"auto\""));
     }
 
     @Test
