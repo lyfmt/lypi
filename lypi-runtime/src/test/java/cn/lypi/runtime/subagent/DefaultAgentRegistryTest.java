@@ -41,7 +41,7 @@ class DefaultAgentRegistryTest {
         );
         ParentSession parent = new ParentSession(List.of(spawned, finished));
         DefaultMailboxService mailbox = new DefaultMailboxService(
-            new JsonlMailboxStore(tempDir), parent, Clock.systemUTC()
+            new JsonlMailboxStore(tempDir), Clock.systemUTC()
         );
         mailbox.publish(new MailboxMessage(
             "mail_1", "inspect-session", "agent_1", "ses_child", "run_1", "ses_parent", "entry_spawn",

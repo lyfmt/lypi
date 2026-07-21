@@ -40,6 +40,7 @@ import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AgentCenterPort;
+import cn.lypi.contracts.runtime.AgentCommunicationPort;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.AgentRegistryPort;
@@ -51,7 +52,6 @@ import cn.lypi.contracts.runtime.CompactionRequest;
 import cn.lypi.contracts.runtime.CompactionResult;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
-import cn.lypi.contracts.runtime.MailboxPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
@@ -85,9 +85,6 @@ import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.subagent.AgentRunStatus;
 import cn.lypi.contracts.subagent.AgentView;
-import cn.lypi.contracts.subagent.MailboxMessage;
-import cn.lypi.contracts.subagent.MailboxStatus;
-import cn.lypi.contracts.subagent.SubagentResultRef;
 import cn.lypi.contracts.subagent.SubagentRunStatus;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
@@ -114,13 +111,12 @@ import cn.lypi.runtime.memory.MemoryConsolidationTurnEndListener;
 import cn.lypi.runtime.subagent.AgentCompactStateBackfill;
 import cn.lypi.runtime.subagent.ChildAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.DefaultAgentRegistry;
-import cn.lypi.runtime.subagent.MailboxDeliveryGuard;
+import cn.lypi.runtime.subagent.DefaultMailboxService;
 import cn.lypi.runtime.subagent.RunningAgentSnapshotProvider;
 import cn.lypi.runtime.subagent.SubagentProcessRunner;
 import cn.lypi.session.SessionManagerImpl;
 import cn.lypi.transport.tui.AgentSlashCommandHandler;
 import cn.lypi.transport.tui.JLineTuiTransportFactory;
-import cn.lypi.transport.tui.MailboxSlashCommandHandler;
 import cn.lypi.tool.FilePermissionAmendmentStore;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
@@ -1304,21 +1300,22 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
-    void createsDefaultSubagentRuntimeBeansWithConservativeDeliveryGuard() {
+    void createsDefaultSimplifiedSubagentRuntimeBeans() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
             .run(context -> {
                 assertThat(context).hasSingleBean(SessionManagerFactoryPort.class);
                 assertThat(context).hasSingleBean(ChildSessionPort.class);
                 assertThat(context).hasSingleBean(SessionManagerPort.class);
-                assertThat(context).hasSingleBean(MailboxPort.class);
+                assertThat(context).hasSingleBean(DefaultMailboxService.class);
+                assertThat(context).hasSingleBean(AgentCommunicationPort.class);
                 assertThat(context).hasSingleBean(SubagentProcessRunner.class);
                 assertThat(context).hasSingleBean(AgentCenterPort.class);
                 assertThat(context).hasSingleBean(AgentRegistryPort.class);
                 assertThat(context).hasSingleBean(CompactStateBackfillPort.class);
                 assertThat(context.getBean(AgentRegistryPort.class)).isInstanceOf(DefaultAgentRegistry.class);
                 assertThat(context.getBean(CompactStateBackfillPort.class)).isInstanceOf(AgentCompactStateBackfill.class);
-                assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(null)).isFalse();
+                assertThat(context).doesNotHaveBean("mailboxSlashCommandHandler");
             });
     }
 
@@ -1457,62 +1454,13 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
-    void defaultDeliveryGuardAllowsSameIdleSessionWhenRuntimeStateExists() {
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
-            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
-            .withBean(SessionManagerPort.class, () -> new BranchingSessionManager(true))
-            .run(context -> {
-                MailboxDeliveryGuard guard = context.getBean(MailboxDeliveryGuard.class);
-
-                assertThat(guard.canDeliver(mail("ses_parent"))).isTrue();
-                assertThat(guard.canDeliver(mail("ses_other"))).isFalse();
-            });
-    }
-
-    @Test
-    void defaultDeliveryGuardKeepsMailboxPendingWhenCurrentBranchMovedAwayFromSpawnEntry() {
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
-            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
-            .withBean(SessionManagerPort.class, () -> new BranchingSessionManager(false))
-            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
-    }
-
-    @Test
-    void defaultDeliveryGuardKeepsMailboxPendingWhenRuntimeStateHasRunningTool() {
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
-            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", true))
-            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
-    }
-
-    @Test
-    void defaultDeliveryGuardKeepsMailboxPendingWhenRuntimeStateHasPendingInteraction() {
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
-            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false, true, false, false))
-            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
-
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
-            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false, false, true, false))
-            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
-
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
-            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false, false, false, true))
-            .run(context -> assertThat(context.getBean(MailboxDeliveryGuard.class).canDeliver(mail("ses_parent"))).isFalse());
-    }
-
-    @Test
     void bindsSubagentCommandToRunnerAndAgentCenter() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
             .withPropertyValues(
                 "lypi.subagent.command[0]=python3",
                 "lypi.subagent.command[1]=-c",
-                "lypi.subagent.command[2]=import json, sys; data=json.load(sys.stdin); print(json.dumps({'childSessionId':data['childSessionId'],'status':'SUCCEEDED','summary':'ok','finalEntryId':'msg_final'}))"
+                "lypi.subagent.command[2]=import json, sys; data=json.load(sys.stdin); print(json.dumps({'taskName':data['taskName'],'agentId':data['agentId'],'childSessionId':data['childSessionId'],'runId':data['runId'],'status':'SUCCEEDED','content':'ok','finalEntryId':'msg_final'}))"
             )
             .run(context -> {
                 SessionManagerPort sessionManager = context.getBean(SessionManagerPort.class);
@@ -1531,11 +1479,10 @@ class LyPiRuntimeAutoConfigurationTest {
                 SubagentSpawnResult result = agentCenter.spawn(new SubagentSpawnRequest(
                     "ses_parent",
                     sessionManager.currentView().leafId(),
+                    "execution-check",
                     "执行检查",
-                    tempDir,
-                    List.of(),
-                    PermissionMode.ASK,
-                    30,
+                    List.of("read", "grep", "glob"),
+                    java.util.Optional.empty(),
                     java.util.Optional.empty(),
                     java.util.Optional.empty()
                 ));
@@ -1603,39 +1550,6 @@ class LyPiRuntimeAutoConfigurationTest {
     }
 
     @Test
-    void keepsUserProvidedMailboxPortWithoutRequiringDefaultAgentCenter() {
-        MailboxPort mailbox = new NoopMailbox();
-
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
-            .withBean(MailboxPort.class, () -> mailbox)
-            .run(context -> {
-                assertThat(context).hasSingleBean(MailboxPort.class);
-                assertThat(context.getBean(MailboxPort.class)).isSameAs(mailbox);
-                assertThat(context).doesNotHaveBean(AgentCenterPort.class);
-            });
-    }
-
-    @Test
-    void registersMailboxSlashCommandHandlerWithRuntimeStateSession() {
-        NoopMailbox mailbox = new NoopMailbox();
-
-        new ApplicationContextRunner()
-            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
-            .withBean(MailboxPort.class, () -> mailbox)
-            .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
-            .run(context -> {
-                MailboxSlashCommandHandler handler = context.getBean(MailboxSlashCommandHandler.class);
-
-                handler.handle(Map.of("action", "list"));
-
-                assertThat(handler.command().name()).isEqualTo("mailbox");
-                assertThat(mailbox.readSessionId).isEqualTo("ses_parent");
-                assertThat(mailbox.readStatuses).containsExactly(MailboxStatus.PENDING);
-            });
-    }
-
-    @Test
     void registersAgentSlashCommandHandlerWithRuntimeStateSession() {
         RecordingAgentRegistry registry = new RecordingAgentRegistry();
         RecordingAgentCenter agentCenter = new RecordingAgentCenter();
@@ -1660,12 +1574,10 @@ class LyPiRuntimeAutoConfigurationTest {
 
     @Test
     void exposesTuiSlashCommandsFromRegisteredHandlers() {
-        NoopMailbox mailbox = new NoopMailbox();
         RecordingAgentRegistry registry = new RecordingAgentRegistry();
 
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
-            .withBean(MailboxPort.class, () -> mailbox)
             .withBean(AgentRegistryPort.class, () -> registry)
             .withBean(SessionRuntimeState.class, () -> sessionState("ses_parent", false))
             .run(context -> {
@@ -1673,7 +1585,7 @@ class LyPiRuntimeAutoConfigurationTest {
 
                 assertThat(slashCommands)
                     .extracting(command -> ((SlashCommand) command).name())
-                    .containsExactly("mailbox", "agent");
+                    .containsExactly("agent");
             });
     }
 
@@ -1781,21 +1693,6 @@ class LyPiRuntimeAutoConfigurationTest {
         );
     }
 
-    private static MailboxMessage mail(String parentSessionId) {
-        return new MailboxMessage(
-            "mail_1",
-            "agent_1",
-            "ses_child",
-            parentSessionId,
-            "entry_spawn",
-            "完成摘要",
-            new SubagentResultRef("ses_child", "entry_final", java.util.Optional.empty()),
-            MailboxStatus.PENDING,
-            Instant.EPOCH,
-            Instant.EPOCH
-        );
-    }
-
     private static cn.lypi.contracts.session.MessageEntry messageEntry(
         String id,
         String parentId,
@@ -1857,36 +1754,6 @@ class LyPiRuntimeAutoConfigurationTest {
         }
     }
 
-    private static final class NoopMailbox implements MailboxPort {
-        private String readSessionId;
-        private java.util.Set<MailboxStatus> readStatuses;
-
-        @Override
-        public List<cn.lypi.contracts.subagent.MailboxMessage> read(
-            String sessionId,
-            java.util.Set<cn.lypi.contracts.subagent.MailboxStatus> statuses
-        ) {
-            readSessionId = sessionId;
-            readStatuses = statuses;
-            return List.of();
-        }
-
-        @Override
-        public cn.lypi.contracts.subagent.MailboxCommandResult accept(String sessionId, String mailId) {
-            return cn.lypi.contracts.subagent.MailboxCommandResult.failure("not used");
-        }
-
-        @Override
-        public cn.lypi.contracts.subagent.MailboxCommandResult stash(String sessionId, String mailId) {
-            return cn.lypi.contracts.subagent.MailboxCommandResult.failure("not used");
-        }
-
-        @Override
-        public cn.lypi.contracts.subagent.MailboxCommandResult discard(String sessionId, String mailId) {
-            return cn.lypi.contracts.subagent.MailboxCommandResult.failure("not used");
-        }
-    }
-
     private static final class RecordingAgentRegistry implements AgentRegistryPort {
         private String parentSessionId;
         private java.util.Set<AgentRunStatus> statuses;
@@ -1914,8 +1781,10 @@ class LyPiRuntimeAutoConfigurationTest {
         }
 
         @Override
-        public Optional<cn.lypi.contracts.subagent.HeadlessSubagentOutput> readResult(String childSessionId) {
-            return Optional.empty();
+        public cn.lypi.contracts.subagent.SubagentWaitResult waitFor(
+            cn.lypi.contracts.subagent.SubagentWaitRequest request
+        ) {
+            return cn.lypi.contracts.subagent.SubagentWaitResult.timedOut();
         }
     }
 
@@ -1954,75 +1823,6 @@ class LyPiRuntimeAutoConfigurationTest {
         @Override
         public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
             return List.of();
-        }
-    }
-
-    private static final class BranchingSessionManager implements SessionManagerPort {
-        private final boolean branchContainsSpawnEntry;
-
-        private BranchingSessionManager(boolean branchContainsSpawnEntry) {
-            this.branchContainsSpawnEntry = branchContainsSpawnEntry;
-        }
-
-        @Override
-        public SessionHandle openOrCreate(String sessionId) {
-            return new SessionHandle(sessionId, null, "leaf-1", Map.of());
-        }
-
-        @Override
-        public SessionHandle openTemporary(String sessionId) {
-            return openOrCreate(sessionId);
-        }
-
-        @Override
-        public SessionHandle append(SessionEntry entry) {
-            return new SessionHandle("ses_parent", null, entry.id(), Map.of());
-        }
-
-        @Override
-        public SessionHandle switchLeaf(String leafId) {
-            return new SessionHandle("ses_parent", null, leafId, Map.of());
-        }
-
-        @Override
-        public List<SessionEntry> branch(String leafId) {
-            if (!branchContainsSpawnEntry) {
-                return List.of(new SessionInfoEntry("entry_other", null, Map.of(), Instant.EPOCH));
-            }
-            return List.of(
-                new SessionInfoEntry("entry_spawn", null, Map.of(), Instant.EPOCH),
-                new SessionInfoEntry(leafId, "entry_spawn", Map.of(), Instant.EPOCH)
-            );
-        }
-
-        @Override
-        public SessionView currentView() {
-            return new SessionView("ses_parent", "leaf-1");
-        }
-
-        @Override
-        public SessionView view(String leafId) {
-            return new SessionView("ses_parent", leafId);
-        }
-
-        @Override
-        public List<AgentMessage> transcript(String leafId) {
-            return List.of();
-        }
-
-        @Override
-        public SessionContext context(String leafId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SessionHandle appendMessage(AgentMessage message) {
-            return new SessionHandle("ses_parent", null, message.id(), Map.of());
-        }
-
-        @Override
-        public SessionHandle fork(ForkRequest request) {
-            throw new UnsupportedOperationException();
         }
     }
 

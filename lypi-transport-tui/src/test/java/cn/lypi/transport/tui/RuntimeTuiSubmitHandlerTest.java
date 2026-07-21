@@ -454,24 +454,24 @@ class RuntimeTuiSubmitHandlerTest {
     void externalSlashCommandRunsHandlerAndPublishesLocalOutputWithoutStartingTurn() {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
-        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("mailId: mail_1");
+        RecordingSlashCommandHandler slash = new RecordingSlashCommandHandler("target: item_1");
         RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
             "ses_1",
             core,
             events,
             Runnable::run,
-            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), slash))
+            List.of(new SlashCommand("custom", "测试外部命令", List.of(), slash))
         );
 
-        handler.submitUserInput("/mailbox accept mail_1");
+        handler.submitUserInput("/custom action=inspect target=item_1");
 
         assertTrue(core.requests.isEmpty());
-        assertEquals(Map.of("action", "accept", "mailId", "mail_1"), slash.arguments);
+        assertEquals(Map.of("action", "inspect", "target", "item_1"), slash.arguments);
         MessageStartEvent start = assertInstanceOf(MessageStartEvent.class, events.published.getFirst());
         assertEquals("ses_1", start.sessionId());
         MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(1));
         assertEquals("ses_1", delta.sessionId());
-        assertEquals("mailId: mail_1", delta.delta());
+        assertEquals("target: item_1", delta.delta());
         assertInstanceOf(MessageEndEvent.class, events.published.get(2));
     }
 
@@ -505,7 +505,7 @@ class RuntimeTuiSubmitHandlerTest {
             core,
             events,
             Runnable::run,
-            List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+            List.of(new SlashCommand("custom", "测试外部命令", List.of(), new RecordingSlashCommandHandler("")))
         );
 
         handler.submitUserInput("hello");
@@ -529,7 +529,7 @@ class RuntimeTuiSubmitHandlerTest {
                 session,
                 emptyResources(),
                 null,
-                List.of(new SlashCommand("mailbox", "读取 mailbox", List.of(), new RecordingSlashCommandHandler("")))
+                List.of(new SlashCommand("custom", "测试外部命令", List.of(), new RecordingSlashCommandHandler("")))
             )
         );
 

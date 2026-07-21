@@ -29,7 +29,7 @@
 | `lypi-security` | 权限 profile 编译、Bash 风险分析、前缀规则匹配、路径安全、网络策略和审批策略判断。 |
 | `lypi-resource` | context file、memory、Skill、Prompt Template、MCP 配置发现，以及系统提示词构建。 |
 | `lypi-runtime` | 事件总线、AgentCenter、mailbox、子进程管理、运行中 agent 快照和后台记忆沉淀。 |
-| `lypi-transport-headless` | 子代理 stdin/stdout JSON 协议、Headless 执行和 continue 语义。 |
+| `lypi-transport-headless` | 子代理 stdin/stdout JSON 协议和单次 Headless Run 执行。 |
 | `lypi-transport-tui` | 基于 JLine 的终端界面、输入编辑、快捷键、slash command、权限弹层、diff、mention 和渲染。 |
 | `lypi-boot` | Spring Boot 自动装配、配置绑定、启动入口、默认组件图和示例配置。 |
 
@@ -60,7 +60,7 @@
 
 Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册 `web_fetch` 和 `get_search_content`；如果 Exa 启用或至少一个商业 provider API key 可用，还会注册 `web_search`。当前 `web_search` 支持 Exa、Tavily、Brave Search 和 Perplexity Search；`web_fetch` 使用本机 HTTP client 抓取公开网页，不依赖商业 provider。
 
-子代理工具在运行层可用时另行注册，包括 `spawn_agent`、`continue_agent`、`wait_agent`、`interrupt_agent`、`read_agent_result`、`read_mailbox`、`accept_mailbox_message`、`stash_mailbox_message`、`discard_mailbox_message` 和 `list_agents`。MCP 工具通过 adapter 映射到内部 `Tool` 契约，并使用规范化名称避免与内建工具直接冲突。
+子代理运行层可用时只注册 `spawn_agent` 和 `wait_agent`。`spawn_agent` 必填 `task_name`、`message`，可选 `tools`、`provider`、`model`、`thinking_level`；不暴露 cwd、权限和 Agent mode。`tools` 只接受已注册的 canonical 工具名，在固定的 `read`、`grep`、`glob` 基础集合上追加并去重。`wait_agent` 只接受可选的 `timeout_ms`，等待当前 session 任意 subagent completion。MCP 工具通过 adapter 映射到内部 `Tool` 契约，并使用规范化名称避免与内建工具直接冲突。
 
 权限判定以 `PermissionRuntimeState` 为中心，包含审批策略、active permission profile、完整 profile、legacy behavior 和兼容用的 `legacyPermissionMode`。`PermissionMode` 仍用于旧配置、旧 JSON 和 UI 展示兼容，新运行时判定优先读取 `PermissionRuntimeState`。
 
@@ -90,9 +90,13 @@ OpenAI 兼容适配支持 Responses、Chat Completions、SSE、WebSocket 和 fal
 
 ### 子代理与入口
 
-子代理用于把独立任务交给 child session。父 agent 通过工具创建子任务，`lypi-runtime` 创建 child session、启动 Headless 子进程、记录生命周期，并把结果投递到 mailbox。父 agent 需要显式等待、读取、接受、暂存或丢弃结果，子代理输出不会自动塞回父上下文。
+子代理用于把独立任务交给 prompt-only child session。每次 `spawn_agent` 创建可读的 `taskName`、稳定的 `agentId`、独立的 `childSessionId` 和本次执行的 `runId`；当前每个 Agent 只运行一次，底层 Agent 与 Run 状态保持分离。child 只接收本次 `message`，cwd 由父 session 内部继承，不复制父对话历史。
 
-`lypi-transport-headless` 面向子代理进程，使用 stdin/stdout JSON 协议。输入包含 child session、父会话、任务提示、工作目录、工具策略、权限运行态和运行模式；输出包含状态、摘要、最终 entry 和错误信息。协议要求 stdout 保持结构化 JSON，避免污染父进程解析。
+省略 `provider`、`model` 或 `thinking_level` 时分别继承主 Agent；显式配置由模型目录校验。child 审批模式固定为 `AUTO`，继承父 session 的 active sandbox/profile，不继承父审批模式、turn 级临时授权或 `strictAutoReview`。
+
+completion 进入父 session 的持久 mailbox 后只会被消费一次。父 turn 正在执行时，它在下一模型边界作为 `AGENT_COMMUNICATION` 类型的 `SYSTEM_LOCAL` 消息注入；父 turn 正在 `wait_agent` 时，工具结果直接返回 task、Agent、child session、Run、状态和内容；父 turn 已结束时，消息保留到下一 turn。wait 与模型边界共用同一原子消费入口，不会重复投递。
+
+`lypi-transport-headless` 面向单次 child Run，使用 stdin/stdout JSON 协议。输入贯通 task、Agent、child session、Run、父会话、任务提示、工作目录、工具策略和权限运行态；输出返回相同身份、状态、内容、最终 entry 和错误信息。协议要求 stdout 保持结构化 JSON，避免污染父进程解析。
 
 `lypi-transport-tui` 通过事件 reducer 把语义事件投影成 `TuiViewModel`，再由渲染层展示。终端层包含输入编辑、历史、快捷键、slash command、文件 mention、Skill mention、权限弹层、diff 展示、Markdown 渲染和宽度计算。
 

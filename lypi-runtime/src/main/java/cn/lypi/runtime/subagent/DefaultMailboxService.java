@@ -2,9 +2,6 @@ package cn.lypi.runtime.subagent;
 
 import cn.lypi.contracts.agent.SteeringMessage;
 import cn.lypi.contracts.runtime.AgentCommunicationPort;
-import cn.lypi.contracts.runtime.MailboxPort;
-import cn.lypi.contracts.runtime.SessionManagerPort;
-import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.MailboxMessage;
 import cn.lypi.contracts.subagent.MailboxStatus;
 import cn.lypi.contracts.subagent.SubagentWaitResult;
@@ -17,13 +14,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-public final class DefaultMailboxService implements MailboxPort, AgentCommunicationPort {
+public final class DefaultMailboxService implements AgentCommunicationPort {
     private final JsonlMailboxStore store;
     private final Clock clock;
-
-    public DefaultMailboxService(JsonlMailboxStore store, SessionManagerPort sessionManager, Clock clock) {
-        this(store, clock);
-    }
 
     public DefaultMailboxService(JsonlMailboxStore store, Clock clock) {
         this.store = Objects.requireNonNull(store, "store must not be null");
@@ -35,7 +28,6 @@ public final class DefaultMailboxService implements MailboxPort, AgentCommunicat
         notifyAll();
     }
 
-    @Override
     public synchronized List<MailboxMessage> read(String sessionId, Set<MailboxStatus> statuses) {
         return store.read(sessionId, statuses);
     }
@@ -66,30 +58,6 @@ public final class DefaultMailboxService implements MailboxPort, AgentCommunicat
     @Override
     public synchronized Optional<SteeringMessage> poll(String parentSessionId) {
         return consumePending(parentSessionId).map(this::steeringMessage);
-    }
-
-    @Override
-    public synchronized MailboxCommandResult accept(String sessionId, String mailId) {
-        Optional<MailboxMessage> message = store.read(sessionId, Set.of()).stream()
-            .filter(candidate -> candidate.mailId().equals(mailId))
-            .filter(candidate -> candidate.status() == MailboxStatus.PENDING)
-            .findFirst();
-        if (message.isEmpty()) {
-            return MailboxCommandResult.failure("Mailbox message is not pending: " + mailId);
-        }
-        MailboxMessage delivered = withStatus(message.orElseThrow(), MailboxStatus.DELIVERED);
-        store.append(delivered);
-        return MailboxCommandResult.success(delivered);
-    }
-
-    @Override
-    public MailboxCommandResult stash(String sessionId, String mailId) {
-        return MailboxCommandResult.failure("Mailbox stash is not supported");
-    }
-
-    @Override
-    public MailboxCommandResult discard(String sessionId, String mailId) {
-        return MailboxCommandResult.failure("Mailbox discard is not supported");
     }
 
     private Optional<MailboxMessage> consumePending(String parentSessionId) {

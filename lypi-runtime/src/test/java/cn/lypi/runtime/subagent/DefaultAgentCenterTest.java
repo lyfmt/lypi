@@ -211,7 +211,6 @@ class DefaultAgentCenterTest {
         ControlledProcessRunner process = new ControlledProcessRunner();
         DefaultMailboxService mailbox = new DefaultMailboxService(
             new JsonlMailboxStore(tempDir),
-            parent,
             Clock.fixed(NOW, ZoneOffset.UTC)
         );
         DefaultAgentCenter center = new DefaultAgentCenter(
