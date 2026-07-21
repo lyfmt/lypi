@@ -56,10 +56,11 @@ import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
-import cn.lypi.contracts.subagent.SubagentToolPolicy;
+import cn.lypi.contracts.subagent.ExpertAgentDefinition;
 import cn.lypi.contracts.subagent.MailboxCommandResult;
 import cn.lypi.contracts.subagent.SubagentSpawnRequest;
 import cn.lypi.contracts.subagent.SubagentSpawnResult;
+import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.subagent.SubagentWaitRequest;
 import cn.lypi.contracts.subagent.SubagentWaitResult;
 import cn.lypi.tool.PermissionGateResult;
@@ -86,6 +87,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -564,6 +566,68 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
+    void loadsResourcesOnceForExpertAndMcpToolRegistration() {
+        RecordingMcpClientFactory mcpClients = new RecordingMcpClientFactory();
+        AtomicInteger loadCalls = new AtomicInteger();
+        ResourceSnapshot resources = resourceSnapshot(
+            List.of(mcpServerConfig()),
+            List.of(new ExpertAgentDefinition(
+                "code-reviewer",
+                "openai",
+                "gpt-5.4",
+                "Review code precisely.",
+                List.of("bash"),
+                Path.of("agents", "code-reviewer.yaml")
+            ))
+        );
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(AgentCenterPort.class, LyPiToolAutoConfigurationTest::agentCenter)
+            .withBean(ResourceRuntimePort.class, () -> resourceRuntimeWith(resources, loadCalls))
+            .withBean(McpClientManagerFactory.class, () -> cwd -> mcpClients.manager(cwd))
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(loadCalls).hasValue(1);
+                assertThat(expertAgentNames(runtime)).containsExactly("code-reviewer");
+                assertThat(runtime.resolve("mcp__fake__echo")).isPresent();
+            });
+    }
+
+    @Test
+    void resourceLoadFailureKeepsDefaultAndGenericSubagentToolsAvailable() {
+        AtomicInteger loadCalls = new AtomicInteger();
+        ResourceRuntimePort failingResources = new ResourceRuntimePort() {
+            @Override
+            public ResourceSnapshot load(Path cwd) {
+                loadCalls.incrementAndGet();
+                throw new IllegalStateException("resource unavailable");
+            }
+
+            @Override
+            public SystemPrompt buildSystemPrompt(ResourceSnapshot resources) {
+                throw new AssertionError("system prompt must not be built during tool registration");
+            }
+        };
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(AgentCenterPort.class, LyPiToolAutoConfigurationTest::agentCenter)
+            .withBean(ResourceRuntimePort.class, () -> failingResources)
+            .run(context -> {
+                ToolRuntimePort runtime = context.getBean(ToolRuntimePort.class);
+
+                assertThat(loadCalls).hasValue(1);
+                assertThat(runtime.resolve("bash")).isPresent();
+                assertThat(runtime.resolve("spawn_agent")).isPresent();
+                assertThat(expertAgentNames(runtime)).isEmpty();
+            });
+    }
+
+    @Test
     void closesMcpManagersWhenContextCloses() {
         RecordingMcpClientFactory mcpClients = new RecordingMcpClientFactory();
 
@@ -721,17 +785,15 @@ class LyPiToolAutoConfigurationTest {
     }
 
     private static ResourceRuntimePort resourceRuntimeWith(McpServerConfig config) {
+        return resourceRuntimeWith(resourceSnapshot(List.of(config), List.of()), new AtomicInteger());
+    }
+
+    private static ResourceRuntimePort resourceRuntimeWith(ResourceSnapshot snapshot, AtomicInteger loadCalls) {
         return new ResourceRuntimePort() {
             @Override
             public ResourceSnapshot load(Path cwd) {
-                return new ResourceSnapshot(
-                    List.of(),
-                    List.of(),
-                    new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()),
-                    List.of(),
-                    List.of(config),
-                    List.of()
-                );
+                loadCalls.incrementAndGet();
+                return snapshot;
             }
 
             @Override
@@ -739,6 +801,35 @@ class LyPiToolAutoConfigurationTest {
                 return new SystemPrompt("system", List.of(), "hash");
             }
         };
+    }
+
+    private static ResourceSnapshot resourceSnapshot(
+        List<McpServerConfig> mcpServers,
+        List<ExpertAgentDefinition> expertAgents
+    ) {
+        return new ResourceSnapshot(
+            List.of(),
+            List.of(),
+            new cn.lypi.contracts.skill.SkillIndex(List.of(), List.of()),
+            List.of(),
+            mcpServers,
+            expertAgents,
+            List.of()
+        );
+    }
+
+    private static List<String> expertAgentNames(ToolRuntimePort runtime) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) runtime.resolve("spawn_agent")
+            .orElseThrow()
+            .inputSchema()
+            .value()
+            .get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> agent = (Map<String, Object>) properties.get("agent");
+        @SuppressWarnings("unchecked")
+        List<String> names = (List<String>) agent.get("enum");
+        return names;
     }
 
     private static McpServerConfig mcpServerConfig() {
