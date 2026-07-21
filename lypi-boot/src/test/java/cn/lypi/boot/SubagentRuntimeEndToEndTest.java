@@ -20,6 +20,7 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.AssistantStreamResult;
+import cn.lypi.contracts.model.ToolCallDelta;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.runtime.AgentCommunicationPort;
 import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
@@ -51,6 +52,7 @@ import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -79,7 +81,8 @@ class SubagentRuntimeEndToEndTest {
         contextRunner(childFactory, parentAi).run(context -> {
             SessionManagerPort sessions = context.getBean(SessionManagerPort.class);
             String parentEntryId = prepareParentSession(sessions);
-            PermissionRuntimeState parentPermissions = sessions.context(parentEntryId).permissionRuntimeState();
+            SessionContext parentContext = sessions.context(parentEntryId);
+            PermissionRuntimeState parentPermissions = parentContext.permissionRuntimeState();
             ToolRuntimePort tools = context.getBean(ToolRuntimePort.class);
 
             ToolResult<?> spawn = executeTool(
@@ -114,6 +117,8 @@ class SubagentRuntimeEndToEndTest {
 
             assertThat(childFactory.request.get().userInput()).isEqualTo("inspect the child session");
             assertThat(childFactory.initialContext.get().messages()).isEmpty();
+            assertThat(childFactory.initialContext.get().model()).isEqualTo(parentContext.model());
+            assertThat(childFactory.initialContext.get().thinkingLevel()).isEqualTo(parentContext.thinkingLevel());
             assertThat(childFactory.cwd.get()).isEqualTo(tempDir.toAbsolutePath().normalize());
             assertThat(childFactory.toolPolicy.get().effectiveTools()).containsExactly("read", "grep", "glob");
             assertThat(childFactory.initialContext.get().permissionRuntimeState().mode()).isEqualTo(PermissionMode.AUTO);
@@ -187,9 +192,53 @@ class SubagentRuntimeEndToEndTest {
         });
     }
 
+    @Test
+    void completionDuringParentToolRoundIsInjectedAtNextBoundaryInSameTurn() {
+        CapturingChildAgentCoreFactory childFactory = new CapturingChildAgentCoreFactory();
+        ActiveTurnParentAiProvider parentAi = new ActiveTurnParentAiProvider();
+
+        contextRunner(childFactory, parentAi).run(context -> {
+            SessionManagerPort sessions = context.getBean(SessionManagerPort.class);
+            prepareParentSession(sessions);
+
+            TurnState state = context.getBean(AgentCorePort.class).execute(new TurnRequest(
+                PARENT_SESSION_ID,
+                "delegate the inspection",
+                Optional.empty(),
+                () -> false
+            ));
+
+            assertThat(state.status()).isEqualTo(TurnStatus.COMPLETED);
+            assertThat(state.currentToolRound()).isEqualTo(1);
+            assertThat(parentAi.contexts).hasSize(2);
+            AgentMessage communication = parentAi.contexts.get(1).messages().stream()
+                .filter(message -> message.role() == MessageRole.SYSTEM_LOCAL)
+                .findFirst()
+                .orElseThrow();
+            assertThat(communication.role()).isNotEqualTo(MessageRole.USER);
+            assertThat(communication.content()).singleElement().isInstanceOfSatisfying(
+                TextContentBlock.class,
+                block -> {
+                    assertThat(block.text()).isEqualTo("child completed");
+                    assertThat(block.metadata())
+                        .containsEntry("taskName", "inspect-active-turn")
+                        .containsEntry("status", "SUCCEEDED")
+                        .containsKeys("agentId", "childSessionId", "runId");
+                }
+            );
+            assertThat(childFactory.toolPolicy.get().effectiveTools())
+                .containsExactly("read", "grep", "glob", "bash");
+
+            DefaultMailboxService mailbox = context.getBean(DefaultMailboxService.class);
+            assertThat(mailbox.read(PARENT_SESSION_ID, Set.of(MailboxStatus.PENDING))).isEmpty();
+            assertThat(mailbox.read(PARENT_SESSION_ID, Set.of(MailboxStatus.DELIVERED))).hasSize(1);
+            assertThat(context.getBean(AgentCommunicationPort.class).poll(PARENT_SESSION_ID)).isEmpty();
+        });
+    }
+
     private ApplicationContextRunner contextRunner(
         CapturingChildAgentCoreFactory childFactory,
-        RecordingParentAiProvider parentAi
+        AiProviderRuntimePort parentAi
     ) {
         return new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
@@ -362,6 +411,35 @@ class SubagentRuntimeEndToEndTest {
             this.context.set(context);
             return new ListAssistantEventStream(List.of(
                 new AssistantStart("msg_parent_final"),
+                new AssistantDone(Optional.empty(), Optional.of("end_turn"))
+            ));
+        }
+    }
+
+    private static final class ActiveTurnParentAiProvider implements AiProviderRuntimePort {
+        private final List<ContextSnapshot> contexts = new ArrayList<>();
+
+        @Override
+        public AssistantEventStream stream(ContextSnapshot context, cn.lypi.contracts.common.AbortSignal signal) {
+            contexts.add(context);
+            if (contexts.size() == 1) {
+                return new ListAssistantEventStream(List.of(
+                    new AssistantStart("msg_parent_spawn_call"),
+                    new ToolCallDelta(
+                        "toolu_spawn",
+                        "spawn_agent",
+                        Map.of(
+                            "task_name", "inspect-active-turn",
+                            "message", "inspect during the parent turn",
+                            "tools", List.of("bash", "bash")
+                        ),
+                        true
+                    ),
+                    new AssistantDone(Optional.empty(), Optional.of("tool_calls"))
+                ));
+            }
+            return new ListAssistantEventStream(List.of(
+                new AssistantStart("msg_parent_after_child"),
                 new AssistantDone(Optional.empty(), Optional.of("end_turn"))
             ));
         }

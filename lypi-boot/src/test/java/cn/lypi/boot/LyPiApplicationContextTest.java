@@ -7,6 +7,7 @@ import cn.lypi.contracts.runtime.AgentCoreFactoryPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -30,8 +31,18 @@ class LyPiApplicationContextTest {
                 ToolRuntimePort toolRuntime = context.getBean(ToolRuntimePort.class);
                 assertThat(toolRuntime.resolve("spawn_agent")).isPresent();
                 assertThat(toolRuntime.resolve("wait_agent")).isPresent();
-                assertThat(toolRuntime.resolve("continue_agent")).isEmpty();
-                assertThat(toolRuntime.resolve("read_agent_result")).isEmpty();
+                for (String removed : List.of(
+                    "continue_agent",
+                    "read_agent_result",
+                    "read_mailbox",
+                    "accept_mailbox_message",
+                    "stash_mailbox_message",
+                    "discard_mailbox_message",
+                    "interrupt_agent",
+                    "list_agents"
+                )) {
+                    assertThat(toolRuntime.resolve(removed)).as(removed).isEmpty();
+                }
             });
     }
 }
