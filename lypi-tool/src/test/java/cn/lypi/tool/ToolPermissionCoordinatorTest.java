@@ -1,6 +1,7 @@
 package cn.lypi.tool;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.security.AgentMode;
@@ -35,6 +36,163 @@ import org.junit.jupiter.api.Test;
 
 class ToolPermissionCoordinatorTest {
     @Test
+    void readOnlyToolsSkipSecurityToolGateAndReviewerInEveryMode() {
+        for (PermissionMode mode : PermissionMode.values()) {
+            AtomicInteger securityCalls = new AtomicInteger();
+            AtomicInteger permissionCalls = new AtomicInteger();
+            AtomicInteger gateCalls = new AtomicInteger();
+            AtomicInteger reviewerCalls = new AtomicInteger();
+            ToolPermissionCoordinator coordinator = coordinator(
+                (request, context) -> {
+                    securityCalls.incrementAndGet();
+                    return TestTools.decision(PermissionBehavior.DENY, "security deny");
+                },
+                (request, tool, context, decision) -> {
+                    gateCalls.incrementAndGet();
+                    return PermissionGateResult.deny("gate deny");
+                },
+                (request, tool, context, snapshot, decision) -> {
+                    reviewerCalls.incrementAndGet();
+                    return PermissionGateResult.deny("reviewer deny");
+                }
+            );
+
+            ToolPermissionCoordinator.Result result = coordinator.authorize(
+                request("read", Map.of()),
+                TestTools.permissionProbeTool("read", true, PermissionBehavior.DENY, permissionCalls),
+                Map.of(),
+                context(mode)
+            );
+
+            assertTrue(result.allowed(), mode.name());
+            assertEquals(0, securityCalls.get(), mode.name());
+            assertEquals(0, permissionCalls.get(), mode.name());
+            assertEquals(0, gateCalls.get(), mode.name());
+            assertEquals(0, reviewerCalls.get(), mode.name());
+        }
+    }
+
+    @Test
+    void askRoutesAllSecurityAndToolDecisionVariantsOnlyToUserGate() {
+        for (PermissionBehavior behavior : PermissionBehavior.values()) {
+            assertAskRoute(behavior, PermissionBehavior.ALLOW);
+            assertAskRoute(PermissionBehavior.ALLOW, behavior);
+        }
+    }
+
+    @Test
+    void autoRoutesAllSecurityAndToolDecisionVariantsOnlyToModelReviewer() {
+        for (PermissionBehavior behavior : PermissionBehavior.values()) {
+            assertAutoRoute(behavior, PermissionBehavior.ALLOW);
+            assertAutoRoute(PermissionBehavior.ALLOW, behavior);
+        }
+    }
+
+    @Test
+    void bypassSkipsSecurityToolGateAndReviewerForNonReadOnlyTools() {
+        AtomicInteger securityCalls = new AtomicInteger();
+        AtomicInteger permissionCalls = new AtomicInteger();
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> {
+                securityCalls.incrementAndGet();
+                return TestTools.decision(PermissionBehavior.DENY, "security deny");
+            },
+            (request, tool, context, decision) -> {
+                gateCalls.incrementAndGet();
+                return PermissionGateResult.deny("gate deny");
+            },
+            (request, tool, context, snapshot, decision) -> {
+                reviewerCalls.incrementAndGet();
+                return PermissionGateResult.deny("reviewer deny");
+            }
+        );
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("write", Map.of()),
+            TestTools.permissionProbeTool("write", false, PermissionBehavior.DENY, permissionCalls),
+            Map.of(),
+            context(PermissionMode.BYPASS)
+        );
+
+        assertTrue(result.allowed());
+        assertEquals(0, securityCalls.get());
+        assertEquals(0, permissionCalls.get());
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, reviewerCalls.get());
+    }
+
+    @Test
+    void bypassApprovesInlineAdditionalPermissionsWithoutReview() {
+        AdditionalPermissionProfile permissions = additionalWrite("/workspace/cache");
+        AtomicInteger securityCalls = new AtomicInteger();
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> {
+                securityCalls.incrementAndGet();
+                return TestTools.decision(PermissionBehavior.DENY, "security deny");
+            },
+            (request, tool, context, decision) -> {
+                gateCalls.incrementAndGet();
+                return PermissionGateResult.deny("gate deny");
+            },
+            (request, tool, context, snapshot, decision) -> {
+                reviewerCalls.incrementAndGet();
+                return PermissionGateResult.deny("reviewer deny");
+            }
+        );
+        Map<String, Object> input = Map.of(
+            "command", "touch cache/out",
+            "sandboxPermissions", "withAdditionalPermissions",
+            "additionalPermissions", permissions
+        );
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("bash", input),
+            TestTools.permission("bash", PermissionBehavior.DENY),
+            input,
+            context(PermissionMode.BYPASS)
+        );
+
+        assertTrue(result.allowed());
+        assertEquals(Optional.of(permissions), result.approvedAdditionalPermissions());
+        assertEquals(0, securityCalls.get());
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, reviewerCalls.get());
+    }
+
+    @Test
+    void autoFailsClosedWhenReviewerDeniesOrThrows() {
+        Tool<Map<String, Object>, String> tool = TestTools.permission("write", PermissionBehavior.ALLOW);
+        ToolPermissionCoordinator denied = coordinator(
+            (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
+            (request, candidate, context, decision) -> PermissionGateResult.allow(),
+            (request, candidate, context, snapshot, decision) -> PermissionGateResult.deny("model deny")
+        );
+        ToolPermissionCoordinator failed = coordinator(
+            (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
+            (request, candidate, context, decision) -> PermissionGateResult.allow(),
+            (request, candidate, context, snapshot, decision) -> {
+                throw new IllegalStateException("provider unavailable");
+            }
+        );
+
+        ToolPermissionCoordinator.Result deniedResult = denied.authorize(
+            request("write", Map.of()), tool, Map.of(), context(PermissionMode.AUTO)
+        );
+        ToolPermissionCoordinator.Result failedResult = failed.authorize(
+            request("write", Map.of()), tool, Map.of(), context(PermissionMode.AUTO)
+        );
+
+        assertFalse(deniedResult.allowed());
+        assertEquals("model deny", deniedResult.gateResult().message().orElseThrow());
+        assertFalse(failedResult.allowed());
+        assertTrue(failedResult.gateResult().message().orElseThrow().contains("provider unavailable"));
+    }
+
+    @Test
     void allowsToolSpecificAskWhenGateAllows() {
         AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         ToolPermissionCoordinator coordinator = coordinator(
@@ -52,7 +210,7 @@ class ToolPermissionCoordinatorTest {
             request("write", Map.of("text", "ok")),
             tool,
             Map.of("text", "ok"),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertTrue(result.allowed());
@@ -60,7 +218,7 @@ class ToolPermissionCoordinatorTest {
     }
 
     @Test
-    void neverPolicyDeniesAskWithoutCallingGate() {
+    void bypassAllowsWithoutCallingGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         ToolPermissionCoordinator coordinator = coordinator(
             (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask"),
@@ -79,7 +237,7 @@ class ToolPermissionCoordinatorTest {
             context(PermissionMode.BYPASS)
         );
 
-        assertEquals(PermissionGateResult.Status.DENY, result.gateResult().status());
+        assertTrue(result.allowed());
         assertEquals(0, gateCalls.get());
     }
 
@@ -106,7 +264,7 @@ class ToolPermissionCoordinatorTest {
             request("write", Map.of("text", "ok")),
             TestTools.permission("write", PermissionBehavior.ALLOW),
             Map.of("text", "ok"),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertTrue(result.allowed(), () -> result.gateResult().status() + " " + result.gateResult().message().orElse(""));
@@ -137,7 +295,7 @@ class ToolPermissionCoordinatorTest {
             request("bash", input),
             TestTools.permission("bash", PermissionBehavior.ALLOW),
             input,
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertTrue(result.allowed());
@@ -145,7 +303,7 @@ class ToolPermissionCoordinatorTest {
     }
 
     @Test
-    void sandboxEscalationUsesCanonicalRuntimeBehaviorInsteadOfLegacyModeMetadata() {
+    void askModeRoutesReviewEvenWhenLegacyBehaviorLooksLikeBypass() {
         ToolPermissionCoordinator coordinator = coordinator(
             (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
             (request, tool, context, decision) -> PermissionGateResult.deny("should not ask"),
@@ -163,16 +321,17 @@ class ToolPermissionCoordinatorTest {
             TestTools.permission("bash", PermissionBehavior.ALLOW),
             input,
             contextWithRuntimeState(
-                PermissionMode.DEFAULT_EXECUTE,
-                runtimeStateWithLegacyMode(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), PermissionMode.DEFAULT_EXECUTE)
+                PermissionMode.ASK,
+                runtimeStateWithLegacyMode(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), PermissionMode.ASK)
             )
         );
 
-        assertTrue(result.allowed(), () -> result.gateResult().status() + " " + result.gateResult().message().orElse(""));
+        assertFalse(result.allowed());
+        assertEquals(PermissionGateResult.Status.DENY, result.gateResult().status());
     }
 
     @Test
-    void defaultBashSandboxRiskUsesCanonicalRuntimeBehaviorInsteadOfLegacyModeMetadata() {
+    void askModeRoutesDefaultBashEvenWhenLegacyBehaviorLooksLikeBypass() {
         ToolPermissionCoordinator coordinator = coordinator(
             (request, context) -> new PermissionDecision(
                 PermissionBehavior.ASK,
@@ -192,16 +351,17 @@ class ToolPermissionCoordinatorTest {
             TestTools.permission("bash", PermissionBehavior.ALLOW),
             input,
             contextWithRuntimeState(
-                PermissionMode.DEFAULT_EXECUTE,
-                runtimeStateWithLegacyMode(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), PermissionMode.DEFAULT_EXECUTE)
+                PermissionMode.ASK,
+                runtimeStateWithLegacyMode(PermissionRuntimeState.fromLegacy(PermissionMode.BYPASS), PermissionMode.ASK)
             )
         );
 
-        assertTrue(result.allowed());
+        assertFalse(result.allowed());
+        assertEquals(PermissionGateResult.Status.DENY, result.gateResult().status());
     }
 
     @Test
-    void deniesHardSecurityDecisionBeforeGate() {
+    void bypassSkipsHardSecurityDecisionAndGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         ToolPermissionCoordinator coordinator = coordinator(
             (request, context) -> TestTools.decision(PermissionBehavior.DENY, "hard deny"),
@@ -220,8 +380,7 @@ class ToolPermissionCoordinatorTest {
             context(PermissionMode.BYPASS)
         );
 
-        assertEquals(PermissionGateResult.Status.DENY, result.gateResult().status());
-        assertEquals("hard deny", result.gateResult().message().orElseThrow());
+        assertTrue(result.allowed());
         assertEquals(0, gateCalls.get());
     }
 
@@ -249,7 +408,7 @@ class ToolPermissionCoordinatorTest {
             request("bash", Map.of("command", "mvn test", "prefix_rule", List.of("mvn", "test"))),
             TestTools.permission("bash", PermissionBehavior.ALLOW),
             Map.of("command", "mvn test", "prefix_rule", List.of("mvn", "test")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertTrue(result.allowed());
@@ -280,7 +439,7 @@ class ToolPermissionCoordinatorTest {
             request("bash", input),
             TestTools.permission("bash", PermissionBehavior.ALLOW),
             input,
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertTrue(result.allowed());
@@ -313,7 +472,7 @@ class ToolPermissionCoordinatorTest {
             request("bash", input),
             TestTools.permission("bash", PermissionBehavior.ALLOW),
             input,
-            contextWithAdditionalPermissions(PermissionMode.DEFAULT_EXECUTE, preapproved)
+            contextWithAdditionalPermissions(PermissionMode.ASK, preapproved)
         );
 
         assertTrue(result.allowed());
@@ -340,6 +499,78 @@ class ToolPermissionCoordinatorTest {
             new SandboxEscalationPolicy(),
             new BashSandboxRiskPolicy()
         );
+    }
+
+    private ToolPermissionCoordinator coordinator(
+        cn.lypi.contracts.runtime.SecurityRuntimePort security,
+        PermissionGate gate,
+        PermissionReviewer reviewer
+    ) {
+        return new ToolPermissionCoordinator(
+            security,
+            gate,
+            PermissionUpdateStore.noop(),
+            List.of(),
+            new SandboxEscalationPolicy(),
+            new BashSandboxRiskPolicy(),
+            reviewer
+        );
+    }
+
+    private void assertAskRoute(PermissionBehavior securityBehavior, PermissionBehavior toolBehavior) {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> TestTools.decision(securityBehavior, "security " + securityBehavior),
+            (request, tool, context, decision) -> {
+                gateCalls.incrementAndGet();
+                assertEquals(PermissionBehavior.ASK, decision.behavior());
+                return PermissionGateResult.allow();
+            },
+            (request, tool, context, snapshot, decision) -> {
+                reviewerCalls.incrementAndGet();
+                return PermissionGateResult.allow();
+            }
+        );
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("write", Map.of()),
+            TestTools.permission("write", toolBehavior),
+            Map.of(),
+            context(PermissionMode.ASK)
+        );
+
+        assertTrue(result.allowed());
+        assertEquals(1, gateCalls.get());
+        assertEquals(0, reviewerCalls.get());
+    }
+
+    private void assertAutoRoute(PermissionBehavior securityBehavior, PermissionBehavior toolBehavior) {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> TestTools.decision(securityBehavior, "security " + securityBehavior),
+            (request, tool, context, decision) -> {
+                gateCalls.incrementAndGet();
+                return PermissionGateResult.allow();
+            },
+            (request, tool, context, snapshot, decision) -> {
+                reviewerCalls.incrementAndGet();
+                assertEquals(PermissionBehavior.ASK, decision.behavior());
+                return PermissionGateResult.allow();
+            }
+        );
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("write", Map.of()),
+            TestTools.permission("write", toolBehavior),
+            Map.of(),
+            context(PermissionMode.AUTO)
+        );
+
+        assertTrue(result.allowed());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, reviewerCalls.get());
     }
 
     private ToolUseRequest request(String toolName, Map<String, Object> input) {

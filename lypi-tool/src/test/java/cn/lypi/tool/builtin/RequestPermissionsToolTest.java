@@ -159,7 +159,7 @@ class RequestPermissionsToolTest {
     }
 
     @Test
-    void neverApprovalPolicyDeniesWithoutPrompt() {
+    void askModePromptsRegardlessOfLegacyApprovalPolicy() {
         AtomicInteger prompts = new AtomicInteger();
         DefaultToolRuntime runtime = runtime(
             context -> allow(),
@@ -172,9 +172,8 @@ class RequestPermissionsToolTest {
 
         ToolResult<?> result = executeOne(runtime, AgentMode.EXECUTE, runtimeState(ApprovalMode.NEVER), input(fileSystemRequest()));
 
-        assertTrue(result.isError());
-        assertTextContains(result, "request_permissions approval is disabled by never policy");
-        assertEquals(0, prompts.get());
+        assertFalse(result.isError());
+        assertEquals(1, prompts.get());
     }
 
     @Test
@@ -481,7 +480,7 @@ class RequestPermissionsToolTest {
     }
 
     @Test
-    void approvedNetworkPermissionAllowsLaterWebSearchWithoutSecondPrompt() {
+    void approvedNetworkPermissionStillReviewsLaterNonReadOnlyWebSearch() {
         AtomicInteger prompts = new AtomicInteger();
         AtomicInteger searches = new AtomicInteger();
         DefaultToolRuntime runtime = runtime(context -> allow(), requestEvent -> {
@@ -507,7 +506,7 @@ class RequestPermissionsToolTest {
 
         assertFalse(results.get(0).isError());
         assertFalse(results.get(1).isError());
-        assertEquals(1, prompts.get());
+        assertEquals(2, prompts.get());
         assertEquals(1, searches.get());
     }
 
@@ -675,7 +674,7 @@ class RequestPermissionsToolTest {
             new ActivePermissionProfile(":workspace"),
             cn.lypi.contracts.security.PermissionProfiles.workspace(),
             new LegacyPermissionBehavior(false, false, true),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 

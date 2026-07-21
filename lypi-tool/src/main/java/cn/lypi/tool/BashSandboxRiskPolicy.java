@@ -34,7 +34,7 @@ final class BashSandboxRiskPolicy {
         BashRiskAnalysis bashRisk = bashRisk(securityDecision);
         if (runtimeState.legacyBehavior().defaultBashRequiresEscalation()) {
             return Optional.of(deny(
-                "ACCEPT_EDITS 权限模式下默认 Bash 请求需要显式沙箱提权。",
+                "AUTO 权限模式下默认 Bash 请求需要显式沙箱提权。",
                 bashRisk
             ));
         }
@@ -60,12 +60,12 @@ final class BashSandboxRiskPolicy {
         }
         Object value = context.metadata().get(ToolRuntimeContextFactory.METADATA_PERMISSION_MODE);
         if (value instanceof PermissionMode permissionMode) {
-            return PermissionRuntimeState.fromLegacy(permissionMode);
+            return PermissionRuntimeState.forMode(permissionMode);
         }
         if (value instanceof String permissionMode) {
-            return PermissionRuntimeState.fromLegacy(PermissionMode.valueOf(permissionMode));
+            return PermissionRuntimeState.forMode(PermissionMode.fromJson(permissionMode));
         }
-        return PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE);
+        return PermissionRuntimeState.forMode(PermissionMode.ASK);
     }
 
     private BashRiskAnalysis bashRisk(PermissionDecision securityDecision) {

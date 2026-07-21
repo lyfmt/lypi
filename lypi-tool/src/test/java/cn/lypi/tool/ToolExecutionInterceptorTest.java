@@ -20,7 +20,7 @@ class ToolExecutionInterceptorTest {
         ToolExecutionInterceptor.BeforeResult result = interceptor.beforeExecute(
             new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
             TestTools.echo("read", List.of(), true, true, false),
-            TestTools.toolContext(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.toolContext(PermissionMode.ASK)
         );
 
         assertTrue(result.blocked());
@@ -39,7 +39,7 @@ class ToolExecutionInterceptorTest {
         ToolResult<?> result = ToolExecutionInterceptors.combine(List.of(first, second)).afterExecute(
             new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
             TestTools.echo("read", List.of(), true, true, false),
-            TestTools.toolContext(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.toolContext(PermissionMode.ASK),
             TestTools.result("toolu_1", "original", false)
         );
 

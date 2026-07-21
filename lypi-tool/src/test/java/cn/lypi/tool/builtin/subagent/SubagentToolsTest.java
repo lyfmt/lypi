@@ -83,7 +83,7 @@ class SubagentToolsTest {
         assertEquals("entry_tool_call", agentCenter.spawnRequest.parentEntryId());
         assertEquals(Path.of("/workspace"), agentCenter.spawnRequest.cwd());
         assertEquals(List.of("read", "grep", "glob"), agentCenter.spawnRequest.allowedTools());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, agentCenter.spawnRequest.permissionMode());
+        assertEquals(PermissionMode.ASK, agentCenter.spawnRequest.permissionMode());
         assertEquals(90, agentCenter.spawnRequest.timeoutSeconds());
         assertEquals(Optional.of("reviewer"), agentCenter.spawnRequest.agentName());
         assertEquals(Optional.of("code-review"), agentCenter.spawnRequest.agentRole());
@@ -135,8 +135,8 @@ class SubagentToolsTest {
         assertTrue(properties.containsKey("thinkingLevel"));
         assertTrue(properties.containsKey("mode"));
         assertTrue(properties.containsKey("permissionMode"));
-        assertEquals(List.of("DEFAULT_EXECUTE", "ACCEPT_EDITS", "BYPASS"), permissionMode.get("enum"));
-        assertTrue(permissionMode.get("description").toString().contains("useDefault"));
+        assertEquals(List.of("ask", "auto", "bypass"), permissionMode.get("enum"));
+        assertTrue(permissionMode.get("description").toString().contains("继承父 session"));
         assertEquals(1200, timeoutSeconds.get("maximum"));
         assertEquals(List.of("PLAN", "EXECUTE"), mode.get("enum"));
         assertTrue(mode.get("description").toString().contains("general"));
@@ -181,7 +181,7 @@ class SubagentToolsTest {
         assertFalse(result.isError());
         assertEquals(List.of("read", "bash", "grep"), agentCenter.spawnRequest.toolPolicy().requestedTools());
         assertEquals(List.of("read", "grep", "glob", "bash"), agentCenter.spawnRequest.toolPolicy().effectiveTools());
-        assertEquals(PermissionMode.ACCEPT_EDITS, agentCenter.spawnRequest.permissionMode());
+        assertEquals(PermissionMode.AUTO, agentCenter.spawnRequest.permissionMode());
         assertEquals(Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.spawnRequest.model());
         assertEquals(Optional.of(ThinkingLevel.HIGH), agentCenter.spawnRequest.thinkingLevel());
         assertEquals(Optional.of(AgentMode.PLAN), agentCenter.spawnRequest.agentMode());
@@ -241,7 +241,7 @@ class SubagentToolsTest {
         });
 
         assertFalse(result.isError());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, agentCenter.spawnRequest.permissionMode());
+        assertEquals(PermissionMode.ASK, agentCenter.spawnRequest.permissionMode());
         assertEquals(Optional.of(AgentMode.EXECUTE), agentCenter.spawnRequest.agentMode());
     }
 
@@ -349,7 +349,7 @@ class SubagentToolsTest {
         assertFalse(result.isError());
         assertEquals(List.of("read", "bash", "grep"), agentCenter.continueRequest.toolPolicy().requestedTools());
         assertEquals(List.of("read", "grep", "glob", "bash"), agentCenter.continueRequest.toolPolicy().effectiveTools());
-        assertEquals(PermissionMode.ACCEPT_EDITS, agentCenter.continueRequest.permissionMode());
+        assertEquals(PermissionMode.AUTO, agentCenter.continueRequest.permissionMode());
         assertEquals(Optional.of(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH)), agentCenter.continueRequest.model());
         assertEquals(Optional.of(ThinkingLevel.HIGH), agentCenter.continueRequest.thinkingLevel());
         assertEquals(Optional.of(AgentMode.EXECUTE), agentCenter.continueRequest.agentMode());
@@ -411,7 +411,7 @@ class SubagentToolsTest {
         });
 
         assertFalse(result.isError());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, agentCenter.continueRequest.permissionMode());
+        assertEquals(PermissionMode.ASK, agentCenter.continueRequest.permissionMode());
         assertEquals(Optional.of(AgentMode.EXECUTE), agentCenter.continueRequest.agentMode());
     }
 
@@ -663,7 +663,7 @@ class SubagentToolsTest {
             Path.of("/workspace"),
             Map.of(
                 "toolUseId", "toolu_subagent",
-                "permissionMode", PermissionMode.DEFAULT_EXECUTE,
+                "permissionMode", PermissionMode.ASK,
                 "parentEntryId", "entry_tool_call"
             )
         );
@@ -675,7 +675,7 @@ class SubagentToolsTest {
             new ActivePermissionProfile(":workspace-write"),
             cn.lypi.contracts.security.PermissionProfiles.readOnly(),
             new LegacyPermissionBehavior(false, false, false),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
     }
 

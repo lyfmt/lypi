@@ -69,7 +69,7 @@ final class WebFetchToolTest {
     void asksWithDomainMetadataWhenNetworkRestricted() {
         WebFetchTool tool = new WebFetchTool(successFetcher());
 
-        var decision = tool.checkPermissions(Map.of("url", "https://example.com/doc"), context(PermissionMode.DEFAULT_EXECUTE));
+        var decision = tool.checkPermissions(Map.of("url", "https://example.com/doc"), context(PermissionMode.ASK));
 
         assertEquals(PermissionBehavior.ASK, decision.behavior());
         assertEquals("example.com", decision.metadata().get("domain"));
@@ -207,7 +207,7 @@ final class WebFetchToolTest {
             "message",
             Path.of("."),
             Map.of(
-                "permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+                "permissionRuntimeState", PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
                 "toolUseId", "toolu_1",
                 "approvedAdditionalPermissions", true,
                 "additionalPermissions", new AdditionalPermissionProfile(

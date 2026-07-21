@@ -36,14 +36,14 @@ class ToolRuntimeContextFactoryTest {
 
         ToolUseContext context = new ToolRuntimeContextFactory(options).create(
             new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         );
 
         assertEquals("ses_1", context.sessionId());
         assertEquals("msg_1", context.messageId());
         assertEquals(Path.of("/workspace"), context.cwd());
-        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE), context.metadata().get("permissionRuntimeState"));
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, context.metadata().get("permissionMode"));
+        assertEquals(PermissionRuntimeState.fromLegacy(PermissionMode.ASK), context.metadata().get("permissionRuntimeState"));
+        assertEquals(PermissionMode.ASK, context.metadata().get("permissionMode"));
         assertEquals(AgentMode.EXECUTE, context.metadata().get("agentMode"));
         assertEquals("tr_1", context.metadata().get("traceId"));
     }
@@ -52,11 +52,11 @@ class ToolRuntimeContextFactoryTest {
     void usesSafeDefaultsWhenOptionsAreEmpty() {
         ToolUseContext context = new ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()).create(
             new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(PermissionMode.ASK)
         );
 
         assertEquals("session_unknown", context.sessionId());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, context.metadata().get("permissionMode"));
+        assertEquals(PermissionMode.ASK, context.metadata().get("permissionMode"));
         assertEquals(AgentMode.EXECUTE, context.metadata().get("agentMode"));
         assertTrue(context.cwd().isAbsolute());
     }
@@ -65,11 +65,11 @@ class ToolRuntimeContextFactoryTest {
     void copiesAgentModeFromContextSnapshot() {
         ToolUseContext context = new ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()).create(
             new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
-            TestTools.context(AgentMode.PLAN, PermissionMode.DEFAULT_EXECUTE)
+            TestTools.context(AgentMode.PLAN, PermissionMode.ASK)
         );
 
         assertEquals(AgentMode.PLAN, context.metadata().get("agentMode"));
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, context.metadata().get("permissionMode"));
+        assertEquals(PermissionMode.ASK, context.metadata().get("permissionMode"));
     }
 
     @Test
@@ -79,7 +79,7 @@ class ToolRuntimeContextFactoryTest {
             new ActivePermissionProfile("locked-down"),
             cn.lypi.contracts.security.PermissionProfiles.readOnly(),
             new LegacyPermissionBehavior(false, false, false),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
 
         ToolUseContext context = new ToolRuntimeContextFactory(ToolRuntimeOptions.defaults()).create(
@@ -88,7 +88,7 @@ class ToolRuntimeContextFactoryTest {
         );
 
         assertEquals(runtimeState, context.metadata().get("permissionRuntimeState"));
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, context.metadata().get("permissionMode"));
+        assertEquals(PermissionMode.ASK, context.metadata().get("permissionMode"));
     }
 
     @Test
@@ -100,7 +100,7 @@ class ToolRuntimeContextFactoryTest {
 
         ToolUseContext context = new ToolRuntimeContextFactory(options).create(
             new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1"),
-            TestTools.context(PermissionMode.DEFAULT_EXECUTE),
+            TestTools.context(PermissionMode.ASK),
             new ToolRuntimeInvocation("session_runtime", "turn_runtime", "entry_tool_call")
         );
 

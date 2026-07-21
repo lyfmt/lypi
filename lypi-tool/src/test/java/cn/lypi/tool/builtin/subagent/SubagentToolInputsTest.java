@@ -59,16 +59,16 @@ class SubagentToolInputsTest {
 
     @Test
     void parsesPermissionModeAndAgentModeWithFriendlyAliases() {
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, SubagentToolInputs.permissionMode(Map.of()));
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, SubagentToolInputs.permissionMode(Map.of("permissionMode", "useDefault")));
-        assertEquals(PermissionMode.ACCEPT_EDITS, SubagentToolInputs.permissionMode(Map.of("permission_mode", "accept-edits")));
+        assertEquals(PermissionMode.ASK, SubagentToolInputs.permissionMode(Map.of()));
+        assertEquals(PermissionMode.ASK, SubagentToolInputs.permissionMode(Map.of("permissionMode", "useDefault")));
+        assertEquals(PermissionMode.AUTO, SubagentToolInputs.permissionMode(Map.of("permission_mode", "accept-edits")));
         assertEquals(Optional.of(AgentMode.EXECUTE), SubagentToolInputs.agentMode(Map.of("mode", "general")));
         assertEquals(Optional.of(AgentMode.PLAN), SubagentToolInputs.agentMode(Map.of("agentMode", "plan")));
 
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () ->
             SubagentToolInputs.permissionMode(Map.of("permissionMode", "use-default-now"))
         );
-        assertTrue(exception.getMessage().contains("DEFAULT_EXECUTE"));
+        assertTrue(exception.getMessage().contains("ask, auto, bypass"));
         assertFalse(exception.getMessage().contains("No enum constant"));
     }
 
