@@ -28,6 +28,8 @@ import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.SystemPrompt;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AiProviderRuntimePort;
+import cn.lypi.contracts.runtime.AgentCommunicationPort;
+import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -361,6 +363,32 @@ final class AgentCoreTestFixtures {
         CompactionCoordinator compactionCoordinator,
         MemoryExtractionWorker memoryExtractionWorker
     ) {
+        return ports(
+            cwd,
+            session,
+            aiProvider,
+            toolRuntime,
+            eventBus,
+            contextAssembler,
+            toolMicroCompactor,
+            compactionCoordinator,
+            memoryExtractionWorker,
+            AgentCommunicationPort.none()
+        );
+    }
+
+    static AgentCoreRuntimePorts ports(
+        Path cwd,
+        InMemorySessionManager session,
+        StubAiProvider aiProvider,
+        StubToolRuntime toolRuntime,
+        RecordingEventBus eventBus,
+        ContextAssembler contextAssembler,
+        ToolMicroCompactor toolMicroCompactor,
+        CompactionCoordinator compactionCoordinator,
+        MemoryExtractionWorker memoryExtractionWorker,
+        AgentCommunicationPort agentCommunication
+    ) {
         return new AgentCoreRuntimePorts(
             cwd,
             session,
@@ -372,6 +400,8 @@ final class AgentCoreTestFixtures {
             contextAssembler,
             toolMicroCompactor,
             compactionCoordinator,
+            CompactStateBackfillPort.none(),
+            agentCommunication,
             memoryExtractionWorker
         );
     }

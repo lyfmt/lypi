@@ -10,6 +10,7 @@ import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.model.TokenUsage;
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public final class AgentMessageFactory {
@@ -25,6 +26,18 @@ public final class AgentMessageFactory {
             MessageRole.USER,
             MessageKind.TEXT,
             List.of(new TextContentBlock(text)),
+            clock.instant(),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    public AgentMessage systemLocalMessage(String messageId, String text, Map<String, Object> metadata) {
+        return new AgentMessage(
+            messageId,
+            MessageRole.SYSTEM_LOCAL,
+            MessageKind.TEXT,
+            List.of(new TextContentBlock(text, metadata == null ? Map.of() : Map.copyOf(metadata))),
             clock.instant(),
             Optional.empty(),
             Optional.empty()

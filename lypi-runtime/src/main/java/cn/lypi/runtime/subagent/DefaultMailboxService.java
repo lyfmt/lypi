@@ -19,12 +19,14 @@ import java.util.Set;
 
 public final class DefaultMailboxService implements MailboxPort, AgentCommunicationPort {
     private final JsonlMailboxStore store;
-    private final SessionManagerPort sessionManager;
     private final Clock clock;
 
     public DefaultMailboxService(JsonlMailboxStore store, SessionManagerPort sessionManager, Clock clock) {
+        this(store, clock);
+    }
+
+    public DefaultMailboxService(JsonlMailboxStore store, Clock clock) {
         this.store = Objects.requireNonNull(store, "store must not be null");
-        this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
         this.clock = clock == null ? Clock.systemUTC() : clock;
     }
 
