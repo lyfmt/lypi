@@ -15,11 +15,13 @@ public final class TuiFramePtyProbe {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 2) {
-            throw new IllegalArgumentException("expected ready and exit file paths");
+        if (args.length != 4) {
+            throw new IllegalArgumentException("expected ready, replace, replaced, and exit file paths");
         }
         Path readyFile = Path.of(args[0]);
-        Path exitFile = Path.of(args[1]);
+        Path replaceFile = Path.of(args[1]);
+        Path replacedFile = Path.of(args[2]);
+        Path exitFile = Path.of(args[3]);
         System.out.print("SHELL_SENTINEL\n");
         System.out.flush();
         Terminal terminal = TerminalBuilder.builder().system(true).build();
@@ -35,16 +37,44 @@ public final class TuiFramePtyProbe {
             TuiLayout layout = new TuiLayout(io.width(), io.height());
 
             try {
-                render(terminalRenderer, renderer, partitioner, ledger, layout, view("status-old"), "", 0);
-                render(terminalRenderer, renderer, partitioner, ledger, layout, view("status-updated"), "input", 5);
+                render(
+                    terminalRenderer,
+                    renderer,
+                    partitioner,
+                    ledger,
+                    layout,
+                    view("status-old"),
+                    "",
+                    0,
+                    TuiRenderIntent.UPDATE
+                );
+                render(
+                    terminalRenderer,
+                    renderer,
+                    partitioner,
+                    ledger,
+                    layout,
+                    view("status-updated"),
+                    "input",
+                    5,
+                    TuiRenderIntent.UPDATE
+                );
                 Files.writeString(readyFile, "ready");
-                long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
-                while (!Files.exists(exitFile)) {
-                    if (System.nanoTime() >= deadline) {
-                        throw new IllegalStateException("timed out waiting for PTY exit signal");
-                    }
-                    Thread.sleep(25);
-                }
+                waitForFile(replaceFile, "PTY replacement signal");
+                ledger.reset();
+                render(
+                    terminalRenderer,
+                    renderer,
+                    partitioner,
+                    ledger,
+                    layout,
+                    replacementView(),
+                    "resumed",
+                    7,
+                    TuiRenderIntent.REPLACE_SESSION
+                );
+                Files.writeString(replacedFile, "replaced");
+                waitForFile(exitFile, "PTY exit signal");
             } finally {
                 terminalRenderer.finish();
             }
@@ -59,7 +89,8 @@ public final class TuiFramePtyProbe {
         TuiLayout layout,
         TuiViewModel view,
         String input,
-        int cursor
+        int cursor,
+        TuiRenderIntent intent
     ) throws Exception {
         TuiTranscriptPartition partition = partitioner.partition(view.blocks());
         List<TerminalLine> history = renderer.renderCommittedBlocks(
@@ -75,7 +106,7 @@ public final class TuiFramePtyProbe {
             List.of(),
             false
         );
-        terminalRenderer.render(new TuiRenderBatch(history, surface));
+        terminalRenderer.render(new TuiRenderBatch(history, surface, intent));
     }
 
     private static TuiViewModel view(String runtimeLine) {
@@ -90,5 +121,41 @@ public final class TuiFramePtyProbe {
             Optional.empty(),
             Optional.empty()
         );
+    }
+
+    private static TuiViewModel replacementView() {
+        return new TuiViewModel(
+            List.of(
+                new TuiMessageBlock(
+                    "history:replacement",
+                    "message:replacement-history",
+                    "assistant",
+                    "replacement history",
+                    false
+                ),
+                new TuiMessageBlock(
+                    "live:replacement",
+                    "message:replacement-live",
+                    "assistant",
+                    "replacement live",
+                    true
+                )
+            ),
+            new StatusBarState("", "", "", "", "replacement status", "", "", false),
+            "",
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private static void waitForFile(Path path, String signalName) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+        while (!Files.exists(path)) {
+            if (System.nanoTime() >= deadline) {
+                throw new IllegalStateException("timed out waiting for " + signalName);
+            }
+            Thread.sleep(25);
+        }
     }
 }
