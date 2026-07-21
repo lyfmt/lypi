@@ -276,7 +276,7 @@ class DefaultToolMicroCompactorTest {
             new ModelSelection("test-provider", "test-model", thinkingLevel),
             thinkingLevel,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0, 0, BigDecimal.ZERO)
         );
     }

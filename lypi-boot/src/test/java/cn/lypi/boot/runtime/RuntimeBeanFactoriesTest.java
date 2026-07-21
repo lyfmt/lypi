@@ -82,7 +82,7 @@ class RuntimeBeanFactoriesTest {
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO),
             false,
             false,

@@ -57,7 +57,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("write", Map.of("path", "../secret.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
@@ -70,7 +70,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "bash -c \"$(cat script.sh)\"")),
-            context(PermissionMode.ACCEPT_EDITS)
+            context(PermissionMode.AUTO)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -84,7 +84,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "git push origin feature/security")),
-            context(PermissionMode.ACCEPT_EDITS)
+            context(PermissionMode.AUTO)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
@@ -109,7 +109,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "cat script.sh | sh")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -122,7 +122,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "echo ok > notes/output.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -137,7 +137,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "echo ok > ../output.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
@@ -166,7 +166,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "echo ok > notes/output.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
@@ -181,7 +181,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "echo ok > notes/output.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
@@ -194,7 +194,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "echo ok > ../output.txt", "cwd", "subdir")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -207,7 +207,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision stdoutRedirect = engine.decide(
             request("bash", Map.of("command", "echo ok 1> notes/output.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
         PermissionDecision stderrAppendRedirect = engine.decide(
             request("bash", Map.of("command", "make test 2>> logs/stderr.txt")),
@@ -245,7 +245,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("read_file", Map.of("path", "README.md")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
@@ -273,7 +273,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "go test ./...", "prefix_rule", List.of("go", "test"))),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -293,7 +293,7 @@ class DefaultPolicyEngineTest {
                 "command", "bash -lc \"mvn -pl lypi-security test\"",
                 "prefix_rule", List.of("mvn", "-pl")
             )),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -308,7 +308,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "python3 script.py", "prefix_rule", List.of("python3"))),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -321,7 +321,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "go test ./...", "prefix_rule", List.of("go"))),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -334,7 +334,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "cargo build")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -351,7 +351,7 @@ class DefaultPolicyEngineTest {
                 "command", "go test ./... && echo ok",
                 "prefix_rule", List.of("go", "test")
             )),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
@@ -366,7 +366,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "go test ./...")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
@@ -411,7 +411,7 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "git status && unknown-tool")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);

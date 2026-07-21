@@ -196,7 +196,7 @@ class PermissionRuntimeEndToEndTest {
             new ModelSelection("provider", "model", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionRuntimeState.fromLegacy(PermissionMode.DEFAULT_EXECUTE),
+            PermissionRuntimeState.fromLegacy(PermissionMode.ASK),
             new ContextBudget(0, 0, 0, 0, 0, 0L, 0L, BigDecimal.ZERO)
         );
     }

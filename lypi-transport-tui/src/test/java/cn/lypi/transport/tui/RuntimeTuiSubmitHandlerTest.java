@@ -220,7 +220,7 @@ class RuntimeTuiSubmitHandlerTest {
         assertEquals(ThinkingLevel.HIGH, state.thinkingLevel());
         assertEquals(new ModelSelection("openai", "gpt-5", ThinkingLevel.HIGH), state.model());
         assertEquals(AgentMode.EXECUTE, state.agentMode());
-        assertEquals(PermissionMode.DEFAULT_EXECUTE, state.permissionMode());
+        assertEquals(PermissionMode.ASK, state.permissionMode());
         MessageDeltaEvent delta = assertInstanceOf(MessageDeltaEvent.class, events.published.get(2));
         assertEquals("thinking: HIGH", delta.delta());
     }
@@ -724,7 +724,7 @@ class RuntimeTuiSubmitHandlerTest {
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0, 0, BigDecimal.ZERO),
             false,
             false,
@@ -782,7 +782,7 @@ class RuntimeTuiSubmitHandlerTest {
             ModelSelection model = new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM);
             ThinkingLevel thinkingLevel = ThinkingLevel.MEDIUM;
             AgentMode agentMode = AgentMode.EXECUTE;
-            PermissionMode permissionMode = PermissionMode.DEFAULT_EXECUTE;
+            PermissionMode permissionMode = PermissionMode.ASK;
             for (SessionEntry entry : entries) {
                 if (entry instanceof ModelChangeEntry modelChange) {
                     model = modelChange.model();

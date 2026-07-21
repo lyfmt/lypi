@@ -177,7 +177,7 @@ class DefaultCompactionPlannerTest {
             null,
             null,
             null,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(101, 128_000, 100, 8_192, 16_384, 0, 0, BigDecimal.ZERO)
         );
     }

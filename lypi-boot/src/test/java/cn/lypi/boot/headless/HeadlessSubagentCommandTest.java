@@ -132,7 +132,7 @@ class HeadlessSubagentCommandTest {
             "执行检查",
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30
         ), input);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -169,7 +169,7 @@ class HeadlessSubagentCommandTest {
             "执行检查",
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30
         ), input);
         InputStream previousIn = System.in;
@@ -239,7 +239,7 @@ class HeadlessSubagentCommandTest {
             "执行检查",
             tempDir,
             List.of(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             30
         ), input);
         ByteArrayOutputStream output = new ByteArrayOutputStream();

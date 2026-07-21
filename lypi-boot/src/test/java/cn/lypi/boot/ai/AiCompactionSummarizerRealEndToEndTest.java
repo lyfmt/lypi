@@ -179,7 +179,7 @@ class AiCompactionSummarizerRealEndToEndTest {
         handle = session.append(new PermissionModeChangeEntry(
             "entry-permission",
             handle.leafId(),
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             "permission",
             Instant.EPOCH
         ));

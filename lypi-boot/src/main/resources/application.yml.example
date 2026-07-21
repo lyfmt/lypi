@@ -37,9 +37,9 @@
 #     agent-mode: execute
 #
 #     # 重要性：必须谨慎。权限模式决定工具调用是否需要审批以及默认放行范围。
-#     # 可选值：default_execute、accept_edits、bypass。
-#     # 建议：默认 default_execute；高信任自动化场景才考虑 bypass。
-#     permission-mode: default_execute
+#     # 可选值：ask、auto、bypass。
+#     # 建议：默认 ask；需要模型自动复核时使用 auto，高信任自动化场景才考虑 bypass。
+#     permission-mode: ask
 #
 #     # 重要性：可选覆盖。启动传输入口。
 #     # 当前内置值：headless、tui。

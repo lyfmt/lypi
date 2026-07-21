@@ -223,7 +223,7 @@ class PathSafetyCheckerTest {
 
         Optional<PermissionDecision> decision = checker.check(
             request("edit_file", Map.of("filePath", "../outside.txt")),
-            context(PermissionMode.DEFAULT_EXECUTE)
+            context(PermissionMode.ASK)
         );
 
         assertThat(decision).isEmpty();

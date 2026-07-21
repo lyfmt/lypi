@@ -265,7 +265,7 @@ final class AgentCoreTestFixtures {
             new ModelSelection("test", "gpt-test", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             cn.lypi.contracts.security.AgentMode.EXECUTE,
-            cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE,
+            cn.lypi.contracts.security.PermissionMode.ASK,
             new cn.lypi.contracts.context.ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0, 0, java.math.BigDecimal.ZERO)
         );
     }
@@ -453,7 +453,7 @@ final class AgentCoreTestFixtures {
             ModelSelection model = new ModelSelection("default", "default", ThinkingLevel.MEDIUM);
             ThinkingLevel thinkingLevel = ThinkingLevel.MEDIUM;
             cn.lypi.contracts.security.AgentMode mode = cn.lypi.contracts.security.AgentMode.EXECUTE;
-            cn.lypi.contracts.security.PermissionMode permissionMode = cn.lypi.contracts.security.PermissionMode.DEFAULT_EXECUTE;
+            cn.lypi.contracts.security.PermissionMode permissionMode = cn.lypi.contracts.security.PermissionMode.ASK;
             List<AgentMessage> messages = new ArrayList<>();
             List<String> entryIds = new ArrayList<>();
             CompactionEntry latestCompaction = null;

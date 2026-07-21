@@ -31,7 +31,10 @@ import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -58,7 +61,43 @@ class SessionManagerReplayTest {
         assertThat(context.model()).isEqualTo(new ModelSelection("default", "default", ThinkingLevel.MEDIUM));
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
         assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ASK);
+    }
+
+    @Test
+    void replaysLegacyPermissionModeStringsAsAskAndAuto() throws Exception {
+        String sessionId = "ses_legacy_permission_modes";
+        SessionJsonMapper mapper = new SessionJsonMapper();
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(new SessionHeader("session", 1, sessionId, tempDir, Optional.empty(), NOW));
+        String legacyAsk = mapper.writeEntry(new PermissionModeChangeEntry(
+            "permission_ask",
+            null,
+            PermissionMode.ASK,
+            "legacy default execute",
+            NOW
+        )).replace("\"permissionMode\":\"ask\"", "\"permissionMode\":\"DEFAULT_EXECUTE\"");
+        String legacyAuto = mapper.writeEntry(new PermissionModeChangeEntry(
+            "permission_auto",
+            "permission_ask",
+            PermissionMode.AUTO,
+            "legacy accept edits",
+            NOW
+        )).replace("\"permissionMode\":\"auto\"", "\"permissionMode\":\"ACCEPT_EDITS\"");
+        Files.writeString(
+            store.sessionFile(sessionId),
+            legacyAsk + System.lineSeparator() + legacyAuto + System.lineSeparator(),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.APPEND
+        );
+        SessionManager manager = new SessionManagerImpl(tempDir);
+
+        manager.openOrCreate(sessionId);
+
+        assertThat(manager.context("permission_ask").permissionRuntimeState())
+            .isEqualTo(PermissionRuntimeState.forMode(PermissionMode.ASK));
+        assertThat(manager.context("permission_auto").permissionRuntimeState())
+            .isEqualTo(PermissionRuntimeState.forMode(PermissionMode.AUTO));
     }
 
     @Test
@@ -68,7 +107,7 @@ class SessionManagerReplayTest {
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         manager.openOrCreate("ses_main");
 
@@ -77,7 +116,7 @@ class SessionManagerReplayTest {
         assertThat(context.model()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
         assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ASK);
     }
 
     @Test
@@ -87,7 +126,7 @@ class SessionManagerReplayTest {
             new ActivePermissionProfile(":read-only"),
             cn.lypi.contracts.security.PermissionProfiles.readOnly(),
             new LegacyPermissionBehavior(false, false, true),
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         SessionManager manager = new SessionManagerImpl(
             tempDir,
@@ -118,7 +157,7 @@ class SessionManagerReplayTest {
             Optional.of(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH)),
             Optional.of(ThinkingLevel.HIGH),
             Optional.of(AgentMode.PLAN),
-            Optional.of(PermissionMode.ACCEPT_EDITS),
+            Optional.of(PermissionMode.AUTO),
             cn.lypi.contracts.subagent.SubagentToolPolicy.empty()
         ));
         SessionManager manager = new SessionManagerImpl(tempDir);
@@ -129,7 +168,7 @@ class SessionManagerReplayTest {
         assertThat(context.model()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.HIGH));
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.AUTO);
     }
 
     @Test
@@ -171,7 +210,7 @@ class SessionManagerReplayTest {
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         SessionHandle firstHandle = firstManager.openOrCreate("ses_main");
 
@@ -180,7 +219,7 @@ class SessionManagerReplayTest {
             new ModelSelection("anthropic", "claude-sonnet", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         SessionHandle reopened = reopenedWithDifferentDefaults.openOrCreate("ses_main");
 
@@ -189,7 +228,7 @@ class SessionManagerReplayTest {
         assertThat(context.model()).isEqualTo(new ModelSelection("anthropic", "claude-sonnet", ThinkingLevel.HIGH));
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ASK);
     }
 
     @Test
@@ -215,7 +254,7 @@ class SessionManagerReplayTest {
             new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.PLAN,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         manager.openOrCreate("ses_legacy");
 
@@ -224,7 +263,7 @@ class SessionManagerReplayTest {
         assertThat(context.model()).isEqualTo(new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM));
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.MEDIUM);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ASK);
     }
 
     @Test
@@ -271,7 +310,7 @@ class SessionManagerReplayTest {
         manager.append(new PermissionModeChangeEntry(
             "permission-default",
             "mode-execute",
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             "default",
             NOW
         ));
@@ -285,20 +324,20 @@ class SessionManagerReplayTest {
         manager.append(new ThinkingChangeEntry("thinking-high", "model-new", ThinkingLevel.HIGH, "high", NOW));
         manager.append(new ModeChangeEntry("mode-plan", "thinking-high", AgentMode.PLAN, "plan", NOW));
         manager.append(new PermissionModeChangeEntry(
-            "permission-accept-edits",
+            "permission-auto",
             "mode-plan",
-            PermissionMode.ACCEPT_EDITS,
-            "accept edits",
+            PermissionMode.AUTO,
+            "auto",
             NOW
         ));
 
-        SessionContext context = manager.context("permission-accept-edits");
+        SessionContext context = manager.context("permission-auto");
 
         assertThat(context.model().modelId()).isEqualTo("gpt-test-latest");
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.model().thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.AUTO);
     }
 
     @Test
@@ -347,7 +386,7 @@ class SessionManagerReplayTest {
             new ModelSelection("openai", "gpt-baseline", ThinkingLevel.MEDIUM),
             ThinkingLevel.MEDIUM,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         manager.openOrCreate("ses_main");
         manager.append(new MessageEntry("root", null, textMessage("msg-root", "root"), NOW));

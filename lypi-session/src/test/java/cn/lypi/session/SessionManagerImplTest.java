@@ -655,7 +655,7 @@ class SessionManagerImplTest {
             sourceModel,
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         sourceEngine.openOrCreate("ses_main");
         sourceEngine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
@@ -669,14 +669,14 @@ class SessionManagerImplTest {
             targetModel,
             ThinkingLevel.LOW,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         targetEngine.openOrCreate(forked.sessionId());
         SessionContext context = targetEngine.context(forked.leafId());
         assertThat(context.model()).isEqualTo(targetModel);
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.LOW);
         assertThat(context.mode()).isEqualTo(AgentMode.EXECUTE);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.DEFAULT_EXECUTE);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ASK);
     }
 
     @Test
@@ -687,7 +687,7 @@ class SessionManagerImplTest {
             sourceModel,
             ThinkingLevel.HIGH,
             AgentMode.PLAN,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         sourceEngine.openOrCreate("ses_main");
         sourceEngine.append(new CustomMessageEntry("root", null, "root", Instant.parse("2026-06-01T00:00:00Z")));
@@ -715,8 +715,8 @@ class SessionManagerImplTest {
         sourceEngine.append(new PermissionModeChangeEntry(
             "permission_change",
             "mode_change",
-            PermissionMode.ACCEPT_EDITS,
-            "/permission-mode accept-edits",
+            PermissionMode.AUTO,
+            "/permission-mode auto",
             Instant.parse("2026-06-01T00:04:00Z")
         ));
         Path targetCwd = tempDir.resolve("fork-cwd");
@@ -728,14 +728,14 @@ class SessionManagerImplTest {
             new ModelSelection("anthropic", "claude-sonnet-4", ThinkingLevel.LOW),
             ThinkingLevel.LOW,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE
+            PermissionMode.ASK
         );
         targetEngine.openOrCreate(forked.sessionId());
         SessionContext context = targetEngine.context(forked.leafId());
         assertThat(context.model()).isEqualTo(sourceModel);
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
-        assertThat(context.permissionMode()).isEqualTo(PermissionMode.ACCEPT_EDITS);
+        assertThat(context.permissionMode()).isEqualTo(PermissionMode.AUTO);
     }
 
     @Test

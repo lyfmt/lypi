@@ -226,7 +226,7 @@ class JLineTuiTransportTest {
         assertFalse(frame.contains("\033[H\033[J"));
         assertTrue(stripAnsi(frame).contains("coding agent cockpit"));
         assertEquals(1, occurrences(stripAnsi(frame), "LY-PI"));
-        assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE DEFAULT_EXECUTE"));
+        assertTrue(frame.contains("ses_1 gpt-5.4 EXECUTE ASK"));
         assertTrue(frame.contains("> "));
 
         transport.close();
@@ -732,7 +732,7 @@ class JLineTuiTransportTest {
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
             false,
             false,
@@ -749,7 +749,7 @@ class JLineTuiTransportTest {
             new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             AgentMode.EXECUTE,
-            PermissionMode.DEFAULT_EXECUTE,
+            PermissionMode.ASK,
             new ContextBudget(0, 200000, 180000, 12000, 6000, 0, 0, BigDecimal.ZERO),
             List.of(new AgentMessage(
                 "msg_restored",
@@ -913,7 +913,7 @@ class JLineTuiTransportTest {
                 new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
                 ThinkingLevel.MEDIUM,
                 AgentMode.EXECUTE,
-                PermissionMode.DEFAULT_EXECUTE
+                PermissionMode.ASK
             );
         }
 

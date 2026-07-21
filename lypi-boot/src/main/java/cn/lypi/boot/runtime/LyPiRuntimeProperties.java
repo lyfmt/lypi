@@ -16,7 +16,7 @@ public class LyPiRuntimeProperties {
     private String defaultModel = "gpt-5-mini";
     private ThinkingLevel thinkingLevel = ThinkingLevel.MEDIUM;
     private AgentMode agentMode = AgentMode.EXECUTE;
-    private PermissionMode permissionMode = PermissionMode.DEFAULT_EXECUTE;
+    private PermissionMode permissionMode = PermissionMode.ASK;
     private String transport = "headless";
     private String initialPrompt;
 
@@ -81,7 +81,7 @@ public class LyPiRuntimeProperties {
     }
 
     public void setPermissionMode(PermissionMode permissionMode) {
-        this.permissionMode = permissionMode == null ? PermissionMode.DEFAULT_EXECUTE : permissionMode;
+        this.permissionMode = permissionMode == null ? PermissionMode.ASK : permissionMode;
     }
 
     public String getTransport() {
