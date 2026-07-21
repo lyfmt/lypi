@@ -3,10 +3,10 @@ package cn.lypi.contracts.subagent;
 import java.util.Optional;
 
 public record SubagentSpawnResult(
+    String taskName,
     String agentId,
     String childSessionId,
-    String parentSessionId,
-    String parentSpawnEntryId,
+    String runId,
     SubagentRunStatus status,
     Optional<String> message
 ) {
