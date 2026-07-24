@@ -459,8 +459,8 @@ class LyPiRuntimeAutoConfigurationTest {
                 new PermissionRule(
                     PermissionRuleSource.USER,
                     PermissionBehavior.ALLOW,
-                    new PermissionRuleValue("bash", "prefix:cargo build"),
-                    "允许 Bash prefix: cargo build"
+                    new PermissionRuleValue("bash", "prefix:npm install"),
+                    "允许 Bash prefix: npm install"
                 )
             ),
             PermissionGrantScope.SESSION,
@@ -472,13 +472,13 @@ class LyPiRuntimeAutoConfigurationTest {
                 SecurityRuntimePort security = context.getBean(SecurityRuntimePort.class);
 
                 PermissionDecision decision = security.decide(
-                    new ToolUseRequest("toolu_1", "bash", Map.of("command", "cargo build --workspace"), "msg_1"),
+                    new ToolUseRequest("toolu_1", "bash", Map.of("command", "npm install"), "msg_1"),
                     new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.ASK))
                 );
 
                 assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
                 PermissionDecision otherSessionDecision = security.decide(
-                    new ToolUseRequest("toolu_2", "bash", Map.of("command", "cargo build --workspace"), "msg_1"),
+                    new ToolUseRequest("toolu_2", "bash", Map.of("command", "npm install"), "msg_1"),
                     new ToolUseContext("ses_2", "msg_1", tempDir, Map.of("permissionMode", PermissionMode.ASK))
                 );
                 assertThat(otherSessionDecision.behavior()).isEqualTo(PermissionBehavior.ASK);
