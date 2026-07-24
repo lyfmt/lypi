@@ -189,7 +189,7 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
-    void decideDeniesBashRedirectsThatEscapeWorkspace() {
+    void decideLeavesBashRedirectsOutsideWorkspaceToManagedSandbox() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 
         PermissionDecision decision = engine.decide(
@@ -197,9 +197,9 @@ class DefaultPolicyEngineTest {
             context(PermissionMode.ASK)
         );
 
-        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
-        assertThat(decision.message()).contains("profile");
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+        assertThat(decision.metadata()).containsKey("bashRisk");
     }
 
     @Test

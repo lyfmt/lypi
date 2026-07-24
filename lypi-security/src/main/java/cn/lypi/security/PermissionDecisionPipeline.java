@@ -89,19 +89,16 @@ public final class PermissionDecisionPipeline {
             return planModeDecision.get();
         }
 
-        Optional<PermissionDecision> pathSafety = pathSafetyDecision(request, context);
-        if (pathSafety.isPresent()) {
-            return hardSafety(pathSafety.get());
-        }
+        if (!isBashTool(request.toolName())) {
+            Optional<PermissionDecision> pathSafety = pathSafetyDecision(request, context);
+            if (pathSafety.isPresent()) {
+                return hardSafety(pathSafety.get());
+            }
 
-        Optional<PermissionDecision> profileBoundary = fileSystemProfileDecision(request, context);
-        if (profileBoundary.isPresent()) {
-            return profileBoundary.get();
-        }
-
-        Optional<PermissionDecision> bashRedirectDecision = bashRedirectDecision(request, context, bashRisk);
-        if (bashRedirectDecision.isPresent()) {
-            return bashRedirectDecision.get();
+            Optional<PermissionDecision> profileBoundary = fileSystemProfileDecision(request, context);
+            if (profileBoundary.isPresent()) {
+                return profileBoundary.get();
+            }
         }
 
         Optional<PermissionDecision> prefixAllow = prefixAllowDecision(request, effectiveRules, bashRisk);
@@ -225,41 +222,6 @@ public final class PermissionDecisionPipeline {
         return Optional.empty();
     }
 
-    private Optional<PermissionDecision> bashRedirectDecision(
-        ToolUseRequest request,
-        ToolUseContext context,
-        BashRiskAnalysis bashRisk
-    ) {
-        if (!isBashTool(request.toolName()) || bashRisk == null || bashRisk.redirectTargets().isEmpty()) {
-            return Optional.empty();
-        }
-        Path redirectBase = bashCwd(request, context);
-        for (Path redirectTarget : bashRisk.redirectTargets()) {
-            PermissionDecision boundaryDecision = fileSystemPolicyChecker.decide(
-                activePermissionProfile(context),
-                FileSystemAccessMode.WRITE,
-                redirectBase.toAbsolutePath().normalize().resolve(redirectTarget).normalize(),
-                context
-            );
-            Optional<PermissionDecision> pathDecision = pathSafetyChecker.checkPathInsideWorkspace(
-                "bashRedirectTarget",
-                redirectTarget.toString(),
-                context,
-                redirectBase
-            );
-            if (pathDecision.isPresent()) {
-                return Optional.of(withBashRisk(hardSafety(pathDecision.get()), bashRisk));
-            }
-            if (boundaryDecision.behavior() == PermissionBehavior.DENY) {
-                if (additionalFilesystemAllows(request, context, "bashRedirectTarget", redirectTarget.toString(), redirectBase)) {
-                    continue;
-                }
-                return Optional.of(withBashRisk(boundaryDecision, bashRisk));
-            }
-        }
-        return Optional.empty();
-    }
-
     private PermissionProfile activePermissionProfile(ToolUseContext context) {
         return runtimeState(context).permissionProfile();
     }
@@ -310,9 +272,6 @@ public final class PermissionDecisionPipeline {
     }
 
     private Optional<FileSystemAccessMode> fileSystemAccessMode(String toolName, String fieldName) {
-        if ("bashRedirectTarget".equals(fieldName)) {
-            return Optional.of(FileSystemAccessMode.WRITE);
-        }
         if ("read".equals(toolName) || "grep".equals(toolName) || "glob".equals(toolName)) {
             return Optional.of(FileSystemAccessMode.READ);
         }
@@ -437,14 +396,6 @@ public final class PermissionDecisionPipeline {
             }
         }
         return Pattern.compile(regex.toString(), Pattern.DOTALL);
-    }
-
-    private Path bashCwd(ToolUseRequest request, ToolUseContext context) {
-        Object rawCwd = request.input().get("cwd");
-        if (rawCwd == null || rawCwd.toString().isBlank()) {
-            return context.cwd();
-        }
-        return context.cwd().resolve(rawCwd.toString()).normalize();
     }
 
     private AgentMode agentMode(ToolUseContext context) {

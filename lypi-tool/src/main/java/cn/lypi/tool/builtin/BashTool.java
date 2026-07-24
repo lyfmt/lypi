@@ -37,6 +37,7 @@ public final class BashTool extends AbstractFileTool {
     private static final String INPUT_LOGIN_SHELL = "loginShell";
     private static final String METADATA_ADDITIONAL_PERMISSIONS = "additionalPermissions";
     private static final String METADATA_APPROVED_ADDITIONAL_PERMISSIONS = "approvedAdditionalPermissions";
+    private static final String METADATA_PERMISSION_APPROVED_FOR_HOST_EXECUTION = "permissionApprovedForHostExecution";
     private static final String METADATA_PERMISSION_MODE = "permissionMode";
     private static final String METADATA_PERMISSION_RUNTIME_STATE = "permissionRuntimeState";
     private static final List<String> ALLOWED_SHELLS = List.of("bash", "sh", "zsh");
@@ -115,9 +116,11 @@ public final class BashTool extends AbstractFileTool {
 
     @Override
     public PermissionDecision checkPermissions(Map<String, Object> input, ToolUseContext context) {
+        if (sandboxPermissions(input) == SandboxPermissions.REQUIRE_ESCALATED) {
+            return super.checkPermissions(input, context);
+        }
         try {
-            Path cwd = resolvePath(input, context, "cwd");
-            requireRealPathInsideWorkspace(cwd, context);
+            Path cwd = resolveBashCwd(input, context);
             return permissionPolicy.decide(input, context, cwd, permissionRuntimeState(context));
         } catch (RuntimeException | IOException exception) {
             return permissionPolicy.ask(input);
@@ -128,17 +131,14 @@ public final class BashTool extends AbstractFileTool {
     public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
         String toolUseId = toolUseId(context);
         try {
-            Path cwd = resolvePath(input, context, "cwd");
-            requireRealPathInsideWorkspace(cwd, context);
+            Path cwd = resolveBashCwd(input, context);
             Duration timeout = Duration.ofSeconds(intInput(input, "timeoutSeconds", (int) DEFAULT_TIMEOUT.toSeconds(), 1, 86_400));
             SandboxPermissions sandboxPermissions = sandboxPermissions(input);
+            PermissionRuntimeState permissionRuntimeState = permissionRuntimeState(context);
             Optional<AdditionalPermissionProfile> additionalPermissions = additionalPermissionsForRequest(context, sandboxPermissions);
-            SandboxRuntimePolicy sandboxPolicy = sandboxPolicy(
-                context.cwd(),
-                cwd,
-                permissionRuntimeState(context),
-                additionalPermissions
-            );
+            SandboxRuntimePolicy sandboxPolicy = usesHostExecution(permissionRuntimeState, sandboxPermissions, context)
+                ? SandboxRuntimePolicy.disabled()
+                : sandboxPolicy(context.cwd(), cwd, permissionRuntimeState, additionalPermissions);
             ExecutionRequest request = new ExecutionRequest(
                 shellCommand(input),
                 cwd,
@@ -157,7 +157,7 @@ public final class BashTool extends AbstractFileTool {
         } catch (IllegalArgumentException exception) {
             return error(toolUseId, exception.getMessage());
         } catch (IOException exception) {
-            return error(toolUseId, "工作目录安全检查失败: " + exception.getMessage());
+            return error(toolUseId, "工作目录解析失败: " + exception.getMessage());
         } catch (RuntimeException exception) {
             return error(toolUseId, "命令执行失败: " + exception.getMessage());
         }
@@ -223,6 +223,32 @@ public final class BashTool extends AbstractFileTool {
 
     private SandboxPermissions sandboxPermissions(Map<String, Object> input) {
         return SandboxPermissions.fromToolValue(stringInput(input, INPUT_SANDBOX_PERMISSIONS));
+    }
+
+    private Path resolveBashCwd(Map<String, Object> input, ToolUseContext context) throws IOException {
+        Path workspace = context.cwd().toAbsolutePath().normalize();
+        String rawCwd = stringInput(input, "cwd");
+        Path cwd = rawCwd.isBlank() ? workspace : Path.of(rawCwd);
+        Path resolved = cwd.isAbsolute() ? cwd.toAbsolutePath().normalize() : workspace.resolve(cwd).normalize();
+        return resolved.toRealPath();
+    }
+
+    private boolean usesHostExecution(
+        PermissionRuntimeState permissionRuntimeState,
+        SandboxPermissions sandboxPermissions,
+        ToolUseContext context
+    ) {
+        return permissionRuntimeState.mode() == PermissionMode.BYPASS
+            || permissionApprovedForHostExecution(context)
+            || sandboxPermissions == SandboxPermissions.REQUIRE_ESCALATED;
+    }
+
+    private boolean permissionApprovedForHostExecution(ToolUseContext context) {
+        Object value = context.metadata().get(METADATA_PERMISSION_APPROVED_FOR_HOST_EXECUTION);
+        if (value instanceof Boolean approved) {
+            return approved;
+        }
+        return value instanceof String approved && Boolean.parseBoolean(approved);
     }
 
     private Optional<AdditionalPermissionProfile> additionalPermissionsForRequest(

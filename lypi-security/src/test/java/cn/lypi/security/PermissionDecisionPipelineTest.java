@@ -428,6 +428,35 @@ class PermissionDecisionPipelineTest {
     }
 
     @Test
+    void bashCwdSkipsHostSidePathSafety(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace.resolve(".git"));
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("bash", Map.of("command", "pwd", "cwd", ".git")),
+            context(PermissionMode.ASK, workspace, Map.of())
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
+    void bashRedirectSkipsHostSideFilesystemProfile() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("bash", Map.of("command", "printf x > /etc/lypi-test")),
+            context(PermissionMode.ASK)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+        assertThat(decision.metadata()).containsKey("bashRisk");
+    }
+
+    @Test
     void additionalFilesystemPermissionsDoNotBypassHardSafety() {
         PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
 
@@ -446,7 +475,7 @@ class PermissionDecisionPipelineTest {
     }
 
     @Test
-    void additionalFilesystemPermissionsDoNotBypassBashRedirectHardSafety(@TempDir Path tempDir) throws IOException {
+    void bashRedirectSymlinkSkipsHostSidePathSafety(@TempDir Path tempDir) throws IOException {
         Path workspace = tempDir.resolve("workspace");
         Path approved = tempDir.resolve("approved");
         Files.createDirectories(workspace.resolve(".git"));
@@ -456,16 +485,41 @@ class PermissionDecisionPipelineTest {
 
         PermissionDecision decision = pipeline.decide(
             request("bash", Map.of("command", "echo ok > " + approved.resolve("git-link/config"))),
-            context(PermissionMode.BYPASS, workspace, Map.of(
-                "additionalPermissions",
-                additionalRootFileSystem(FileSystemAccessMode.WRITE),
-                "approvedAdditionalPermissions",
-                true
-            ))
+            context(PermissionMode.ASK, workspace, Map.of())
         );
 
-        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.HARD_SAFETY);
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
+    void nonBashFileToolsKeepPathSafetyAndFilesystemProfileChecks(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace.resolve(".git"));
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+        ToolUseContext readOnlyContext = context(
+            PermissionMode.ASK,
+            workspace,
+            Map.of("permissionRuntimeState", runtimeStateWithProfile("read-only", PermissionProfiles.readOnly()))
+        );
+
+        PermissionDecision read = pipeline.decide(
+            request("read", Map.of("path", ".git/config")),
+            readOnlyContext
+        );
+        PermissionDecision edit = pipeline.decide(
+            request("edit", Map.of("path", ".git/config")),
+            readOnlyContext
+        );
+        PermissionDecision write = pipeline.decide(
+            request("write", Map.of("path", workspace.resolve("output.txt").toString())),
+            readOnlyContext
+        );
+
+        assertThat(read.reason()).isEqualTo(PermissionDecisionReason.HARD_SAFETY);
+        assertThat(edit.reason()).isEqualTo(PermissionDecisionReason.HARD_SAFETY);
+        assertThat(write.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(write.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
     }
 
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
