@@ -25,6 +25,12 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class DefaultSystemPromptBuilderTest {
+    private static final String SANDBOX_GUIDANCE = "Treat Bash as running inside the active sandbox by default. "
+        + "Paths may be read-only or not visible, and network access may be unavailable. "
+        + "If the task genuinely requires access beyond the sandbox, issue a new Bash request with "
+        + "sandboxPermissions=requireEscalated and a user-facing justification. "
+        + "The runtime does not request escalation or retry outside the sandbox automatically.";
+
     @Test
     void buildCombinesResourceSnapshotWithoutReadingFiles() {
         ResourceSnapshot snapshot = new ResourceSnapshot(
@@ -140,29 +146,43 @@ class DefaultSystemPromptBuilderTest {
     }
 
     @Test
-    void buildIncludesCodexStylePermissionInstructionsFromRuntimeState() {
-        PermissionRuntimeState runtimeState = new PermissionRuntimeState(
-            new ApprovalPolicy(ApprovalMode.ON_FAILURE),
-            new ActivePermissionProfile("project-dev", Optional.of(":workspace")),
-            cn.lypi.contracts.security.PermissionProfiles.workspace(),
-            new LegacyPermissionBehavior(false, false, false),
-            PermissionMode.AUTO
-        );
+    void buildUsesSameSandboxGuidanceForEveryPermissionMode() {
+        List<PermissionMode> modes = List.of(PermissionMode.ASK, PermissionMode.AUTO, PermissionMode.BYPASS);
+        List<SystemPrompt> prompts = modes.stream()
+            .map(this::buildPermissionPrompt)
+            .toList();
 
-        SystemPrompt prompt = new DefaultSystemPromptBuilder().build(emptySnapshot(), runtimeState);
+        for (int index = 0; index < modes.size(); index++) {
+            PermissionMode mode = modes.get(index);
+            SystemPrompt prompt = prompts.get(index);
 
-        assertThat(prompt.content()).contains("## Permissions");
-        assertThat(prompt.content()).contains("Current permission mode: AUTO");
-        assertThat(prompt.content()).contains("independent model reviewer");
-        assertThat(prompt.content()).contains("approval policy metadata: ON_FAILURE");
-        assertThat(prompt.content()).contains("active sandbox profile: project-dev");
-        assertThat(prompt.content()).contains("request_permissions");
-        assertThat(prompt.content()).contains("strictAutoReview");
-        assertThat(prompt.content()).contains("sandboxPermissions=requireEscalated");
-        assertThat(prompt.content()).contains("sandboxPermissions=withAdditionalPermissions");
-        assertThat(prompt.content()).contains("permission mode above is the final review route");
-        assertThat(prompt.content()).doesNotContain("DEFAULT_EXECUTE").doesNotContain("ACCEPT_EDITS");
-        assertThat(prompt.sourceNames()).contains("permission-runtime-state");
+            assertThat(prompt.content()).contains("## Permissions");
+            assertThat(prompt.content()).contains(
+                "Current permission mode: " + mode + ". Follow the permission and sandbox guidance below for tool calls."
+            );
+            assertThat(prompt.content()).contains("approval policy metadata: ON_FAILURE");
+            assertThat(prompt.content()).contains("active sandbox profile: project-dev");
+            assertThat(prompt.content()).contains("request_permissions");
+            assertThat(prompt.content()).contains("strictAutoReview");
+            assertThat(prompt.content()).contains("sandboxPermissions=requireEscalated");
+            assertThat(prompt.content()).contains("sandboxPermissions=withAdditionalPermissions");
+            assertThat(prompt.content()).contains("permission mode above is the final review route");
+            assertThat(prompt.content()).contains(SANDBOX_GUIDANCE);
+            assertThat(prompt.content()).doesNotContain(
+                "Read-only tools run directly",
+                "independent model reviewer",
+                "Permission review is skipped",
+                "DEFAULT_EXECUTE",
+                "ACCEPT_EDITS"
+            );
+            assertThat(prompt.sourceNames()).containsExactly(
+                "base-agent-instructions",
+                "permission-runtime-state"
+            );
+        }
+
+        assertThat(prompts.stream().map(prompt -> extractSandboxGuidance(prompt.content())).toList())
+            .containsExactly(SANDBOX_GUIDANCE, SANDBOX_GUIDANCE, SANDBOX_GUIDANCE);
     }
 
     @Test
@@ -198,5 +218,21 @@ class DefaultSystemPromptBuilderTest {
             List.of(),
             List.of()
         );
+    }
+
+    private SystemPrompt buildPermissionPrompt(PermissionMode mode) {
+        PermissionRuntimeState runtimeState = new PermissionRuntimeState(
+            new ApprovalPolicy(ApprovalMode.ON_FAILURE),
+            new ActivePermissionProfile("project-dev", Optional.of(":workspace")),
+            cn.lypi.contracts.security.PermissionProfiles.workspace(),
+            new LegacyPermissionBehavior(false, false, false),
+            mode
+        );
+        return new DefaultSystemPromptBuilder().build(emptySnapshot(), runtimeState);
+    }
+
+    private String extractSandboxGuidance(String content) {
+        int start = content.indexOf(SANDBOX_GUIDANCE);
+        return start < 0 ? "" : content.substring(start, start + SANDBOX_GUIDANCE.length());
     }
 }
