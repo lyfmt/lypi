@@ -33,6 +33,7 @@ class ExecutorRegistryTest {
         assertEquals(0, host.calls);
         assertEquals(1, sandbox.calls);
         assertEquals("bubblewrap", result.metadata().executorName());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, sandbox.request.sandboxPolicy().kind());
     }
 
     @Test
@@ -63,6 +64,7 @@ class ExecutorRegistryTest {
         assertEquals(1, host.calls);
         assertEquals(0, sandbox.calls);
         assertEquals("host", result.metadata().executorName());
+        assertEquals(SandboxPermissions.REQUIRE_ESCALATED, host.request.sandboxPermissions());
     }
 
     @Test
@@ -77,6 +79,7 @@ class ExecutorRegistryTest {
         assertEquals(1, host.calls);
         assertEquals(0, sandbox.calls);
         assertEquals("host", result.metadata().executorName());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, host.request.sandboxPolicy().kind());
     }
 
     @Test
@@ -105,6 +108,23 @@ class ExecutorRegistryTest {
         assertEquals(0, host.calls);
         assertEquals(1, sandbox.calls);
         assertEquals("bubblewrap", result.metadata().executorName());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, sandbox.request.sandboxPolicy().kind());
+    }
+
+    @Test
+    void disabledPolicyRoutesAdditionalPermissionRequestToHost() {
+        RecordingExecutor host = new RecordingExecutor("host");
+        RecordingExecutor sandbox = new RecordingExecutor("bubblewrap");
+        ExecutorRegistry registry = new ExecutorRegistry(host, sandbox, true);
+
+        ExecutionResult result = registry.execute(additionalPermissionsRequest(disabledPolicy()), progress -> {
+        }, () -> false);
+
+        assertEquals(1, host.calls);
+        assertEquals(0, sandbox.calls);
+        assertEquals("host", result.metadata().executorName());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, host.request.sandboxPolicy().kind());
+        assertEquals(SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS, host.request.sandboxPermissions());
     }
 
     private ExecutionRequest request(SandboxRuntimePolicy policy) {
@@ -174,6 +194,7 @@ class ExecutorRegistryTest {
     private static final class RecordingExecutor implements Executor {
         private final String name;
         private int calls;
+        private ExecutionRequest request;
 
         private RecordingExecutor(String name) {
             this.name = name;
@@ -187,6 +208,7 @@ class ExecutorRegistryTest {
         @Override
         public ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal) {
             calls++;
+            this.request = request;
             return new ExecutionResult(0, "", "", false, Optional.empty(), ExecutionMetadata.unsandboxed(name));
         }
     }

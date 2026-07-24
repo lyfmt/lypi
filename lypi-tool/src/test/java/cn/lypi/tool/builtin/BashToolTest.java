@@ -460,6 +460,35 @@ class BashToolTest {
     }
 
     @Test
+    void rendersOrdinarySandboxFailuresWithoutEscalationHints() {
+        for (String stderr : List.of(
+            "Read-only file system",
+            "Permission denied",
+            "Network is unreachable"
+        )) {
+            RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(
+                1,
+                "",
+                stderr,
+                false,
+                Optional.empty(),
+                ExecutionMetadata.sandboxed("bubblewrap")
+            ));
+            BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+
+            ToolResult<String> result = tool.execute(Map.of("command", "touch output.txt"), context(Map.of()), message -> {
+            });
+
+            assertFalse(result.isError());
+            assertTrue(result.output().contains("sandboxed=true"));
+            assertTrue(result.output().contains(stderr));
+            assertFalse(result.output().contains("sandboxDenied=true"));
+            assertFalse(result.output().contains("retryWith="));
+            assertFalse(result.output().contains("retryHint="));
+        }
+    }
+
+    @Test
     void rejectsEscalatedSandboxRequestWithoutJustification() {
         BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
 
