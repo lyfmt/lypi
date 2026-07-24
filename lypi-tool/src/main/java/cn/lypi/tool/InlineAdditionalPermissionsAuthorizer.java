@@ -44,7 +44,7 @@ final class InlineAdditionalPermissionsAuthorizer {
         Optional<AdditionalPermissionProfile> preapproved = approvedAdditionalPermissions(context);
         Object rawPermissions = request.input() == null ? null : request.input().get(INPUT_ADDITIONAL_PERMISSIONS);
         if (rawPermissions == null) {
-            return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(
+            return Optional.of(ToolPermissionCoordinator.Result.disallowed(PermissionGateResult.deny(
                 "sandboxPermissions=withAdditionalPermissions 时 additionalPermissions 不能为空。"
             )));
         }
@@ -52,10 +52,10 @@ final class InlineAdditionalPermissionsAuthorizer {
         try {
             additionalPermissions = AdditionalPermissionsInputParser.parse(rawPermissions, INPUT_ADDITIONAL_PERMISSIONS);
         } catch (IllegalArgumentException exception) {
-            return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(exception.getMessage())));
+            return Optional.of(ToolPermissionCoordinator.Result.disallowed(PermissionGateResult.deny(exception.getMessage())));
         }
         if (AdditionalPermissionsInputParser.isEmpty(additionalPermissions)) {
-            return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(
+            return Optional.of(ToolPermissionCoordinator.Result.disallowed(PermissionGateResult.deny(
                 "sandboxPermissions=withAdditionalPermissions 时 additionalPermissions 不能为空。"
             )));
         }
@@ -73,7 +73,7 @@ final class InlineAdditionalPermissionsAuthorizer {
         if (permissionResult.status() != PermissionGateResult.Status.ALLOW) {
             return Optional.of(ToolPermissionCoordinator.Result.disallowed(permissionResult));
         }
-        return Optional.of(ToolPermissionCoordinator.Result.allowed(
+        return Optional.of(ToolPermissionCoordinator.Result.approved(
             permissionResult,
             mergeAdditionalPermissions(preapproved.orElse(AdditionalPermissionProfile.empty()), additionalPermissions)
         ));
@@ -88,7 +88,7 @@ final class InlineAdditionalPermissionsAuthorizer {
         }
         Object rawPermissions = request.input() == null ? null : request.input().get(INPUT_ADDITIONAL_PERMISSIONS);
         if (rawPermissions == null) {
-            return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(
+            return Optional.of(ToolPermissionCoordinator.Result.disallowed(PermissionGateResult.deny(
                 "sandboxPermissions=withAdditionalPermissions 时 additionalPermissions 不能为空。"
             )));
         }
@@ -98,18 +98,18 @@ final class InlineAdditionalPermissionsAuthorizer {
                 INPUT_ADDITIONAL_PERMISSIONS
             );
             if (AdditionalPermissionsInputParser.isEmpty(additionalPermissions)) {
-                return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(
+                return Optional.of(ToolPermissionCoordinator.Result.disallowed(PermissionGateResult.deny(
                     "sandboxPermissions=withAdditionalPermissions 时 additionalPermissions 不能为空。"
                 )));
             }
             AdditionalPermissionProfile preapproved = approvedAdditionalPermissions(context)
                 .orElse(AdditionalPermissionProfile.empty());
-            return Optional.of(ToolPermissionCoordinator.Result.allowed(
+            return Optional.of(ToolPermissionCoordinator.Result.directlyAllowed(
                 PermissionGateResult.allow(),
                 mergeAdditionalPermissions(preapproved, additionalPermissions)
             ));
         } catch (IllegalArgumentException exception) {
-            return Optional.of(ToolPermissionCoordinator.Result.denied(PermissionGateResult.deny(exception.getMessage())));
+            return Optional.of(ToolPermissionCoordinator.Result.disallowed(PermissionGateResult.deny(exception.getMessage())));
         }
     }
 

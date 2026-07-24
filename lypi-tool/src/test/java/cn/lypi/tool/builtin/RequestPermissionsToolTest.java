@@ -482,7 +482,7 @@ class RequestPermissionsToolTest {
     }
 
     @Test
-    void approvedNetworkPermissionStillReviewsLaterNonReadOnlyWebSearch() {
+    void approvedNetworkPermissionDoesNotForceReviewForLaterEffectiveAllowWebSearch() {
         AtomicInteger prompts = new AtomicInteger();
         AtomicInteger searches = new AtomicInteger();
         DefaultToolRuntime runtime = runtime(context -> allow(), requestEvent -> {
@@ -508,7 +508,7 @@ class RequestPermissionsToolTest {
 
         assertFalse(results.get(0).isError());
         assertFalse(results.get(1).isError());
-        assertEquals(2, prompts.get());
+        assertEquals(1, prompts.get());
         assertEquals(1, searches.get());
     }
 

@@ -68,6 +68,7 @@ class ToolPermissionCoordinatorTest {
             );
 
             assertTrue(result.allowed(), mode.name());
+            assertFalse(result.approvedDuringCurrentCall(), mode.name());
             assertEquals(0, securityCalls.get(), mode.name());
             assertEquals(0, permissionCalls.get(), mode.name());
             assertEquals(0, gateCalls.get(), mode.name());
@@ -76,19 +77,52 @@ class ToolPermissionCoordinatorTest {
     }
 
     @Test
-    void askRoutesAllSecurityAndToolDecisionVariantsOnlyToUserGate() {
-        for (PermissionBehavior behavior : PermissionBehavior.values()) {
-            assertAskRoute(behavior, PermissionBehavior.ALLOW);
-            assertAskRoute(PermissionBehavior.ALLOW, behavior);
-        }
+    void askRoutesNonAllowEffectiveDecisionsOnlyToUserGate() {
+        assertAskRoute(PermissionBehavior.DENY, PermissionBehavior.ALLOW);
+        assertAskRoute(PermissionBehavior.ASK, PermissionBehavior.ALLOW);
+        assertAskRoute(PermissionBehavior.ALLOW, PermissionBehavior.DENY);
+        assertAskRoute(PermissionBehavior.ALLOW, PermissionBehavior.ASK);
     }
 
     @Test
-    void autoRoutesAllSecurityAndToolDecisionVariantsOnlyToModelReviewer() {
-        for (PermissionBehavior behavior : PermissionBehavior.values()) {
-            assertAutoRoute(behavior, PermissionBehavior.ALLOW);
-            assertAutoRoute(PermissionBehavior.ALLOW, behavior);
-        }
+    void autoRoutesNonAllowEffectiveDecisionsOnlyToModelReviewer() {
+        assertAutoRoute(PermissionBehavior.DENY, PermissionBehavior.ALLOW);
+        assertAutoRoute(PermissionBehavior.ASK, PermissionBehavior.ALLOW);
+        assertAutoRoute(PermissionBehavior.ALLOW, PermissionBehavior.DENY);
+        assertAutoRoute(PermissionBehavior.ALLOW, PermissionBehavior.ASK);
+    }
+
+    @Test
+    void askDirectlyAllowsEffectiveAllowWithoutCallingPermissionGate() {
+        assertDirectAllowWithoutReview(
+            PermissionMode.ASK,
+            TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
+            PermissionBehavior.ALLOW
+        );
+    }
+
+    @Test
+    void autoDirectlyAllowsEffectiveAllowWithoutCallingPermissionReviewer() {
+        assertDirectAllowWithoutReview(
+            PermissionMode.AUTO,
+            TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
+            PermissionBehavior.ALLOW
+        );
+    }
+
+    @Test
+    void explicitRuleAllowExecutesWithoutReviewEvenWhenToolAsks() {
+        assertDirectAllowWithoutReview(
+            PermissionMode.ASK,
+            new PermissionDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.EXPLICIT_RULE,
+                "prefix allow",
+                Optional.empty(),
+                Map.of()
+            ),
+            PermissionBehavior.ASK
+        );
     }
 
     @Test
@@ -120,6 +154,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed());
+        assertFalse(result.approvedDuringCurrentCall());
         assertEquals(0, securityCalls.get());
         assertEquals(0, permissionCalls.get());
         assertEquals(0, gateCalls.get());
@@ -160,6 +195,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed());
+        assertFalse(result.approvedDuringCurrentCall());
         assertEquals(Optional.of(permissions), result.approvedAdditionalPermissions());
         assertEquals(0, securityCalls.get());
         assertEquals(0, gateCalls.get());
@@ -167,15 +203,15 @@ class ToolPermissionCoordinatorTest {
     }
 
     @Test
-    void autoFailsClosedWhenReviewerDeniesOrThrows() {
+    void autoFailsClosedWhenReviewerDeniesOrThrowsForAskDecision() {
         Tool<Map<String, Object>, String> tool = TestTools.permission("write", PermissionBehavior.ALLOW);
         ToolPermissionCoordinator denied = coordinator(
-            (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
+            (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask"),
             (request, candidate, context, decision) -> PermissionGateResult.allow(),
             (request, candidate, context, snapshot, decision) -> PermissionGateResult.deny("model deny")
         );
         ToolPermissionCoordinator failed = coordinator(
-            (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
+            (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask"),
             (request, candidate, context, decision) -> PermissionGateResult.allow(),
             (request, candidate, context, snapshot, decision) -> {
                 throw new IllegalStateException("provider unavailable");
@@ -217,6 +253,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed());
+        assertTrue(result.approvedDuringCurrentCall());
         assertEquals(PermissionBehavior.ASK, requestedDecision.get().behavior());
     }
 
@@ -241,6 +278,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed());
+        assertFalse(result.approvedDuringCurrentCall());
         assertEquals(0, gateCalls.get());
     }
 
@@ -271,6 +309,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed(), () -> result.gateResult().status() + " " + result.gateResult().message().orElse(""));
+        assertTrue(result.approvedDuringCurrentCall());
         assertEquals(1, gateCalls.get());
     }
 
@@ -302,6 +341,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed());
+        assertTrue(result.approvedDuringCurrentCall());
         assertEquals(1, gateCalls.get());
     }
 
@@ -316,7 +356,7 @@ class ToolPermissionCoordinatorTest {
 
         for (PermissionMode mode : List.of(PermissionMode.ASK, PermissionMode.AUTO)) {
             for (BashRiskAnalysis risk : eligible) {
-                assertDefaultBashReview(mode, risk, PermissionBehavior.ALLOW);
+                assertDefaultBashDirectAllow(mode, risk);
             }
         }
     }
@@ -448,6 +488,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed());
+        assertTrue(result.approvedDuringCurrentCall());
         assertEquals(List.of(update), stored);
         assertEquals(List.of(update.rule()), runtimeRules);
     }
@@ -479,6 +520,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed());
+        assertTrue(result.approvedDuringCurrentCall());
         assertEquals(Optional.of(permissions), result.approvedAdditionalPermissions());
         assertEquals(ApprovalKind.REQUEST_PERMISSIONS, requestedDecision.get().metadata().get("approvalKind"));
         assertEquals(permissions, requestedDecision.get().metadata().get("additionalPermissions"));
@@ -512,6 +554,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed());
+        assertTrue(result.approvedDuringCurrentCall());
         AdditionalPermissionProfile merged = result.approvedAdditionalPermissions().orElseThrow();
         assertTrue(merged.fileSystem().orElseThrow().entries().containsAll(List.of(
             preapproved.fileSystem().orElseThrow().entries().getFirst(),
@@ -567,15 +610,18 @@ class ToolPermissionCoordinatorTest {
             }
         );
 
-        ToolPermissionCoordinator.Result result = coordinator.authorize(
-            request("write", Map.of()),
-            TestTools.permission("write", toolBehavior),
-            Map.of(),
-            context(PermissionMode.ASK)
-        );
+        for (ToolUseContext candidate : canonicalAndLegacyContexts(PermissionMode.ASK)) {
+            ToolPermissionCoordinator.Result result = coordinator.authorize(
+                request("write", Map.of()),
+                TestTools.permission("write", toolBehavior),
+                Map.of(),
+                candidate
+            );
 
-        assertTrue(result.allowed());
-        assertEquals(1, gateCalls.get());
+            assertTrue(result.allowed());
+            assertTrue(result.approvedDuringCurrentCall());
+        }
+        assertEquals(2, gateCalls.get());
         assertEquals(0, reviewerCalls.get());
     }
 
@@ -595,16 +641,86 @@ class ToolPermissionCoordinatorTest {
             }
         );
 
+        for (ToolUseContext candidate : canonicalAndLegacyContexts(PermissionMode.AUTO)) {
+            ToolPermissionCoordinator.Result result = coordinator.authorize(
+                request("write", Map.of()),
+                TestTools.permission("write", toolBehavior),
+                Map.of(),
+                candidate
+            );
+
+            assertTrue(result.allowed());
+            assertTrue(result.approvedDuringCurrentCall());
+        }
+        assertEquals(0, gateCalls.get());
+        assertEquals(2, reviewerCalls.get());
+    }
+
+    private void assertDirectAllowWithoutReview(
+        PermissionMode mode,
+        PermissionDecision securityDecision,
+        PermissionBehavior toolBehavior
+    ) {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> securityDecision,
+            (request, tool, context, decision) -> {
+                gateCalls.incrementAndGet();
+                return PermissionGateResult.deny("gate must not run");
+            },
+            (request, tool, context, snapshot, decision) -> {
+                reviewerCalls.incrementAndGet();
+                return PermissionGateResult.deny("reviewer must not run");
+            }
+        );
+
         ToolPermissionCoordinator.Result result = coordinator.authorize(
             request("write", Map.of()),
             TestTools.permission("write", toolBehavior),
             Map.of(),
-            context(PermissionMode.AUTO)
+            context(mode)
         );
 
         assertTrue(result.allowed());
+        assertFalse(result.approvedDuringCurrentCall());
         assertEquals(0, gateCalls.get());
-        assertEquals(1, reviewerCalls.get());
+        assertEquals(0, reviewerCalls.get());
+    }
+
+    private void assertDefaultBashDirectAllow(PermissionMode mode, BashRiskAnalysis risk) {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> new PermissionDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.BASH_RISK,
+                "bash risk decision",
+                Optional.empty(),
+                Map.of("bashRisk", risk)
+            ),
+            (request, tool, context, decision) -> {
+                gateCalls.incrementAndGet();
+                return PermissionGateResult.deny("gate must not run");
+            },
+            (request, tool, context, snapshot, decision) -> {
+                reviewerCalls.incrementAndGet();
+                return PermissionGateResult.deny("reviewer must not run");
+            }
+        );
+        Map<String, Object> input = Map.of("command", risk.normalizedCommand());
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("bash", input),
+            TestTools.permission("bash", PermissionBehavior.ALLOW),
+            input,
+            context(mode)
+        );
+
+        assertTrue(result.allowed(), mode + ": " + risk.normalizedCommand());
+        assertFalse(result.approvedDuringCurrentCall());
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, reviewerCalls.get());
     }
 
     private void assertDefaultBashReview(
@@ -640,6 +756,7 @@ class ToolPermissionCoordinatorTest {
         );
 
         assertTrue(result.allowed(), mode + ": " + risk.normalizedCommand());
+        assertTrue(result.approvedDuringCurrentCall());
         assertNotNull(reviewedDecision.get(), mode + ": " + risk.normalizedCommand());
         assertEquals(PermissionBehavior.ASK, reviewedDecision.get().behavior());
         assertEquals(risk, reviewedDecision.get().metadata().get("bashRisk"));
@@ -676,6 +793,24 @@ class ToolPermissionCoordinatorTest {
                 permissionMode,
                 ToolRuntimeContextFactory.METADATA_PERMISSION_RUNTIME_STATE,
                 runtimeState
+            )
+        );
+    }
+
+    private List<ToolUseContext> canonicalAndLegacyContexts(PermissionMode permissionMode) {
+        return List.of(context(permissionMode), legacyContext(permissionMode));
+    }
+
+    private ToolUseContext legacyContext(PermissionMode permissionMode) {
+        return new ToolUseContext(
+            "ses_legacy",
+            "msg_1",
+            Path.of("/workspace"),
+            Map.of(
+                ToolRuntimeContextFactory.METADATA_AGENT_MODE,
+                AgentMode.EXECUTE,
+                ToolRuntimeContextFactory.METADATA_PERMISSION_MODE,
+                permissionMode
             )
         );
     }

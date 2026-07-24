@@ -43,6 +43,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
     private static final String METADATA_TOOL_USE_ID = "toolUseId";
     private static final String METADATA_ADDITIONAL_PERMISSIONS = "additionalPermissions";
     private static final String METADATA_APPROVED_ADDITIONAL_PERMISSIONS = "approvedAdditionalPermissions";
+    private static final String METADATA_PERMISSION_APPROVED_FOR_HOST_EXECUTION = "permissionApprovedForHostExecution";
     private static final String REQUEST_PERMISSIONS_TOOL = "request_permissions";
 
     private final ToolRegistry registry;
@@ -735,7 +736,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
                 finalResult = permissionGateError(request.toolUseId(), permissionResult.gateResult());
                 return finalResult;
             }
-            toolContext = withApprovedAdditionalPermissions(toolContext, permissionResult);
+            toolContext = withAuthorizationMetadata(toolContext, permissionResult);
             ToolExecutionInterceptor.BeforeResult beforeResult = interceptor.beforeExecute(request, tool, toolContext);
             if (beforeResult != null && beforeResult.blocked()) {
                 finalResult = errorResult(request.toolUseId(), beforeResult.message());
@@ -815,16 +816,23 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return interceptedResult == null ? result : interceptedResult;
     }
 
-    private ToolUseContext withApprovedAdditionalPermissions(
+    private ToolUseContext withAuthorizationMetadata(
         ToolUseContext context,
         ToolPermissionCoordinator.Result permissionResult
     ) {
-        if (permissionResult == null || permissionResult.approvedAdditionalPermissions().isEmpty()) {
+        if (permissionResult == null
+            || (!permissionResult.approvedDuringCurrentCall()
+                && permissionResult.approvedAdditionalPermissions().isEmpty())) {
             return context;
         }
         Map<String, Object> metadata = new LinkedHashMap<>(context.metadata());
-        metadata.put(METADATA_ADDITIONAL_PERMISSIONS, permissionResult.approvedAdditionalPermissions().orElseThrow());
-        metadata.put(METADATA_APPROVED_ADDITIONAL_PERMISSIONS, true);
+        if (permissionResult.approvedDuringCurrentCall()) {
+            metadata.put(METADATA_PERMISSION_APPROVED_FOR_HOST_EXECUTION, true);
+        }
+        permissionResult.approvedAdditionalPermissions().ifPresent(additionalPermissions -> {
+            metadata.put(METADATA_ADDITIONAL_PERMISSIONS, additionalPermissions);
+            metadata.put(METADATA_APPROVED_ADDITIONAL_PERMISSIONS, true);
+        });
         return new ToolUseContext(
             context.sessionId(),
             context.messageId(),
@@ -844,6 +852,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         metadata.put(METADATA_TOOL_USE_ID, toolUseId);
         metadata.remove(METADATA_ADDITIONAL_PERMISSIONS);
         metadata.remove(METADATA_APPROVED_ADDITIONAL_PERMISSIONS);
+        metadata.remove(METADATA_PERMISSION_APPROVED_FOR_HOST_EXECUTION);
         if (turnState != null && turnState.strictAutoReview()) {
             metadata.put("strictAutoReview", true);
         }

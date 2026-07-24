@@ -457,6 +457,113 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void askExecutesEffectiveAllowWithoutCallingPermissionGate() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("gate must not run");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.permissionCountingTool("write", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.ASK)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executeCalls.get());
+    }
+
+    @Test
+    void askApprovalMarksCurrentCallAsApproved() {
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        DefaultToolRuntime runtime = runtimeWithGate(
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
+            security
+        );
+        runtime.register(approvalCapturingTool("write", PermissionBehavior.ALLOW, approvals));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.ASK)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(List.of(true), approvals);
+    }
+
+    @Test
+    void autoApprovalMarksCurrentCallAsApproved() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("gate must not run");
+        };
+        PermissionReviewer reviewer = (request, tool, context, snapshot, decision) -> {
+            reviewerCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGateAndReviewer(gate, security, reviewer);
+        runtime.register(approvalCapturingTool("write", PermissionBehavior.ALLOW, approvals));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.AUTO)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, reviewerCalls.get());
+        assertEquals(List.of(true), approvals);
+    }
+
+    @Test
+    void inlineAdditionalPermissionApprovalMarksCurrentCallAsApproved() {
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        DefaultToolRuntime runtime = runtimeWithGate(
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
+            allowAllSecurity()
+        );
+        runtime.register(approvalCapturingTool("bash", PermissionBehavior.ALLOW, approvals));
+        AdditionalPermissionProfile permissions = additionalFileSystem(tempDir.resolve("cache"));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "command", "touch cache/out",
+                "text", "done",
+                "sandboxPermissions", "withAdditionalPermissions",
+                "additionalPermissions", permissions
+            ), "msg_1")),
+            TestTools.context(PermissionMode.ASK)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(List.of(true), approvals);
+    }
+
+    @Test
+    void bypassAndDirectAllowAreNotMarkedAsApproved() {
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), allowAllSecurity());
+        runtime.register(approvalCapturingTool("write", PermissionBehavior.ALLOW, approvals));
+        ToolUseRequest request = new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1");
+
+        ToolResult<?> bypass = runtime.execute(List.of(request), TestTools.context(PermissionMode.BYPASS)).getFirst();
+        ToolResult<?> direct = runtime.execute(List.of(request), TestTools.context(PermissionMode.ASK)).getFirst();
+
+        assertFalse(bypass.isError());
+        assertFalse(direct.isError());
+        assertEquals(List.of(false, false), approvals);
+    }
+
+    @Test
     void allowAndRememberAppendsPermissionAmendmentAndUpdatesRuntimeMemory() {
         AtomicInteger gateCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -476,8 +583,8 @@ class DefaultToolRuntimeTest {
             ToolExecutionEventPublisher.noop(),
             amendmentStore
         );
-        AtomicInteger executeCalls = new AtomicInteger();
-        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        runtime.register(approvalCapturingTool("bash", PermissionBehavior.ALLOW, approvals));
 
         ToolUseRequest first = new ToolUseRequest(
             "toolu_1",
@@ -497,8 +604,8 @@ class DefaultToolRuntimeTest {
 
         assertFalse(firstResult.isError());
         assertFalse(secondResult.isError());
-        assertEquals(2, gateCalls.get());
-        assertEquals(2, executeCalls.get());
+        assertEquals(1, gateCalls.get());
+        assertEquals(List.of(true, false), approvals);
         assertEquals(List.of(prefixUpdate("go test")), amendmentStore.readPermissionUpdates(PermissionGrantScope.SESSION));
         assertFalse(Files.exists(tempDir.resolve("rules/default.rules")));
     }
@@ -558,7 +665,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void explicitPrefixAllowStillRequiresAskReview() {
+    void explicitPrefixAllowExecutesWithoutAskReview() {
         AtomicInteger gateCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
             gateCalls.incrementAndGet();
@@ -609,9 +716,9 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(List.of(request), TestTools.context(PermissionMode.ASK)).getFirst();
 
-        assertTrue(result.isError());
-        assertEquals(1, gateCalls.get());
-        assertEquals(0, executor.calls.get());
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executor.calls.get());
     }
 
     @Test
@@ -887,7 +994,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void autoUsesReviewerInsteadOfUserGateForDefaultBash() {
+    void autoExecutesEffectiveAllowWithoutCallingPermissionReviewer() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -902,10 +1009,9 @@ class DefaultToolRuntimeTest {
             TestTools.context(AgentMode.EXECUTE, PermissionMode.AUTO)
         ).getFirst();
 
-        assertTrue(result.isError());
-        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("AUTO 权限复核器不可用"));
+        assertFalse(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(0, executeCalls.get());
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
@@ -2678,6 +2784,102 @@ class DefaultToolRuntimeTest {
             security,
             gate
         );
+    }
+
+    private DefaultToolRuntime runtimeWithGateAndReviewer(
+        PermissionGate gate,
+        SecurityRuntimePort security,
+        PermissionReviewer reviewer
+    ) {
+        return new DefaultToolRuntime(
+            ToolRuntimeOptions.defaults(),
+            security,
+            gate,
+            (EventBus) null,
+            reviewer
+        );
+    }
+
+    private Tool<Map<String, Object>, String> approvalCapturingTool(
+        String name,
+        PermissionBehavior behavior,
+        List<Boolean> approvals
+    ) {
+        Tool<Map<String, Object>, String> delegate = TestTools.permission(name, behavior);
+        return new Tool<>() {
+            @Override
+            public String name() {
+                return delegate.name();
+            }
+
+            @Override
+            public List<String> aliases() {
+                return delegate.aliases();
+            }
+
+            @Override
+            public JsonSchema inputSchema() {
+                return delegate.inputSchema();
+            }
+
+            @Override
+            public ValidationResult validateInput(Map<String, Object> input, cn.lypi.contracts.tool.ToolUseContext context) {
+                return delegate.validateInput(input, context);
+            }
+
+            @Override
+            public PermissionDecision checkPermissions(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context
+            ) {
+                return delegate.checkPermissions(input, context);
+            }
+
+            @Override
+            public ToolResult<String> execute(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context,
+                ProgressSink progress
+            ) {
+                approvals.add(Boolean.TRUE.equals(context.metadata().get("permissionApprovedForHostExecution")));
+                return delegate.execute(input, context, progress);
+            }
+
+            @Override
+            public InterruptBehavior interruptBehavior() {
+                return delegate.interruptBehavior();
+            }
+
+            @Override
+            public boolean isReadOnly(Map<String, Object> input) {
+                return delegate.isReadOnly(input);
+            }
+
+            @Override
+            public boolean isConcurrencySafe(Map<String, Object> input) {
+                return delegate.isConcurrencySafe(input);
+            }
+
+            @Override
+            public boolean isDestructive(Map<String, Object> input) {
+                return delegate.isDestructive(input);
+            }
+
+            @Override
+            public int maxResultSize() {
+                return delegate.maxResultSize();
+            }
+
+            @Override
+            public String renderForUser(Map<String, Object> input) {
+                return delegate.renderForUser(input);
+            }
+
+            @Override
+            public AgentMessage serializeForContext(String output) {
+                return delegate.serializeForContext(output);
+            }
+        };
     }
 
     private DefaultToolRuntime runtimeWithEvents(EventBus eventBus, SecurityRuntimePort security) {
