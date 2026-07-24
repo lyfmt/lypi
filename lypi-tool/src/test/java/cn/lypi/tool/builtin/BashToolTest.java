@@ -442,14 +442,14 @@ class BashToolTest {
     }
 
     @Test
-    void isNotReadOnlyAndAsksPermission() {
+    void isNotReadOnlyAndAllowsManagedSandboxPermission() {
         BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
         Map<String, Object> input = Map.of("command", "echo hi");
 
         assertFalse(tool.isReadOnly(input));
         assertFalse(tool.isConcurrencySafe(input));
         assertTrue(tool.isDestructive(input));
-        assertEquals(PermissionBehavior.ASK, tool.checkPermissions(input, context(Map.of())).behavior());
+        assertEquals(PermissionBehavior.ALLOW, tool.checkPermissions(input, context(Map.of())).behavior());
     }
 
     @Test
@@ -490,16 +490,35 @@ class BashToolTest {
     }
 
     @Test
-    void stillAsksWhenSandboxAutoAllowCanFallbackToHost() {
+    void allowsManagedSandboxWhenAutoAllowAndFailIfUnavailableAreFalse() {
         BashTool tool = new BashTool(
             new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())),
-            new RecordingSandboxPolicyResolver(policy(false, true))
+            new RecordingSandboxPolicyResolver(policy(false, false))
         );
 
         assertEquals(
-            PermissionBehavior.ASK,
+            PermissionBehavior.ALLOW,
             tool.checkPermissions(Map.of("command", "echo hi"), context(Map.of())).behavior()
         );
+    }
+
+    @Test
+    void stillAsksWhenSandboxIsDisabledOrExternal() {
+        for (SandboxRuntimePolicyKind kind : List.of(
+            SandboxRuntimePolicyKind.DISABLED,
+            SandboxRuntimePolicyKind.EXTERNAL
+        )) {
+            BashTool tool = new BashTool(
+                new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())),
+                new RecordingSandboxPolicyResolver(policy(kind, false, false))
+            );
+
+            assertEquals(
+                PermissionBehavior.ASK,
+                tool.checkPermissions(Map.of("command", "echo hi"), context(Map.of())).behavior(),
+                kind.name()
+            );
+        }
     }
 
     private ToolUseContext context(Map<String, Object> extraMetadata) {
@@ -514,7 +533,16 @@ class BashToolTest {
     }
 
     private SandboxRuntimePolicy policy(boolean failIfUnavailable, boolean autoAllowBashIfSandboxed) {
+        return policy(SandboxRuntimePolicyKind.MANAGED, failIfUnavailable, autoAllowBashIfSandboxed);
+    }
+
+    private SandboxRuntimePolicy policy(
+        SandboxRuntimePolicyKind kind,
+        boolean failIfUnavailable,
+        boolean autoAllowBashIfSandboxed
+    ) {
         return new SandboxRuntimePolicy(
+            kind,
             List.of(Path.of("/usr")),
             List.of(),
             List.of(tempDir),

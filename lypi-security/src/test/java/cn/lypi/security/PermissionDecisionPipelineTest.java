@@ -11,6 +11,8 @@ import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.FileSystemSpecialPath;
 import cn.lypi.contracts.security.ActivePermissionProfile;
 import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.BashRiskAnalysis;
+import cn.lypi.contracts.security.BashRiskLevel;
 import cn.lypi.contracts.security.LegacyPermissionBehavior;
 import cn.lypi.contracts.security.ManagedPermissionProfile;
 import cn.lypi.contracts.security.PermissionBehavior;
@@ -143,6 +145,89 @@ class PermissionDecisionPipelineTest {
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
         assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
         assertThat(decision.metadata()).containsKey("bashRisk");
+    }
+
+    @Test
+    void lowAndMediumBashDefaultToAllow() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(pipeline, "pwd", PermissionBehavior.ALLOW, BashRiskLevel.LOW);
+        assertBashDecision(pipeline, "touch output.txt", PermissionBehavior.ALLOW, BashRiskLevel.MEDIUM);
+    }
+
+    @Test
+    void listedHighAndDestructiveBashDefaultToAllow() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(pipeline, "curl https://example.com", PermissionBehavior.ALLOW, BashRiskLevel.HIGH);
+        assertBashDecision(pipeline, "rm -rf build", PermissionBehavior.ALLOW, BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
+    void reviewOnlyBashDefaultsToAsk() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(pipeline, "dd if=a of=b", PermissionBehavior.ASK, BashRiskLevel.DESTRUCTIVE);
+        assertBashDecision(pipeline, "mkfs /dev/loop0", PermissionBehavior.ASK, BashRiskLevel.DESTRUCTIVE);
+        assertBashDecision(pipeline, "npm install", PermissionBehavior.ASK, BashRiskLevel.HIGH);
+        assertBashDecision(pipeline, "pip install package", PermissionBehavior.ASK, BashRiskLevel.HIGH);
+    }
+
+    @Test
+    void mixedBashUsesStrictestSegment() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(
+            pipeline,
+            "curl https://example.com && rm -rf build",
+            PermissionBehavior.ALLOW,
+            BashRiskLevel.DESTRUCTIVE
+        );
+        assertBashDecision(
+            pipeline,
+            "rm -rf build && dd if=a of=b",
+            PermissionBehavior.ASK,
+            BashRiskLevel.DESTRUCTIVE
+        );
+    }
+
+    @Test
+    void unknownBashDefaultsToAsk() {
+        assertBashDecision(
+            new PermissionDecisionPipeline(),
+            "echo $(id)",
+            PermissionBehavior.ASK,
+            BashRiskLevel.UNKNOWN
+        );
+    }
+
+    @Test
+    void eligibleBashStillHonorsExplicitAskAndStrictAutoReview() {
+        PermissionDecisionPipeline explicitAskPipeline = new PermissionDecisionPipeline(List.of(
+            rule(PermissionBehavior.ASK, "bash", "curl *", "review curl")
+        ));
+
+        for (ToolUseContext context : permissionContexts(PermissionMode.ASK)) {
+            PermissionDecision explicitAsk = explicitAskPipeline.decide(
+                request("bash", Map.of("command", "curl https://example.com")),
+                context
+            );
+            assertThat(explicitAsk.behavior()).isEqualTo(PermissionBehavior.ASK);
+            assertThat(explicitAsk.reason()).isEqualTo(PermissionDecisionReason.EXPLICIT_RULE);
+            assertThat(explicitAsk.metadata()).containsKey("bashRisk");
+        }
+
+        for (ToolUseContext context : permissionContexts(PermissionMode.AUTO)) {
+            java.util.LinkedHashMap<String, Object> metadata = new java.util.LinkedHashMap<>(context.metadata());
+            metadata.put("strictAutoReview", true);
+            PermissionDecision strictReview = new PermissionDecisionPipeline().decide(
+                request("bash", Map.of("command", "pwd")),
+                new ToolUseContext(context.sessionId(), context.messageId(), context.cwd(), Map.copyOf(metadata))
+            );
+            assertThat(strictReview.behavior()).isEqualTo(PermissionBehavior.ASK);
+            assertThat(strictReview.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
+            assertThat(strictReview.metadata()).containsKeys("strictAutoReview", "bashRisk");
+        }
     }
 
     @Test
@@ -385,6 +470,42 @@ class PermissionDecisionPipelineTest {
 
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
         return new ToolUseRequest("toolu_1", toolName, input, "msg_1");
+    }
+
+    private void assertBashDecision(
+        PermissionDecisionPipeline pipeline,
+        String command,
+        PermissionBehavior expectedBehavior,
+        BashRiskLevel expectedRisk
+    ) {
+        for (PermissionMode mode : List.of(PermissionMode.ASK, PermissionMode.AUTO)) {
+            for (ToolUseContext context : permissionContexts(mode)) {
+                PermissionDecision decision = pipeline.decide(
+                    request("bash", Map.of("command", command)),
+                    context
+                );
+
+                assertThat(decision.behavior()).as(mode + ": " + command).isEqualTo(expectedBehavior);
+                assertThat(decision.metadata().get("bashRisk"))
+                    .as(mode + ": " + command)
+                    .isInstanceOf(BashRiskAnalysis.class);
+                assertThat(((BashRiskAnalysis) decision.metadata().get("bashRisk")).riskLevel())
+                    .as(mode + ": " + command)
+                    .isEqualTo(expectedRisk);
+            }
+        }
+    }
+
+    private List<ToolUseContext> permissionContexts(PermissionMode mode) {
+        return List.of(
+            new ToolUseContext(
+                "ses_canonical",
+                "msg_1",
+                Path.of("/workspace"),
+                Map.of("permissionRuntimeState", PermissionRuntimeState.forMode(mode))
+            ),
+            context(mode)
+        );
     }
 
     private ToolUseContext context(PermissionMode mode) {

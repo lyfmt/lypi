@@ -2,6 +2,7 @@ package cn.lypi.tool;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.security.AgentMode;
@@ -9,6 +10,8 @@ import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.ApprovalKind;
 import cn.lypi.contracts.security.ApprovalMode;
 import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.BashRiskAnalysis;
+import cn.lypi.contracts.security.BashRiskLevel;
 import cn.lypi.contracts.security.FileSystemAccessMode;
 import cn.lypi.contracts.security.FileSystemPath;
 import cn.lypi.contracts.security.FileSystemPermissionEntry;
@@ -303,6 +306,39 @@ class ToolPermissionCoordinatorTest {
     }
 
     @Test
+    void eligibleDefaultBashHasNoLegacySandboxDenialOrRetryMetadata() {
+        List<BashRiskAnalysis> eligible = List.of(
+            bashRisk("pwd", BashRiskLevel.LOW, true),
+            bashRisk("touch output.txt", BashRiskLevel.MEDIUM, true),
+            bashRisk("curl https://example.com", BashRiskLevel.HIGH, true),
+            bashRisk("rm -rf build", BashRiskLevel.DESTRUCTIVE, true)
+        );
+
+        for (PermissionMode mode : List.of(PermissionMode.ASK, PermissionMode.AUTO)) {
+            for (BashRiskAnalysis risk : eligible) {
+                assertDefaultBashReview(mode, risk, PermissionBehavior.ALLOW);
+            }
+        }
+    }
+
+    @Test
+    void reviewOnlyDefaultBashKeepsSecurityAskWithoutLegacyRetryMetadata() {
+        List<BashRiskAnalysis> reviewOnly = List.of(
+            bashRisk("dd if=a of=b", BashRiskLevel.DESTRUCTIVE, true),
+            bashRisk("mkfs /dev/loop0", BashRiskLevel.DESTRUCTIVE, true),
+            bashRisk("npm install", BashRiskLevel.HIGH, true),
+            bashRisk("pip install package", BashRiskLevel.HIGH, true),
+            bashRisk("echo $(id)", BashRiskLevel.UNKNOWN, false)
+        );
+
+        for (PermissionMode mode : List.of(PermissionMode.ASK, PermissionMode.AUTO)) {
+            for (BashRiskAnalysis risk : reviewOnly) {
+                assertDefaultBashReview(mode, risk, PermissionBehavior.ASK);
+            }
+        }
+    }
+
+    @Test
     void askModeRoutesReviewEvenWhenLegacyBehaviorLooksLikeBypass() {
         ToolPermissionCoordinator coordinator = coordinator(
             (request, context) -> TestTools.decision(PermissionBehavior.ALLOW, "security allow"),
@@ -496,8 +532,7 @@ class ToolPermissionCoordinatorTest {
             gate,
             store,
             runtimeRules,
-            new SandboxEscalationPolicy(),
-            new BashSandboxRiskPolicy()
+            new SandboxEscalationPolicy()
         );
     }
 
@@ -512,7 +547,6 @@ class ToolPermissionCoordinatorTest {
             PermissionUpdateStore.noop(),
             List.of(),
             new SandboxEscalationPolicy(),
-            new BashSandboxRiskPolicy(),
             reviewer
         );
     }
@@ -571,6 +605,58 @@ class ToolPermissionCoordinatorTest {
         assertTrue(result.allowed());
         assertEquals(0, gateCalls.get());
         assertEquals(1, reviewerCalls.get());
+    }
+
+    private void assertDefaultBashReview(
+        PermissionMode mode,
+        BashRiskAnalysis risk,
+        PermissionBehavior securityBehavior
+    ) {
+        AtomicReference<PermissionDecision> reviewedDecision = new AtomicReference<>();
+        ToolPermissionCoordinator coordinator = coordinator(
+            (request, context) -> new PermissionDecision(
+                securityBehavior,
+                PermissionDecisionReason.BASH_RISK,
+                "bash risk decision",
+                Optional.empty(),
+                Map.of("bashRisk", risk)
+            ),
+            (request, tool, context, decision) -> {
+                reviewedDecision.set(decision);
+                return PermissionGateResult.allow();
+            },
+            (request, tool, context, snapshot, decision) -> {
+                reviewedDecision.set(decision);
+                return PermissionGateResult.allow();
+            }
+        );
+        Map<String, Object> input = Map.of("command", risk.normalizedCommand());
+
+        ToolPermissionCoordinator.Result result = coordinator.authorize(
+            request("bash", input),
+            TestTools.permission("bash", PermissionBehavior.ALLOW),
+            input,
+            context(mode)
+        );
+
+        assertTrue(result.allowed(), mode + ": " + risk.normalizedCommand());
+        assertNotNull(reviewedDecision.get(), mode + ": " + risk.normalizedCommand());
+        assertEquals(PermissionBehavior.ASK, reviewedDecision.get().behavior());
+        assertEquals(risk, reviewedDecision.get().metadata().get("bashRisk"));
+        assertFalse(reviewedDecision.get().metadata().containsKey("sandboxDenied"));
+        assertFalse(reviewedDecision.get().metadata().containsKey("retryWith"));
+        assertFalse(reviewedDecision.get().metadata().containsKey("retryHint"));
+    }
+
+    private BashRiskAnalysis bashRisk(String command, BashRiskLevel riskLevel, boolean staticallyKnown) {
+        return new BashRiskAnalysis(
+            command,
+            List.of(command),
+            List.of(),
+            riskLevel,
+            List.of("test risk"),
+            staticallyKnown
+        );
     }
 
     private ToolUseRequest request(String toolName, Map<String, Object> input) {

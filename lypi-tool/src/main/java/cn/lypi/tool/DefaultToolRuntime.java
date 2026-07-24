@@ -499,7 +499,6 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
             this.permissionUpdateStore,
             this.runtimePermissionRules,
             new SandboxEscalationPolicy(),
-            new BashSandboxRiskPolicy(),
             permissionReviewer
         );
         this.maxConcurrency = normalizedOptions.maxConcurrency();

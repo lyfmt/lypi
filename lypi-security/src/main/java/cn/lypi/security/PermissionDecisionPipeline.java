@@ -45,6 +45,7 @@ public final class PermissionDecisionPipeline {
     private final FileSystemPolicyChecker fileSystemPolicyChecker;
     private final BashRuleMatcher bashRuleMatcher;
     private final BashPrefixPolicy bashPrefixPolicy;
+    private final BashSandboxEligibilityPolicy bashSandboxEligibilityPolicy;
 
     public PermissionDecisionPipeline() {
         this(List.of(), new DefaultBashRiskAnalyzer());
@@ -62,6 +63,7 @@ public final class PermissionDecisionPipeline {
         BashCommandNormalizer normalizer = new BashCommandNormalizer();
         this.bashRuleMatcher = new BashRuleMatcher(normalizer);
         this.bashPrefixPolicy = new BashPrefixPolicy(normalizer);
+        this.bashSandboxEligibilityPolicy = new BashSandboxEligibilityPolicy(bashRiskAnalyzer, normalizer);
     }
 
     /**
@@ -104,15 +106,15 @@ public final class PermissionDecisionPipeline {
 
         Optional<PermissionDecision> prefixAllow = prefixAllowDecision(request, effectiveRules, bashRisk);
         if (prefixAllow.isPresent()) {
-            return strictAutoReviewDecision(context, prefixAllow.get());
+            return strictAutoReviewDecision(context, withBashRisk(prefixAllow.get(), bashRisk));
         }
 
         Optional<PermissionDecision> explicitAllow = explicitAllowDecision(request, effectiveRules, bashRisk);
         if (explicitAllow.isPresent()) {
-            return strictAutoReviewDecision(context, explicitAllow.get());
+            return strictAutoReviewDecision(context, withBashRisk(explicitAllow.get(), bashRisk));
         }
 
-        Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, runtimeState(context), bashRisk);
+        Optional<PermissionDecision> bashRiskDecision = bashRiskDecision(request, bashRisk);
         if (bashRiskDecision.isPresent()) {
             return bashRiskDecision.get();
         }
@@ -124,15 +126,15 @@ public final class PermissionDecisionPipeline {
             bashRisk
         );
         if (explicitAsk.isPresent()) {
-            return explicitAsk.get();
+            return withBashRisk(explicitAsk.get(), bashRisk);
         }
 
-        return strictAutoReviewDecision(context, decision(
+        return strictAutoReviewDecision(context, withBashRisk(decision(
             PermissionBehavior.ALLOW,
             PermissionDecisionReason.MODE_DEFAULT,
             "当前权限模式允许工具调用。",
             Map.of()
-        ));
+        ), bashRisk));
     }
 
     private Optional<PermissionDecision> explicitDecision(
@@ -347,20 +349,20 @@ public final class PermissionDecisionPipeline {
         if (!strictAutoReview(context) || decision.behavior() != PermissionBehavior.ALLOW) {
             return decision;
         }
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>(decision.metadata());
+        metadata.put(METADATA_STRICT_AUTO_REVIEW, true);
         return decision(
             PermissionBehavior.ASK,
             PermissionDecisionReason.SANDBOX_POLICY,
             "strictAutoReview 要求本轮后续命令先进入人工 review。",
-            Map.of(METADATA_STRICT_AUTO_REVIEW, true)
+            metadata
         );
     }
 
     private Optional<PermissionDecision> bashRiskDecision(
         ToolUseRequest request,
-        PermissionRuntimeState runtimeState,
         BashRiskAnalysis bashRisk
     ) {
-        // NOTE: ASK 对非低风险 Bash 保持更保守的 review 原因；最终路由仍由权限模式决定。
         if (!isBashTool(request.toolName())) {
             return Optional.empty();
         }
@@ -373,24 +375,15 @@ public final class PermissionDecisionPipeline {
                 Optional.empty()
             ));
         }
-        if (bashRisk.riskLevel() == BashRiskLevel.DESTRUCTIVE) {
+        if (!bashSandboxEligibilityPolicy.allows(bashRisk)) {
             return Optional.of(decisionWithSuggestedUpdate(
                 PermissionBehavior.ASK,
                 PermissionDecisionReason.BASH_RISK,
-                "Bash 命令包含破坏性操作，需要用户确认。",
+                "Bash 命令不在 managed sandbox 直接准入范围内，需要确认。",
                 Map.of("bashRisk", bashRisk),
-                Optional.empty()
-            ));
-        }
-        if (!runtimeState.legacyBehavior().defaultBashRequiresEscalation()
-            && !runtimeState.legacyBehavior().allowExplicitEscalationWithoutPrompt()
-            && bashRisk.riskLevel() != BashRiskLevel.LOW) {
-            return Optional.of(decisionWithSuggestedUpdate(
-                PermissionBehavior.ASK,
-                PermissionDecisionReason.BASH_RISK,
-                "默认执行模式下 Bash 写入、网络或远端变更需要用户确认。",
-                Map.of("bashRisk", bashRisk),
-                bashPrefixPolicy.suggestedUpdate(request, bashRisk)
+                bashRisk.riskLevel() == BashRiskLevel.DESTRUCTIVE
+                    ? Optional.empty()
+                    : bashPrefixPolicy.suggestedUpdate(request, bashRisk)
             ));
         }
         return Optional.empty();
@@ -553,6 +546,9 @@ public final class PermissionDecisionPipeline {
     }
 
     private PermissionDecision withBashRisk(PermissionDecision decision, BashRiskAnalysis bashRisk) {
+        if (bashRisk == null) {
+            return decision;
+        }
         Map<String, Object> metadata = new java.util.LinkedHashMap<>(decision.metadata());
         metadata.put("bashRisk", bashRisk);
         return new PermissionDecision(

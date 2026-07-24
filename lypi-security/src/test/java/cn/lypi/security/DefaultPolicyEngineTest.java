@@ -2,10 +2,13 @@ package cn.lypi.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import cn.lypi.contracts.security.BashRiskAnalysis;
+import cn.lypi.contracts.security.BashRiskLevel;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.security.PermissionRule;
 import cn.lypi.contracts.security.PermissionRuleSource;
 import cn.lypi.contracts.security.PermissionRuleValue;
@@ -79,6 +82,60 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
+    void lowAndMediumBashDefaultToAllow() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        assertBashDecision(engine, "pwd", PermissionBehavior.ALLOW, BashRiskLevel.LOW);
+        assertBashDecision(engine, "touch output.txt", PermissionBehavior.ALLOW, BashRiskLevel.MEDIUM);
+    }
+
+    @Test
+    void listedHighAndDestructiveBashDefaultToAllow() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        assertBashDecision(engine, "curl https://example.com", PermissionBehavior.ALLOW, BashRiskLevel.HIGH);
+        assertBashDecision(engine, "rm -rf build", PermissionBehavior.ALLOW, BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
+    void reviewOnlyBashDefaultsToAsk() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        assertBashDecision(engine, "dd if=a of=b", PermissionBehavior.ASK, BashRiskLevel.DESTRUCTIVE);
+        assertBashDecision(engine, "mkfs /dev/loop0", PermissionBehavior.ASK, BashRiskLevel.DESTRUCTIVE);
+        assertBashDecision(engine, "npm install", PermissionBehavior.ASK, BashRiskLevel.HIGH);
+        assertBashDecision(engine, "pip install package", PermissionBehavior.ASK, BashRiskLevel.HIGH);
+    }
+
+    @Test
+    void mixedBashUsesStrictestSegment() {
+        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+
+        assertBashDecision(
+            engine,
+            "curl https://example.com && rm -rf build",
+            PermissionBehavior.ALLOW,
+            BashRiskLevel.DESTRUCTIVE
+        );
+        assertBashDecision(
+            engine,
+            "rm -rf build && dd if=a of=b",
+            PermissionBehavior.ASK,
+            BashRiskLevel.DESTRUCTIVE
+        );
+    }
+
+    @Test
+    void unknownBashDefaultsToAsk() {
+        assertBashDecision(
+            new DefaultPolicyEngine(),
+            "echo $(id)",
+            PermissionBehavior.ASK,
+            BashRiskLevel.UNKNOWN
+        );
+    }
+
+    @Test
     void decideAllowsHighRiskBashInAcceptEditsModeWhenRiskIsStaticallyKnown() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 
@@ -117,7 +174,7 @@ class DefaultPolicyEngineTest {
     }
 
     @Test
-    void decideAsksForWorkspaceBashRedirectsInDefaultExecuteMode() {
+    void decideAllowsWorkspaceBashRedirectsInDefaultExecuteMode() {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 
         PermissionDecision decision = engine.decide(
@@ -125,8 +182,8 @@ class DefaultPolicyEngineTest {
             context(PermissionMode.ASK)
         );
 
-        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
-        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
         assertThat(decision.metadata()).containsKey("bashRisk");
         assertThat(decision.suggestedUpdate()).isEmpty();
     }
@@ -197,8 +254,8 @@ class DefaultPolicyEngineTest {
             context(PermissionMode.ASK)
         );
 
-        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
-        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
     }
 
     @Test
@@ -218,8 +275,8 @@ class DefaultPolicyEngineTest {
             context(PermissionMode.BYPASS)
         );
 
-        assertThat(stdoutRedirect.behavior()).isEqualTo(PermissionBehavior.ASK);
-        assertThat(stdoutRedirect.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
+        assertThat(stdoutRedirect.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(stdoutRedirect.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
         assertThat(stderrAppendRedirect.behavior()).isEqualTo(PermissionBehavior.ALLOW);
         assertThat(stderrAppendRedirect.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
         assertThat(compactRedirect.behavior()).isEqualTo(PermissionBehavior.ALLOW);
@@ -272,7 +329,7 @@ class DefaultPolicyEngineTest {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 
         PermissionDecision decision = engine.decide(
-            request("bash", Map.of("command", "go test ./...", "prefix_rule", List.of("go", "test"))),
+            request("bash", Map.of("command", "npm install package", "prefix_rule", List.of("npm", "install"))),
             context(PermissionMode.ASK)
         );
 
@@ -281,7 +338,7 @@ class DefaultPolicyEngineTest {
         PermissionRule rule = decision.suggestedUpdate().orElseThrow().rule();
         assertThat(rule.behavior()).isEqualTo(PermissionBehavior.ALLOW);
         assertThat(rule.value().toolName()).isEqualTo("bash");
-        assertThat(rule.value().pattern()).isEqualTo("prefix:go test");
+        assertThat(rule.value().pattern()).isEqualTo("prefix:npm install");
     }
 
     @Test
@@ -290,21 +347,28 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of(
-                "command", "bash -lc \"mvn -pl lypi-security test\"",
-                "prefix_rule", List.of("mvn", "-pl")
+                "command", "bash -lc \"npm install package\"",
+                "prefix_rule", List.of("npm", "install")
             )),
             context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
-        assertThat(decision.message()).contains("默认执行模式");
+        assertThat(decision.message()).contains("managed sandbox");
         assertThat(decision.suggestedUpdate()).isPresent();
-        assertThat(decision.suggestedUpdate().orElseThrow().rule().value().pattern()).isEqualTo("prefix:mvn -pl");
+        assertThat(decision.suggestedUpdate().orElseThrow().rule().value().pattern()).isEqualTo("prefix:npm install");
     }
 
     @Test
     void decideRejectsBannedRequestedPrefixRule() {
-        DefaultPolicyEngine engine = new DefaultPolicyEngine();
+        DefaultPolicyEngine engine = new DefaultPolicyEngine(List.of(), command -> new BashRiskAnalysis(
+            command,
+            List.of(command),
+            List.of(),
+            BashRiskLevel.HIGH,
+            List.of("future high risk"),
+            true
+        ));
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of("command", "python3 script.py", "prefix_rule", List.of("python3"))),
@@ -320,7 +384,7 @@ class DefaultPolicyEngineTest {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 
         PermissionDecision decision = engine.decide(
-            request("bash", Map.of("command", "go test ./...", "prefix_rule", List.of("go"))),
+            request("bash", Map.of("command", "npm install package", "prefix_rule", List.of("npm"))),
             context(PermissionMode.ASK)
         );
 
@@ -333,13 +397,13 @@ class DefaultPolicyEngineTest {
         DefaultPolicyEngine engine = new DefaultPolicyEngine();
 
         PermissionDecision decision = engine.decide(
-            request("bash", Map.of("command", "cargo build")),
+            request("bash", Map.of("command", "npm install package")),
             context(PermissionMode.ASK)
         );
 
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
         assertThat(decision.suggestedUpdate()).isPresent();
-        assertThat(decision.suggestedUpdate().orElseThrow().rule().value().pattern()).isEqualTo("prefix:cargo build");
+        assertThat(decision.suggestedUpdate().orElseThrow().rule().value().pattern()).isEqualTo("prefix:npm install");
     }
 
     @Test
@@ -348,8 +412,8 @@ class DefaultPolicyEngineTest {
 
         PermissionDecision decision = engine.decide(
             request("bash", Map.of(
-                "command", "go test ./... && echo ok",
-                "prefix_rule", List.of("go", "test")
+                "command", "npm install package && pip install package",
+                "prefix_rule", List.of("npm", "install")
             )),
             context(PermissionMode.ASK)
         );
@@ -410,7 +474,7 @@ class DefaultPolicyEngineTest {
         ));
 
         PermissionDecision decision = engine.decide(
-            request("bash", Map.of("command", "git status && unknown-tool")),
+            request("bash", Map.of("command", "git status && dd if=a of=b")),
             context(PermissionMode.ASK)
         );
 
@@ -420,6 +484,42 @@ class DefaultPolicyEngineTest {
 
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
         return new ToolUseRequest("toolu_1", toolName, input, "msg_1");
+    }
+
+    private void assertBashDecision(
+        DefaultPolicyEngine engine,
+        String command,
+        PermissionBehavior expectedBehavior,
+        BashRiskLevel expectedRisk
+    ) {
+        for (PermissionMode mode : List.of(PermissionMode.ASK, PermissionMode.AUTO)) {
+            for (ToolUseContext context : permissionContexts(mode)) {
+                PermissionDecision decision = engine.decide(
+                    request("bash", Map.of("command", command)),
+                    context
+                );
+
+                assertThat(decision.behavior()).as(mode + ": " + command).isEqualTo(expectedBehavior);
+                assertThat(decision.metadata().get("bashRisk"))
+                    .as(mode + ": " + command)
+                    .isInstanceOf(BashRiskAnalysis.class);
+                assertThat(((BashRiskAnalysis) decision.metadata().get("bashRisk")).riskLevel())
+                    .as(mode + ": " + command)
+                    .isEqualTo(expectedRisk);
+            }
+        }
+    }
+
+    private List<ToolUseContext> permissionContexts(PermissionMode mode) {
+        return List.of(
+            new ToolUseContext(
+                "ses_canonical",
+                "msg_1",
+                Path.of("/workspace"),
+                Map.of("permissionRuntimeState", PermissionRuntimeState.forMode(mode))
+            ),
+            context(mode)
+        );
     }
 
     private ToolUseContext context(PermissionMode mode) {

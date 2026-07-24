@@ -25,15 +25,13 @@ final class ToolPermissionCoordinator {
     private final ApprovalCoordinator approvalCoordinator;
     private final InlineAdditionalPermissionsAuthorizer additionalPermissionsAuthorizer;
     private final SandboxEscalationPolicy sandboxEscalationPolicy;
-    private final BashSandboxRiskPolicy bashSandboxRiskPolicy;
 
     ToolPermissionCoordinator(
         SecurityRuntimePort securityRuntime,
         PermissionGate permissionGate,
         PermissionUpdateStore permissionUpdateStore,
         List<PermissionRule> runtimePermissionRules,
-        SandboxEscalationPolicy sandboxEscalationPolicy,
-        BashSandboxRiskPolicy bashSandboxRiskPolicy
+        SandboxEscalationPolicy sandboxEscalationPolicy
     ) {
         this(
             securityRuntime,
@@ -41,7 +39,6 @@ final class ToolPermissionCoordinator {
             permissionUpdateStore,
             runtimePermissionRules,
             sandboxEscalationPolicy,
-            bashSandboxRiskPolicy,
             PermissionReviewer.denying()
         );
     }
@@ -52,7 +49,6 @@ final class ToolPermissionCoordinator {
         PermissionUpdateStore permissionUpdateStore,
         List<PermissionRule> runtimePermissionRules,
         SandboxEscalationPolicy sandboxEscalationPolicy,
-        BashSandboxRiskPolicy bashSandboxRiskPolicy,
         PermissionReviewer permissionReviewer
     ) {
         this.securityRuntime = securityRuntime;
@@ -65,7 +61,6 @@ final class ToolPermissionCoordinator {
         );
         this.additionalPermissionsAuthorizer = new InlineAdditionalPermissionsAuthorizer(this.approvalCoordinator);
         this.sandboxEscalationPolicy = sandboxEscalationPolicy == null ? new SandboxEscalationPolicy() : sandboxEscalationPolicy;
-        this.bashSandboxRiskPolicy = bashSandboxRiskPolicy == null ? new BashSandboxRiskPolicy() : bashSandboxRiskPolicy;
     }
 
     ToolPermissionCoordinator(
@@ -73,8 +68,7 @@ final class ToolPermissionCoordinator {
         PermissionGate permissionGate,
         PermissionUpdateStore permissionUpdateStore,
         RuntimePermissionRuleStore runtimePermissionRules,
-        SandboxEscalationPolicy sandboxEscalationPolicy,
-        BashSandboxRiskPolicy bashSandboxRiskPolicy
+        SandboxEscalationPolicy sandboxEscalationPolicy
     ) {
         this(
             securityRuntime,
@@ -82,7 +76,6 @@ final class ToolPermissionCoordinator {
             permissionUpdateStore,
             runtimePermissionRules,
             sandboxEscalationPolicy,
-            bashSandboxRiskPolicy,
             PermissionReviewer.denying()
         );
     }
@@ -93,7 +86,6 @@ final class ToolPermissionCoordinator {
         PermissionUpdateStore permissionUpdateStore,
         RuntimePermissionRuleStore runtimePermissionRules,
         SandboxEscalationPolicy sandboxEscalationPolicy,
-        BashSandboxRiskPolicy bashSandboxRiskPolicy,
         PermissionReviewer permissionReviewer
     ) {
         this.securityRuntime = securityRuntime;
@@ -106,7 +98,6 @@ final class ToolPermissionCoordinator {
         );
         this.additionalPermissionsAuthorizer = new InlineAdditionalPermissionsAuthorizer(this.approvalCoordinator);
         this.sandboxEscalationPolicy = sandboxEscalationPolicy == null ? new SandboxEscalationPolicy() : sandboxEscalationPolicy;
-        this.bashSandboxRiskPolicy = bashSandboxRiskPolicy == null ? new BashSandboxRiskPolicy() : bashSandboxRiskPolicy;
     }
 
     Result authorize(
@@ -148,11 +139,6 @@ final class ToolPermissionCoordinator {
                 isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"),
                 sandboxDecision
             );
-        } else if (!isDeny(effectiveDecision)) {
-            Optional<PermissionDecision> bashSandboxRiskDecision = bashSandboxRiskPolicy.decide(request, context, securityDecision);
-            if (bashSandboxRiskDecision.isPresent()) {
-                effectiveDecision = bashSandboxRiskDecision.get();
-            }
         }
 
         Optional<Result> additionalPermissionsResult = additionalPermissionsAuthorizer.authorize(

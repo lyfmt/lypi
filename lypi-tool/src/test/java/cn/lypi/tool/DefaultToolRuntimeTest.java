@@ -749,10 +749,17 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void defaultExecuteDeniesSudoDangerousDefaultBashBeforeGateAndExecutor() {
+    void defaultExecuteReviewsSudoDangerousDefaultBashAndStopsWhenDenied() {
+        AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.HIGH, "sudo rm -f 洗车店.md");
-        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            requestedDecision.set(decision);
+            return PermissionGateResult.deny("user denied");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
         runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
 
         ToolResult<?> result = runtime.execute(
@@ -761,18 +768,27 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
-        assertSandboxRetryHint(result);
+        assertEquals(1, gateCalls.get());
+        assertEquals(BashRiskLevel.HIGH, bashRisk(requestedDecision.get()).riskLevel());
+        assertNoSandboxRetryHint(result);
         assertEquals(0, executeCalls.get());
     }
 
     @Test
-    void defaultExecuteDeniesShellLcDangerousDefaultBashBeforeGateAndExecutor() {
+    void defaultExecuteReviewsUnknownShellLcBashAndStopsWhenDenied() {
+        AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(
             BashRiskLevel.UNKNOWN,
             "bash -lc \"echo hi && rm -rf target\""
         );
-        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            requestedDecision.set(decision);
+            return PermissionGateResult.deny("user denied");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
         runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
 
         ToolResult<?> result = runtime.execute(
@@ -781,18 +797,27 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
-        assertSandboxRetryHint(result);
+        assertEquals(1, gateCalls.get());
+        assertEquals(BashRiskLevel.UNKNOWN, bashRisk(requestedDecision.get()).riskLevel());
+        assertNoSandboxRetryHint(result);
         assertEquals(0, executeCalls.get());
     }
 
     @Test
-    void defaultExecuteDeniesSudoShellLcDangerousDefaultBashBeforeGateAndExecutor() {
+    void defaultExecuteReviewsSudoShellLcBashAndStopsWhenDenied() {
+        AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(
             BashRiskLevel.HIGH,
             "sudo bash -lc \"rm -rf target\""
         );
-        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            requestedDecision.set(decision);
+            return PermissionGateResult.deny("user denied");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
         runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
 
         ToolResult<?> result = runtime.execute(
@@ -801,7 +826,9 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
-        assertSandboxRetryHint(result);
+        assertEquals(1, gateCalls.get());
+        assertEquals(BashRiskLevel.HIGH, bashRisk(requestedDecision.get()).riskLevel());
+        assertNoSandboxRetryHint(result);
         assertEquals(0, executeCalls.get());
     }
 
@@ -2607,11 +2634,11 @@ class DefaultToolRuntimeTest {
         return (BashRiskAnalysis) decision.metadata().get("bashRisk");
     }
 
-    private void assertSandboxRetryHint(ToolResult<?> result) {
+    private void assertNoSandboxRetryHint(ToolResult<?> result) {
         String text = result.newMessages().getFirst().content().getFirst().text();
-        assertTrue(text.contains("sandboxDenied=true"));
-        assertTrue(text.contains("retryWith=sandboxPermissions=requireEscalated"));
-        assertTrue(text.contains("retryHint=provide a user-facing justification"));
+        assertFalse(text.contains("sandboxDenied"));
+        assertFalse(text.contains("retryWith"));
+        assertFalse(text.contains("retryHint"));
     }
 
     private List<AgentEvent> lifecycleEvents(RecordingEventBus events) {
