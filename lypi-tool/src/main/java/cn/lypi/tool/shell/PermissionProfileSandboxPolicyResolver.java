@@ -15,6 +15,7 @@ import cn.lypi.contracts.security.FileSystemSpecialPath;
 import cn.lypi.contracts.security.ManagedPermissionProfile;
 import cn.lypi.contracts.security.NetworkPermissionPolicy;
 import cn.lypi.contracts.security.NetworkPolicyMode;
+import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionProfile;
 import cn.lypi.contracts.security.PermissionProfiles;
 import cn.lypi.contracts.security.PermissionRuntimeState;
@@ -112,16 +113,7 @@ public final class PermissionProfileSandboxPolicyResolver implements SandboxPoli
             : additionalPermissions;
         return switch (permissionProfile) {
             case ManagedPermissionProfile managed -> managedPolicy(realWorkspace, managed, safeAdditionalPermissions);
-            case DisabledPermissionProfile ignored -> new SandboxRuntimePolicy(
-                SandboxRuntimePolicyKind.DISABLED,
-                List.of(Path.of("/")),
-                List.of(),
-                List.of(Path.of("/")),
-                List.of(),
-                NetworkMode.HOST,
-                false,
-                true
-            );
+            case DisabledPermissionProfile ignored -> SandboxRuntimePolicy.disabled();
             case ExternalPermissionProfile external -> new SandboxRuntimePolicy(
                 SandboxRuntimePolicyKind.EXTERNAL,
                 List.of(),
@@ -136,6 +128,9 @@ public final class PermissionProfileSandboxPolicyResolver implements SandboxPoli
     }
 
     private PermissionProfile effectivePermissionProfile(PermissionRuntimeState permissionRuntimeState) {
+        if (permissionRuntimeState != null && permissionRuntimeState.mode() == PermissionMode.BYPASS) {
+            return PermissionProfiles.dangerFullAccess();
+        }
         if (configuredProfileOverridesRuntimeState || permissionRuntimeState == null) {
             return configuredPermissionProfile;
         }

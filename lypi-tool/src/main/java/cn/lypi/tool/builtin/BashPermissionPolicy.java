@@ -1,6 +1,7 @@
 package cn.lypi.tool.builtin;
 
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.security.PermissionBehavior;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionDecisionReason;
@@ -36,7 +37,7 @@ final class BashPermissionPolicy {
             cwd,
             permissionRuntimeState
         );
-        if (sandboxPolicy.autoAllowBashIfSandboxed() && sandboxPolicy.failIfUnavailable()) {
+        if (sandboxPolicy.kind() == SandboxRuntimePolicyKind.MANAGED) {
             return new PermissionDecision(
                 PermissionBehavior.ALLOW,
                 PermissionDecisionReason.TOOL_SPECIFIC,
@@ -44,9 +45,7 @@ final class BashPermissionPolicy {
                 Optional.<PermissionUpdate>empty(),
                 Map.of(
                     "tool", "bash",
-                    "sandboxed", true,
-                    "failIfUnavailable", true,
-                    "autoAllowBashIfSandboxed", true
+                    "sandboxed", true
                 )
             );
         }

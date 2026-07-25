@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -297,6 +298,93 @@ class BashToolTest {
     }
 
     @Test
+    void approvedDefaultRequestUsesHostWithoutResolvingSandboxPolicy(@TempDir Path outsideDir) throws Exception {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        FailingSandboxPolicyResolver resolver = new FailingSandboxPolicyResolver();
+        BashTool tool = new BashTool(executor, resolver);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "pwd", "cwd", outsideDir.toString()),
+            context(Map.of("permissionApprovedForHostExecution", true)),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, executor.request.get().sandboxPolicy().kind());
+        assertEquals(0, resolver.calls.get());
+        assertEquals(outsideDir.toRealPath(), executor.request.get().cwd());
+    }
+
+    @Test
+    void approvedAdditionalPermissionsRequestUsesHostWithoutResolvingSandboxPolicy() throws Exception {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        FailingSandboxPolicyResolver resolver = new FailingSandboxPolicyResolver();
+        BashTool tool = new BashTool(executor, resolver);
+        Path cacheDir = Files.createDirectory(tempDir.resolve("host-cache"));
+        AdditionalPermissionProfile permissions = additionalWrite(cacheDir);
+
+        ToolResult<String> result = tool.execute(
+            Map.of(
+                "command", "touch host-cache/out",
+                "sandboxPermissions", "withAdditionalPermissions"
+            ),
+            context(Map.of(
+                "additionalPermissions", permissions,
+                "approvedAdditionalPermissions", true,
+                "permissionApprovedForHostExecution", true
+            )),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, executor.request.get().sandboxPolicy().kind());
+        assertEquals(Optional.of(permissions), executor.request.get().additionalPermissions());
+        assertEquals(0, resolver.calls.get());
+    }
+
+    @Test
+    void approvedEscalatedRequestUsesHostWithoutResolvingSandboxPolicy() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        FailingSandboxPolicyResolver resolver = new FailingSandboxPolicyResolver();
+        BashTool tool = new BashTool(executor, resolver);
+
+        ToolResult<String> result = tool.execute(
+            Map.of(
+                "command", "id",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host process access."
+            ),
+            context(Map.of("permissionApprovedForHostExecution", true)),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, executor.request.get().sandboxPolicy().kind());
+        assertEquals(0, resolver.calls.get());
+    }
+
+    @Test
+    void bypassUsesHostWithoutApprovalOrSandboxResolution() {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        FailingSandboxPolicyResolver resolver = new FailingSandboxPolicyResolver();
+        BashTool tool = new BashTool(executor, resolver);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "pwd"),
+            context(Map.of("permissionRuntimeState", PermissionRuntimeState.forMode(PermissionMode.BYPASS))),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, executor.request.get().sandboxPolicy().kind());
+        assertEquals(0, resolver.calls.get());
+    }
+
+    @Test
     void mapsApprovedAdditionalPermissionsToSingleExecutionRequest() throws Exception {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
         BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
@@ -372,6 +460,35 @@ class BashToolTest {
     }
 
     @Test
+    void rendersOrdinarySandboxFailuresWithoutEscalationHints() {
+        for (String stderr : List.of(
+            "Read-only file system",
+            "Permission denied",
+            "Network is unreachable"
+        )) {
+            RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(
+                1,
+                "",
+                stderr,
+                false,
+                Optional.empty(),
+                ExecutionMetadata.sandboxed("bubblewrap")
+            ));
+            BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+
+            ToolResult<String> result = tool.execute(Map.of("command", "touch output.txt"), context(Map.of()), message -> {
+            });
+
+            assertFalse(result.isError());
+            assertTrue(result.output().contains("sandboxed=true"));
+            assertTrue(result.output().contains(stderr));
+            assertFalse(result.output().contains("sandboxDenied=true"));
+            assertFalse(result.output().contains("retryWith="));
+            assertFalse(result.output().contains("retryHint="));
+        }
+    }
+
+    @Test
     void rejectsEscalatedSandboxRequestWithoutJustification() {
         BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
 
@@ -417,39 +534,50 @@ class BashToolTest {
     }
 
     @Test
-    void rejectsCwdOutsideWorkspace() {
-        BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
+    void directAllowUsesManagedSandboxWithCwdOutsideWorkspace() throws Exception {
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
+        BashTool tool = new BashTool(executor, resolver);
+        Path outsideDir = tempDir.getParent();
 
-        ToolResult<String> result = tool.execute(Map.of("command", "pwd", "cwd", "../"), context(Map.of()), message -> {
-        });
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "printf x > /etc/lypi-test", "cwd", outsideDir.toString()),
+            context(Map.of()),
+            message -> {
+            }
+        );
 
-        assertTrue(result.isError());
-        assertTrue(result.output().contains("越过当前工作目录"));
+        assertFalse(result.isError());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, executor.request.get().sandboxPolicy().kind());
+        assertEquals(outsideDir.toRealPath(), executor.request.get().cwd());
+        assertEquals(1, resolver.calls.get());
     }
 
     @Test
-    void rejectsCwdSymlinkOutsideWorkspace(@TempDir Path outsideDir) throws Exception {
+    void directAllowUsesManagedSandboxWithCwdSymlinkOutsideWorkspace(@TempDir Path outsideDir) throws Exception {
         Files.createSymbolicLink(tempDir.resolve("outside-link"), outsideDir);
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
-        BashTool tool = new BashTool(executor);
+        RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
+        BashTool tool = new BashTool(executor, resolver);
 
         ToolResult<String> result = tool.execute(Map.of("command", "pwd", "cwd", "outside-link"), context(Map.of()), message -> {
         });
 
-        assertTrue(result.isError());
-        assertTrue(result.output().contains("越过当前工作目录"));
-        assertEquals(null, executor.request.get());
+        assertFalse(result.isError());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, executor.request.get().sandboxPolicy().kind());
+        assertEquals(outsideDir.toRealPath(), executor.request.get().cwd());
+        assertEquals(1, resolver.calls.get());
     }
 
     @Test
-    void isNotReadOnlyAndAsksPermission() {
+    void isNotReadOnlyAndAllowsManagedSandboxPermission() {
         BashTool tool = new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())));
         Map<String, Object> input = Map.of("command", "echo hi");
 
         assertFalse(tool.isReadOnly(input));
         assertFalse(tool.isConcurrencySafe(input));
         assertTrue(tool.isDestructive(input));
-        assertEquals(PermissionBehavior.ASK, tool.checkPermissions(input, context(Map.of())).behavior());
+        assertEquals(PermissionBehavior.ALLOW, tool.checkPermissions(input, context(Map.of())).behavior());
     }
 
     @Test
@@ -490,16 +618,56 @@ class BashToolTest {
     }
 
     @Test
-    void stillAsksWhenSandboxAutoAllowCanFallbackToHost() {
+    void allowsManagedSandboxWhenAutoAllowAndFailIfUnavailableAreFalse() {
         BashTool tool = new BashTool(
             new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())),
-            new RecordingSandboxPolicyResolver(policy(false, true))
+            new RecordingSandboxPolicyResolver(policy(false, false))
         );
 
         assertEquals(
-            PermissionBehavior.ASK,
+            PermissionBehavior.ALLOW,
             tool.checkPermissions(Map.of("command", "echo hi"), context(Map.of())).behavior()
         );
+    }
+
+    @Test
+    void escalatedPermissionCheckAllowsCoordinatorReviewWithoutResolvingSandboxPolicy() {
+        RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
+        BashTool tool = new BashTool(
+            new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())),
+            resolver
+        );
+
+        var decision = tool.checkPermissions(
+            Map.of(
+                "command", "id",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host process access."
+            ),
+            context(Map.of())
+        );
+
+        assertEquals(PermissionBehavior.ALLOW, decision.behavior());
+        assertEquals(0, resolver.calls.get());
+    }
+
+    @Test
+    void stillAsksWhenSandboxIsDisabledOrExternal() {
+        for (SandboxRuntimePolicyKind kind : List.of(
+            SandboxRuntimePolicyKind.DISABLED,
+            SandboxRuntimePolicyKind.EXTERNAL
+        )) {
+            BashTool tool = new BashTool(
+                new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty())),
+                new RecordingSandboxPolicyResolver(policy(kind, false, false))
+            );
+
+            assertEquals(
+                PermissionBehavior.ASK,
+                tool.checkPermissions(Map.of("command", "echo hi"), context(Map.of())).behavior(),
+                kind.name()
+            );
+        }
     }
 
     private ToolUseContext context(Map<String, Object> extraMetadata) {
@@ -514,7 +682,16 @@ class BashToolTest {
     }
 
     private SandboxRuntimePolicy policy(boolean failIfUnavailable, boolean autoAllowBashIfSandboxed) {
+        return policy(SandboxRuntimePolicyKind.MANAGED, failIfUnavailable, autoAllowBashIfSandboxed);
+    }
+
+    private SandboxRuntimePolicy policy(
+        SandboxRuntimePolicyKind kind,
+        boolean failIfUnavailable,
+        boolean autoAllowBashIfSandboxed
+    ) {
         return new SandboxRuntimePolicy(
+            kind,
             List.of(Path.of("/usr")),
             List.of(),
             List.of(tempDir),
@@ -562,6 +739,7 @@ class BashToolTest {
 
     private static final class RecordingSandboxPolicyResolver implements cn.lypi.tool.shell.SandboxPolicyResolver {
         private final SandboxRuntimePolicy policy;
+        private final AtomicInteger calls = new AtomicInteger();
         private final AtomicReference<Path> workspace = new AtomicReference<>();
         private final AtomicReference<Path> cwd = new AtomicReference<>();
 
@@ -571,9 +749,20 @@ class BashToolTest {
 
         @Override
         public SandboxRuntimePolicy resolve(Path workspace, Path cwd) {
+            calls.incrementAndGet();
             this.workspace.set(workspace);
             this.cwd.set(cwd);
             return policy;
+        }
+    }
+
+    private static final class FailingSandboxPolicyResolver implements cn.lypi.tool.shell.SandboxPolicyResolver {
+        private final AtomicInteger calls = new AtomicInteger();
+
+        @Override
+        public SandboxRuntimePolicy resolve(Path workspace, Path cwd) {
+            calls.incrementAndGet();
+            throw new IllegalStateException("sandbox policy must not be resolved for host execution");
         }
     }
 }

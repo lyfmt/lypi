@@ -105,7 +105,7 @@ class PermissionProfileSandboxPolicyResolverTest {
     }
 
     @Test
-    void explicitConfiguredProfileOverridesRuntimeModeDefault() throws Exception {
+    void bypassDisablesSandboxWhileExplicitProfileStillAppliesToAskAndAuto() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         PermissionProfileSandboxPolicyResolver resolver = new PermissionProfileSandboxPolicyResolver(
             PermissionProfiles.readOnly(),
@@ -113,16 +113,30 @@ class PermissionProfileSandboxPolicyResolverTest {
             true
         );
 
-        SandboxRuntimePolicy policy = resolver.resolve(
+        SandboxRuntimePolicy ask = resolver.resolve(
+            workspace,
+            workspace,
+            PermissionRuntimeState.forMode(PermissionMode.ASK)
+        );
+        SandboxRuntimePolicy auto = resolver.resolve(
+            workspace,
+            workspace,
+            PermissionRuntimeState.forMode(PermissionMode.AUTO)
+        );
+        SandboxRuntimePolicy bypass = resolver.resolve(
             workspace,
             workspace,
             PermissionRuntimeState.forMode(PermissionMode.BYPASS)
         );
 
-        assertEquals(SandboxRuntimePolicyKind.MANAGED, policy.kind());
-        assertTrue(policy.allowRead().contains(Path.of("/")));
-        assertTrue(policy.allowWrite().isEmpty());
-        assertEquals(NetworkMode.DISABLED, policy.networkMode());
+        for (SandboxRuntimePolicy policy : List.of(ask, auto)) {
+            assertEquals(SandboxRuntimePolicyKind.MANAGED, policy.kind());
+            assertTrue(policy.allowRead().contains(Path.of("/")));
+            assertTrue(policy.allowWrite().isEmpty());
+            assertEquals(NetworkMode.DISABLED, policy.networkMode());
+        }
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, bypass.kind());
+        assertEquals(NetworkMode.HOST, bypass.networkMode());
     }
 
     @Test

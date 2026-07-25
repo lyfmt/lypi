@@ -207,7 +207,7 @@ class ModelPermissionReviewerTest {
         DefaultToolRuntime denyRuntime = runtime(denyProvider);
         denyRuntime.register(TestTools.permissionAndExecutionCountingTool(
             "write-notes",
-            PermissionBehavior.ALLOW,
+            PermissionBehavior.DENY,
             new AtomicInteger(),
             deniedExecutions
         ));

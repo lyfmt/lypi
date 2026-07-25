@@ -42,4 +42,17 @@ public record SandboxRuntimePolicy(
         denyWrite = denyWrite == null ? List.of() : List.copyOf(denyWrite);
         networkMode = networkMode == null ? NetworkMode.DISABLED : networkMode;
     }
+
+    public static SandboxRuntimePolicy disabled() {
+        return new SandboxRuntimePolicy(
+            SandboxRuntimePolicyKind.DISABLED,
+            List.of(Path.of("/")),
+            List.of(),
+            List.of(Path.of("/")),
+            List.of(),
+            NetworkMode.HOST,
+            false,
+            true
+        );
+    }
 }

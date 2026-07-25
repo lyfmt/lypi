@@ -32,7 +32,7 @@ final class SandboxEscalationPolicy {
             ));
         }
         PermissionRuntimeState runtimeState = runtimeState(context);
-        if (runtimeState.legacyBehavior().allowExplicitEscalationWithoutPrompt()) {
+        if (runtimeState.mode() == PermissionMode.BYPASS) {
             return Optional.of(decision(
                 PermissionBehavior.ALLOW,
                 "BYPASS 权限模式允许沙箱提权执行。",

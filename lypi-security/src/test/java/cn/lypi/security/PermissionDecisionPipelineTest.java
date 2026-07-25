@@ -11,6 +11,8 @@ import cn.lypi.contracts.security.FileSystemPermissionPolicy;
 import cn.lypi.contracts.security.FileSystemSpecialPath;
 import cn.lypi.contracts.security.ActivePermissionProfile;
 import cn.lypi.contracts.security.ApprovalPolicy;
+import cn.lypi.contracts.security.BashRiskAnalysis;
+import cn.lypi.contracts.security.BashRiskLevel;
 import cn.lypi.contracts.security.LegacyPermissionBehavior;
 import cn.lypi.contracts.security.ManagedPermissionProfile;
 import cn.lypi.contracts.security.PermissionBehavior;
@@ -143,6 +145,89 @@ class PermissionDecisionPipelineTest {
         assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ASK);
         assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.BASH_RISK);
         assertThat(decision.metadata()).containsKey("bashRisk");
+    }
+
+    @Test
+    void lowAndMediumBashDefaultToAllow() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(pipeline, "pwd", PermissionBehavior.ALLOW, BashRiskLevel.LOW);
+        assertBashDecision(pipeline, "touch output.txt", PermissionBehavior.ALLOW, BashRiskLevel.MEDIUM);
+    }
+
+    @Test
+    void listedHighAndDestructiveBashDefaultToAllow() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(pipeline, "curl https://example.com", PermissionBehavior.ALLOW, BashRiskLevel.HIGH);
+        assertBashDecision(pipeline, "rm -rf build", PermissionBehavior.ALLOW, BashRiskLevel.DESTRUCTIVE);
+    }
+
+    @Test
+    void reviewOnlyBashDefaultsToAsk() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(pipeline, "dd if=a of=b", PermissionBehavior.ASK, BashRiskLevel.DESTRUCTIVE);
+        assertBashDecision(pipeline, "mkfs /dev/loop0", PermissionBehavior.ASK, BashRiskLevel.DESTRUCTIVE);
+        assertBashDecision(pipeline, "npm install", PermissionBehavior.ASK, BashRiskLevel.HIGH);
+        assertBashDecision(pipeline, "pip install package", PermissionBehavior.ASK, BashRiskLevel.HIGH);
+    }
+
+    @Test
+    void mixedBashUsesStrictestSegment() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(
+            pipeline,
+            "curl https://example.com && rm -rf build",
+            PermissionBehavior.ALLOW,
+            BashRiskLevel.DESTRUCTIVE
+        );
+        assertBashDecision(
+            pipeline,
+            "rm -rf build && dd if=a of=b",
+            PermissionBehavior.ASK,
+            BashRiskLevel.DESTRUCTIVE
+        );
+    }
+
+    @Test
+    void unknownBashDefaultsToAsk() {
+        assertBashDecision(
+            new PermissionDecisionPipeline(),
+            "echo $(id)",
+            PermissionBehavior.ASK,
+            BashRiskLevel.UNKNOWN
+        );
+    }
+
+    @Test
+    void eligibleBashStillHonorsExplicitAskAndStrictAutoReview() {
+        PermissionDecisionPipeline explicitAskPipeline = new PermissionDecisionPipeline(List.of(
+            rule(PermissionBehavior.ASK, "bash", "curl *", "review curl")
+        ));
+
+        for (ToolUseContext context : permissionContexts(PermissionMode.ASK)) {
+            PermissionDecision explicitAsk = explicitAskPipeline.decide(
+                request("bash", Map.of("command", "curl https://example.com")),
+                context
+            );
+            assertThat(explicitAsk.behavior()).isEqualTo(PermissionBehavior.ASK);
+            assertThat(explicitAsk.reason()).isEqualTo(PermissionDecisionReason.EXPLICIT_RULE);
+            assertThat(explicitAsk.metadata()).containsKey("bashRisk");
+        }
+
+        for (ToolUseContext context : permissionContexts(PermissionMode.AUTO)) {
+            java.util.LinkedHashMap<String, Object> metadata = new java.util.LinkedHashMap<>(context.metadata());
+            metadata.put("strictAutoReview", true);
+            PermissionDecision strictReview = new PermissionDecisionPipeline().decide(
+                request("bash", Map.of("command", "pwd")),
+                new ToolUseContext(context.sessionId(), context.messageId(), context.cwd(), Map.copyOf(metadata))
+            );
+            assertThat(strictReview.behavior()).isEqualTo(PermissionBehavior.ASK);
+            assertThat(strictReview.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
+            assertThat(strictReview.metadata()).containsKeys("strictAutoReview", "bashRisk");
+        }
     }
 
     @Test
@@ -343,6 +428,35 @@ class PermissionDecisionPipelineTest {
     }
 
     @Test
+    void bashCwdSkipsHostSidePathSafety(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace.resolve(".git"));
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("bash", Map.of("command", "pwd", "cwd", ".git")),
+            context(PermissionMode.ASK, workspace, Map.of())
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
+    void bashRedirectSkipsHostSideFilesystemProfile() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        PermissionDecision decision = pipeline.decide(
+            request("bash", Map.of("command", "printf x > /etc/lypi-test")),
+            context(PermissionMode.ASK)
+        );
+
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+        assertThat(decision.metadata()).containsKey("bashRisk");
+    }
+
+    @Test
     void additionalFilesystemPermissionsDoNotBypassHardSafety() {
         PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
 
@@ -361,7 +475,7 @@ class PermissionDecisionPipelineTest {
     }
 
     @Test
-    void additionalFilesystemPermissionsDoNotBypassBashRedirectHardSafety(@TempDir Path tempDir) throws IOException {
+    void bashRedirectSymlinkSkipsHostSidePathSafety(@TempDir Path tempDir) throws IOException {
         Path workspace = tempDir.resolve("workspace");
         Path approved = tempDir.resolve("approved");
         Files.createDirectories(workspace.resolve(".git"));
@@ -371,20 +485,81 @@ class PermissionDecisionPipelineTest {
 
         PermissionDecision decision = pipeline.decide(
             request("bash", Map.of("command", "echo ok > " + approved.resolve("git-link/config"))),
-            context(PermissionMode.BYPASS, workspace, Map.of(
-                "additionalPermissions",
-                additionalRootFileSystem(FileSystemAccessMode.WRITE),
-                "approvedAdditionalPermissions",
-                true
-            ))
+            context(PermissionMode.ASK, workspace, Map.of())
         );
 
-        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.DENY);
-        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.HARD_SAFETY);
+        assertThat(decision.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(decision.reason()).isEqualTo(PermissionDecisionReason.MODE_DEFAULT);
+    }
+
+    @Test
+    void nonBashFileToolsKeepPathSafetyAndFilesystemProfileChecks(@TempDir Path tempDir) throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace.resolve(".git"));
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+        ToolUseContext readOnlyContext = context(
+            PermissionMode.ASK,
+            workspace,
+            Map.of("permissionRuntimeState", runtimeStateWithProfile("read-only", PermissionProfiles.readOnly()))
+        );
+
+        PermissionDecision read = pipeline.decide(
+            request("read", Map.of("path", ".git/config")),
+            readOnlyContext
+        );
+        PermissionDecision edit = pipeline.decide(
+            request("edit", Map.of("path", ".git/config")),
+            readOnlyContext
+        );
+        PermissionDecision write = pipeline.decide(
+            request("write", Map.of("path", workspace.resolve("output.txt").toString())),
+            readOnlyContext
+        );
+
+        assertThat(read.reason()).isEqualTo(PermissionDecisionReason.HARD_SAFETY);
+        assertThat(edit.reason()).isEqualTo(PermissionDecisionReason.HARD_SAFETY);
+        assertThat(write.behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(write.reason()).isEqualTo(PermissionDecisionReason.SANDBOX_POLICY);
     }
 
     private ToolUseRequest request(String toolName, Map<String, Object> input) {
         return new ToolUseRequest("toolu_1", toolName, input, "msg_1");
+    }
+
+    private void assertBashDecision(
+        PermissionDecisionPipeline pipeline,
+        String command,
+        PermissionBehavior expectedBehavior,
+        BashRiskLevel expectedRisk
+    ) {
+        for (PermissionMode mode : List.of(PermissionMode.ASK, PermissionMode.AUTO)) {
+            for (ToolUseContext context : permissionContexts(mode)) {
+                PermissionDecision decision = pipeline.decide(
+                    request("bash", Map.of("command", command)),
+                    context
+                );
+
+                assertThat(decision.behavior()).as(mode + ": " + command).isEqualTo(expectedBehavior);
+                assertThat(decision.metadata().get("bashRisk"))
+                    .as(mode + ": " + command)
+                    .isInstanceOf(BashRiskAnalysis.class);
+                assertThat(((BashRiskAnalysis) decision.metadata().get("bashRisk")).riskLevel())
+                    .as(mode + ": " + command)
+                    .isEqualTo(expectedRisk);
+            }
+        }
+    }
+
+    private List<ToolUseContext> permissionContexts(PermissionMode mode) {
+        return List.of(
+            new ToolUseContext(
+                "ses_canonical",
+                "msg_1",
+                Path.of("/workspace"),
+                Map.of("permissionRuntimeState", PermissionRuntimeState.forMode(mode))
+            ),
+            context(mode)
+        );
     }
 
     private ToolUseContext context(PermissionMode mode) {

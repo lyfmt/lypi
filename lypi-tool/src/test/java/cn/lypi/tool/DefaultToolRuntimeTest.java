@@ -26,6 +26,7 @@ import cn.lypi.contracts.event.ToolEndEvent;
 import cn.lypi.contracts.event.ToolProgressEvent;
 import cn.lypi.contracts.event.ToolStartEvent;
 import cn.lypi.contracts.mcp.McpToolSchema;
+import cn.lypi.contracts.runtime.ExecutionMetadata;
 import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
@@ -66,6 +67,7 @@ import cn.lypi.tool.builtin.ReadTool;
 import cn.lypi.tool.builtin.RequestPermissionsTool;
 import cn.lypi.tool.builtin.WriteTool;
 import cn.lypi.tool.mcp.McpToolAdapter;
+import cn.lypi.tool.shell.ExecutorRegistry;
 import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import java.nio.file.Files;
@@ -415,6 +417,426 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void directAllowedBashCommandsRouteToManagedSandboxWithoutReview() {
+        List<BashCommandCase> commands = List.of(
+            new BashCommandCase("pwd", BashRiskLevel.LOW),
+            new BashCommandCase("touch output.txt", BashRiskLevel.MEDIUM),
+            new BashCommandCase("curl https://example.com", BashRiskLevel.HIGH),
+            new BashCommandCase("wget https://example.com/file", BashRiskLevel.HIGH),
+            new BashCommandCase("git push origin feature/test", BashRiskLevel.HIGH),
+            new BashCommandCase("sudo id", BashRiskLevel.HIGH),
+            new BashCommandCase("rm -rf build", BashRiskLevel.DESTRUCTIVE),
+            new BashCommandCase("rmdir build", BashRiskLevel.DESTRUCTIVE),
+            new BashCommandCase("shred secret.txt", BashRiskLevel.DESTRUCTIVE),
+            new BashCommandCase("chmod 600 secret.txt", BashRiskLevel.DESTRUCTIVE),
+            new BashCommandCase("chown root secret.txt", BashRiskLevel.DESTRUCTIVE)
+        );
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        List<BashRiskAnalysis> analyses = new CopyOnWriteArrayList<>();
+        SecurityRuntimePort security = (request, context) -> {
+            String command = request.input().get("command").toString();
+            BashCommandCase commandCase = commands.stream()
+                .filter(candidate -> candidate.command().equals(command))
+                .findFirst()
+                .orElseThrow();
+            BashRiskAnalysis analysis = bashAnalysis(command, commandCase.riskLevel());
+            analyses.add(analysis);
+            return bashDecision(
+                PermissionBehavior.ALLOW,
+                PermissionDecisionReason.MODE_DEFAULT,
+                analysis,
+                Optional.empty()
+            );
+        };
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("gate must not run");
+        };
+        PermissionReviewer reviewer = (request, tool, context, snapshot, decision) -> {
+            reviewerCalls.incrementAndGet();
+            return PermissionGateResult.deny("reviewer must not run");
+        };
+        RecordingExecutor host = recordingHostExecutor();
+        RecordingExecutor bubblewrap = recordingSandboxExecutor();
+        DefaultToolRuntime runtime = runtimeWithBashRouting(security, gate, reviewer, host, bubblewrap);
+
+        int requestIndex = 0;
+        for (PermissionMode mode : List.of(PermissionMode.ASK, PermissionMode.AUTO)) {
+            for (BashCommandCase command : commands) {
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest(
+                        "toolu_direct_" + requestIndex++,
+                        "bash",
+                        Map.of("command", command.command()),
+                        "msg_1"
+                    )),
+                    TestTools.context(mode)
+                ).getFirst();
+
+                assertFalse(result.isError(), mode + ": " + command.command());
+            }
+        }
+
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, reviewerCalls.get());
+        assertEquals(0, host.calls.get());
+        assertEquals(commands.size() * 2, bubblewrap.calls.get());
+        assertTrue(bubblewrap.requests.stream().allMatch(request ->
+            request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.MANAGED
+        ));
+        for (int index = 0; index < analyses.size(); index++) {
+            BashCommandCase expected = commands.get(index % commands.size());
+            assertEquals(expected.command(), analyses.get(index).normalizedCommand());
+            assertEquals(expected.riskLevel(), analyses.get(index).riskLevel());
+        }
+    }
+
+    @Test
+    void reviewedBashCommandsRouteToHostForAskAndAuto() {
+        List<BashCommandCase> commands = List.of(
+            new BashCommandCase("dd if=a of=b", BashRiskLevel.DESTRUCTIVE),
+            new BashCommandCase("mkfs /dev/loop0", BashRiskLevel.DESTRUCTIVE),
+            new BashCommandCase("npm install", BashRiskLevel.HIGH),
+            new BashCommandCase("pip install package", BashRiskLevel.HIGH),
+            new BashCommandCase("rm -rf build && dd if=a of=b", BashRiskLevel.DESTRUCTIVE),
+            new BashCommandCase("echo $(id)", BashRiskLevel.UNKNOWN)
+        );
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> {
+            String command = request.input().get("command").toString();
+            BashCommandCase commandCase = commands.stream()
+                .filter(candidate -> candidate.command().equals(command))
+                .findFirst()
+                .orElseThrow();
+            return bashDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.BASH_RISK,
+                bashAnalysis(command, commandCase.riskLevel()),
+                Optional.empty()
+            );
+        };
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            assertEquals(
+                request.input().get("command"),
+                bashRisk(decision).normalizedCommand()
+            );
+            return PermissionGateResult.allow();
+        };
+        PermissionReviewer reviewer = (request, tool, context, snapshot, decision) -> {
+            reviewerCalls.incrementAndGet();
+            assertEquals(
+                request.input().get("command"),
+                bashRisk(decision).normalizedCommand()
+            );
+            return PermissionGateResult.allow();
+        };
+        RecordingExecutor host = recordingHostExecutor();
+        RecordingExecutor bubblewrap = recordingSandboxExecutor();
+        DefaultToolRuntime runtime = runtimeWithBashRouting(security, gate, reviewer, host, bubblewrap);
+
+        int requestIndex = 0;
+        for (PermissionMode mode : List.of(PermissionMode.ASK, PermissionMode.AUTO)) {
+            for (BashCommandCase command : commands) {
+                ToolResult<?> result = runtime.execute(
+                    List.of(new ToolUseRequest(
+                        "toolu_reviewed_" + requestIndex++,
+                        "bash",
+                        Map.of("command", command.command()),
+                        "msg_1"
+                    )),
+                    TestTools.context(mode)
+                ).getFirst();
+
+                assertFalse(result.isError(), mode + ": " + command.command());
+            }
+        }
+
+        assertEquals(commands.size(), gateCalls.get());
+        assertEquals(commands.size(), reviewerCalls.get());
+        assertEquals(commands.size() * 2, host.calls.get());
+        assertEquals(0, bubblewrap.calls.get());
+        assertTrue(host.requests.stream().allMatch(request ->
+            request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.DISABLED
+        ));
+    }
+
+    @Test
+    void allApprovedBashPermissionShapesRouteToHost() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashDecision(
+            PermissionBehavior.ASK,
+            PermissionDecisionReason.BASH_RISK,
+            bashAnalysis(request.input().get("command").toString(), BashRiskLevel.HIGH),
+            Optional.empty()
+        );
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        RecordingExecutor host = recordingHostExecutor();
+        RecordingExecutor bubblewrap = recordingSandboxExecutor();
+        DefaultToolRuntime runtime = runtimeWithBashRouting(
+            security,
+            gate,
+            PermissionReviewer.denying(),
+            host,
+            bubblewrap
+        );
+        List<Map<String, Object>> inputs = List.of(
+            Map.of("command", "dd if=a of=b"),
+            Map.of(
+                "command", "touch cache/out",
+                "sandboxPermissions", "withAdditionalPermissions",
+                "additionalPermissions", additionalPermissionsInput(tempDir.resolve("cache"))
+            ),
+            Map.of(
+                "command", "id",
+                "sandboxPermissions", "requireEscalated",
+                "justification", "Need host process access."
+            )
+        );
+
+        for (int index = 0; index < inputs.size(); index++) {
+            ToolResult<?> result = runtime.execute(
+                List.of(new ToolUseRequest("toolu_shape_" + index, "bash", inputs.get(index), "msg_1")),
+                TestTools.context(PermissionMode.ASK)
+            ).getFirst();
+            assertFalse(
+                result.isError(),
+                index + ": " + result.newMessages().getFirst().content().getFirst().text()
+            );
+        }
+
+        assertEquals(3, gateCalls.get());
+        assertEquals(3, host.calls.get());
+        assertEquals(0, bubblewrap.calls.get());
+        assertEquals(
+            List.of(
+                SandboxPermissions.USE_DEFAULT,
+                SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+                SandboxPermissions.REQUIRE_ESCALATED
+            ),
+            host.requests.stream().map(ExecutionRequest::sandboxPermissions).toList()
+        );
+        assertTrue(host.requests.stream().allMatch(request ->
+            request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.DISABLED
+        ));
+    }
+
+    @Test
+    void ordinarySandboxFailuresDoNotRequestApprovalOrRetryOnHost() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashDecision(
+            PermissionBehavior.ALLOW,
+            PermissionDecisionReason.MODE_DEFAULT,
+            bashAnalysis(request.input().get("command").toString(), BashRiskLevel.MEDIUM),
+            Optional.empty()
+        );
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        PermissionReviewer reviewer = (request, tool, context, snapshot, decision) -> {
+            reviewerCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+
+        for (String stderr : List.of(
+            "Read-only file system",
+            "Permission denied",
+            "Network is unreachable"
+        )) {
+            RecordingExecutor host = recordingHostExecutor();
+            RecordingExecutor bubblewrap = new RecordingExecutor(new ExecutionResult(
+                1,
+                "",
+                stderr,
+                false,
+                Optional.empty(),
+                ExecutionMetadata.sandboxed("bubblewrap")
+            ));
+            DefaultToolRuntime runtime = runtimeWithBashRouting(security, gate, reviewer, host, bubblewrap);
+
+            ToolResult<?> result = runtime.execute(
+                List.of(new ToolUseRequest("toolu_failure", "bash", Map.of("command", "touch output.txt"), "msg_1")),
+                TestTools.context(PermissionMode.ASK)
+            ).getFirst();
+            String text = result.newMessages().getFirst().content().getFirst().text();
+
+            assertFalse(result.isError());
+            assertTrue(text.contains("sandboxed=true"));
+            assertTrue(text.contains(stderr));
+            assertNoSandboxRetryHint(result);
+            assertEquals(0, host.calls.get());
+            assertEquals(1, bubblewrap.calls.get());
+        }
+
+        RecordingExecutor unavailableHost = recordingHostExecutor();
+        RecordingExecutor unavailableBubblewrap = new RecordingExecutor(new ExecutionResult(
+            126,
+            "",
+            "sandbox unavailable",
+            false,
+            Optional.empty(),
+            ExecutionMetadata.sandboxUnavailable("bubblewrap", "user namespaces unavailable")
+        ));
+        DefaultToolRuntime unavailableRuntime = runtimeWithBashRouting(
+            security,
+            gate,
+            reviewer,
+            unavailableHost,
+            unavailableBubblewrap
+        );
+
+        ToolResult<?> unavailable = unavailableRuntime.execute(
+            List.of(new ToolUseRequest("toolu_unavailable", "bash", Map.of("command", "touch output.txt"), "msg_1")),
+            TestTools.context(PermissionMode.ASK)
+        ).getFirst();
+        String unavailableText = unavailable.newMessages().getFirst().content().getFirst().text();
+
+        assertFalse(unavailable.isError());
+        assertTrue(unavailableText.contains("sandboxUnavailable=true"));
+        assertTrue(unavailableText.contains("diagnostic=user namespaces unavailable"));
+        assertEquals(0, unavailableHost.calls.get());
+        assertEquals(1, unavailableBubblewrap.calls.get());
+        assertEquals(0, gateCalls.get());
+        assertEquals(0, reviewerCalls.get());
+    }
+
+    @Test
+    void deniedBashReviewDoesNotCallEitherExecutor() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> bashRiskDecision(
+            BashRiskLevel.DESTRUCTIVE,
+            request.input().get("command").toString()
+        );
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("user denied");
+        };
+        PermissionReviewer reviewer = (request, tool, context, snapshot, decision) -> {
+            reviewerCalls.incrementAndGet();
+            return PermissionGateResult.deny("reviewer denied");
+        };
+        RecordingExecutor host = recordingHostExecutor();
+        RecordingExecutor bubblewrap = recordingSandboxExecutor();
+        DefaultToolRuntime runtime = runtimeWithBashRouting(security, gate, reviewer, host, bubblewrap);
+
+        ToolResult<?> ask = runtime.execute(
+            List.of(new ToolUseRequest("toolu_deny_ask", "bash", Map.of("command", "dd if=a of=b"), "msg_1")),
+            TestTools.context(PermissionMode.ASK)
+        ).getFirst();
+        ToolResult<?> auto = runtime.execute(
+            List.of(new ToolUseRequest("toolu_deny_auto", "bash", Map.of("command", "dd if=a of=b"), "msg_1")),
+            TestTools.context(PermissionMode.AUTO)
+        ).getFirst();
+
+        assertTrue(ask.isError());
+        assertTrue(auto.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(1, reviewerCalls.get());
+        assertEquals(0, host.calls.get());
+        assertEquals(0, bubblewrap.calls.get());
+    }
+
+    @Test
+    void rememberedBashApprovalRoutesFirstCallToHostAndLaterAllowToSandbox() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        SecurityRuntimePort security = (request, context) -> {
+            BashRiskAnalysis analysis = bashAnalysis("npm install", BashRiskLevel.HIGH);
+            Object rules = context.metadata().get("permissionRules");
+            if (rules instanceof Iterable<?> iterable) {
+                for (Object candidate : iterable) {
+                    if (candidate instanceof PermissionRule rule
+                        && rule.behavior() == PermissionBehavior.ALLOW
+                        && "bash".equals(rule.value().toolName())
+                        && "prefix:npm install".equals(rule.value().pattern())) {
+                        return bashDecision(
+                            PermissionBehavior.ALLOW,
+                            PermissionDecisionReason.EXPLICIT_RULE,
+                            analysis,
+                            Optional.empty()
+                        );
+                    }
+                }
+            }
+            return bashDecision(
+                PermissionBehavior.ASK,
+                PermissionDecisionReason.BASH_RISK,
+                analysis,
+                Optional.of(prefixUpdate("npm install"))
+            );
+        };
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.allow(decision.suggestedUpdate());
+        };
+        RecordingExecutor host = recordingHostExecutor();
+        RecordingExecutor bubblewrap = recordingSandboxExecutor();
+        DefaultToolRuntime runtime = runtimeWithBashRouting(
+            security,
+            gate,
+            PermissionReviewer.denying(),
+            host,
+            bubblewrap
+        );
+        ToolUseRequest first = new ToolUseRequest(
+            "toolu_remember_first",
+            "bash",
+            Map.of("command", "npm install", "prefix_rule", List.of("npm", "install")),
+            "msg_1"
+        );
+        ToolUseRequest second = new ToolUseRequest(
+            "toolu_remember_second",
+            "bash",
+            Map.of("command", "npm install", "prefix_rule", List.of("npm", "install")),
+            "msg_1"
+        );
+
+        ToolResult<?> firstResult = runtime.execute(List.of(first), TestTools.context(PermissionMode.ASK)).getFirst();
+        ToolResult<?> secondResult = runtime.execute(List.of(second), TestTools.context(PermissionMode.ASK)).getFirst();
+
+        assertFalse(firstResult.isError());
+        assertFalse(secondResult.isError());
+        assertEquals(1, gateCalls.get());
+        assertEquals(1, host.calls.get());
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, host.request.get().sandboxPolicy().kind());
+        assertEquals(1, bubblewrap.calls.get());
+        assertEquals(SandboxRuntimePolicyKind.MANAGED, bubblewrap.request.get().sandboxPolicy().kind());
+    }
+
+    @Test
+    void staleApprovalMarkerIsClearedFromParallelReadOnlyCalls() {
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder()
+                .cwd(tempDir)
+                .maxConcurrency(2)
+                .metadata(Map.of("permissionApprovedForHostExecution", true))
+                .build(),
+            allowAllSecurity()
+        );
+        runtime.register(approvalMarkerCapturingReadTool("read_one", approvals));
+        runtime.register(approvalMarkerCapturingReadTool("read_two", approvals));
+
+        List<ToolResult<?>> results = runtime.execute(
+            List.of(
+                new ToolUseRequest("toolu_read_one", "read_one", Map.of("text", "one"), "msg_1"),
+                new ToolUseRequest("toolu_read_two", "read_two", Map.of("text", "two"), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK)
+        );
+
+        assertTrue(results.stream().noneMatch(ToolResult::isError));
+        assertEquals(List.of(false, false), approvals);
+    }
+
+    @Test
     void permissionGateAllowContinuesAfterToolAskDecision() {
         AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -457,6 +879,113 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void askExecutesEffectiveAllowWithoutCallingPermissionGate() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger executeCalls = new AtomicInteger();
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("gate must not run");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, allowAllSecurity());
+        runtime.register(TestTools.permissionCountingTool("write", PermissionBehavior.ALLOW, executeCalls));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.ASK)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executeCalls.get());
+    }
+
+    @Test
+    void askApprovalMarksCurrentCallAsApproved() {
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        DefaultToolRuntime runtime = runtimeWithGate(
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
+            security
+        );
+        runtime.register(approvalCapturingTool("write", PermissionBehavior.ALLOW, approvals));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.ASK)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(List.of(true), approvals);
+    }
+
+    @Test
+    void autoApprovalMarksCurrentCallAsApproved() {
+        AtomicInteger gateCalls = new AtomicInteger();
+        AtomicInteger reviewerCalls = new AtomicInteger();
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        SecurityRuntimePort security = (request, context) -> TestTools.decision(PermissionBehavior.ASK, "security ask");
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            return PermissionGateResult.deny("gate must not run");
+        };
+        PermissionReviewer reviewer = (request, tool, context, snapshot, decision) -> {
+            reviewerCalls.incrementAndGet();
+            return PermissionGateResult.allow();
+        };
+        DefaultToolRuntime runtime = runtimeWithGateAndReviewer(gate, security, reviewer);
+        runtime.register(approvalCapturingTool("write", PermissionBehavior.ALLOW, approvals));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1")),
+            TestTools.context(PermissionMode.AUTO)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, reviewerCalls.get());
+        assertEquals(List.of(true), approvals);
+    }
+
+    @Test
+    void inlineAdditionalPermissionApprovalMarksCurrentCallAsApproved() {
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        DefaultToolRuntime runtime = runtimeWithGate(
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
+            allowAllSecurity()
+        );
+        runtime.register(approvalCapturingTool("bash", PermissionBehavior.ALLOW, approvals));
+        AdditionalPermissionProfile permissions = additionalFileSystem(tempDir.resolve("cache"));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "bash", Map.of(
+                "command", "touch cache/out",
+                "text", "done",
+                "sandboxPermissions", "withAdditionalPermissions",
+                "additionalPermissions", permissions
+            ), "msg_1")),
+            TestTools.context(PermissionMode.ASK)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(List.of(true), approvals);
+    }
+
+    @Test
+    void bypassAndDirectAllowAreNotMarkedAsApproved() {
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), allowAllSecurity());
+        runtime.register(approvalCapturingTool("write", PermissionBehavior.ALLOW, approvals));
+        ToolUseRequest request = new ToolUseRequest("toolu_1", "write", Map.of("text", "done"), "msg_1");
+
+        ToolResult<?> bypass = runtime.execute(List.of(request), TestTools.context(PermissionMode.BYPASS)).getFirst();
+        ToolResult<?> direct = runtime.execute(List.of(request), TestTools.context(PermissionMode.ASK)).getFirst();
+
+        assertFalse(bypass.isError());
+        assertFalse(direct.isError());
+        assertEquals(List.of(false, false), approvals);
+    }
+
+    @Test
     void allowAndRememberAppendsPermissionAmendmentAndUpdatesRuntimeMemory() {
         AtomicInteger gateCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -476,8 +1005,8 @@ class DefaultToolRuntimeTest {
             ToolExecutionEventPublisher.noop(),
             amendmentStore
         );
-        AtomicInteger executeCalls = new AtomicInteger();
-        runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
+        List<Boolean> approvals = new CopyOnWriteArrayList<>();
+        runtime.register(approvalCapturingTool("bash", PermissionBehavior.ALLOW, approvals));
 
         ToolUseRequest first = new ToolUseRequest(
             "toolu_1",
@@ -497,8 +1026,8 @@ class DefaultToolRuntimeTest {
 
         assertFalse(firstResult.isError());
         assertFalse(secondResult.isError());
-        assertEquals(2, gateCalls.get());
-        assertEquals(2, executeCalls.get());
+        assertEquals(1, gateCalls.get());
+        assertEquals(List.of(true, false), approvals);
         assertEquals(List.of(prefixUpdate("go test")), amendmentStore.readPermissionUpdates(PermissionGrantScope.SESSION));
         assertFalse(Files.exists(tempDir.resolve("rules/default.rules")));
     }
@@ -558,7 +1087,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void explicitPrefixAllowStillRequiresAskReview() {
+    void explicitPrefixAllowExecutesWithoutAskReview() {
         AtomicInteger gateCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
             gateCalls.incrementAndGet();
@@ -609,9 +1138,9 @@ class DefaultToolRuntimeTest {
 
         ToolResult<?> result = runtime.execute(List.of(request), TestTools.context(PermissionMode.ASK)).getFirst();
 
-        assertTrue(result.isError());
-        assertEquals(1, gateCalls.get());
-        assertEquals(0, executor.calls.get());
+        assertFalse(result.isError());
+        assertEquals(0, gateCalls.get());
+        assertEquals(1, executor.calls.get());
     }
 
     @Test
@@ -749,10 +1278,17 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void defaultExecuteDeniesSudoDangerousDefaultBashBeforeGateAndExecutor() {
+    void defaultExecuteReviewsSudoDangerousDefaultBashAndStopsWhenDenied() {
+        AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(BashRiskLevel.HIGH, "sudo rm -f 洗车店.md");
-        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            requestedDecision.set(decision);
+            return PermissionGateResult.deny("user denied");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
         runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
 
         ToolResult<?> result = runtime.execute(
@@ -761,18 +1297,27 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
-        assertSandboxRetryHint(result);
+        assertEquals(1, gateCalls.get());
+        assertEquals(BashRiskLevel.HIGH, bashRisk(requestedDecision.get()).riskLevel());
+        assertNoSandboxRetryHint(result);
         assertEquals(0, executeCalls.get());
     }
 
     @Test
-    void defaultExecuteDeniesShellLcDangerousDefaultBashBeforeGateAndExecutor() {
+    void defaultExecuteReviewsUnknownShellLcBashAndStopsWhenDenied() {
+        AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(
             BashRiskLevel.UNKNOWN,
             "bash -lc \"echo hi && rm -rf target\""
         );
-        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            requestedDecision.set(decision);
+            return PermissionGateResult.deny("user denied");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
         runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
 
         ToolResult<?> result = runtime.execute(
@@ -781,18 +1326,27 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
-        assertSandboxRetryHint(result);
+        assertEquals(1, gateCalls.get());
+        assertEquals(BashRiskLevel.UNKNOWN, bashRisk(requestedDecision.get()).riskLevel());
+        assertNoSandboxRetryHint(result);
         assertEquals(0, executeCalls.get());
     }
 
     @Test
-    void defaultExecuteDeniesSudoShellLcDangerousDefaultBashBeforeGateAndExecutor() {
+    void defaultExecuteReviewsSudoShellLcBashAndStopsWhenDenied() {
+        AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
+        AtomicReference<PermissionDecision> requestedDecision = new AtomicReference<>();
         SecurityRuntimePort security = (request, context) -> bashRiskDecision(
             BashRiskLevel.HIGH,
             "sudo bash -lc \"rm -rf target\""
         );
-        DefaultToolRuntime runtime = runtimeWithGate(PermissionGate.denying(), security);
+        PermissionGate gate = (request, tool, context, decision) -> {
+            gateCalls.incrementAndGet();
+            requestedDecision.set(decision);
+            return PermissionGateResult.deny("user denied");
+        };
+        DefaultToolRuntime runtime = runtimeWithGate(gate, security);
         runtime.register(TestTools.permissionCountingTool("bash", PermissionBehavior.ALLOW, executeCalls));
 
         ToolResult<?> result = runtime.execute(
@@ -801,7 +1355,9 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertTrue(result.isError());
-        assertSandboxRetryHint(result);
+        assertEquals(1, gateCalls.get());
+        assertEquals(BashRiskLevel.HIGH, bashRisk(requestedDecision.get()).riskLevel());
+        assertNoSandboxRetryHint(result);
         assertEquals(0, executeCalls.get());
     }
 
@@ -860,7 +1416,7 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
-    void autoUsesReviewerInsteadOfUserGateForDefaultBash() {
+    void autoExecutesEffectiveAllowWithoutCallingPermissionReviewer() {
         AtomicInteger gateCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         PermissionGate gate = (request, tool, context, decision) -> {
@@ -875,10 +1431,9 @@ class DefaultToolRuntimeTest {
             TestTools.context(AgentMode.EXECUTE, PermissionMode.AUTO)
         ).getFirst();
 
-        assertTrue(result.isError());
-        assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("AUTO 权限复核器不可用"));
+        assertFalse(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(0, executeCalls.get());
+        assertEquals(1, executeCalls.get());
     }
 
     @Test
@@ -2286,7 +2841,7 @@ class DefaultToolRuntimeTest {
         assertFalse(bashResult.isError());
         assertEquals(SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS, executor.request.get().sandboxPermissions());
         assertEquals(Optional.of(permissions), executor.request.get().additionalPermissions());
-        assertTrue(executor.request.get().sandboxPolicy().allowWrite().contains(approved.toRealPath()));
+        assertEquals(SandboxRuntimePolicyKind.DISABLED, executor.request.get().sandboxPolicy().kind());
         assertTrue(nextResult.isError());
         assertEquals(1, executor.calls.get());
     }
@@ -2379,6 +2934,53 @@ class DefaultToolRuntimeTest {
         assertFalse(fakeResult.isError());
         assertTrue(writeResult.isError());
         assertFalse(Files.exists(approved.resolve("outside.txt")));
+    }
+
+    private DefaultToolRuntime runtimeWithBashRouting(
+        SecurityRuntimePort security,
+        PermissionGate gate,
+        PermissionReviewer reviewer,
+        RecordingExecutor host,
+        RecordingExecutor bubblewrap
+    ) {
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(tempDir).build(),
+            security,
+            gate,
+            null,
+            reviewer
+        );
+        runtime.register(new BashTool(
+            new ExecutorRegistry(host, bubblewrap, true),
+            new PermissionProfileSandboxPolicyResolver(
+                PermissionProfiles.workspace(),
+                SandboxPolicyOptions.defaults(),
+                false
+            )
+        ));
+        return runtime;
+    }
+
+    private RecordingExecutor recordingHostExecutor() {
+        return new RecordingExecutor(new ExecutionResult(
+            0,
+            "",
+            "",
+            false,
+            Optional.empty(),
+            ExecutionMetadata.unsandboxed("host")
+        ));
+    }
+
+    private RecordingExecutor recordingSandboxExecutor() {
+        return new RecordingExecutor(new ExecutionResult(
+            0,
+            "",
+            "",
+            false,
+            Optional.empty(),
+            ExecutionMetadata.sandboxed("bubblewrap")
+        ));
     }
 
     private SecurityRuntimePort allowAllSecurity() {
@@ -2587,19 +3189,45 @@ class DefaultToolRuntimeTest {
     }
 
     private PermissionDecision bashRiskDecision(BashRiskLevel riskLevel, String command, List<Path> redirectTargets) {
-        return new PermissionDecision(
+        BashRiskAnalysis analysis = new BashRiskAnalysis(
+            command,
+            List.of(command),
+            redirectTargets,
+            riskLevel,
+            List.of("test risk"),
+            riskLevel != BashRiskLevel.UNKNOWN
+        );
+        return bashDecision(
             PermissionBehavior.ASK,
             PermissionDecisionReason.BASH_RISK,
+            analysis,
+            Optional.empty()
+        );
+    }
+
+    private BashRiskAnalysis bashAnalysis(String command, BashRiskLevel riskLevel) {
+        return new BashRiskAnalysis(
+            command,
+            List.of(command),
+            List.of(),
+            riskLevel,
+            List.of("test risk"),
+            riskLevel != BashRiskLevel.UNKNOWN
+        );
+    }
+
+    private PermissionDecision bashDecision(
+        PermissionBehavior behavior,
+        PermissionDecisionReason reason,
+        BashRiskAnalysis analysis,
+        Optional<PermissionUpdate> suggestedUpdate
+    ) {
+        return new PermissionDecision(
+            behavior,
+            reason,
             "bash risk",
-            Optional.<PermissionUpdate>empty(),
-            Map.of("bashRisk", new BashRiskAnalysis(
-                command,
-                List.of(command),
-                redirectTargets,
-                riskLevel,
-                List.of("test risk"),
-                riskLevel != BashRiskLevel.UNKNOWN
-            ))
+            suggestedUpdate,
+            Map.of("bashRisk", analysis)
         );
     }
 
@@ -2607,11 +3235,11 @@ class DefaultToolRuntimeTest {
         return (BashRiskAnalysis) decision.metadata().get("bashRisk");
     }
 
-    private void assertSandboxRetryHint(ToolResult<?> result) {
+    private void assertNoSandboxRetryHint(ToolResult<?> result) {
         String text = result.newMessages().getFirst().content().getFirst().text();
-        assertTrue(text.contains("sandboxDenied=true"));
-        assertTrue(text.contains("retryWith=sandboxPermissions=requireEscalated"));
-        assertTrue(text.contains("retryHint=provide a user-facing justification"));
+        assertFalse(text.contains("sandboxDenied"));
+        assertFalse(text.contains("retryWith"));
+        assertFalse(text.contains("retryHint"));
     }
 
     private List<AgentEvent> lifecycleEvents(RecordingEventBus events) {
@@ -2651,6 +3279,118 @@ class DefaultToolRuntimeTest {
             security,
             gate
         );
+    }
+
+    private DefaultToolRuntime runtimeWithGateAndReviewer(
+        PermissionGate gate,
+        SecurityRuntimePort security,
+        PermissionReviewer reviewer
+    ) {
+        return new DefaultToolRuntime(
+            ToolRuntimeOptions.defaults(),
+            security,
+            gate,
+            (EventBus) null,
+            reviewer
+        );
+    }
+
+    private Tool<Map<String, Object>, String> approvalCapturingTool(
+        String name,
+        PermissionBehavior behavior,
+        List<Boolean> approvals
+    ) {
+        return approvalMarkerCapturingTool(TestTools.permission(name, behavior), approvals);
+    }
+
+    private Tool<Map<String, Object>, String> approvalMarkerCapturingReadTool(
+        String name,
+        List<Boolean> approvals
+    ) {
+        return approvalMarkerCapturingTool(
+            TestTools.echo(name, List.of(), true, true, false),
+            approvals
+        );
+    }
+
+    private Tool<Map<String, Object>, String> approvalMarkerCapturingTool(
+        Tool<Map<String, Object>, String> delegate,
+        List<Boolean> approvals
+    ) {
+        return new Tool<>() {
+            @Override
+            public String name() {
+                return delegate.name();
+            }
+
+            @Override
+            public List<String> aliases() {
+                return delegate.aliases();
+            }
+
+            @Override
+            public JsonSchema inputSchema() {
+                return delegate.inputSchema();
+            }
+
+            @Override
+            public ValidationResult validateInput(Map<String, Object> input, cn.lypi.contracts.tool.ToolUseContext context) {
+                return delegate.validateInput(input, context);
+            }
+
+            @Override
+            public PermissionDecision checkPermissions(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context
+            ) {
+                return delegate.checkPermissions(input, context);
+            }
+
+            @Override
+            public ToolResult<String> execute(
+                Map<String, Object> input,
+                cn.lypi.contracts.tool.ToolUseContext context,
+                ProgressSink progress
+            ) {
+                approvals.add(Boolean.TRUE.equals(context.metadata().get("permissionApprovedForHostExecution")));
+                return delegate.execute(input, context, progress);
+            }
+
+            @Override
+            public InterruptBehavior interruptBehavior() {
+                return delegate.interruptBehavior();
+            }
+
+            @Override
+            public boolean isReadOnly(Map<String, Object> input) {
+                return delegate.isReadOnly(input);
+            }
+
+            @Override
+            public boolean isConcurrencySafe(Map<String, Object> input) {
+                return delegate.isConcurrencySafe(input);
+            }
+
+            @Override
+            public boolean isDestructive(Map<String, Object> input) {
+                return delegate.isDestructive(input);
+            }
+
+            @Override
+            public int maxResultSize() {
+                return delegate.maxResultSize();
+            }
+
+            @Override
+            public String renderForUser(Map<String, Object> input) {
+                return delegate.renderForUser(input);
+            }
+
+            @Override
+            public AgentMessage serializeForContext(String output) {
+                return delegate.serializeForContext(output);
+            }
+        };
     }
 
     private DefaultToolRuntime runtimeWithEvents(EventBus eventBus, SecurityRuntimePort security) {
@@ -2778,10 +3518,13 @@ class DefaultToolRuntimeTest {
         }
     }
 
+    private record BashCommandCase(String command, BashRiskLevel riskLevel) {}
+
     private static final class RecordingExecutor implements Executor {
         private final ExecutionResult result;
         private final AtomicInteger calls = new AtomicInteger();
         private final AtomicReference<ExecutionRequest> request = new AtomicReference<>();
+        private final List<ExecutionRequest> requests = new CopyOnWriteArrayList<>();
 
         private RecordingExecutor(ExecutionResult result) {
             this.result = result;
@@ -2800,6 +3543,7 @@ class DefaultToolRuntimeTest {
         ) {
             calls.incrementAndGet();
             this.request.set(request);
+            requests.add(request);
             return result;
         }
     }

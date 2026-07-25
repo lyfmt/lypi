@@ -25,15 +25,13 @@ final class ToolPermissionCoordinator {
     private final ApprovalCoordinator approvalCoordinator;
     private final InlineAdditionalPermissionsAuthorizer additionalPermissionsAuthorizer;
     private final SandboxEscalationPolicy sandboxEscalationPolicy;
-    private final BashSandboxRiskPolicy bashSandboxRiskPolicy;
 
     ToolPermissionCoordinator(
         SecurityRuntimePort securityRuntime,
         PermissionGate permissionGate,
         PermissionUpdateStore permissionUpdateStore,
         List<PermissionRule> runtimePermissionRules,
-        SandboxEscalationPolicy sandboxEscalationPolicy,
-        BashSandboxRiskPolicy bashSandboxRiskPolicy
+        SandboxEscalationPolicy sandboxEscalationPolicy
     ) {
         this(
             securityRuntime,
@@ -41,7 +39,6 @@ final class ToolPermissionCoordinator {
             permissionUpdateStore,
             runtimePermissionRules,
             sandboxEscalationPolicy,
-            bashSandboxRiskPolicy,
             PermissionReviewer.denying()
         );
     }
@@ -52,7 +49,6 @@ final class ToolPermissionCoordinator {
         PermissionUpdateStore permissionUpdateStore,
         List<PermissionRule> runtimePermissionRules,
         SandboxEscalationPolicy sandboxEscalationPolicy,
-        BashSandboxRiskPolicy bashSandboxRiskPolicy,
         PermissionReviewer permissionReviewer
     ) {
         this.securityRuntime = securityRuntime;
@@ -65,7 +61,6 @@ final class ToolPermissionCoordinator {
         );
         this.additionalPermissionsAuthorizer = new InlineAdditionalPermissionsAuthorizer(this.approvalCoordinator);
         this.sandboxEscalationPolicy = sandboxEscalationPolicy == null ? new SandboxEscalationPolicy() : sandboxEscalationPolicy;
-        this.bashSandboxRiskPolicy = bashSandboxRiskPolicy == null ? new BashSandboxRiskPolicy() : bashSandboxRiskPolicy;
     }
 
     ToolPermissionCoordinator(
@@ -73,8 +68,7 @@ final class ToolPermissionCoordinator {
         PermissionGate permissionGate,
         PermissionUpdateStore permissionUpdateStore,
         RuntimePermissionRuleStore runtimePermissionRules,
-        SandboxEscalationPolicy sandboxEscalationPolicy,
-        BashSandboxRiskPolicy bashSandboxRiskPolicy
+        SandboxEscalationPolicy sandboxEscalationPolicy
     ) {
         this(
             securityRuntime,
@@ -82,7 +76,6 @@ final class ToolPermissionCoordinator {
             permissionUpdateStore,
             runtimePermissionRules,
             sandboxEscalationPolicy,
-            bashSandboxRiskPolicy,
             PermissionReviewer.denying()
         );
     }
@@ -93,7 +86,6 @@ final class ToolPermissionCoordinator {
         PermissionUpdateStore permissionUpdateStore,
         RuntimePermissionRuleStore runtimePermissionRules,
         SandboxEscalationPolicy sandboxEscalationPolicy,
-        BashSandboxRiskPolicy bashSandboxRiskPolicy,
         PermissionReviewer permissionReviewer
     ) {
         this.securityRuntime = securityRuntime;
@@ -106,7 +98,6 @@ final class ToolPermissionCoordinator {
         );
         this.additionalPermissionsAuthorizer = new InlineAdditionalPermissionsAuthorizer(this.approvalCoordinator);
         this.sandboxEscalationPolicy = sandboxEscalationPolicy == null ? new SandboxEscalationPolicy() : sandboxEscalationPolicy;
-        this.bashSandboxRiskPolicy = bashSandboxRiskPolicy == null ? new BashSandboxRiskPolicy() : bashSandboxRiskPolicy;
     }
 
     Result authorize(
@@ -128,10 +119,10 @@ final class ToolPermissionCoordinator {
         PermissionMode mode = runtimeState(context).mode();
         if (mode == PermissionMode.BYPASS) {
             return additionalPermissionsAuthorizer.authorizeBypass(request, context)
-                .orElseGet(() -> Result.allowed(PermissionGateResult.allow()));
+                .orElseGet(() -> Result.directlyAllowed(PermissionGateResult.allow()));
         }
         if (tool.isReadOnly(input)) {
-            return Result.allowed(PermissionGateResult.allow());
+            return Result.directlyAllowed(PermissionGateResult.allow());
         }
 
         PermissionDecision securityDecision = securityRuntime.decide(request, context);
@@ -148,11 +139,6 @@ final class ToolPermissionCoordinator {
                 isDeny(effectiveDecision) ? effectiveDecision : allowDecision("允许进入沙箱提权审批。"),
                 sandboxDecision
             );
-        } else if (!isDeny(effectiveDecision)) {
-            Optional<PermissionDecision> bashSandboxRiskDecision = bashSandboxRiskPolicy.decide(request, context, securityDecision);
-            if (bashSandboxRiskDecision.isPresent()) {
-                effectiveDecision = bashSandboxRiskDecision.get();
-            }
         }
 
         Optional<Result> additionalPermissionsResult = additionalPermissionsAuthorizer.authorize(
@@ -166,6 +152,10 @@ final class ToolPermissionCoordinator {
             return additionalPermissionsResult.get();
         }
 
+        if (effectiveDecision != null && effectiveDecision.behavior() == PermissionBehavior.ALLOW) {
+            return Result.directlyAllowed(PermissionGateResult.allow());
+        }
+
         PermissionGateResult permissionResult = approvalCoordinator.resolve(
             request,
             tool,
@@ -177,7 +167,7 @@ final class ToolPermissionCoordinator {
             return Result.disallowed(permissionResult);
         }
 
-        return Result.allowed(permissionResult);
+        return Result.approved(permissionResult);
     }
 
     private PermissionDecision effectiveDecision(PermissionDecision toolDecision, PermissionDecision securityDecision) {
@@ -283,35 +273,39 @@ final class ToolPermissionCoordinator {
     record Result(
         boolean allowed,
         PermissionGateResult gateResult,
+        boolean approvedDuringCurrentCall,
         Optional<AdditionalPermissionProfile> approvedAdditionalPermissions
     ) {
-        Result(boolean allowed, PermissionGateResult gateResult) {
-            this(allowed, gateResult, Optional.empty());
-        }
-
         Result {
             approvedAdditionalPermissions = approvedAdditionalPermissions == null
                 ? Optional.empty()
                 : approvedAdditionalPermissions;
         }
 
-        static Result allowed(PermissionGateResult result) {
-            return new Result(true, result, Optional.empty());
+        static Result directlyAllowed(PermissionGateResult result) {
+            return new Result(true, result, false, Optional.empty());
         }
 
-        static Result disallowed(PermissionGateResult result) {
-            return new Result(false, result, Optional.empty());
-        }
-
-        static Result allowed(
+        static Result directlyAllowed(
             PermissionGateResult result,
             AdditionalPermissionProfile additionalPermissions
         ) {
-            return new Result(true, result, Optional.of(additionalPermissions));
+            return new Result(true, result, false, Optional.of(additionalPermissions));
         }
 
-        static Result denied(PermissionGateResult result) {
-            return new Result(false, result, Optional.empty());
+        static Result approved(PermissionGateResult result) {
+            return new Result(true, result, true, Optional.empty());
+        }
+
+        static Result disallowed(PermissionGateResult result) {
+            return new Result(false, result, false, Optional.empty());
+        }
+
+        static Result approved(
+            PermissionGateResult result,
+            AdditionalPermissionProfile additionalPermissions
+        ) {
+            return new Result(true, result, true, Optional.of(additionalPermissions));
         }
     }
 }

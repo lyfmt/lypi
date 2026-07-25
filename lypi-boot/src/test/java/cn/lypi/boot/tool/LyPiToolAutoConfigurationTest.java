@@ -133,7 +133,7 @@ class LyPiToolAutoConfigurationTest {
     }
 
     @Test
-    void explicitDefaultPermissionsProfileOverridesRuntimeMode() {
+    void explicitDefaultPermissionsProfileKeepsBypassDisabledAndAppliesToAskAndAuto() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiToolAutoConfiguration.class)
             .withPropertyValues("lypi.permissions.default-permissions=:workspace")
@@ -142,8 +142,14 @@ class LyPiToolAutoConfigurationTest {
                 SandboxPolicyResolver resolver = context.getBean(SandboxPolicyResolver.class);
                 Path cwd = Path.of(".").toAbsolutePath();
 
-                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.BYPASS)).kind())
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.ASK)).kind())
                     .isEqualTo(SandboxRuntimePolicyKind.MANAGED);
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.AUTO)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.MANAGED);
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.BYPASS)).kind())
+                    .isEqualTo(SandboxRuntimePolicyKind.DISABLED);
+                assertThat(resolver.resolve(cwd, cwd, PermissionRuntimeState.forMode(PermissionMode.BYPASS)).networkMode())
+                    .isEqualTo(NetworkMode.HOST);
             });
     }
 
