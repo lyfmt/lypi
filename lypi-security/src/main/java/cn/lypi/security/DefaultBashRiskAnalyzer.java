@@ -74,11 +74,17 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
     @Override
     public BashRiskAnalysis analyze(String rawCommand) {
         String normalized = normalizer.normalizeRaw(rawCommand);
-        List<String> parsedCommands = parseCommands(normalized);
-        List<Path> redirectTargets = redirectTargets(normalized);
+        BashCommandNormalizer.CommandScan scan = normalizer.scan(normalized);
+        List<String> parsedCommands = parseCommands(scan.segments());
+        List<Path> redirectTargets = redirectTargets(scan.analyzableCommand());
         List<String> reasons = new ArrayList<>();
 
-        if (containsDynamicShell(normalized) || containsAmbiguousShellSyntax(normalized, parsedCommands)) {
+        if (scan.ambiguous()) {
+            reasons.add("包含无法静态解析的 shell 结构");
+            return analysis(normalized, parsedCommands, redirectTargets, BashRiskLevel.UNKNOWN, reasons, false);
+        }
+        if (containsDynamicShell(scan.analyzableCommand())
+            || containsAmbiguousShellSyntax(scan.analyzableCommand(), parsedCommands)) {
             reasons.add("包含动态 shell 结构");
             return analysis(normalized, parsedCommands, redirectTargets, BashRiskLevel.UNKNOWN, reasons, false);
         }
@@ -133,9 +139,9 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
         );
     }
 
-    private List<String> parseCommands(String normalizedCommand) {
+    private List<String> parseCommands(List<String> segments) {
         List<String> commands = new ArrayList<>();
-        for (String part : normalizer.splitCommandSegments(normalizedCommand)) {
+        for (String part : segments) {
             String command = part.trim();
             if (!command.isBlank()) {
                 commands.add(displayCommand(command));
@@ -169,7 +175,6 @@ public final class DefaultBashRiskAnalyzer implements BashRiskAnalyzer {
             || command.contains("`")
             || command.contains("<(")
             || command.contains(">(")
-            || command.matches(".*\\s<<-?\\s*\\S+.*")
             || command.matches(".*\\bfor\\b.*\\bdo\\b.*")
             || command.matches(".*\\bwhile\\b.*\\bdo\\b.*")
             || command.matches(".*\\bcase\\b.*\\bin\\b.*")

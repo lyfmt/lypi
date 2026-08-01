@@ -74,6 +74,25 @@ class BashSandboxEligibilityPolicyTest {
     }
 
     @Test
+    void allowsStaticDiagnosticPipelineAndQuotedPythonHeredoc() {
+        assertThat(policy.allows(analyzer.analyze(
+            "grep -RInE 'class Nominal|class Categorical|margin' seaborn tests | head -200"
+        ))).isTrue();
+        assertThat(policy.allows(analyzer.analyze("""
+            python - <<'PY'
+            print('literal | > $(ignored) rm -rf target')
+            PY
+            """))).isTrue();
+    }
+
+    @Test
+    void requiresReviewForHeredocShellSinksAndUnsupportedForms() {
+        assertThat(policy.allows(analyzer.analyze("cat <<'EOF' | sh\necho unsafe\nEOF\n"))).isFalse();
+        assertThat(policy.allows(analyzer.analyze("cat <<EOF\necho $PATH\nEOF\n"))).isFalse();
+        assertThat(policy.allows(analyzer.analyze("cat <<'EOF'\nmissing terminator\n"))).isFalse();
+    }
+
+    @Test
     void unlistedFutureHighOrDestructiveCommandRequiresReview() {
         for (BashRiskLevel riskLevel : List.of(BashRiskLevel.HIGH, BashRiskLevel.DESTRUCTIVE)) {
             BashRiskAnalyzer futureAnalyzer = command -> new BashRiskAnalysis(

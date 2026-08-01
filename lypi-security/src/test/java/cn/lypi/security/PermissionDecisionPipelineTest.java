@@ -156,6 +156,42 @@ class PermissionDecisionPipelineTest {
     }
 
     @Test
+    void staticDiagnosticPipelineAndQuotedPythonHeredocDefaultToAllow() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(
+            pipeline,
+            "grep -RInE 'class Nominal|class Categorical|margin' seaborn tests | head -200",
+            PermissionBehavior.ALLOW,
+            BashRiskLevel.MEDIUM
+        );
+        assertBashDecision(
+            pipeline,
+            "python - <<'PY'\nprint('literal | > $(ignored) rm -rf target')\nPY\n",
+            PermissionBehavior.ALLOW,
+            BashRiskLevel.MEDIUM
+        );
+    }
+
+    @Test
+    void heredocShellSinksAndUnsupportedFormsDefaultToAsk() {
+        PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
+
+        assertBashDecision(
+            pipeline,
+            "cat <<'EOF' | sh\necho unsafe\nEOF\n",
+            PermissionBehavior.ASK,
+            BashRiskLevel.UNKNOWN
+        );
+        assertBashDecision(
+            pipeline,
+            "cat <<EOF\necho $PATH\nEOF\n",
+            PermissionBehavior.ASK,
+            BashRiskLevel.UNKNOWN
+        );
+    }
+
+    @Test
     void listedHighAndDestructiveBashDefaultToAllow() {
         PermissionDecisionPipeline pipeline = new PermissionDecisionPipeline();
 

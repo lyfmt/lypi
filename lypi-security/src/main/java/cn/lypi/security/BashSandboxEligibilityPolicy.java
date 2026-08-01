@@ -90,14 +90,19 @@ final class BashSandboxEligibilityPolicy {
     }
 
     boolean allows(BashRiskAnalysis analysis) {
+        BashCommandNormalizer.CommandScan scan = analysis == null || analysis.normalizedCommand() == null
+            ? null
+            : normalizer.scan(analysis.normalizedCommand());
         if (analysis == null
             || analysis.normalizedCommand() == null
-            || containsDynamicExpansion(analysis.normalizedCommand())
+            || scan == null
+            || scan.ambiguous()
+            || containsDynamicExpansion(scan.analyzableCommand())
             || !analysis.staticallyKnown()
             || analysis.riskLevel() == BashRiskLevel.UNKNOWN) {
             return false;
         }
-        List<String> segments = normalizer.splitCommandSegments(analysis.normalizedCommand());
+        List<String> segments = scan.segments();
         return !segments.isEmpty() && segments.stream().allMatch(this::allowsSegment);
     }
 
