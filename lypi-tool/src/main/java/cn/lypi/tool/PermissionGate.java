@@ -30,6 +30,13 @@ public interface PermissionGate {
      * 默认拒绝 ASK 决策，不阻塞等待用户输入。
      */
     static PermissionGate denying() {
-        return (request, tool, context, decision) -> PermissionGateResult.deny(decision == null ? null : decision.message());
+        return (request, tool, context, decision) -> {
+            String reason = decision == null || decision.message() == null || decision.message().isBlank()
+                ? "权限请求未获允许。"
+                : decision.message();
+            return PermissionGateResult.deny(
+                "ASK 没有可用审批通道，非交互运行时已拒绝执行；请配置 AUTO 或交互式 PermissionGate: " + reason
+            );
+        };
     }
 }
