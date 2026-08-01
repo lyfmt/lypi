@@ -125,6 +125,44 @@ class RipgrepSearchRunnerTest {
     }
 
     @Test
+    void systemBinaryParentIsMountedReadOnly() throws Exception {
+        Path systemDirectory = Files.createDirectories(tempDir.resolve("custom-bin"));
+        Path executable = Files.writeString(systemDirectory.resolve("rg"), "#!/bin/sh\n");
+        executable.toFile().setExecutable(true);
+        RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
+            new RipgrepPlatform("linux", "x86_64"),
+            tempDir.resolve("missing-resources"),
+            tempDir.resolve("cache"),
+            RipgrepSearchRunner.class.getClassLoader(),
+            List.of(systemDirectory)
+        );
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        RipgrepSearchRunner runner = new RipgrepSearchRunner(
+            executor,
+            new RipgrepCommandBuilder(),
+            resolver,
+            Duration.ofSeconds(20)
+        );
+
+        RipgrepSearchResult result = runner.search(
+            GrepQuery.fromInput(Map.of("pattern", "needle")),
+            tempDir,
+            new ToolUseContext(
+                "ses_1",
+                "msg_1",
+                tempDir,
+                Map.of(RipgrepBinaryResolver.MODE_KEY, "system")
+            ),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(executable.toRealPath().toString(), executor.request.command().getFirst());
+        assertTrue(executor.request.sandboxPolicy().allowRead().contains(systemDirectory.toRealPath()));
+    }
+
+    @Test
     void exitOneIsNoMatchSuccess() throws Exception {
         vendorBinary();
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(1, "", "", false, Optional.empty()));

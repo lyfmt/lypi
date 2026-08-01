@@ -124,7 +124,7 @@ final class RipgrepSearchRunner {
     }
 
     private Path binaryParent(RipgrepBinary binary) {
-        if (binary == null || binary.command() == null || binary.command().isBlank() || "system".equals(binary.mode())) {
+        if (binary == null || binary.command() == null || binary.command().isBlank()) {
             return null;
         }
         Path command = Path.of(binary.command());
