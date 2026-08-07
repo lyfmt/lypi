@@ -252,11 +252,16 @@ class BashToolTest {
     }
 
     @Test
-    void explicitCwdCommandBypassesHarness() {
+    void cwdInputIsNotInSchemaButStillAcceptedAsExecutionOverride() {
         ShellEnvironmentHarness harness = testHarness();
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
         BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), harness);
 
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
+        assertFalse(properties.containsKey("cwd"));
+
+        // 兼容期：显式 cwd 仍接受作为一次性执行目录，但命令照常走 harness 且不回写会话状态
         ToolResult<String> result = tool.execute(
             Map.of("command", "echo hi", "cwd", "."),
             context(Map.of()),
@@ -265,8 +270,8 @@ class BashToolTest {
         );
 
         assertFalse(result.isError());
-        assertEquals(List.of("bash", "-lc", "echo hi"), executor.request.get().command());
-        assertFalse(harness.snapshotExists("ses_1"));
+        assertEquals("bash", executor.request.get().command().get(0));
+        assertTrue(executor.request.get().command().get(2).contains("eval 'echo hi'"));
     }
 
     @Test

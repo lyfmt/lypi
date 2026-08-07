@@ -68,13 +68,26 @@ public final class BashTool extends AbstractFileTool {
     }
 
     @Override
+    public String description() {
+        return "Execute shell commands in the session's persistent shell state. "
+            + "The working directory persists across calls: `cd dir` in one command applies to all subsequent "
+            + "bash commands and file tools (read/write/grep/glob resolve relative paths against it), "
+            + "so do not pass absolute paths or repeat cd. "
+            + "Your login shell environment (aliases, functions, exports) is replayed from a snapshot on every call. "
+            + "Note: `export`/`source` inside a command do NOT persist to the next call; cross-command environment "
+            + "must come from session env scripts or the login profile.";
+    }
+
+    @Override
     public JsonSchema inputSchema() {
         return new JsonSchema(Map.of(
             "type", "object",
             "required", List.of("command"),
             "properties", Map.of(
-                "command", Map.of("type", "string"),
-                "cwd", Map.of("type", "string"),
+                "command", Map.of(
+                    "type", "string",
+                    "description", "Shell command executed in the session working directory (persists via cd)."
+                ),
                 INPUT_SHELL, Map.of("type", "string"),
                 INPUT_LOGIN_SHELL, Map.of("type", "boolean"),
                 "timeoutSeconds", Map.of("type", "integer", "minimum", 1),
@@ -159,7 +172,7 @@ public final class BashTool extends AbstractFileTool {
             );
             progress.progress(ToolProgress.phase("running", "执行 shell 命令"));
             ExecutionResult result = executor.execute(request, progress, abortSignal(context));
-            return success(toolUseId, renderResult(result, context, input));
+            return success(toolUseId, renderResult(result, context));
         } catch (IllegalArgumentException exception) {
             return error(toolUseId, exception.getMessage());
         } catch (IOException exception) {
@@ -194,7 +207,7 @@ public final class BashTool extends AbstractFileTool {
         return value instanceof AbortSignal signal ? signal : NOT_ABORTED;
     }
 
-    private String renderResult(ExecutionResult result, ToolUseContext context, Map<String, Object> input) {
+    private String renderResult(ExecutionResult result, ToolUseContext context) {
         StringBuilder builder = new StringBuilder();
         builder.append("exitCode=").append(result.exitCode());
         if (result.timedOut()) {
@@ -220,16 +233,10 @@ public final class BashTool extends AbstractFileTool {
             builder.append("\nstderr:\n").append(result.stderr());
         }
         result.persistedOutput().ifPresent(path -> builder.append("\npersistedOutput=").append(path));
-        if (capturesShellCwd(input)) {
-            shellHarness.consumeCapturedCwd(context.sessionId())
-                .filter(captured -> !captured.equals(context.cwd().toAbsolutePath().normalize()))
-                .ifPresent(captured -> builder.append("\nshellCwd=").append(captured));
-        }
+        shellHarness.consumeCapturedCwd(context.sessionId())
+            .filter(captured -> !captured.equals(context.cwd().toAbsolutePath().normalize()))
+            .ifPresent(captured -> builder.append("\nshellCwd=").append(captured));
         return builder.toString();
-    }
-
-    private boolean capturesShellCwd(Map<String, Object> input) {
-        return stringInput(input, "cwd").isBlank();
     }
 
     private String sanitizeCommand(String command) {
@@ -337,11 +344,6 @@ public final class BashTool extends AbstractFileTool {
         String shell = stringInput(input, INPUT_SHELL);
         String resolvedShell = shell.isBlank() ? "bash" : shell;
         String command = input.get("command").toString();
-        if (!capturesShellCwd(input)) {
-            // 显式 cwd 的一次性命令不接入 harness 状态（不捕获、不回写）
-            boolean loginShell = booleanInput(input, INPUT_LOGIN_SHELL, true);
-            return List.of(resolvedShell, loginShell ? "-lc" : "-c", command);
-        }
         shellHarness.ensureSnapshot(context.sessionId(), resolvedShell);
         shellHarness.importEnvFile(context.sessionId(), System.getenv());
         String wrapped = shellHarness.wrap(context.sessionId(), command);
