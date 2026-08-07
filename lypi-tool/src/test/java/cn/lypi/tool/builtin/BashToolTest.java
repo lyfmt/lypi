@@ -93,7 +93,7 @@ class BashToolTest {
     void mapsCommandToExecutionRequestAndResult() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(7, "out", "err", false, Optional.empty()));
         RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
-        BashTool tool = new BashTool(executor, resolver);
+        BashTool tool = new BashTool(executor, resolver, testHarness());
         List<ToolProgress> progresses = new ArrayList<>();
 
         ToolResult<String> result = tool.execute(
@@ -103,7 +103,10 @@ class BashToolTest {
         );
 
         assertFalse(result.isError());
-        assertEquals(List.of("bash", "-lc", "echo hi"), executor.request.get().command());
+        assertEquals("bash", executor.request.get().command().get(0));
+        assertTrue(executor.request.get().command().get(2).contains("eval 'echo hi'"));
+        // snapshot 可能已由其他测试预生成（-c）或尚未生成（-lc）
+        assertTrue(List.of("-c", "-lc").contains(executor.request.get().command().get(1)));
         assertEquals(tempDir, executor.request.get().cwd());
         assertEquals(Duration.ofSeconds(3), executor.request.get().timeout());
         assertSame(resolver.policy, executor.request.get().sandboxPolicy());
@@ -220,7 +223,91 @@ class BashToolTest {
         );
 
         assertFalse(result.isError());
-        assertEquals(List.of("bash", "-c", "echo hi"), executor.request.get().command());
+        assertEquals("bash", executor.request.get().command().get(0));
+        assertEquals("-c", executor.request.get().command().get(1));
+        assertTrue(executor.request.get().command().get(2).contains("eval 'echo hi'"));
+    }
+
+    @Test
+    void wrapsCommandWithHarnessAndCapturesShellCwd() throws Exception {
+        ShellEnvironmentHarness harness = testHarness();
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), harness);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "echo hi"),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        List<String> command = executor.request.get().command();
+        assertEquals("bash", command.get(0));
+        String wrapped = command.get(2);
+        assertTrue(wrapped.contains("eval 'echo hi'"), wrapped);
+        assertTrue(wrapped.contains("pwd -P"), wrapped);
+        // RecordingExecutor 不真正执行，无 shellCwd 输出
+        assertFalse(result.output().contains("shellCwd="));
+    }
+
+    @Test
+    void explicitCwdCommandBypassesHarness() {
+        ShellEnvironmentHarness harness = testHarness();
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), harness);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "echo hi", "cwd", "."),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(List.of("bash", "-lc", "echo hi"), executor.request.get().command());
+        assertFalse(harness.snapshotExists("ses_1"));
+    }
+
+    @Test
+    void shellCwdCapturedFromExecutedCommand() throws Exception {
+        ShellEnvironmentHarness harness = testHarness();
+        // 用真实 bash 执行，走完整 wrap + cwd 捕获链路
+        Executor realExecutor = new cn.lypi.tool.shell.HostExecutor();
+        BashTool tool = new BashTool(realExecutor, new RecordingSandboxPolicyResolver(defaultPolicy()), harness);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "pwd"),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("exitCode=0"), result.output());
+        // pwd 未改变目录，无 shellCwd 增量（captured == context.cwd）
+        assertFalse(result.output().contains("shellCwd="), result.output());
+        assertTrue(harness.snapshotExists("ses_1"));
+    }
+
+    @Test
+    void sessionEnvScriptAppliesToWrappedCommand() throws Exception {
+        ShellEnvironmentHarness harness = testHarness();
+        Path envDir = harness.sessionDir("ses_1").resolve("env");
+        Files.createDirectories(envDir);
+        Files.writeString(envDir.resolve("01-test.sh"), "export LYPI_BASH_TOOL_TEST=persisted\n");
+        Executor realExecutor = new cn.lypi.tool.shell.HostExecutor();
+        BashTool tool = new BashTool(realExecutor, new RecordingSandboxPolicyResolver(defaultPolicy()), harness);
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "echo \"$LYPI_BASH_TOOL_TEST\""),
+            context(Map.of()),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("persisted"), result.output());
     }
 
     @Test
@@ -236,7 +323,7 @@ class BashToolTest {
         );
 
         assertFalse(shResult.isError());
-        assertEquals(List.of("sh", "-lc", "echo hi"), executor.request.get().command());
+        assertEquals("sh", executor.request.get().command().get(0));
 
         ToolResult<String> zshResult = tool.execute(
             Map.of("command", "echo hi", "shell", "zsh"),
@@ -246,7 +333,7 @@ class BashToolTest {
         );
 
         assertFalse(zshResult.isError());
-        assertEquals(List.of("zsh", "-lc", "echo hi"), executor.request.get().command());
+        assertEquals("zsh", executor.request.get().command().get(0));
 
         ToolResult<String> absoluteBashResult = tool.execute(
             Map.of("command", "echo hi", "shell", "/bin/bash"),
@@ -256,7 +343,7 @@ class BashToolTest {
         );
 
         assertFalse(absoluteBashResult.isError());
-        assertEquals(List.of("/bin/bash", "-lc", "echo hi"), executor.request.get().command());
+        assertEquals("/bin/bash", executor.request.get().command().get(0));
     }
 
     @Test
@@ -675,6 +762,10 @@ class BashToolTest {
         metadata.put("toolUseId", "toolu_1");
         metadata.putAll(extraMetadata);
         return new ToolUseContext("ses_1", "msg_1", tempDir, Map.copyOf(metadata));
+    }
+
+    private ShellEnvironmentHarness testHarness() {
+        return new ShellEnvironmentHarness(tempDir.resolve("shell-state"));
     }
 
     private SandboxRuntimePolicy defaultPolicy() {

@@ -17,6 +17,7 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.session.ShellState;
 import cn.lypi.contracts.tui.SessionFileView;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -213,6 +214,22 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     }
 
     @Override
+    public synchronized ShellState shellState() {
+        ensureOpen();
+        return header.shellState();
+    }
+
+    @Override
+    public synchronized SessionHandle updateShellState(ShellState shellState) {
+        ensureOpen();
+        header = header.withShellState(shellState);
+        if (persistent) {
+            store.rewriteHeader(header);
+        }
+        return new SessionHandle(sessionId, store.sessionFile(sessionId), index.leafId(), index.byId());
+    }
+
+    @Override
     public synchronized SessionView view(String leafId) {
         ensureOpen();
         return new SessionView(sessionId, leafId);
@@ -403,7 +420,8 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
             Optional.of(replayProjector.defaultModel()),
             Optional.of(replayProjector.defaultThinkingLevel()),
             Optional.of(replayProjector.defaultMode()),
-            replayProjector.defaultPermissionRuntimeState()
+            replayProjector.defaultPermissionRuntimeState(),
+            ShellState.of(cwd)
         );
     }
 

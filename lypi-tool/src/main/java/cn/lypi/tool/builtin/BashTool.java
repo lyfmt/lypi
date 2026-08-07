@@ -45,15 +45,21 @@ public final class BashTool extends AbstractFileTool {
     private final Executor executor;
     private final SandboxPolicyResolver sandboxPolicyResolver;
     private final BashPermissionPolicy permissionPolicy;
+    private final ShellEnvironmentHarness shellHarness;
 
     public BashTool(Executor executor) {
         this(executor, new DefaultSandboxPolicyResolver(SandboxPolicyOptions.defaults()));
     }
 
     public BashTool(Executor executor, SandboxPolicyResolver sandboxPolicyResolver) {
+        this(executor, sandboxPolicyResolver, new ShellEnvironmentHarness(ShellEnvironmentHarness.defaultStateRoot()));
+    }
+
+    public BashTool(Executor executor, SandboxPolicyResolver sandboxPolicyResolver, ShellEnvironmentHarness shellHarness) {
         this.executor = Objects.requireNonNull(executor, "executor must not be null");
         this.sandboxPolicyResolver = Objects.requireNonNull(sandboxPolicyResolver, "sandboxPolicyResolver must not be null");
         this.permissionPolicy = new BashPermissionPolicy(this.sandboxPolicyResolver);
+        this.shellHarness = Objects.requireNonNull(shellHarness, "shellHarness must not be null");
     }
 
     @Override
@@ -140,7 +146,7 @@ public final class BashTool extends AbstractFileTool {
                 ? SandboxRuntimePolicy.disabled()
                 : sandboxPolicy(context.cwd(), cwd, permissionRuntimeState, additionalPermissions);
             ExecutionRequest request = new ExecutionRequest(
-                shellCommand(input),
+                shellCommand(input, context),
                 cwd,
                 Map.of(),
                 timeout,
@@ -153,7 +159,7 @@ public final class BashTool extends AbstractFileTool {
             );
             progress.progress(ToolProgress.phase("running", "执行 shell 命令"));
             ExecutionResult result = executor.execute(request, progress, abortSignal(context));
-            return success(toolUseId, renderResult(result));
+            return success(toolUseId, renderResult(result, context, input));
         } catch (IllegalArgumentException exception) {
             return error(toolUseId, exception.getMessage());
         } catch (IOException exception) {
@@ -188,7 +194,7 @@ public final class BashTool extends AbstractFileTool {
         return value instanceof AbortSignal signal ? signal : NOT_ABORTED;
     }
 
-    private String renderResult(ExecutionResult result) {
+    private String renderResult(ExecutionResult result, ToolUseContext context, Map<String, Object> input) {
         StringBuilder builder = new StringBuilder();
         builder.append("exitCode=").append(result.exitCode());
         if (result.timedOut()) {
@@ -214,7 +220,16 @@ public final class BashTool extends AbstractFileTool {
             builder.append("\nstderr:\n").append(result.stderr());
         }
         result.persistedOutput().ifPresent(path -> builder.append("\npersistedOutput=").append(path));
+        if (capturesShellCwd(input)) {
+            shellHarness.consumeCapturedCwd(context.sessionId())
+                .filter(captured -> !captured.equals(context.cwd().toAbsolutePath().normalize()))
+                .ifPresent(captured -> builder.append("\nshellCwd=").append(captured));
+        }
         return builder.toString();
+    }
+
+    private boolean capturesShellCwd(Map<String, Object> input) {
+        return stringInput(input, "cwd").isBlank();
     }
 
     private String sanitizeCommand(String command) {
@@ -318,11 +333,20 @@ public final class BashTool extends AbstractFileTool {
         return permissions.fileSystem().isEmpty() && permissions.network().isEmpty();
     }
 
-    private List<String> shellCommand(Map<String, Object> input) {
+    private List<String> shellCommand(Map<String, Object> input, ToolUseContext context) {
         String shell = stringInput(input, INPUT_SHELL);
         String resolvedShell = shell.isBlank() ? "bash" : shell;
-        boolean loginShell = booleanInput(input, INPUT_LOGIN_SHELL, true);
-        return List.of(resolvedShell, loginShell ? "-lc" : "-c", input.get("command").toString());
+        String command = input.get("command").toString();
+        if (!capturesShellCwd(input)) {
+            // 显式 cwd 的一次性命令不接入 harness 状态（不捕获、不回写）
+            boolean loginShell = booleanInput(input, INPUT_LOGIN_SHELL, true);
+            return List.of(resolvedShell, loginShell ? "-lc" : "-c", command);
+        }
+        shellHarness.ensureSnapshot(context.sessionId(), resolvedShell);
+        shellHarness.importEnvFile(context.sessionId(), System.getenv());
+        String wrapped = shellHarness.wrap(context.sessionId(), command);
+        boolean loginShell = booleanInput(input, INPUT_LOGIN_SHELL, true) && !shellHarness.snapshotExists(context.sessionId());
+        return List.of(resolvedShell, loginShell ? "-lc" : "-c", wrapped);
     }
 
     private boolean isAllowedShell(String shell) {

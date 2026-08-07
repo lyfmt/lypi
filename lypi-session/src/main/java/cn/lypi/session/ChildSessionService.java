@@ -6,6 +6,7 @@ import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.session.ShellState;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -51,7 +52,8 @@ public final class ChildSessionService implements ChildSessionPort {
             request.initialModel(),
             request.initialThinkingLevel(),
             request.initialAgentMode(),
-            request.initialPermissionRuntimeState()
+            request.initialPermissionRuntimeState(),
+            ShellState.of(request.cwd())
         );
         store.create(header);
 

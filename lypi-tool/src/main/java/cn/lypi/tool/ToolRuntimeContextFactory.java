@@ -69,9 +69,16 @@ public final class ToolRuntimeContextFactory {
         return new ToolUseContext(
             sessionId(invocation),
             request.parentMessageId(),
-            options.cwd(),
+            invocationCwd(invocation),
             Map.copyOf(metadata)
         );
+    }
+
+    private Path invocationCwd(ToolRuntimeInvocation invocation) {
+        if (invocation != null && invocation.cwd() != null) {
+            return invocation.cwd();
+        }
+        return options.cwd();
     }
 
     private String sessionId(ToolRuntimeInvocation invocation) {

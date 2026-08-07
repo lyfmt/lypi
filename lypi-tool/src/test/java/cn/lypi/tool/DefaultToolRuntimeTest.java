@@ -376,7 +376,8 @@ class DefaultToolRuntimeTest {
 
         assertFalse(result.isError());
         assertEquals(1, executor.calls.get());
-        assertEquals(List.of("bash", "-lc", "echo done"), executor.request.get().command());
+        assertEquals("bash", executor.request.get().command().get(0));
+        assertTrue(executor.request.get().command().get(2).contains("eval 'echo done'"));
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("stdout:\ndone"));
     }
 

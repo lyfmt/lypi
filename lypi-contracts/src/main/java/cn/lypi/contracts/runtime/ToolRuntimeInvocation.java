@@ -13,7 +13,8 @@ public record ToolRuntimeInvocation(
     String turnId,
     String parentEntryId,
     AbortSignal abortSignal,
-    SteeringMessageSource steeringMessages
+    SteeringMessageSource steeringMessages,
+    java.nio.file.Path cwd
 ) {
     public ToolRuntimeInvocation(String sessionId, String turnId) {
         this(sessionId, turnId, null);
@@ -23,8 +24,25 @@ public record ToolRuntimeInvocation(
         this(sessionId, turnId, parentEntryId, AbortSignal.none(), SteeringMessageSource.none());
     }
 
+    public ToolRuntimeInvocation(
+        String sessionId,
+        String turnId,
+        String parentEntryId,
+        AbortSignal abortSignal,
+        SteeringMessageSource steeringMessages
+    ) {
+        this(sessionId, turnId, parentEntryId, abortSignal, steeringMessages, null);
+    }
+
     public ToolRuntimeInvocation {
         abortSignal = abortSignal == null ? AbortSignal.none() : abortSignal;
         steeringMessages = steeringMessages == null ? SteeringMessageSource.none() : steeringMessages;
+    }
+
+    /**
+     * 本轮工具调用的工作目录覆盖；为空时由 runtime 默认 cwd 决定。
+     */
+    public ToolRuntimeInvocation withCwd(java.nio.file.Path cwdOverride) {
+        return new ToolRuntimeInvocation(sessionId, turnId, parentEntryId, abortSignal, steeringMessages, cwdOverride);
     }
 }

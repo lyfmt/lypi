@@ -88,6 +88,7 @@ import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
+import cn.lypi.contracts.session.ShellState;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.skill.SkillIndex;
@@ -395,6 +396,36 @@ class ContractSerializationTest {
     }
 
     @Test
+    void sessionHeaderRoundTripKeepsShellState() throws Exception {
+        SessionHeader header = new SessionHeader(
+            "session",
+            1,
+            "ses_shell",
+            Path.of("/tmp/project"),
+            Optional.empty(),
+            Instant.parse("2026-06-09T00:00:00Z")
+        ).withShellState(ShellState.of(Path.of("/tmp/project/subdir")));
+
+        String json = mapper.writeValueAsString(header);
+        SessionHeader restored = mapper.readValue(json, SessionHeader.class);
+
+        assertEquals(Path.of("/tmp/project/subdir"), restored.shellState().cwd());
+        assertEquals(Path.of("/tmp/project"), restored.cwd());
+    }
+
+    @Test
+    void legacySessionHeaderDefaultsShellStateToHeaderCwd() throws Exception {
+        String legacyJson = """
+            {"type":"session","version":1,"id":"ses_old","cwd":"/tmp/legacy",
+             "timestamp":"2026-06-09T00:00:00Z"}
+            """;
+
+        SessionHeader restored = mapper.readValue(legacyJson, SessionHeader.class);
+
+        assertEquals(ShellState.of(Path.of("/tmp/legacy")), restored.shellState());
+    }
+
+    @Test
     void sessionHeaderRoundTripKeepsSubagentRelationshipFields() throws Exception {
         SessionHeader header = new SessionHeader(
             "session",
@@ -435,7 +466,8 @@ class ContractSerializationTest {
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),
-            runtimeState
+            runtimeState,
+            null
         );
 
         String json = mapper.writeValueAsString(header);

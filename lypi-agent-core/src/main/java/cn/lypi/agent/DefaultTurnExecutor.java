@@ -30,6 +30,7 @@ import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.session.ShellState;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -224,8 +225,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ContextBuildRequest contextBuildRequest = new ContextBuildRequest(
             request.sessionId(),
             leafEntryId,
-            // NOTE: lypi-resource 负责从 cwd 探索 project root 和资源层级；agent-core 只传入启动层确定的 cwd 起点。
-            ports.cwd(),
+            // NOTE: lypi-resource 负责从 cwd 探索 project root 和资源层级；cwd 跟随当前 shell 状态（cd 后随之迁移）。
+            currentShellCwd(),
             true,
             skillMentions
         );
@@ -488,7 +489,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                     turnId,
                     parentEntryId,
                     turnRequest.abortSignal(),
-                    turnRequest.steeringMessages()
+                    turnRequest.steeringMessages(),
+                    currentShellCwd()
                 )
             );
             if (results.size() != toolRequests.size()) {
@@ -499,8 +501,44 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         } catch (RuntimeException failure) {
             throw failure;
         }
+        applyShellCwdDeltas(results);
         return results;
     }
+
+    private Path currentShellCwd() {
+        try {
+            Path shellCwd = ports.sessionManager().shellState().cwd();
+            // 该 manager 可能属于另一个 cwd 的 session（如 child runtime 共享父 manager）；
+            // 与本 runtime cwd 不一致时视为外部状态，不覆盖本 runtime 的绑定 cwd。
+            if (shellCwd != null && shellCwd.toAbsolutePath().normalize().startsWith(ports.cwd())) {
+                return shellCwd;
+            }
+            return ports.cwd();
+        } catch (RuntimeException e) {
+            return ports.cwd();
+        }
+    }
+
+    private void applyShellCwdDeltas(List<ToolResult<?>> results) {
+        for (ToolResult<?> result : results) {
+            if (result == null || result.isError() || !(result.output() instanceof String output)) {
+                continue;
+            }
+            java.util.regex.Matcher matcher = SHELL_CWD_PATTERN.matcher(output);
+            if (!matcher.find()) {
+                continue;
+            }
+            Path captured = Path.of(matcher.group(1).trim());
+            try {
+                ports.sessionManager().updateShellState(ShellState.of(captured));
+            } catch (RuntimeException e) {
+                // cwd 回写失败不阻塞工具结果
+            }
+        }
+    }
+
+    private static final java.util.regex.Pattern SHELL_CWD_PATTERN =
+        java.util.regex.Pattern.compile("(?m)^shellCwd=(\\S+)$");
 
     private void ensureToolRuntimeCwdMatches() {
         Path agentCwd = ports.cwd();
