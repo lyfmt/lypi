@@ -38,6 +38,27 @@ class WorkspacePathsTest {
     }
 
     @Test
+    void resolvesFromDynamicCwdWithoutShrinkingWorkspaceBoundary() throws Exception {
+        Path nested = Files.createDirectories(tempDir.resolve("nested"));
+        ToolUseContext context = new ToolUseContext("ses_1", "msg_1", tempDir, nested, Map.of());
+
+        assertEquals(
+            nested.resolve("file.txt"),
+            WorkspacePaths.resolvePath(Map.of("path", "file.txt"), context, "path")
+        );
+        assertEquals(
+            tempDir.resolve("root.txt"),
+            WorkspacePaths.resolvePath(Map.of("path", "../root.txt"), context, "path")
+        );
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> WorkspacePaths.resolvePath(Map.of("path", "../../outside.txt"), context, "path")
+        );
+        assertTrue(exception.getMessage().contains("工作区"));
+    }
+
+    @Test
     void resolvesApprovedOutsidePathFromAdditionalPermissions(@TempDir Path outsideDir) {
         ToolUseContext context = context(additionalFileSystem(outsideDir, FileSystemAccessMode.WRITE));
 

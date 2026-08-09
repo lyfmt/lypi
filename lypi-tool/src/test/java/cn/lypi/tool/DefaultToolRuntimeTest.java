@@ -61,6 +61,7 @@ import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.tool.builtin.BashTool;
 import cn.lypi.tool.builtin.ReadTool;
@@ -313,6 +314,40 @@ class DefaultToolRuntimeTest {
         assertEquals("turn-dynamic", start.turnId());
         ToolEndEvent end = assertInstanceOf(ToolEndEvent.class, events.events.get(1));
         assertEquals("session-dynamic", end.sessionId());
+    }
+
+    @Test
+    void preservesWorkspaceRootWhileAddingCallAndAuthorizationMetadata() throws Exception {
+        Path nested = Files.createDirectories(tempDir.resolve("nested"));
+        AtomicReference<ToolUseContext> captured = new AtomicReference<>();
+        ToolExecutionInterceptor interceptor = ToolExecutionInterceptor.before((request, tool, context) -> {
+            captured.set(context);
+            return ToolExecutionInterceptor.BeforeResult.allow();
+        });
+        SecurityRuntimePort security = (request, context) ->
+            TestTools.decision(PermissionBehavior.ASK, "review");
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            interceptor,
+            security,
+            (request, tool, context, decision) -> PermissionGateResult.allow()
+        );
+        runtime.register(TestTools.permission("write", PermissionBehavior.ALLOW));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ok"), "msg_1")),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(nested)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(tempDir, captured.get().workspaceRoot());
+        assertEquals(nested, captured.get().cwd());
+        assertEquals(true, captured.get().metadata().get("permissionApprovedForHostExecution"));
     }
 
     @Test

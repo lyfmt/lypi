@@ -157,7 +157,7 @@ public final class BashTool extends AbstractFileTool {
             Optional<AdditionalPermissionProfile> additionalPermissions = additionalPermissionsForRequest(context, sandboxPermissions);
             SandboxRuntimePolicy sandboxPolicy = usesHostExecution(permissionRuntimeState, sandboxPermissions, context)
                 ? SandboxRuntimePolicy.disabled()
-                : sandboxPolicy(context.cwd(), cwd, permissionRuntimeState, additionalPermissions);
+                : sandboxPolicy(context.workspaceRoot(), cwd, permissionRuntimeState, additionalPermissions);
             ExecutionRequest request = new ExecutionRequest(
                 shellCommand(input, context),
                 cwd,
@@ -248,10 +248,10 @@ public final class BashTool extends AbstractFileTool {
     }
 
     private Path resolveBashCwd(Map<String, Object> input, ToolUseContext context) throws IOException {
-        Path workspace = context.cwd().toAbsolutePath().normalize();
+        Path dynamicCwd = context.cwd().toAbsolutePath().normalize();
         String rawCwd = stringInput(input, "cwd");
-        Path cwd = rawCwd.isBlank() ? workspace : Path.of(rawCwd);
-        Path resolved = cwd.isAbsolute() ? cwd.toAbsolutePath().normalize() : workspace.resolve(cwd).normalize();
+        Path cwd = rawCwd.isBlank() ? dynamicCwd : Path.of(rawCwd);
+        Path resolved = cwd.isAbsolute() ? cwd.toAbsolutePath().normalize() : dynamicCwd.resolve(cwd).normalize();
         return resolved.toRealPath();
     }
 

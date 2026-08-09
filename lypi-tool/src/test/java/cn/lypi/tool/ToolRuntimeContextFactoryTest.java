@@ -22,11 +22,13 @@ import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import java.math.BigDecimal;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ToolRuntimeContextFactoryTest {
     @Test
@@ -141,6 +143,46 @@ class ToolRuntimeContextFactoryTest {
 
         assertSame(invocationAbort, ToolAbortSupport.signal(context));
         assertSame(invocationSteering, ToolSteeringSupport.source(context));
+    }
+
+    @Test
+    void separatesStableWorkspaceRootFromValidatedInvocationCwd(@TempDir Path tempDir) throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path nested = Files.createDirectory(workspace.resolve("nested"));
+        Path outside = Files.createDirectory(tempDir.resolve("outside"));
+        Path escape = workspace.resolve("escape");
+        Files.createSymbolicLink(escape, outside);
+        ToolRuntimeContextFactory factory = new ToolRuntimeContextFactory(
+            ToolRuntimeOptions.builder().cwd(workspace).build()
+        );
+        ToolUseRequest request = new ToolUseRequest("toolu_1", "read", Map.of(), "msg_1");
+
+        ToolUseContext valid = factory.create(
+            request,
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(nested)
+        );
+        ToolUseContext lexicalEscape = factory.create(
+            request,
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(outside)
+        );
+        ToolUseContext missing = factory.create(
+            request,
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(workspace.resolve("missing"))
+        );
+        ToolUseContext symlinkEscape = factory.create(
+            request,
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(escape)
+        );
+
+        assertEquals(workspace, valid.workspaceRoot());
+        assertEquals(nested, valid.cwd());
+        assertEquals(workspace, lexicalEscape.cwd());
+        assertEquals(workspace, missing.cwd());
+        assertEquals(workspace, symlinkEscape.cwd());
     }
 
     private ContextSnapshot context(AgentMode agentMode, PermissionRuntimeState runtimeState) {

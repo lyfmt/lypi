@@ -54,6 +54,48 @@ class FileSystemPolicyCheckerTest {
     }
 
     @Test
+    void workspaceAndRelativeProfileEntriesStayRootedAtStableWorkspace(@TempDir Path workspace) throws IOException {
+        Path nested = Files.createDirectories(workspace.resolve("nested"));
+        ToolUseContext context = new ToolUseContext(
+            "ses_1",
+            "msg_1",
+            workspace,
+            nested,
+            Map.of("permissionMode", PermissionMode.BYPASS)
+        );
+        ManagedPermissionProfile relativeProfile = new ManagedPermissionProfile(
+            FileSystemPermissionPolicy.restricted(List.of(
+                new FileSystemPermissionEntry(FileSystemPath.exactPath("shared"), FileSystemAccessMode.WRITE),
+                new FileSystemPermissionEntry(FileSystemPath.globPattern("logs/*.log"), FileSystemAccessMode.READ)
+            )),
+            NetworkPermissionPolicy.restricted()
+        );
+
+        PermissionDecision projectRoot = checker.decide(
+            PermissionProfiles.workspace(),
+            FileSystemAccessMode.WRITE,
+            workspace.resolve("root.txt"),
+            context
+        );
+        PermissionDecision exact = checker.decide(
+            relativeProfile,
+            FileSystemAccessMode.WRITE,
+            workspace.resolve("shared/output.txt"),
+            context
+        );
+        PermissionDecision glob = checker.decide(
+            relativeProfile,
+            FileSystemAccessMode.READ,
+            workspace.resolve("logs/app.log"),
+            context
+        );
+
+        assertThat(projectRoot.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(exact.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+        assertThat(glob.behavior()).isEqualTo(PermissionBehavior.ALLOW);
+    }
+
+    @Test
     void writeEntryAllowsReadAccess(@TempDir Path workspace) {
         PermissionDecision decision = checker.decide(
             PermissionProfiles.workspace(),

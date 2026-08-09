@@ -90,7 +90,8 @@ class BashToolTest {
     }
 
     @Test
-    void mapsCommandToExecutionRequestAndResult() {
+    void mapsCommandToExecutionRequestAndResult() throws Exception {
+        Path nested = Files.createDirectory(tempDir.resolve("nested"));
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(7, "out", "err", false, Optional.empty()));
         RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
         BashTool tool = new BashTool(executor, resolver, testHarness());
@@ -98,7 +99,7 @@ class BashToolTest {
 
         ToolResult<String> result = tool.execute(
             Map.of("command", "echo hi", "timeoutSeconds", 3),
-            context(Map.of()),
+            context(tempDir, nested, Map.of()),
             progresses::add
         );
 
@@ -107,13 +108,13 @@ class BashToolTest {
         assertTrue(executor.request.get().command().get(2).contains("eval 'echo hi'"));
         // snapshot 可能已由其他测试预生成（-c）或尚未生成（-lc）
         assertTrue(List.of("-c", "-lc").contains(executor.request.get().command().get(1)));
-        assertEquals(tempDir, executor.request.get().cwd());
+        assertEquals(nested, executor.request.get().cwd());
         assertEquals(Duration.ofSeconds(3), executor.request.get().timeout());
         assertSame(resolver.policy, executor.request.get().sandboxPolicy());
         assertEquals(SandboxPermissions.USE_DEFAULT, executor.request.get().sandboxPermissions());
         assertEquals(Optional.empty(), executor.request.get().justification());
         assertEquals(tempDir, resolver.workspace.get());
-        assertEquals(tempDir, resolver.cwd.get());
+        assertEquals(nested, resolver.cwd.get());
         assertEquals(NetworkMode.DISABLED, executor.request.get().sandboxPolicy().networkMode());
         assertFalse(executor.request.get().sandboxPolicy().failIfUnavailable());
         assertFalse(executor.request.get().sandboxPolicy().autoAllowBashIfSandboxed());
@@ -763,10 +764,14 @@ class BashToolTest {
     }
 
     private ToolUseContext context(Map<String, Object> extraMetadata) {
+        return context(tempDir, tempDir, extraMetadata);
+    }
+
+    private ToolUseContext context(Path workspaceRoot, Path cwd, Map<String, Object> extraMetadata) {
         java.util.LinkedHashMap<String, Object> metadata = new java.util.LinkedHashMap<>();
         metadata.put("toolUseId", "toolu_1");
         metadata.putAll(extraMetadata);
-        return new ToolUseContext("ses_1", "msg_1", tempDir, Map.copyOf(metadata));
+        return new ToolUseContext("ses_1", "msg_1", workspaceRoot, cwd, Map.copyOf(metadata));
     }
 
     private ShellEnvironmentHarness testHarness() {

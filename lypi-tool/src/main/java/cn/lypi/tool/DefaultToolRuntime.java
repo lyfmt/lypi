@@ -836,6 +836,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return new ToolUseContext(
             context.sessionId(),
             context.messageId(),
+            context.workspaceRoot(),
             context.cwd(),
             Map.copyOf(metadata)
         );
@@ -881,6 +882,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         return new ToolUseContext(
             context.sessionId(),
             context.messageId(),
+            context.workspaceRoot(),
             context.cwd(),
             Map.copyOf(metadata)
         );

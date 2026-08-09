@@ -39,11 +39,12 @@ final class WorkspacePaths {
         Object raw = input.get(fieldName);
         String value = raw == null ? "." : raw.toString();
         Path cwd = context.cwd().toAbsolutePath().normalize();
+        Path workspaceRoot = context.workspaceRoot().toAbsolutePath().normalize();
         Path resolved = cwd.resolve(value).normalize();
-        if (resolved.startsWith(cwd) || additionalFileSystemAllows(context, accessMode, resolved)) {
+        if (resolved.startsWith(workspaceRoot) || additionalFileSystemAllows(context, accessMode, resolved)) {
             return resolved;
         }
-        throw new IllegalArgumentException("路径越过当前工作目录: " + value);
+        throw new IllegalArgumentException("路径越过当前工作目录或工作区: " + value);
     }
 
     static String relativePath(Path path, ToolUseContext context) {
@@ -65,12 +66,13 @@ final class WorkspacePaths {
         ToolUseContext context,
         FileSystemAccessMode accessMode
     ) throws IOException {
-        Path realCwd = context.cwd().toRealPath();
+        Path realWorkspace = context.workspaceRoot().toRealPath();
         Path realPath = path.toRealPath();
-        if (realPath.startsWith(realCwd) || additionalFileSystemAllows(context, accessMode, path.toAbsolutePath().normalize())) {
+        if (realPath.startsWith(realWorkspace)
+            || additionalFileSystemAllows(context, accessMode, path.toAbsolutePath().normalize())) {
             return realPath;
         }
-        throw new IllegalArgumentException("路径经符号链接越过当前工作目录: " + relativePath(path, context));
+        throw new IllegalArgumentException("路径经符号链接越过当前工作目录或工作区: " + relativePath(path, context));
     }
 
     static boolean realPathInsideWorkspace(Path path, ToolUseContext context) {
@@ -79,9 +81,9 @@ final class WorkspacePaths {
 
     static boolean realPathInsideWorkspace(Path path, ToolUseContext context, FileSystemAccessMode accessMode) {
         try {
-            Path realCwd = context.cwd().toRealPath();
+            Path realWorkspace = context.workspaceRoot().toRealPath();
             Path realPath = path.toRealPath();
-            return realPath.startsWith(realCwd)
+            return realPath.startsWith(realWorkspace)
                 || additionalFileSystemAllows(context, accessMode, path.toAbsolutePath().normalize());
         } catch (IOException exception) {
             return false;
@@ -200,8 +202,8 @@ final class WorkspacePaths {
     private static boolean matchesPath(FileSystemPath path, Path candidate, ToolUseContext context) {
         return switch (path.kind()) {
             case SPECIAL -> matchesSpecialPath(path, candidate, context);
-            case EXACT_PATH -> matchesExactPath(path.value(), candidate, context.cwd());
-            case GLOB_PATTERN -> matchesGlob(path.value(), candidate, context.cwd());
+            case EXACT_PATH -> matchesExactPath(path.value(), candidate, context.workspaceRoot());
+            case GLOB_PATTERN -> matchesGlob(path.value(), candidate, context.workspaceRoot());
         };
     }
 
@@ -209,11 +211,23 @@ final class WorkspacePaths {
         FileSystemSpecialPath specialPath = FileSystemSpecialPath.fromJson(path.value());
         return switch (specialPath) {
             case ROOT -> true;
-            case PROJECT_ROOTS -> isSameOrDescendant(candidate, context.cwd().toAbsolutePath().normalize());
+            case PROJECT_ROOTS -> matchesWorkspaceRoot(candidate, context.workspaceRoot());
             case TMPDIR -> isSameOrDescendant(candidate, Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize());
             case SLASH_TMP -> isSameOrDescendant(candidate, Path.of("/tmp").toAbsolutePath().normalize());
             case MINIMAL -> false;
         };
+    }
+
+    private static boolean matchesWorkspaceRoot(Path candidate, Path workspaceRoot) {
+        Path normalizedRoot = workspaceRoot.toAbsolutePath().normalize();
+        if (isSameOrDescendant(candidate, normalizedRoot)) {
+            return true;
+        }
+        try {
+            return isSameOrDescendant(candidate, normalizedRoot.toRealPath());
+        } catch (IOException exception) {
+            return false;
+        }
     }
 
     private static boolean matchesExactPath(String configuredPath, Path candidate, Path cwd) {
