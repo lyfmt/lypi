@@ -87,6 +87,16 @@ OpenAI 兼容适配支持 Responses、Chat Completions、SSE、WebSocket 和 fal
 
 TUI 输入无参数 `/model` 会打开启动期模型快照，候选项统一显示为 `provider/model`；使用上下方向键移动，Enter 切换，Esc 取消。选择结果仍写入会话模型变更条目，恢复会话后继续生效。
 
+TUI 的 `/login` 可注册 OpenAI-compatible Provider，交互顺序为：
+
+```text
+/login
+1. Base URL
+2. Auth key（掩码显示）
+```
+
+登录固定使用 OpenAI-compatible Chat Completions over SSE。系统会依次探测 `<base-url>/models` 和 `<base-url>/model`，仅在至少发现一个可用模型后才保存并注册 Provider；成功后模型会立刻出现在 `/model`，但不会自动切换当前会话模型，也不会逐个验证模型能完成聊天请求。登录数据仅写入受管文件 `<user-home>/.ly-pi/login-providers.properties`，不会改写用户维护的 `<user-home>/.ly-pi/application.yml`。
+
 Anthropic 适配负责 Messages 请求、SSE 事件归一化、tool call/result 映射和 usage 合并。当前版本不启用 Anthropic extended thinking：Anthropic 模型的 `supports-thinking` 应保持 `false`，作为默认模型时还需把 `lypi.runtime.thinking-level` 设为 `off`。
 
 ### 资源与记忆
