@@ -50,6 +50,8 @@ import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
+import cn.lypi.contracts.session.ShellState;
+import cn.lypi.contracts.session.ShellStateChangeEntry;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tool.Tool;
@@ -422,6 +424,7 @@ final class AgentCoreTestFixtures {
         private String sessionId;
         private String leafId = "";
         private final Map<String, SessionEntry> entries = new LinkedHashMap<>();
+        private ShellState initialShellState = ShellState.of(Path.of(".").toAbsolutePath().normalize());
 
         @Override
         public SessionHandle openOrCreate(String sessionId) {
@@ -434,6 +437,27 @@ final class AgentCoreTestFixtures {
             entries.put(entry.id(), entry);
             leafId = entry.id();
             return handle();
+        }
+
+        @Override
+        public ShellState shellState() {
+            ShellState current = initialShellState;
+            for (SessionEntry entry : branch(leafId)) {
+                if (entry instanceof ShellStateChangeEntry change) {
+                    current = change.shellState();
+                }
+            }
+            return current;
+        }
+
+        @Override
+        public SessionHandle appendShellStateChange(ShellState shellState) {
+            return append(new ShellStateChangeEntry(
+                "entry-shell-state-" + entries.size(),
+                leafId,
+                shellState,
+                NOW
+            ));
         }
 
         @Override
@@ -556,6 +580,10 @@ final class AgentCoreTestFixtures {
 
         SessionEntry entry(String entryId) {
             return entries.get(entryId);
+        }
+
+        void initialShellState(Path cwd) {
+            initialShellState = ShellState.of(cwd);
         }
 
         SessionHandle handle() {

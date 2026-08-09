@@ -31,6 +31,8 @@ import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.session.ShellState;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -139,6 +141,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                             AgentMessage pendingToolMessage = ToolResultMessageMarker.markPendingToolOutput(toolMessage);
                             contextLeafId = appendNewMessage(request.sessionId(), pendingToolMessage);
                             newMessages.add(pendingToolMessage);
+                        }
+                        Optional<Path> nextCwd = toolResult.stateDelta()
+                            .flatMap(delta -> validShellCwd(delta.cwd()));
+                        if (nextCwd.isPresent()) {
+                            contextLeafId = ports.sessionManager()
+                                .appendShellStateChange(ShellState.of(nextCwd.orElseThrow()))
+                                .leafId();
                         }
                     }
                 }
@@ -479,66 +488,50 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         TurnRequest turnRequest
     ) {
         ensureToolRuntimeCwdMatches();
-        List<ToolResult<?>> results;
-        try {
-            results = ports.toolRuntime().execute(
-                toolRequests,
-                context,
-                new ToolRuntimeInvocation(
-                    sessionId,
-                    turnId,
-                    parentEntryId,
-                    turnRequest.abortSignal(),
-                    turnRequest.steeringMessages(),
-                    currentShellCwd()
-                )
+        List<ToolResult<?>> results = ports.toolRuntime().execute(
+            toolRequests,
+            context,
+            new ToolRuntimeInvocation(
+                sessionId,
+                turnId,
+                parentEntryId,
+                turnRequest.abortSignal(),
+                turnRequest.steeringMessages(),
+                currentShellCwd()
+            )
+        );
+        if (results.size() != toolRequests.size()) {
+            throw new IllegalStateException(
+                "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
             );
-            if (results.size() != toolRequests.size()) {
-                throw new IllegalStateException(
-                    "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
-                );
-            }
-        } catch (RuntimeException failure) {
-            throw failure;
         }
-        applyShellCwdDeltas(results);
         return results;
     }
 
     private Path currentShellCwd() {
+        return validShellCwd(ports.sessionManager().shellState().cwd()).orElse(ports.cwd());
+    }
+
+    private Optional<Path> validShellCwd(Path candidate) {
+        if (candidate == null) {
+            return Optional.empty();
+        }
+        Path workspaceRoot = ports.cwd().toAbsolutePath().normalize();
+        Path normalized = candidate.toAbsolutePath().normalize();
+        if (!normalized.startsWith(workspaceRoot)) {
+            return Optional.empty();
+        }
         try {
-            Path shellCwd = ports.sessionManager().shellState().cwd();
-            // 该 manager 可能属于另一个 cwd 的 session（如 child runtime 共享父 manager）；
-            // 与本 runtime cwd 不一致时视为外部状态，不覆盖本 runtime 的绑定 cwd。
-            if (shellCwd != null && shellCwd.toAbsolutePath().normalize().startsWith(ports.cwd())) {
-                return shellCwd;
+            Path realWorkspaceRoot = workspaceRoot.toRealPath();
+            Path realCandidate = normalized.toRealPath();
+            if (Files.isDirectory(realCandidate) && realCandidate.startsWith(realWorkspaceRoot)) {
+                return Optional.of(normalized);
             }
-            return ports.cwd();
-        } catch (RuntimeException e) {
-            return ports.cwd();
+        } catch (IOException | SecurityException ignored) {
+            return Optional.empty();
         }
+        return Optional.empty();
     }
-
-    private void applyShellCwdDeltas(List<ToolResult<?>> results) {
-        for (ToolResult<?> result : results) {
-            if (result == null || result.isError() || !(result.output() instanceof String output)) {
-                continue;
-            }
-            java.util.regex.Matcher matcher = SHELL_CWD_PATTERN.matcher(output);
-            if (!matcher.find()) {
-                continue;
-            }
-            Path captured = Path.of(matcher.group(1).trim());
-            try {
-                ports.sessionManager().updateShellState(ShellState.of(captured));
-            } catch (RuntimeException e) {
-                // cwd 回写失败不阻塞工具结果
-            }
-        }
-    }
-
-    private static final java.util.regex.Pattern SHELL_CWD_PATTERN =
-        java.util.regex.Pattern.compile("(?m)^shellCwd=(\\S+)$");
 
     private void ensureToolRuntimeCwdMatches() {
         Path agentCwd = ports.cwd();
