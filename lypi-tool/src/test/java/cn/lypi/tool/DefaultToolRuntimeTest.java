@@ -66,11 +66,14 @@ import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.tool.builtin.BashTool;
 import cn.lypi.tool.builtin.ReadTool;
 import cn.lypi.tool.builtin.RequestPermissionsTool;
+import cn.lypi.tool.builtin.ShellEnvironmentHarness;
 import cn.lypi.tool.builtin.WriteTool;
 import cn.lypi.tool.mcp.McpToolAdapter;
+import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.ExecutorRegistry;
 import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
+import cn.lypi.tool.shell.SandboxPolicyResolver;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -210,7 +213,7 @@ class DefaultToolRuntimeTest {
     void publishesBoundedSingleLineBashSummary() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
-        runtime.register(new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()))));
+        runtime.register(bashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()))));
         String command = "printf 'one\ntwo'\r\n" + "🙂".repeat(200);
 
         runtime.execute(
@@ -514,7 +517,7 @@ class DefaultToolRuntimeTest {
             (request, tool, context, decision) -> PermissionGateResult.allow(),
             null
         );
-        runtime.register(new BashTool(executor, (workspace, cwd) -> policy));
+        runtime.register(bashTool(executor, (workspace, cwd) -> policy));
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("command", "echo done"), "msg_1")),
@@ -522,7 +525,7 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(1, executor.calls.get());
+        assertEquals(2, executor.calls.get());
         assertEquals("bash", executor.request.get().command().get(0));
         assertTrue(executor.request.get().command().get(2).contains("eval 'echo done'"));
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("stdout:\ndone"));
@@ -537,7 +540,7 @@ class DefaultToolRuntimeTest {
             (request, tool, context, decision) -> PermissionGateResult.allow(),
             null
         );
-        runtime.register(new BashTool(
+        runtime.register(bashTool(
             executor,
             new PermissionProfileSandboxPolicyResolver(
                 PermissionProfiles.workspace(),
@@ -561,7 +564,7 @@ class DefaultToolRuntimeTest {
         assertEquals(SandboxRuntimePolicyKind.MANAGED, askPolicy.kind());
         assertFalse(bypassResult.isError());
         assertEquals(SandboxRuntimePolicyKind.DISABLED, bypassPolicy.kind());
-        assertEquals(2, executor.calls.get());
+        assertEquals(4, executor.calls.get());
     }
 
     @Test
@@ -629,7 +632,7 @@ class DefaultToolRuntimeTest {
         assertEquals(0, gateCalls.get());
         assertEquals(0, reviewerCalls.get());
         assertEquals(0, host.calls.get());
-        assertEquals(commands.size() * 2, bubblewrap.calls.get());
+        assertEquals(commands.size() * 4, bubblewrap.calls.get());
         assertTrue(bubblewrap.requests.stream().allMatch(request ->
             request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.MANAGED
         ));
@@ -704,7 +707,7 @@ class DefaultToolRuntimeTest {
 
         assertEquals(commands.size(), gateCalls.get());
         assertEquals(commands.size(), reviewerCalls.get());
-        assertEquals(commands.size() * 2, host.calls.get());
+        assertEquals(commands.size() * 4, host.calls.get());
         assertEquals(0, bubblewrap.calls.get());
         assertTrue(host.requests.stream().allMatch(request ->
             request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.DISABLED
@@ -759,12 +762,15 @@ class DefaultToolRuntimeTest {
         }
 
         assertEquals(3, gateCalls.get());
-        assertEquals(3, host.calls.get());
+        assertEquals(6, host.calls.get());
         assertEquals(0, bubblewrap.calls.get());
         assertEquals(
             List.of(
                 SandboxPermissions.USE_DEFAULT,
+                SandboxPermissions.USE_DEFAULT,
                 SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+                SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+                SandboxPermissions.REQUIRE_ESCALATED,
                 SandboxPermissions.REQUIRE_ESCALATED
             ),
             host.requests.stream().map(ExecutionRequest::sandboxPermissions).toList()
@@ -820,7 +826,7 @@ class DefaultToolRuntimeTest {
             assertTrue(text.contains(stderr));
             assertNoSandboxRetryHint(result);
             assertEquals(0, host.calls.get());
-            assertEquals(1, bubblewrap.calls.get());
+            assertEquals(2, bubblewrap.calls.get());
         }
 
         RecordingExecutor unavailableHost = recordingHostExecutor();
@@ -850,7 +856,7 @@ class DefaultToolRuntimeTest {
         assertTrue(unavailableText.contains("sandboxUnavailable=true"));
         assertTrue(unavailableText.contains("diagnostic=user namespaces unavailable"));
         assertEquals(0, unavailableHost.calls.get());
-        assertEquals(1, unavailableBubblewrap.calls.get());
+        assertEquals(2, unavailableBubblewrap.calls.get());
         assertEquals(0, gateCalls.get());
         assertEquals(0, reviewerCalls.get());
     }
@@ -952,9 +958,9 @@ class DefaultToolRuntimeTest {
         assertFalse(firstResult.isError());
         assertFalse(secondResult.isError());
         assertEquals(1, gateCalls.get());
-        assertEquals(1, host.calls.get());
+        assertEquals(2, host.calls.get());
         assertEquals(SandboxRuntimePolicyKind.DISABLED, host.request.get().sandboxPolicy().kind());
-        assertEquals(1, bubblewrap.calls.get());
+        assertEquals(2, bubblewrap.calls.get());
         assertEquals(SandboxRuntimePolicyKind.MANAGED, bubblewrap.request.get().sandboxPolicy().kind());
     }
 
@@ -1270,7 +1276,7 @@ class DefaultToolRuntimeTest {
             new FilePermissionUpdateStore(tempDir)
         );
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "done", "", false, Optional.empty()));
-        runtime.register(new BashTool(executor, (workspace, cwd) -> policy));
+        runtime.register(bashTool(executor, (workspace, cwd) -> policy));
 
         ToolUseRequest request = new ToolUseRequest(
             "toolu_1",
@@ -1288,7 +1294,7 @@ class DefaultToolRuntimeTest {
 
         assertFalse(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(1, executor.calls.get());
+        assertEquals(2, executor.calls.get());
     }
 
     @Test
@@ -2958,7 +2964,7 @@ class DefaultToolRuntimeTest {
             allowAllSecurity(),
             gate
         );
-        runtime.register(new BashTool(executor));
+        runtime.register(bashTool(executor));
         AdditionalPermissionProfile permissions = additionalFileSystem(approved);
 
         ToolResult<?> bashResult = runtime.execute(
@@ -2991,7 +2997,7 @@ class DefaultToolRuntimeTest {
         assertEquals(Optional.of(permissions), executor.request.get().additionalPermissions());
         assertEquals(SandboxRuntimePolicyKind.DISABLED, executor.request.get().sandboxPolicy().kind());
         assertTrue(nextResult.isError());
-        assertEquals(1, executor.calls.get());
+        assertEquals(2, executor.calls.get());
     }
 
     @Test
@@ -3098,7 +3104,7 @@ class DefaultToolRuntimeTest {
             null,
             reviewer
         );
-        runtime.register(new BashTool(
+        runtime.register(bashTool(
             new ExecutorRegistry(host, bubblewrap, true),
             new PermissionProfileSandboxPolicyResolver(
                 PermissionProfiles.workspace(),
@@ -3107,6 +3113,18 @@ class DefaultToolRuntimeTest {
             )
         ));
         return runtime;
+    }
+
+    private BashTool bashTool(Executor executor) {
+        return bashTool(executor, new DefaultSandboxPolicyResolver(SandboxPolicyOptions.defaults()));
+    }
+
+    private BashTool bashTool(Executor executor, SandboxPolicyResolver sandboxPolicyResolver) {
+        return new BashTool(
+            executor,
+            sandboxPolicyResolver,
+            new ShellEnvironmentHarness(tempDir.resolve("shell-state"))
+        );
     }
 
     private RecordingExecutor recordingHostExecutor() {

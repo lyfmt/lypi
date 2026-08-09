@@ -85,8 +85,9 @@ class BashToolTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
 
-        assertEquals(Map.of("type", "string"), properties.get("shell"));
+        assertEquals(Map.of("type", "string", "enum", List.of("bash", "sh", "zsh")), properties.get("shell"));
         assertEquals(Map.of("type", "boolean"), properties.get("loginShell"));
+        assertFalse(properties.containsKey("cwd"));
     }
 
     @Test
@@ -110,7 +111,9 @@ class BashToolTest {
         assertTrue(List.of("-c", "-lc").contains(executor.request.get().command().get(1)));
         assertEquals(nested, executor.request.get().cwd());
         assertEquals(Duration.ofSeconds(3), executor.request.get().timeout());
-        assertSame(resolver.policy, executor.request.get().sandboxPolicy());
+        assertEquals(resolver.policy.kind(), executor.request.get().sandboxPolicy().kind());
+        assertTrue(executor.request.get().sandboxPolicy().allowRead().containsAll(resolver.policy.allowRead()));
+        assertTrue(executor.request.get().sandboxPolicy().allowWrite().containsAll(resolver.policy.allowWrite()));
         assertEquals(SandboxPermissions.USE_DEFAULT, executor.request.get().sandboxPermissions());
         assertEquals(Optional.empty(), executor.request.get().justification());
         assertEquals(tempDir, resolver.workspace.get());
@@ -123,6 +126,7 @@ class BashToolTest {
         assertTrue(result.output().contains("stderr:\nerr"));
         assertEquals(List.of(
             ToolProgress.phase("running", "执行 shell 命令"),
+            ToolProgress.status("executor progress", null),
             ToolProgress.status("executor progress", null)
         ), progresses);
     }
@@ -136,7 +140,8 @@ class BashToolTest {
                 PermissionProfiles.workspace(),
                 SandboxPolicyOptions.defaults(),
                 false
-            )
+            ),
+            testHarness()
         );
 
         ToolResult<String> askResult = tool.execute(
@@ -145,6 +150,7 @@ class BashToolTest {
             message -> {
             }
         );
+        assertFalse(askResult.isError(), askResult.output());
         SandboxRuntimePolicy askPolicy = executor.request.get().sandboxPolicy();
         ToolResult<String> bypassResult = tool.execute(
             Map.of("command", "true"),
@@ -154,7 +160,6 @@ class BashToolTest {
         );
         SandboxRuntimePolicy bypassPolicy = executor.request.get().sandboxPolicy();
 
-        assertFalse(askResult.isError());
         assertEquals(SandboxRuntimePolicyKind.MANAGED, askPolicy.kind());
         assertEquals(NetworkMode.DISABLED, askPolicy.networkMode());
         assertFalse(bypassResult.isError());
@@ -171,7 +176,8 @@ class BashToolTest {
                 PermissionProfiles.workspace(),
                 SandboxPolicyOptions.defaults(),
                 false
-            )
+            ),
+            testHarness()
         );
 
         ToolResult<String> result = tool.execute(
@@ -197,7 +203,8 @@ class BashToolTest {
                 PermissionProfiles.workspace(),
                 SandboxPolicyOptions.defaults(),
                 false
-            )
+            ),
+            testHarness()
         );
 
         ToolResult<String> result = tool.execute(
@@ -214,7 +221,11 @@ class BashToolTest {
     @Test
     void mapsNonLoginShellCommandToExecutionRequest() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
-        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+        BashTool tool = new BashTool(
+            executor,
+            new RecordingSandboxPolicyResolver(defaultPolicy()),
+            testHarness()
+        );
 
         ToolResult<String> result = tool.execute(
             Map.of("command", "echo hi", "loginShell", false),
@@ -227,6 +238,94 @@ class BashToolTest {
         assertEquals("bash", executor.request.get().command().get(0));
         assertEquals("-c", executor.request.get().command().get(1));
         assertTrue(executor.request.get().command().get(2).contains("eval 'echo hi'"));
+        assertEquals(1, executor.requests.size());
+        assertFalse(executor.request.get().command().get(2).contains("shell-snapshot-"));
+    }
+
+    @Test
+    void snapshotAndCommandShareExecutorAuthorizationAndNarrowInternalMounts() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace-unified"));
+        Path stateRoot = tempDir.resolve("state-outside-workspace");
+        ShellEnvironmentHarness harness = new ShellEnvironmentHarness(stateRoot);
+        RecordingDelegatingExecutor executor = new RecordingDelegatingExecutor();
+        SandboxRuntimePolicy basePolicy = new SandboxRuntimePolicy(
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            NetworkMode.DISABLED,
+            true,
+            false
+        );
+        RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(basePolicy);
+        BashTool tool = new BashTool(executor, resolver, harness);
+        AbortSignal signal = () -> false;
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "printf ok"),
+            context(workspace, workspace, Map.of("abortSignal", signal)),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError(), result.output());
+        assertEquals(2, executor.requests.size());
+        ExecutionRequest snapshotRequest = executor.requests.get(0);
+        ExecutionRequest commandRequest = executor.requests.get(1);
+        assertEquals(List.of("bash", "-lc"), snapshotRequest.command().subList(0, 2));
+        assertEquals(List.of("bash", "-c"), commandRequest.command().subList(0, 2));
+        assertEquals(1, resolver.calls.get());
+        assertEquals(snapshotRequest.sandboxPermissions(), commandRequest.sandboxPermissions());
+        assertEquals(snapshotRequest.additionalPermissions(), commandRequest.additionalPermissions());
+        assertEquals(snapshotRequest.justification(), commandRequest.justification());
+        assertEquals(snapshotRequest.sandboxPolicy().kind(), commandRequest.sandboxPolicy().kind());
+        assertEquals(snapshotRequest.sandboxPolicy().networkMode(), commandRequest.sandboxPolicy().networkMode());
+        assertEquals(snapshotRequest.sandboxPolicy().failIfUnavailable(), commandRequest.sandboxPolicy().failIfUnavailable());
+        assertEquals(
+            snapshotRequest.sandboxPolicy().autoAllowBashIfSandboxed(),
+            commandRequest.sandboxPolicy().autoAllowBashIfSandboxed()
+        );
+        assertSame(signal, executor.signals.get(0));
+        assertSame(signal, executor.signals.get(1));
+
+        Path sessionDir = harness.sessionDir(workspace, "ses_1");
+        for (ExecutionRequest request : executor.requests) {
+            assertTrue(request.sandboxPolicy().allowRead().contains(Path.of("/usr")));
+            assertTrue(request.sandboxPolicy().allowWrite().contains(workspace));
+            assertFalse(request.sandboxPolicy().allowWrite().contains(stateRoot));
+            assertFalse(request.sandboxPolicy().allowWrite().contains(sessionDir));
+            assertEquals(
+                1,
+                request.sandboxPolicy().allowWrite().stream().filter(path -> path.startsWith(sessionDir)).count()
+            );
+        }
+        assertTrue(result.output().contains("exitCode=0"), result.output());
+        assertTrue(result.output().contains("stdout:\nok"), result.output());
+    }
+
+    @Test
+    void typedCwdDeltaComesFromUniqueCaptureNotStdoutProtocol() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace-delta"));
+        Path nested = Files.createDirectory(workspace.resolve("dir with spaces"));
+        ShellEnvironmentHarness harness = new ShellEnvironmentHarness(tempDir.resolve("state-delta"));
+        RecordingDelegatingExecutor executor = new RecordingDelegatingExecutor();
+        BashTool tool = new BashTool(
+            executor,
+            new RecordingSandboxPolicyResolver(policyForWorkspace(workspace)),
+            harness
+        );
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "printf 'shellCwd=/outside\\n'; cd 'dir with spaces'"),
+            context(workspace, workspace, Map.of()),
+            progress -> {
+            }
+        );
+
+        assertFalse(result.isError(), result.output());
+        assertTrue(result.output().contains("shellCwd=/outside"));
+        assertFalse(result.output().contains("shellCwd=" + nested));
+        assertEquals(nested, result.stateDelta().orElseThrow().cwd());
     }
 
     @Test
@@ -253,7 +352,7 @@ class BashToolTest {
     }
 
     @Test
-    void cwdInputIsNotInSchemaButStillAcceptedAsExecutionOverride() {
+    void rejectsHiddenCwdInput() {
         ShellEnvironmentHarness harness = testHarness();
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
         BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), harness);
@@ -262,17 +361,13 @@ class BashToolTest {
         Map<String, Object> properties = (Map<String, Object>) tool.inputSchema().value().get("properties");
         assertFalse(properties.containsKey("cwd"));
 
-        // 兼容期：显式 cwd 仍接受作为一次性执行目录，但命令照常走 harness 且不回写会话状态
-        ToolResult<String> result = tool.execute(
+        var validation = tool.validateInput(
             Map.of("command", "echo hi", "cwd", "."),
-            context(Map.of()),
-            message -> {
-            }
+            context(Map.of())
         );
 
-        assertFalse(result.isError());
-        assertEquals("bash", executor.request.get().command().get(0));
-        assertTrue(executor.request.get().command().get(2).contains("eval 'echo hi'"));
+        assertFalse(validation.valid());
+        assertTrue(validation.messages().getFirst().contains("cwd"));
     }
 
     @Test
@@ -293,13 +388,13 @@ class BashToolTest {
         assertTrue(result.output().contains("exitCode=0"), result.output());
         // pwd 未改变目录，无 shellCwd 增量（captured == context.cwd）
         assertFalse(result.output().contains("shellCwd="), result.output());
-        assertTrue(harness.snapshotExists("ses_1"));
+        assertTrue(harness.snapshotExists(tempDir, "ses_1", "bash"));
     }
 
     @Test
     void sessionEnvScriptAppliesToWrappedCommand() throws Exception {
         ShellEnvironmentHarness harness = testHarness();
-        Path envDir = harness.sessionDir("ses_1").resolve("env");
+        Path envDir = harness.sessionDir(tempDir, "ses_1").resolve("env");
         Files.createDirectories(envDir);
         Files.writeString(envDir.resolve("01-test.sh"), "export LYPI_BASH_TOOL_TEST=persisted\n");
         Executor realExecutor = new cn.lypi.tool.shell.HostExecutor();
@@ -319,7 +414,7 @@ class BashToolTest {
     @Test
     void mapsAllowedShellToExecutionRequest() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
-        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), testHarness());
 
         ToolResult<String> shResult = tool.execute(
             Map.of("command", "echo hi", "shell", "sh"),
@@ -328,7 +423,7 @@ class BashToolTest {
             }
         );
 
-        assertFalse(shResult.isError());
+        assertFalse(shResult.isError(), shResult.output());
         assertEquals("sh", executor.request.get().command().get(0));
 
         ToolResult<String> zshResult = tool.execute(
@@ -341,15 +436,6 @@ class BashToolTest {
         assertFalse(zshResult.isError());
         assertEquals("zsh", executor.request.get().command().get(0));
 
-        ToolResult<String> absoluteBashResult = tool.execute(
-            Map.of("command", "echo hi", "shell", "/bin/bash"),
-            context(Map.of()),
-            message -> {
-            }
-        );
-
-        assertFalse(absoluteBashResult.isError());
-        assertEquals("/bin/bash", executor.request.get().command().get(0));
     }
 
     @Test
@@ -358,17 +444,24 @@ class BashToolTest {
 
         var pythonResult = tool.validateInput(Map.of("command", "echo hi", "shell", "python"), context(Map.of()));
         var relativePathResult = tool.validateInput(Map.of("command", "echo hi", "shell", "bin/bash"), context(Map.of()));
+        var absolutePathResult = tool.validateInput(Map.of("command", "echo hi", "shell", "/bin/bash"), context(Map.of()));
 
         assertFalse(pythonResult.valid());
         assertTrue(pythonResult.messages().getFirst().contains("shell"));
         assertFalse(relativePathResult.valid());
         assertTrue(relativePathResult.messages().getFirst().contains("shell"));
+        assertFalse(absolutePathResult.valid());
+        assertTrue(absolutePathResult.messages().getFirst().contains("shell"));
     }
 
     @Test
     void mapsEscalatedSandboxRequestToExecutionRequest() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
-        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+        BashTool tool = new BashTool(
+            executor,
+            new RecordingSandboxPolicyResolver(defaultPolicy()),
+            testHarness()
+        );
 
         ToolResult<String> result = tool.execute(
             Map.of(
@@ -388,16 +481,22 @@ class BashToolTest {
             executor.request.get().justification()
         );
         assertEquals(Optional.empty(), executor.request.get().additionalPermissions());
+        assertEquals(2, executor.requests.size());
+        assertTrue(executor.requests.stream().allMatch(request ->
+            request.sandboxPermissions() == SandboxPermissions.REQUIRE_ESCALATED
+                && request.justification().equals(Optional.of("Need host access to inspect local process state."))
+                && request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.DISABLED
+        ));
     }
 
     @Test
-    void approvedDefaultRequestUsesHostWithoutResolvingSandboxPolicy(@TempDir Path outsideDir) throws Exception {
+    void approvedDefaultRequestUsesHostWithoutResolvingSandboxPolicy() throws Exception {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
         FailingSandboxPolicyResolver resolver = new FailingSandboxPolicyResolver();
-        BashTool tool = new BashTool(executor, resolver);
+        BashTool tool = new BashTool(executor, resolver, testHarness());
 
         ToolResult<String> result = tool.execute(
-            Map.of("command", "pwd", "cwd", outsideDir.toString()),
+            Map.of("command", "pwd"),
             context(Map.of("permissionApprovedForHostExecution", true)),
             message -> {
             }
@@ -406,14 +505,14 @@ class BashToolTest {
         assertFalse(result.isError());
         assertEquals(SandboxRuntimePolicyKind.DISABLED, executor.request.get().sandboxPolicy().kind());
         assertEquals(0, resolver.calls.get());
-        assertEquals(outsideDir.toRealPath(), executor.request.get().cwd());
+        assertEquals(tempDir.toRealPath(), executor.request.get().cwd());
     }
 
     @Test
     void approvedAdditionalPermissionsRequestUsesHostWithoutResolvingSandboxPolicy() throws Exception {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
         FailingSandboxPolicyResolver resolver = new FailingSandboxPolicyResolver();
-        BashTool tool = new BashTool(executor, resolver);
+        BashTool tool = new BashTool(executor, resolver, testHarness());
         Path cacheDir = Files.createDirectory(tempDir.resolve("host-cache"));
         AdditionalPermissionProfile permissions = additionalWrite(cacheDir);
 
@@ -441,7 +540,7 @@ class BashToolTest {
     void approvedEscalatedRequestUsesHostWithoutResolvingSandboxPolicy() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
         FailingSandboxPolicyResolver resolver = new FailingSandboxPolicyResolver();
-        BashTool tool = new BashTool(executor, resolver);
+        BashTool tool = new BashTool(executor, resolver, testHarness());
 
         ToolResult<String> result = tool.execute(
             Map.of(
@@ -463,7 +562,7 @@ class BashToolTest {
     void bypassUsesHostWithoutApprovalOrSandboxResolution() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
         FailingSandboxPolicyResolver resolver = new FailingSandboxPolicyResolver();
-        BashTool tool = new BashTool(executor, resolver);
+        BashTool tool = new BashTool(executor, resolver, testHarness());
 
         ToolResult<String> result = tool.execute(
             Map.of("command", "pwd"),
@@ -480,7 +579,7 @@ class BashToolTest {
     @Test
     void mapsApprovedAdditionalPermissionsToSingleExecutionRequest() throws Exception {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
-        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), testHarness());
         Path cacheDir = Files.createDirectory(tempDir.resolve("cache"));
         AdditionalPermissionProfile permissions = additionalWrite(cacheDir);
 
@@ -501,6 +600,12 @@ class BashToolTest {
         assertEquals(SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS, executor.request.get().sandboxPermissions());
         assertEquals(Optional.of(permissions), executor.request.get().additionalPermissions());
         assertEquals(Optional.empty(), executor.request.get().justification());
+        assertEquals(2, executor.requests.size());
+        assertTrue(executor.requests.stream().allMatch(request ->
+            request.sandboxPermissions() == SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS
+                && request.additionalPermissions().equals(Optional.of(permissions))
+                && request.justification().isEmpty()
+        ));
 
         ToolResult<String> defaultResult = tool.execute(
             Map.of("command", "true"),
@@ -517,7 +622,7 @@ class BashToolTest {
     @Test
     void rejectsAdditionalPermissionsWithoutApprovedMarker() throws Exception {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
-        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), testHarness());
         Path cacheDir = Files.createDirectory(tempDir.resolve("cache"));
 
         ToolResult<String> result = tool.execute(
@@ -542,7 +647,7 @@ class BashToolTest {
             "bubblewrap unavailable"
         );
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(126, "", "denied", false, Optional.empty(), metadata));
-        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), testHarness());
 
         ToolResult<String> result = tool.execute(Map.of("command", "id"), context(Map.of()), message -> {
         });
@@ -567,7 +672,7 @@ class BashToolTest {
                 Optional.empty(),
                 ExecutionMetadata.sandboxed("bubblewrap")
             ));
-            BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()));
+            BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), testHarness());
 
             ToolResult<String> result = tool.execute(Map.of("command", "touch output.txt"), context(Map.of()), message -> {
             });
@@ -597,7 +702,7 @@ class BashToolTest {
     @Test
     void reportsRunningPhaseBeforeExecutingCommand() {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
-        BashTool tool = new BashTool(executor);
+        BashTool tool = new BashTool(executor, new RecordingSandboxPolicyResolver(defaultPolicy()), testHarness());
         List<ToolProgress> progresses = new ArrayList<>();
 
         tool.execute(Map.of("command", "echo hi"), context(Map.of()), progresses::add);
@@ -609,57 +714,62 @@ class BashToolTest {
     }
 
     @Test
-    void supportsCwdOverrideInsideWorkspaceAndPassesAbortSignal() {
-        AbortSignal signal = () -> true;
+    void usesDynamicContextCwdAndPassesAbortSignal() throws Exception {
+        AbortSignal signal = () -> false;
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
-        BashTool tool = new BashTool(executor);
+        Path nested = Files.createDirectory(tempDir.resolve("nested-cwd"));
+        BashTool tool = new BashTool(
+            executor,
+            new RecordingSandboxPolicyResolver(defaultPolicy()),
+            testHarness()
+        );
 
         ToolResult<String> result = tool.execute(
-            Map.of("command", "pwd", "cwd", "."),
-            context(Map.of("abortSignal", signal)),
+            Map.of("command", "pwd"),
+            context(tempDir, nested, Map.of("abortSignal", signal)),
             message -> {
             }
         );
 
         assertFalse(result.isError());
         assertSame(signal, executor.signal.get());
-        assertEquals(tempDir, executor.request.get().cwd());
+        assertEquals(nested, executor.request.get().cwd());
     }
 
     @Test
-    void directAllowUsesManagedSandboxWithCwdOutsideWorkspace() throws Exception {
+    void rejectsContextCwdOutsideWorkspace() throws Exception {
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
         RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
-        BashTool tool = new BashTool(executor, resolver);
-        Path outsideDir = tempDir.getParent();
+        BashTool tool = new BashTool(executor, resolver, testHarness());
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace-boundary"));
+        Path outsideDir = Files.createDirectory(tempDir.resolve("outside-boundary"));
 
         ToolResult<String> result = tool.execute(
-            Map.of("command", "printf x > /etc/lypi-test", "cwd", outsideDir.toString()),
-            context(Map.of()),
+            Map.of("command", "pwd"),
+            context(workspace, outsideDir, Map.of()),
             message -> {
             }
         );
 
-        assertFalse(result.isError());
-        assertEquals(SandboxRuntimePolicyKind.MANAGED, executor.request.get().sandboxPolicy().kind());
-        assertEquals(outsideDir.toRealPath(), executor.request.get().cwd());
-        assertEquals(1, resolver.calls.get());
+        assertTrue(result.isError());
+        assertEquals(0, executor.requests.size());
+        assertEquals(0, resolver.calls.get());
     }
 
     @Test
-    void directAllowUsesManagedSandboxWithCwdSymlinkOutsideWorkspace(@TempDir Path outsideDir) throws Exception {
-        Files.createSymbolicLink(tempDir.resolve("outside-link"), outsideDir);
+    void rejectsContextCwdSymlinkEscape(@TempDir Path outsideDir) throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace-symlink"));
+        Path escape = Files.createSymbolicLink(workspace.resolve("outside-link"), outsideDir);
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
         RecordingSandboxPolicyResolver resolver = new RecordingSandboxPolicyResolver(defaultPolicy());
-        BashTool tool = new BashTool(executor, resolver);
+        BashTool tool = new BashTool(executor, resolver, testHarness());
 
-        ToolResult<String> result = tool.execute(Map.of("command", "pwd", "cwd", "outside-link"), context(Map.of()), message -> {
+        ToolResult<String> result = tool.execute(Map.of("command", "pwd"), context(workspace, escape, Map.of()), message -> {
         });
 
-        assertFalse(result.isError());
-        assertEquals(SandboxRuntimePolicyKind.MANAGED, executor.request.get().sandboxPolicy().kind());
-        assertEquals(outsideDir.toRealPath(), executor.request.get().cwd());
-        assertEquals(1, resolver.calls.get());
+        assertTrue(result.isError());
+        assertEquals(0, executor.requests.size());
+        assertEquals(0, resolver.calls.get());
     }
 
     @Test
@@ -782,6 +892,18 @@ class BashToolTest {
         return policy(false, false);
     }
 
+    private SandboxRuntimePolicy policyForWorkspace(Path workspace) {
+        return new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), Path.of("/bin"), Path.of("/lib"), Path.of("/lib64"), Path.of("/etc")),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+    }
+
     private SandboxRuntimePolicy policy(boolean failIfUnavailable, boolean autoAllowBashIfSandboxed) {
         return policy(SandboxRuntimePolicyKind.MANAGED, failIfUnavailable, autoAllowBashIfSandboxed);
     }
@@ -819,6 +941,7 @@ class BashToolTest {
         private final ExecutionResult result;
         private final AtomicReference<ExecutionRequest> request = new AtomicReference<>();
         private final AtomicReference<AbortSignal> signal = new AtomicReference<>();
+        private final List<ExecutionRequest> requests = new ArrayList<>();
 
         private RecordingExecutor(ExecutionResult result) {
             this.result = result;
@@ -833,8 +956,27 @@ class BashToolTest {
         public ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal) {
             this.request.set(request);
             this.signal.set(signal);
+            this.requests.add(request);
             progress.progress(ToolProgress.status("executor progress", null));
             return result;
+        }
+    }
+
+    private static final class RecordingDelegatingExecutor implements Executor {
+        private final Executor delegate = new cn.lypi.tool.shell.HostExecutor();
+        private final List<ExecutionRequest> requests = new ArrayList<>();
+        private final List<AbortSignal> signals = new ArrayList<>();
+
+        @Override
+        public String name() {
+            return "recording-host";
+        }
+
+        @Override
+        public ExecutionResult execute(ExecutionRequest request, ProgressSink progress, AbortSignal signal) {
+            requests.add(request);
+            signals.add(signal);
+            return delegate.execute(request, progress, signal);
         }
     }
 

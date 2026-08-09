@@ -2,8 +2,10 @@ package cn.lypi.tool.builtin;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.runtime.ExecutionResult;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,102 +17,218 @@ import org.junit.jupiter.api.io.TempDir;
 
 class ShellEnvironmentHarnessTest {
     @TempDir
-    Path stateRoot;
+    Path tempDir;
 
     private ShellEnvironmentHarness harness() {
-        return new ShellEnvironmentHarness(stateRoot);
+        return new ShellEnvironmentHarness(tempDir.resolve("state"));
     }
 
     @Test
-    void wrapWithoutSnapshotSourcesEnvDirAndCapturesCwd() {
+    void sessionDirectoriesUseWorkspaceAndRawSessionHashes() throws Exception {
         ShellEnvironmentHarness harness = harness();
+        Path firstWorkspace = Files.createDirectory(tempDir.resolve("workspace-a"));
+        Path secondWorkspace = Files.createDirectory(tempDir.resolve("workspace-b"));
 
-        String wrapped = harness.wrap("ses_1", "echo hi");
+        Path slashId = harness.sessionDir(firstWorkspace, "a/b");
+        Path underscoreId = harness.sessionDir(firstWorkspace, "a_b");
+        Path otherWorkspace = harness.sessionDir(secondWorkspace, "a/b");
 
-        assertFalse(wrapped.contains("shell-snapshot.sh"));
-        assertTrue(wrapped.contains("eval 'echo hi'"));
-        assertTrue(wrapped.contains("pwd -P >|"));
-        assertTrue(wrapped.contains("exit $lypi_rc"));
-        assertTrue(wrapped.contains("env"));
+        assertTrue(slashId.startsWith(tempDir.resolve("state")));
+        assertNotEquals(slashId, underscoreId);
+        assertNotEquals(slashId, otherWorkspace);
+        assertEquals(64, slashId.getFileName().toString().length());
     }
 
     @Test
-    void wrapWithSnapshotSourcesSnapshotFirst() throws IOException {
+    void snapshotsAreIsolatedByShellAndFilterPwdExports() throws Exception {
         ShellEnvironmentHarness harness = harness();
-        Path dir = harness.sessionDir("ses_1");
-        Files.createDirectories(dir);
-        Files.writeString(dir.resolve(ShellEnvironmentHarness.SNAPSHOT_FILE), "export FOO=1\n");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
 
-        String wrapped = harness.wrap("ses_1", "echo hi");
+        ShellEnvironmentHarness.SnapshotPlan bashPlan = harness
+            .prepareSnapshot(workspace, "ses_1", "bash")
+            .orElseThrow();
+        try (bashPlan) {
+            Files.writeString(
+                bashPlan.captureFile(),
+                "declare -x OLDPWD\n"
+                    + "declare -x PWD=\"/forged\"\n"
+                    + "declare -x KEEP=\"ok\"\n"
+                    + "alias ll='ls -l'\n"
+                    + "kept_function () { echo ok; }\n"
+            );
+            harness.completeSnapshot(bashPlan, success());
+        }
 
-        assertTrue(wrapped.startsWith("source '"));
-        assertTrue(wrapped.contains("shell-snapshot.sh"));
-        assertTrue(wrapped.contains("|| true && "));
-        assertTrue(harness.snapshotExists("ses_1"));
+        assertTrue(harness.snapshotExists(workspace, "ses_1", "bash"));
+        assertFalse(harness.snapshotExists(workspace, "ses_1", "sh"));
+        String snapshot = Files.readString(bashPlan.snapshotFile());
+        assertFalse(snapshot.lines().anyMatch(line -> line.matches("declare -x (OLDPWD|PWD)(=.*)?")));
+        assertTrue(snapshot.contains("declare -x KEEP=\"ok\""));
+        assertTrue(snapshot.contains("alias ll='ls -l'"));
+        assertTrue(snapshot.contains("kept_function"));
+
+        ShellEnvironmentHarness.SnapshotPlan shPlan = harness
+            .prepareSnapshot(workspace, "ses_1", "sh")
+            .orElseThrow();
+        try (shPlan) {
+            assertNotEquals(bashPlan.captureFile(), shPlan.captureFile());
+            assertNotEquals(bashPlan.snapshotFile(), shPlan.snapshotFile());
+            assertEquals("sh", shPlan.command().getFirst());
+            Files.writeString(shPlan.captureFile(), "export KEEP='sh'\n");
+            harness.completeSnapshot(shPlan, success());
+        }
+        assertTrue(harness.snapshotExists(workspace, "ses_1", "sh"));
     }
 
     @Test
-    void ensureSnapshotDumpsEnvironmentOnce() {
+    void commandPlanUsesSortedExplicitSourcesAndPosixSyntax() throws Exception {
         ShellEnvironmentHarness harness = harness();
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        createSnapshot(harness, workspace, "ses_1", "sh", "export SNAPSHOT_VALUE='ok'\n");
+        Path envDir = harness.sessionDir(workspace, "ses_1").resolve(ShellEnvironmentHarness.ENV_DIR);
+        Files.createDirectories(envDir);
+        Path second = Files.writeString(envDir.resolve("02-second.sh"), "export SECOND=2\n");
+        Path first = Files.writeString(envDir.resolve("01-first.sh"), "export FIRST=1\n");
 
-        harness.ensureSnapshot("ses_1", "bash");
-        assertTrue(harness.snapshotExists("ses_1"));
-
-        // 第二次调用不重写（mtime 不变）
-        Path snapshot = harness.sessionDir("ses_1").resolve(ShellEnvironmentHarness.SNAPSHOT_FILE);
-        try {
-            long mtime = Files.getLastModifiedTime(snapshot).toMillis();
-            harness.ensureSnapshot("ses_1", "bash");
-            assertEquals(mtime, Files.getLastModifiedTime(snapshot).toMillis());
-        } catch (IOException e) {
-            throw new AssertionError(e);
+        try (ShellEnvironmentHarness.CommandPlan plan = harness.prepareCommand(
+            workspace,
+            "ses_1",
+            "sh",
+            "printf '%s' \"$SNAPSHOT_VALUE$FIRST$SECOND\"",
+            true
+        )) {
+            assertEquals("sh", plan.command().get(0));
+            assertEquals("-c", plan.command().get(1));
+            String wrapped = plan.command().get(2);
+            assertTrue(wrapped.contains(". '" + plan.snapshotFile() + "'"), wrapped);
+            assertTrue(wrapped.indexOf(first.toString()) < wrapped.indexOf(second.toString()), wrapped);
+            assertTrue(wrapped.contains("eval 'printf '"), wrapped);
+            assertTrue(wrapped.contains("pwd -P > '" + plan.cwdCaptureFile() + "'"), wrapped);
+            assertFalse(wrapped.contains("source "), wrapped);
+            assertFalse(wrapped.contains(">|"), wrapped);
+            assertEquals(List.of(plan.snapshotFile(), first, second), plan.readOnlyFiles());
+            assertEquals(List.of(plan.cwdCaptureFile()), plan.writableFiles());
         }
     }
 
     @Test
-    void wrappedCommandExecutesWithEnvScriptsAndCapturesCwd() throws Exception {
+    void nonLoginCommandDoesNotUseOrSourceExistingSnapshot() throws Exception {
         ShellEnvironmentHarness harness = harness();
-        Path envDir = harness.sessionDir("ses_2").resolve(ShellEnvironmentHarness.ENV_DIR);
-        Files.createDirectories(envDir);
-        Files.writeString(envDir.resolve("01-first.sh"), "export LYPI_TEST_A=hello\n");
-        Files.writeString(envDir.resolve("02-second.sh"), "export LYPI_TEST_B=$LYPI_TEST_A-world\n");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        createSnapshot(harness, workspace, "ses_1", "bash", "export SNAPSHOT_VALUE='ok'\n");
 
-        List<Path> scripts = harness.envScripts("ses_2").toList();
-        assertEquals(2, scripts.size());
-        assertTrue(scripts.get(0).getFileName().toString().startsWith("01"));
-
-        String wrapped = harness.wrap("ses_2", "echo \"$LYPI_TEST_B\" && cd /");
-        Process process = new ProcessBuilder("bash", "-c", wrapped)
-            .redirectErrorStream(true)
-            .start();
-        String output = new String(process.getInputStream().readAllBytes());
-        assertEquals(0, process.waitFor());
-        assertTrue(output.contains("hello-world"), output);
-
-        Optional<Path> cwd = harness.consumeCapturedCwd("ses_2");
-        assertEquals(Optional.of(Path.of("/")), cwd);
-        // 已消费，再次读取为空
-        assertTrue(harness.consumeCapturedCwd("ses_2").isEmpty());
+        try (ShellEnvironmentHarness.CommandPlan plan = harness.prepareCommand(
+            workspace,
+            "ses_1",
+            "bash",
+            "echo hi",
+            false
+        )) {
+            assertEquals("-c", plan.command().get(1));
+            assertFalse(plan.command().get(2).contains(plan.snapshotFile().toString()));
+            assertFalse(plan.readOnlyFiles().contains(plan.snapshotFile()));
+        }
     }
 
     @Test
-    void importEnvFileCopiesExternalScriptOnce() throws IOException {
+    void commandPlansUseUniqueCwdFilesAndConsumeOnlyTheirOwnCapture() throws Exception {
         ShellEnvironmentHarness harness = harness();
-        Path external = stateRoot.resolve("external.sh");
-        Files.writeString(external, "export LYPI_EXTERNAL=1\n");
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path nested = Files.createDirectory(workspace.resolve("dir with spaces"));
 
-        harness.importEnvFile("ses_3", Map.of(ShellEnvironmentHarness.ENV_FILE_VARIABLE, external.toString()));
-        harness.importEnvFile("ses_3", Map.of(ShellEnvironmentHarness.ENV_FILE_VARIABLE, external.toString()));
+        try (
+            ShellEnvironmentHarness.CommandPlan first = harness.prepareCommand(
+                workspace,
+                "ses_1",
+                "bash",
+                "pwd",
+                false
+            );
+            ShellEnvironmentHarness.CommandPlan second = harness.prepareCommand(
+                workspace,
+                "ses_1",
+                "bash",
+                "pwd",
+                false
+            )
+        ) {
+            assertNotEquals(first.cwdCaptureFile(), second.cwdCaptureFile());
+            Files.writeString(first.cwdCaptureFile(), nested + "\n");
 
-        List<Path> scripts = harness.envScripts("ses_3").toList();
+            assertEquals(Optional.of(nested), harness.consumeCapturedCwd(first, workspace, workspace));
+            assertFalse(Files.exists(first.cwdCaptureFile()));
+            assertTrue(Files.exists(second.cwdCaptureFile()));
+            assertEquals(Optional.empty(), harness.consumeCapturedCwd(second, workspace, workspace));
+        }
+    }
+
+    @Test
+    void capturedCwdRejectsOutsideMissingRelativeAndSymlinkEscapePaths() throws Exception {
+        ShellEnvironmentHarness harness = harness();
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path outside = Files.createDirectory(tempDir.resolve("outside"));
+        Path escape = Files.createSymbolicLink(workspace.resolve("escape"), outside);
+
+        for (String captured : List.of(
+            outside.toString(),
+            workspace.resolve("missing").toString(),
+            "relative",
+            escape.toString()
+        )) {
+            try (ShellEnvironmentHarness.CommandPlan plan = harness.prepareCommand(
+                workspace,
+                "ses_1",
+                "bash",
+                "pwd",
+                false
+            )) {
+                Files.writeString(plan.cwdCaptureFile(), captured + "\n");
+                assertEquals(Optional.empty(), harness.consumeCapturedCwd(plan, workspace, workspace), captured);
+                assertFalse(Files.exists(plan.cwdCaptureFile()));
+            }
+        }
+    }
+
+    @Test
+    void importEnvFileCopiesTrustedScriptOnce() throws IOException {
+        ShellEnvironmentHarness harness = harness();
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path external = Files.writeString(tempDir.resolve("external.sh"), "export LYPI_EXTERNAL=1\n");
+
+        harness.importEnvFile(
+            workspace,
+            "ses_1",
+            Map.of(ShellEnvironmentHarness.ENV_FILE_VARIABLE, external.toString())
+        );
+        Files.writeString(external, "export LYPI_EXTERNAL=2\n");
+        harness.importEnvFile(
+            workspace,
+            "ses_1",
+            Map.of(ShellEnvironmentHarness.ENV_FILE_VARIABLE, external.toString())
+        );
+
+        List<Path> scripts = harness.envScripts(workspace, "ses_1");
         assertEquals(1, scripts.size());
-        assertEquals("export LYPI_EXTERNAL=1", Files.readString(scripts.get(0)).trim());
+        assertEquals("export LYPI_EXTERNAL=1", Files.readString(scripts.getFirst()).trim());
     }
 
-    @Test
-    void sessionIdSanitizedForFilesystem() {
-        ShellEnvironmentHarness harness = harness();
-        Path dir = harness.sessionDir("../evil/../../id");
-        assertTrue(dir.startsWith(stateRoot), dir.toString());
+    private void createSnapshot(
+        ShellEnvironmentHarness harness,
+        Path workspace,
+        String sessionId,
+        String shell,
+        String content
+    ) throws Exception {
+        ShellEnvironmentHarness.SnapshotPlan plan = harness
+            .prepareSnapshot(workspace, sessionId, shell)
+            .orElseThrow();
+        try (plan) {
+            Files.writeString(plan.captureFile(), content);
+            harness.completeSnapshot(plan, success());
+        }
+    }
+
+    private ExecutionResult success() {
+        return new ExecutionResult(0, "", "", false, Optional.empty());
     }
 }

@@ -48,6 +48,8 @@ import cn.lypi.contracts.web.WebSearchResult;
 import cn.lypi.tool.DefaultToolRuntime;
 import cn.lypi.tool.PermissionResponseGate;
 import cn.lypi.tool.ToolRuntimeOptions;
+import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
+import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.web.WebProviderRegistry;
 import cn.lypi.tool.web.WebSearchProvider;
 import cn.lypi.tool.web.WebSearchRequest;
@@ -463,7 +465,11 @@ class RequestPermissionsToolTest {
             executions
         );
         runtime.register(new RequestPermissionsTool());
-        runtime.register(new BashTool(executor(executions)));
+        runtime.register(new BashTool(
+            executor(executions),
+            new DefaultSandboxPolicyResolver(SandboxPolicyOptions.defaults()),
+            new ShellEnvironmentHarness(tempDir.resolve("shell-state"))
+        ));
 
         List<ToolResult<?>> results = runtime.execute(
             List.of(
@@ -476,7 +482,7 @@ class RequestPermissionsToolTest {
         assertFalse(results.get(0).isError());
         assertFalse(results.get(1).isError());
         assertEquals(2, prompts.get());
-        assertEquals(1, executions.get());
+        assertEquals(2, executions.get());
         assertEquals(ApprovalKind.REQUEST_PERMISSIONS, events.get(0).approvalKind());
         assertTrue(events.get(1).message().contains("strictAutoReview"));
     }

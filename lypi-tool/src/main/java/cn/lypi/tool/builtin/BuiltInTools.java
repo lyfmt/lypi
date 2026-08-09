@@ -33,14 +33,30 @@ public final class BuiltInTools {
      * 创建默认内置工具集合。
      */
     public static List<Tool<?, ?>> createDefaultTools(Executor executor, SandboxPolicyResolver sandboxPolicyResolver) {
+        return createDefaultTools(
+            executor,
+            sandboxPolicyResolver,
+            new ShellEnvironmentHarness(ShellEnvironmentHarness.defaultStateRoot())
+        );
+    }
+
+    /**
+     * 创建使用共享 shell 状态 harness 的默认内置工具集合。
+     */
+    public static List<Tool<?, ?>> createDefaultTools(
+        Executor executor,
+        SandboxPolicyResolver sandboxPolicyResolver,
+        ShellEnvironmentHarness shellHarness
+    ) {
         Objects.requireNonNull(executor, "executor must not be null");
         Objects.requireNonNull(sandboxPolicyResolver, "sandboxPolicyResolver must not be null");
+        Objects.requireNonNull(shellHarness, "shellHarness must not be null");
         return List.of(
             new ReadTool(),
             new WriteTool(),
             new EditTool(),
             new RequestPermissionsTool(),
-            new BashTool(executor, sandboxPolicyResolver),
+            new BashTool(executor, sandboxPolicyResolver, shellHarness),
             new GrepTool(executor),
             new GlobTool()
         );
@@ -57,8 +73,25 @@ public final class BuiltInTools {
      * 注册默认内置工具集合。
      */
     public static void registerDefaults(ToolRuntimePort runtime, Executor executor, SandboxPolicyResolver sandboxPolicyResolver) {
+        registerDefaults(
+            runtime,
+            executor,
+            sandboxPolicyResolver,
+            new ShellEnvironmentHarness(ShellEnvironmentHarness.defaultStateRoot())
+        );
+    }
+
+    /**
+     * 注册使用共享 shell 状态 harness 的默认内置工具集合。
+     */
+    public static void registerDefaults(
+        ToolRuntimePort runtime,
+        Executor executor,
+        SandboxPolicyResolver sandboxPolicyResolver,
+        ShellEnvironmentHarness shellHarness
+    ) {
         Objects.requireNonNull(runtime, "runtime must not be null");
-        for (Tool<?, ?> tool : createDefaultTools(executor, sandboxPolicyResolver)) {
+        for (Tool<?, ?> tool : createDefaultTools(executor, sandboxPolicyResolver, shellHarness)) {
             runtime.register(tool);
         }
     }

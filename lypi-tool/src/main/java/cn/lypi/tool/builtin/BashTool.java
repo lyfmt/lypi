@@ -10,18 +10,24 @@ import cn.lypi.contracts.runtime.ExecutionResult;
 import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.SandboxPermissions;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicyKind;
 import cn.lypi.contracts.security.AdditionalPermissionProfile;
 import cn.lypi.contracts.security.PermissionDecision;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolStateDelta;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
+import cn.lypi.tool.shell.SandboxPlatformPaths;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
-import java.nio.file.Path;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +35,7 @@ import java.util.Optional;
 
 public final class BashTool extends AbstractFileTool {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(120);
+    private static final Duration SNAPSHOT_TIMEOUT = Duration.ofSeconds(10);
     private static final AbortSignal NOT_ABORTED = () -> false;
     private static final String INPUT_SANDBOX_PERMISSIONS = "sandboxPermissions";
     private static final String INPUT_ADDITIONAL_PERMISSIONS = "additionalPermissions";
@@ -88,7 +95,7 @@ public final class BashTool extends AbstractFileTool {
                     "type", "string",
                     "description", "Shell command executed in the session working directory (persists via cd)."
                 ),
-                INPUT_SHELL, Map.of("type", "string"),
+                INPUT_SHELL, Map.of("type", "string", "enum", ALLOWED_SHELLS),
                 INPUT_LOGIN_SHELL, Map.of("type", "boolean"),
                 "timeoutSeconds", Map.of("type", "integer", "minimum", 1),
                 INPUT_SANDBOX_PERMISSIONS, Map.of(
@@ -127,8 +134,11 @@ public final class BashTool extends AbstractFileTool {
             return new ValidationResult(false, List.of("sandboxPermissions=requireEscalated 时 justification 不能为空。"));
         }
         String shell = stringInput(input, INPUT_SHELL);
-        if (!shell.isBlank() && !isAllowedShell(shell)) {
-            return new ValidationResult(false, List.of("shell 仅支持 bash、sh、zsh 或 basename 为这些值的绝对路径。"));
+        if (!shell.isBlank() && !ALLOWED_SHELLS.contains(shell)) {
+            return new ValidationResult(false, List.of("shell 仅支持 bash、sh 或 zsh。"));
+        }
+        if (input.containsKey("cwd")) {
+            return new ValidationResult(false, List.of("cwd 由会话状态管理，不接受工具输入覆盖。"));
         }
         return new ValidationResult(true, List.of());
     }
@@ -139,7 +149,7 @@ public final class BashTool extends AbstractFileTool {
             return super.checkPermissions(input, context);
         }
         try {
-            Path cwd = resolveBashCwd(input, context);
+            Path cwd = resolveBashCwd(context);
             return permissionPolicy.decide(input, context, cwd, permissionRuntimeState(context));
         } catch (RuntimeException | IOException exception) {
             return permissionPolicy.ask(input);
@@ -150,29 +160,89 @@ public final class BashTool extends AbstractFileTool {
     public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
         String toolUseId = toolUseId(context);
         try {
-            Path cwd = resolveBashCwd(input, context);
+            rejectExecutionOnlyOverrides(input);
+            Path cwd = resolveBashCwd(context);
+            String shell = resolvedShell(input);
+            boolean loginShell = booleanInput(input, INPUT_LOGIN_SHELL, true);
             Duration timeout = Duration.ofSeconds(intInput(input, "timeoutSeconds", (int) DEFAULT_TIMEOUT.toSeconds(), 1, 86_400));
             SandboxPermissions sandboxPermissions = sandboxPermissions(input);
             PermissionRuntimeState permissionRuntimeState = permissionRuntimeState(context);
             Optional<AdditionalPermissionProfile> additionalPermissions = additionalPermissionsForRequest(context, sandboxPermissions);
-            SandboxRuntimePolicy sandboxPolicy = usesHostExecution(permissionRuntimeState, sandboxPermissions, context)
+            Optional<String> justification = sandboxPermissions == SandboxPermissions.REQUIRE_ESCALATED
+                ? Optional.of(stringInput(input, INPUT_JUSTIFICATION))
+                : Optional.empty();
+            SandboxRuntimePolicy basePolicy = usesHostExecution(permissionRuntimeState, sandboxPermissions, context)
                 ? SandboxRuntimePolicy.disabled()
                 : sandboxPolicy(context.workspaceRoot(), cwd, permissionRuntimeState, additionalPermissions);
-            ExecutionRequest request = new ExecutionRequest(
-                shellCommand(input, context),
-                cwd,
-                Map.of(),
-                timeout,
-                sandboxPolicy,
-                sandboxPermissions,
-                additionalPermissions,
-                sandboxPermissions == SandboxPermissions.REQUIRE_ESCALATED
-                    ? Optional.of(stringInput(input, INPUT_JUSTIFICATION))
-                    : Optional.empty()
-            );
+            AbortSignal signal = abortSignal(context);
+            shellHarness.importEnvFile(context.workspaceRoot(), context.sessionId(), System.getenv());
             progress.progress(ToolProgress.phase("running", "执行 shell 命令"));
-            ExecutionResult result = executor.execute(request, progress, abortSignal(context));
-            return success(toolUseId, renderResult(result, context));
+
+            if (loginShell && !shellHarness.snapshotExists(context.workspaceRoot(), context.sessionId(), shell)) {
+                shellHarness.prepareSnapshot(context.workspaceRoot(), context.sessionId(), shell).ifPresent(plan -> {
+                    try (plan) {
+                        SandboxRuntimePolicy snapshotPolicy = policyWithInternalAccess(
+                            basePolicy,
+                            cwd,
+                            List.of(),
+                            List.of(plan.captureFile())
+                        );
+                        ExecutionResult snapshotResult = executor.execute(
+                            executionRequest(
+                                plan.command(),
+                                cwd,
+                                shorterTimeout(timeout, SNAPSHOT_TIMEOUT),
+                                snapshotPolicy,
+                                sandboxPermissions,
+                                additionalPermissions,
+                                justification
+                            ),
+                            progress,
+                            signal
+                        );
+                        shellHarness.completeSnapshot(plan, snapshotResult);
+                    } catch (RuntimeException ignored) {
+                        // Snapshot is an optimization; the user command falls back to a login shell.
+                    }
+                });
+            }
+            if (signal.aborted()) {
+                return error(toolUseId, "命令执行已中止。");
+            }
+
+            try (ShellEnvironmentHarness.CommandPlan plan = shellHarness.prepareCommand(
+                context.workspaceRoot(),
+                context.sessionId(),
+                shell,
+                input.get("command").toString(),
+                loginShell
+            )) {
+                SandboxRuntimePolicy commandPolicy = policyWithInternalAccess(
+                    basePolicy,
+                    cwd,
+                    plan.readOnlyFiles(),
+                    plan.writableFiles()
+                );
+                ExecutionResult result = executor.execute(
+                    executionRequest(
+                        plan.command(),
+                        cwd,
+                        timeout,
+                        commandPolicy,
+                        sandboxPermissions,
+                        additionalPermissions,
+                        justification
+                    ),
+                    progress,
+                    signal
+                );
+                Optional<ToolStateDelta> delta = shellHarness.consumeCapturedCwd(
+                    plan,
+                    context.workspaceRoot(),
+                    cwd
+                ).filter(captured -> !captured.equals(cwd)).map(ToolStateDelta::new);
+                return success(toolUseId, renderResult(result)).withStateDelta(delta);
+            }
         } catch (IllegalArgumentException exception) {
             return error(toolUseId, exception.getMessage());
         } catch (IOException exception) {
@@ -207,7 +277,7 @@ public final class BashTool extends AbstractFileTool {
         return value instanceof AbortSignal signal ? signal : NOT_ABORTED;
     }
 
-    private String renderResult(ExecutionResult result, ToolUseContext context) {
+    private String renderResult(ExecutionResult result) {
         StringBuilder builder = new StringBuilder();
         builder.append("exitCode=").append(result.exitCode());
         if (result.timedOut()) {
@@ -233,9 +303,6 @@ public final class BashTool extends AbstractFileTool {
             builder.append("\nstderr:\n").append(result.stderr());
         }
         result.persistedOutput().ifPresent(path -> builder.append("\npersistedOutput=").append(path));
-        shellHarness.consumeCapturedCwd(context.sessionId())
-            .filter(captured -> !captured.equals(context.cwd().toAbsolutePath().normalize()))
-            .ifPresent(captured -> builder.append("\nshellCwd=").append(captured));
         return builder.toString();
     }
 
@@ -247,12 +314,13 @@ public final class BashTool extends AbstractFileTool {
         return SandboxPermissions.fromToolValue(stringInput(input, INPUT_SANDBOX_PERMISSIONS));
     }
 
-    private Path resolveBashCwd(Map<String, Object> input, ToolUseContext context) throws IOException {
-        Path dynamicCwd = context.cwd().toAbsolutePath().normalize();
-        String rawCwd = stringInput(input, "cwd");
-        Path cwd = rawCwd.isBlank() ? dynamicCwd : Path.of(rawCwd);
-        Path resolved = cwd.isAbsolute() ? cwd.toAbsolutePath().normalize() : dynamicCwd.resolve(cwd).normalize();
-        return resolved.toRealPath();
+    private Path resolveBashCwd(ToolUseContext context) throws IOException {
+        Path workspaceRoot = context.workspaceRoot().toAbsolutePath().normalize().toRealPath();
+        Path cwd = context.cwd().toAbsolutePath().normalize().toRealPath();
+        if (!Files.isDirectory(cwd) || !cwd.startsWith(workspaceRoot)) {
+            throw new IOException("当前工作目录不在 workspace 内: " + context.cwd());
+        }
+        return cwd;
     }
 
     private boolean usesHostExecution(
@@ -305,6 +373,83 @@ public final class BashTool extends AbstractFileTool {
         return sandboxPolicyResolver.resolve(workspace, cwd, permissionRuntimeState);
     }
 
+    private ExecutionRequest executionRequest(
+        List<String> command,
+        Path cwd,
+        Duration timeout,
+        SandboxRuntimePolicy sandboxPolicy,
+        SandboxPermissions sandboxPermissions,
+        Optional<AdditionalPermissionProfile> additionalPermissions,
+        Optional<String> justification
+    ) {
+        return new ExecutionRequest(
+            command,
+            cwd,
+            Map.of(),
+            timeout,
+            sandboxPolicy,
+            sandboxPermissions,
+            additionalPermissions,
+            justification
+        );
+    }
+
+    private SandboxRuntimePolicy policyWithInternalAccess(
+        SandboxRuntimePolicy policy,
+        Path cwd,
+        List<Path> readOnlyFiles,
+        List<Path> writableFiles
+    ) {
+        if (policy.kind() != SandboxRuntimePolicyKind.MANAGED) {
+            return policy;
+        }
+        LinkedHashSet<Path> allowRead = new LinkedHashSet<>(
+            policy.allowRead().isEmpty() ? SandboxPlatformPaths.defaultReadOnlyPaths() : policy.allowRead()
+        );
+        LinkedHashSet<Path> allowWrite = new LinkedHashSet<>(
+            policy.allowWrite().isEmpty() ? List.of(cwd) : policy.allowWrite()
+        );
+        appendExistingFiles(allowRead, readOnlyFiles);
+        appendExistingFiles(allowWrite, writableFiles);
+        return new SandboxRuntimePolicy(
+            policy.kind(),
+            List.copyOf(allowRead),
+            policy.denyRead(),
+            List.copyOf(allowWrite),
+            policy.denyWrite(),
+            policy.networkMode(),
+            policy.failIfUnavailable(),
+            policy.autoAllowBashIfSandboxed()
+        );
+    }
+
+    private void appendExistingFiles(LinkedHashSet<Path> target, List<Path> files) {
+        for (Path file : files) {
+            if (file != null && Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+                target.add(file.toAbsolutePath().normalize());
+            }
+        }
+    }
+
+    private Duration shorterTimeout(Duration first, Duration second) {
+        return first.compareTo(second) <= 0 ? first : second;
+    }
+
+    private void rejectExecutionOnlyOverrides(Map<String, Object> input) {
+        if (input.containsKey("cwd")) {
+            throw new IllegalArgumentException("cwd 由会话状态管理，不接受工具输入覆盖。");
+        }
+    }
+
+    private String resolvedShell(Map<String, Object> input) {
+        String shell = stringInput(input, INPUT_SHELL);
+        String resolved = shell.isBlank() ? "bash" : shell;
+        if (!ALLOWED_SHELLS.contains(resolved)) {
+            throw new IllegalArgumentException("shell 仅支持 bash、sh 或 zsh。");
+        }
+        return resolved;
+    }
+
     private PermissionRuntimeState permissionRuntimeState(ToolUseContext context) {
         Object canonical = context.metadata().get(METADATA_PERMISSION_RUNTIME_STATE);
         if (canonical instanceof PermissionRuntimeState permissionRuntimeState) {
@@ -338,26 +483,6 @@ public final class BashTool extends AbstractFileTool {
 
     private boolean isEmpty(AdditionalPermissionProfile permissions) {
         return permissions.fileSystem().isEmpty() && permissions.network().isEmpty();
-    }
-
-    private List<String> shellCommand(Map<String, Object> input, ToolUseContext context) {
-        String shell = stringInput(input, INPUT_SHELL);
-        String resolvedShell = shell.isBlank() ? "bash" : shell;
-        String command = input.get("command").toString();
-        shellHarness.ensureSnapshot(context.sessionId(), resolvedShell);
-        shellHarness.importEnvFile(context.sessionId(), System.getenv());
-        String wrapped = shellHarness.wrap(context.sessionId(), command);
-        boolean loginShell = booleanInput(input, INPUT_LOGIN_SHELL, true) && !shellHarness.snapshotExists(context.sessionId());
-        return List.of(resolvedShell, loginShell ? "-lc" : "-c", wrapped);
-    }
-
-    private boolean isAllowedShell(String shell) {
-        Path path = Path.of(shell);
-        String shellName = path.getFileName() == null ? shell : path.getFileName().toString();
-        if (path.isAbsolute()) {
-            return ALLOWED_SHELLS.contains(shellName);
-        }
-        return ALLOWED_SHELLS.contains(shell);
     }
 
     private boolean booleanInput(Map<String, Object> input, String key, boolean defaultValue) {
