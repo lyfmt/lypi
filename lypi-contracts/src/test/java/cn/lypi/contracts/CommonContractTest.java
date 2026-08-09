@@ -29,6 +29,7 @@ import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.runtime.SessionStorageRootPort;
 import cn.lypi.contracts.runtime.ToolRuntimePort;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import java.lang.reflect.Method;
@@ -166,6 +167,7 @@ class CommonContractTest {
             () -> assertMethod(ChildSessionPort.class, "create", 1),
             () -> assertMethod(SessionManagerFactoryPort.class, "open", 2),
             () -> assertMethod(SessionStorageRootPort.class, "sessionStorageRoot", 0),
+            () -> assertMethod(ProviderLoginPort.class, "register", 2),
             () -> assertMethod(ProgressSink.class, "progress", 1),
             () -> assertMethod(ToolProgressEvent.class, "progress", 0)
         );
