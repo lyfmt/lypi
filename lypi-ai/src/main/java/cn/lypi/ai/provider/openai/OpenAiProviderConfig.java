@@ -33,4 +33,19 @@ public record OpenAiProviderConfig(
         websocketUrl = websocketUrl == null ? Optional.empty() : websocketUrl;
         compat = compat == null ? Map.of() : Map.copyOf(compat);
     }
+
+    @Override
+    public String toString() {
+        return "OpenAiProviderConfig[provider=" + provider
+            + ", baseUrl=" + baseUrl
+            + ", websocketUrl=" + websocketUrl
+            + ", websocketPath=" + websocketPath
+            + ", apiKey=<redacted>"
+            + ", requestStyle=" + requestStyle
+            + ", fallbackRequestStyle=" + fallbackRequestStyle
+            + ", transportMode=" + transportMode
+            + ", timeout=" + timeout
+            + ", maxRetries=" + maxRetries
+            + ", compat=<redacted>]";
+    }
 }

@@ -19,4 +19,9 @@ public record ProviderRequest(
         headers = Map.copyOf(headers);
         timeout = timeout == null ? Optional.empty() : timeout;
     }
+
+    @Override
+    public String toString() {
+        return "ProviderRequest[uri=" + uri + ", headers=<redacted>, body=<redacted>, timeout=" + timeout + "]";
+    }
 }
