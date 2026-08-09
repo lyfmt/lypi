@@ -8,6 +8,7 @@ import cn.lypi.ai.ModelPort;
 import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.ProviderAdapterApiProvider;
 import cn.lypi.ai.RuntimeModelRegistry;
+import cn.lypi.ai.model.DiscoveredModel;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
@@ -28,6 +29,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -294,10 +297,60 @@ class LyPiAiAutoConfigurationTest {
     }
 
     @Test
+    void appliesConfiguredDiscoveryDefaultsOnlyToMissingRemoteMetadata() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(RemoteModelDiscoveryClient.class, () -> new FixedRemoteModelDiscoveryClient(List.of(
+                new DiscoveredModel(
+                    "remote-explicit",
+                    OptionalInt.of(128_000),
+                    OptionalInt.of(16_384),
+                    Optional.of(false),
+                    Optional.of(false)
+                ),
+                DiscoveredModel.idOnly("remote-defaulted")
+            )))
+            .withPropertyValues(
+                "lypi.ai.model-discovery.defaults.context-window=192000",
+                "lypi.ai.model-discovery.defaults.max-output-tokens=12288",
+                "lypi.ai.model-discovery.defaults.supports-thinking=true",
+                "lypi.ai.model-discovery.defaults.supports-image-input=false",
+                "lypi.ai.providers.fixture.enabled=true",
+                "lypi.ai.providers.fixture.api-style=openai_compatible",
+                "lypi.ai.providers.fixture.base-url=https://api.fixture.test/v1",
+                "lypi.ai.providers.fixture.model-discovery.enabled=true"
+            )
+            .run(context -> {
+                ModelRegistry registry = context.getBean(ModelRegistry.class);
+
+                assertThat(model(registry, "fixture", "remote-explicit")).satisfies(descriptor -> {
+                    assertThat(descriptor.contextWindow()).isEqualTo(128_000);
+                    assertThat(descriptor.maxOutputTokens()).isEqualTo(16_384);
+                    assertThat(descriptor.supportsThinking()).isFalse();
+                    assertThat(descriptor.supportsImageInput()).isFalse();
+                });
+                assertThat(model(registry, "fixture", "remote-defaulted")).satisfies(descriptor -> {
+                    assertThat(descriptor.contextWindow()).isEqualTo(192_000);
+                    assertThat(descriptor.maxOutputTokens()).isEqualTo(12_288);
+                    assertThat(descriptor.supportsThinking()).isTrue();
+                    assertThat(descriptor.supportsImageInput()).isFalse();
+                });
+            });
+    }
+
+    @Test
     void discoveredModelsAreAuthoritativeWhileMatchingLocalMetadataOverridesDefaults() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiAiAutoConfiguration.class)
-            .withBean(RemoteModelDiscoveryClient.class, () -> new FixedRemoteModelDiscoveryClient("remote-a"))
+            .withBean(RemoteModelDiscoveryClient.class, () -> new FixedRemoteModelDiscoveryClient(List.of(
+                new DiscoveredModel(
+                    "remote-a",
+                    OptionalInt.of(128_000),
+                    OptionalInt.of(16_384),
+                    Optional.of(false),
+                    Optional.of(false)
+                )
+            )))
             .withPropertyValues(
                 "lypi.ai.providers.fixture.enabled=true",
                 "lypi.ai.providers.fixture.api-style=openai_compatible",
@@ -306,6 +359,8 @@ class LyPiAiAutoConfigurationTest {
                 "lypi.ai.providers.fixture.models[0].model-id=remote-a",
                 "lypi.ai.providers.fixture.models[0].context-window=96000",
                 "lypi.ai.providers.fixture.models[0].max-output-tokens=8192",
+                "lypi.ai.providers.fixture.models[0].supports-thinking=true",
+                "lypi.ai.providers.fixture.models[0].supports-image-input=true",
                 "lypi.ai.providers.fixture.models[1].model-id=local-only",
                 "lypi.ai.providers.fixture.models[1].context-window=64000",
                 "lypi.ai.providers.fixture.models[1].max-output-tokens=4096"
@@ -317,7 +372,25 @@ class LyPiAiAutoConfigurationTest {
                     .filteredOn(model -> model.provider().equals("fixture"))
                     .extracting(ModelDescriptor::modelId)
                     .containsExactly("remote-a");
-                assertThat(model(registry, "fixture", "remote-a").contextWindow()).isEqualTo(96_000);
+                assertThat(model(registry, "fixture", "remote-a")).satisfies(descriptor -> {
+                    assertThat(descriptor.contextWindow()).isEqualTo(96_000);
+                    assertThat(descriptor.maxOutputTokens()).isEqualTo(8_192);
+                    assertThat(descriptor.supportsThinking()).isTrue();
+                    assertThat(descriptor.supportsImageInput()).isTrue();
+                });
+            });
+    }
+
+    @Test
+    void rejectsNonPositiveDiscoveryDefaultTokenLimits() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues("lypi.ai.model-discovery.defaults.context-window=0")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(rootCause(context.getStartupFailure()))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Model discovery default token limits must be positive.");
             });
     }
 
@@ -567,21 +640,25 @@ class LyPiAiAutoConfigurationTest {
 
     private static final class ThrowingRemoteModelDiscoveryClient extends RemoteModelDiscoveryClient {
         @Override
-        public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
+        public List<DiscoveredModel> discoverModels(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
             throw new AssertionError("Remote discovery should not be called when disabled.");
         }
     }
 
     private static final class FixedRemoteModelDiscoveryClient extends RemoteModelDiscoveryClient {
-        private final String modelId;
+        private final List<DiscoveredModel> models;
 
         private FixedRemoteModelDiscoveryClient(String modelId) {
-            this.modelId = modelId;
+            this(List.of(DiscoveredModel.idOnly(modelId)));
+        }
+
+        private FixedRemoteModelDiscoveryClient(List<DiscoveredModel> models) {
+            this.models = List.copyOf(models);
         }
 
         @Override
-        public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
-            return List.of(modelId);
+        public List<DiscoveredModel> discoverModels(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
+            return models;
         }
     }
 
@@ -594,9 +671,9 @@ class LyPiAiAutoConfigurationTest {
         }
 
         @Override
-        public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
+        public List<DiscoveredModel> discoverModels(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
             calls.incrementAndGet();
-            return List.of(modelId);
+            return List.of(DiscoveredModel.idOnly(modelId));
         }
 
         private int calls() {
@@ -606,7 +683,7 @@ class LyPiAiAutoConfigurationTest {
 
     private static final class FailingRemoteModelDiscoveryClient extends RemoteModelDiscoveryClient {
         @Override
-        public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
+        public List<DiscoveredModel> discoverModels(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
             throw new ModelProviderException(
                 "model.discovery_unavailable",
                 ErrorSeverity.ERROR,

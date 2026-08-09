@@ -10,12 +10,23 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 class RemoteModelDescriptorSourceTest {
     @Test
-    void mapsDiscoveredModelIdsToDescriptors() {
-        RecordingDiscoveryClient client = new RecordingDiscoveryClient(List.of("remote-a", "remote-b"));
+    void mapsExplicitCapabilitiesAndDefaultsMissingMetadata() {
+        RecordingDiscoveryClient client = new RecordingDiscoveryClient(List.of(
+            new DiscoveredModel(
+                "remote-explicit",
+                OptionalInt.of(128_000),
+                OptionalInt.of(16_384),
+                Optional.of(false),
+                Optional.of(false)
+            ),
+            DiscoveredModel.idOnly("remote-defaulted")
+        ));
         RemoteModelDescriptorSource source = new RemoteModelDescriptorSource(
             true,
             "test-provider",
@@ -28,12 +39,26 @@ class RemoteModelDescriptorSourceTest {
             defaults()
         );
 
-        assertThat(source.list())
+        List<ModelDescriptor> descriptors = source.list();
+
+        assertThat(descriptors)
             .extracting(ModelDescriptor::provider, ModelDescriptor::modelId, ModelDescriptor::baseUrl, ModelDescriptor::apiStyle)
             .containsExactly(
-                org.assertj.core.groups.Tuple.tuple("test-provider", "remote-a", URI.create("https://provider.example/v1"), ApiStyle.OPENAI_COMPATIBLE),
-                org.assertj.core.groups.Tuple.tuple("test-provider", "remote-b", URI.create("https://provider.example/v1"), ApiStyle.OPENAI_COMPATIBLE)
+                org.assertj.core.groups.Tuple.tuple("test-provider", "remote-explicit", URI.create("https://provider.example/v1"), ApiStyle.OPENAI_COMPATIBLE),
+                org.assertj.core.groups.Tuple.tuple("test-provider", "remote-defaulted", URI.create("https://provider.example/v1"), ApiStyle.OPENAI_COMPATIBLE)
             );
+        assertThat(descriptors.get(0)).satisfies(descriptor -> {
+            assertThat(descriptor.contextWindow()).isEqualTo(128_000);
+            assertThat(descriptor.maxOutputTokens()).isEqualTo(16_384);
+            assertThat(descriptor.supportsThinking()).isFalse();
+            assertThat(descriptor.supportsImageInput()).isFalse();
+        });
+        assertThat(descriptors.get(1)).satisfies(descriptor -> {
+            assertThat(descriptor.contextWindow()).isEqualTo(256_000);
+            assertThat(descriptor.maxOutputTokens()).isEqualTo(8_192);
+            assertThat(descriptor.supportsThinking()).isTrue();
+            assertThat(descriptor.supportsImageInput()).isTrue();
+        });
         assertThat(client.baseUrl).isEqualTo(URI.create("https://provider.example/v1"));
         assertThat(client.apiKey).isEqualTo("secret-key");
         assertThat(client.paths).containsExactly("/models", "/model");
@@ -50,8 +75,8 @@ class RemoteModelDescriptorSourceTest {
             "secret-key",
             List.of("/models"),
             Duration.ofSeconds(3),
-            new RecordingDiscoveryClient(List.of("remote-a")),
-            new RemoteModelDescriptorSource.DescriptorDefaults(
+            new RecordingDiscoveryClient(List.of(DiscoveredModel.idOnly("remote-a"))),
+            new DiscoveredModelDefaults(
                 200_000,
                 32_000,
                 true,
@@ -81,7 +106,7 @@ class RemoteModelDescriptorSourceTest {
 
     @Test
     void returnsEmptyWhenDiscoveryDisabled() {
-        RecordingDiscoveryClient client = new RecordingDiscoveryClient(List.of("remote-a"));
+        RecordingDiscoveryClient client = new RecordingDiscoveryClient(List.of(DiscoveredModel.idOnly("remote-a")));
         RemoteModelDescriptorSource source = new RemoteModelDescriptorSource(
             false,
             "test-provider",
@@ -98,37 +123,37 @@ class RemoteModelDescriptorSourceTest {
         assertThat(client.called).isFalse();
     }
 
-    private static RemoteModelDescriptorSource.DescriptorDefaults defaults() {
-        return new RemoteModelDescriptorSource.DescriptorDefaults(
-            128_000,
-            16_384,
-            false,
-            false,
+    private static DiscoveredModelDefaults defaults() {
+        return new DiscoveredModelDefaults(
+            256_000,
+            8_192,
+            true,
+            true,
             new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
             Map.of()
         );
     }
 
     private static final class RecordingDiscoveryClient extends RemoteModelDiscoveryClient {
-        private final List<String> modelIds;
+        private final List<DiscoveredModel> models;
         private boolean called;
         private URI baseUrl;
         private String apiKey;
         private List<String> paths;
         private Duration timeout;
 
-        private RecordingDiscoveryClient(List<String> modelIds) {
-            this.modelIds = modelIds;
+        private RecordingDiscoveryClient(List<DiscoveredModel> models) {
+            this.models = models;
         }
 
         @Override
-        public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
+        public List<DiscoveredModel> discoverModels(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
             this.called = true;
             this.baseUrl = baseUrl;
             this.apiKey = apiKey;
             this.paths = paths;
             this.timeout = timeout;
-            return modelIds;
+            return models;
         }
     }
 }

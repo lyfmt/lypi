@@ -2,6 +2,7 @@ package cn.lypi.boot.ai;
 
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
+import cn.lypi.ai.model.DiscoveredModelDefaults;
 import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
 import cn.lypi.contracts.model.ApiStyle;
 import java.math.BigDecimal;
@@ -17,6 +18,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class LyPiAiProperties {
     private String defaultProvider;
     private String defaultModel;
+    private GlobalModelDiscoveryProperties modelDiscovery = new GlobalModelDiscoveryProperties();
     private Map<String, ProviderProperties> providers = new LinkedHashMap<>();
     private CompactionSummaryProperties compactionSummary = new CompactionSummaryProperties();
 
@@ -34,6 +36,14 @@ public class LyPiAiProperties {
 
     public void setDefaultModel(String defaultModel) {
         this.defaultModel = defaultModel;
+    }
+
+    public GlobalModelDiscoveryProperties getModelDiscovery() {
+        return modelDiscovery;
+    }
+
+    public void setModelDiscovery(GlobalModelDiscoveryProperties modelDiscovery) {
+        this.modelDiscovery = modelDiscovery == null ? new GlobalModelDiscoveryProperties() : modelDiscovery;
     }
 
     public Map<String, ProviderProperties> getProviders() {
@@ -63,6 +73,57 @@ public class LyPiAiProperties {
             this.fallbackPolicy = fallbackPolicy == null
                 ? CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC
                 : fallbackPolicy;
+        }
+    }
+
+    public static class GlobalModelDiscoveryProperties {
+        private ModelDefaultsProperties defaults = new ModelDefaultsProperties();
+
+        public ModelDefaultsProperties getDefaults() {
+            return defaults;
+        }
+
+        public void setDefaults(ModelDefaultsProperties defaults) {
+            this.defaults = defaults == null ? new ModelDefaultsProperties() : defaults;
+        }
+    }
+
+    public static class ModelDefaultsProperties {
+        private int contextWindow = DiscoveredModelDefaults.DEFAULT_CONTEXT_WINDOW;
+        private int maxOutputTokens = DiscoveredModelDefaults.DEFAULT_MAX_OUTPUT_TOKENS;
+        private boolean supportsThinking = DiscoveredModelDefaults.DEFAULT_SUPPORTS_THINKING;
+        private boolean supportsImageInput = DiscoveredModelDefaults.DEFAULT_SUPPORTS_IMAGE_INPUT;
+
+        public int getContextWindow() {
+            return contextWindow;
+        }
+
+        public void setContextWindow(int contextWindow) {
+            this.contextWindow = contextWindow;
+        }
+
+        public int getMaxOutputTokens() {
+            return maxOutputTokens;
+        }
+
+        public void setMaxOutputTokens(int maxOutputTokens) {
+            this.maxOutputTokens = maxOutputTokens;
+        }
+
+        public boolean isSupportsThinking() {
+            return supportsThinking;
+        }
+
+        public void setSupportsThinking(boolean supportsThinking) {
+            this.supportsThinking = supportsThinking;
+        }
+
+        public boolean isSupportsImageInput() {
+            return supportsImageInput;
+        }
+
+        public void setSupportsImageInput(boolean supportsImageInput) {
+            this.supportsImageInput = supportsImageInput;
         }
     }
 

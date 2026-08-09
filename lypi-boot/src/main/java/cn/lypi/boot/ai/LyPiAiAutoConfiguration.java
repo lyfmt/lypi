@@ -12,6 +12,7 @@ import cn.lypi.ai.RuntimeModelRegistry;
 import cn.lypi.ai.model.BuiltinModelDescriptorSource;
 import cn.lypi.ai.model.CompatSanitizer;
 import cn.lypi.ai.model.CompositeModelDescriptorSource;
+import cn.lypi.ai.model.DiscoveredModelDefaults;
 import cn.lypi.ai.model.ModelDescriptorSource;
 import cn.lypi.ai.model.RemoteModelDescriptorSource;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
@@ -154,7 +155,8 @@ public class LyPiAiAutoConfiguration {
     }
 
     private ModelDescriptorSource modelDescriptorSource(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
-        List<ModelDescriptor> remote = remoteModelDescriptors(properties, discoveryClient);
+        DiscoveredModelDefaults defaults = descriptorDefaults(properties);
+        List<ModelDescriptor> remote = remoteModelDescriptors(properties, discoveryClient, defaults);
         Set<ModelKey> discovered = remote.stream()
             .map(model -> new ModelKey(model.provider(), model.modelId()))
             .collect(Collectors.toUnmodifiableSet());
@@ -229,7 +231,11 @@ public class LyPiAiAutoConfiguration {
         return descriptors;
     }
 
-    private List<ModelDescriptor> remoteModelDescriptors(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
+    private List<ModelDescriptor> remoteModelDescriptors(
+        LyPiAiProperties properties,
+        RemoteModelDiscoveryClient discoveryClient,
+        DiscoveredModelDefaults defaults
+    ) {
         List<ModelDescriptor> descriptors = new ArrayList<>();
         effectiveProviders(properties).forEach((providerName, provider) -> {
             if (!provider.isEnabled() || provider.getBaseUrl() == null || !provider.getModelDiscovery().isEnabled()) {
@@ -238,7 +244,6 @@ public class LyPiAiAutoConfiguration {
             if (valueOrDefault(provider.getApiStyle(), ApiStyle.OPENAI_COMPATIBLE) != ApiStyle.OPENAI_COMPATIBLE) {
                 return;
             }
-            RemoteModelDescriptorSource.DescriptorDefaults defaults = descriptorDefaults(provider);
             descriptors.addAll(new RemoteModelDescriptorSource(
                 true,
                 providerName,
@@ -254,19 +259,18 @@ public class LyPiAiAutoConfiguration {
         return descriptors;
     }
 
-    private RemoteModelDescriptorSource.DescriptorDefaults descriptorDefaults(ProviderProperties provider) {
-        ModelProperties firstModel = provider.getModels().isEmpty() ? new ModelProperties() : provider.getModels().getFirst();
-        return new RemoteModelDescriptorSource.DescriptorDefaults(
-            firstModel.getContextWindow(),
-            firstModel.getMaxOutputTokens(),
-            firstModel.isSupportsThinking(),
-            firstModel.isSupportsImageInput(),
-            new CostProfile(
-                valueOrDefault(firstModel.getInputTokenCost(), BigDecimal.ZERO),
-                valueOrDefault(firstModel.getOutputTokenCost(), BigDecimal.ZERO),
-                valueOrDefault(firstModel.getCurrency(), "USD")
-            ),
-            sanitizedCompat(provider.getCompat(), firstModel.getCompat())
+    private DiscoveredModelDefaults descriptorDefaults(LyPiAiProperties properties) {
+        LyPiAiProperties.ModelDefaultsProperties defaults = properties.getModelDiscovery().getDefaults();
+        if (defaults.getContextWindow() <= 0 || defaults.getMaxOutputTokens() <= 0) {
+            throw new IllegalArgumentException("Model discovery default token limits must be positive.");
+        }
+        return new DiscoveredModelDefaults(
+            defaults.getContextWindow(),
+            defaults.getMaxOutputTokens(),
+            defaults.isSupportsThinking(),
+            defaults.isSupportsImageInput(),
+            new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
+            Map.of()
         );
     }
 
