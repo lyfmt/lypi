@@ -16,6 +16,86 @@ import org.junit.jupiter.api.Test;
 
 class OpenAiChatCompletionsStreamNormalizerTest {
     @Test
+    void normalizesCompatibleReasoningShapesWithoutDuplicateDetails() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("""
+                {"choices":[{"index":0,"delta":{"reasoning":"think","reasoning_details":[{"type":"reasoning.text","text":"think"}]}}]}
+                """),
+            normalizer.normalize("""
+                {"choices":[{"index":0,"delta":{"reasoning_text":"fallback"}}]}
+                """),
+            normalizer.normalize("""
+                {"choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"ignored"},{"type":"reasoning.text","text":"details-only"}]}}]}
+                """),
+            normalizer.normalize("""
+                {"choices":[{"index":1,"delta":{"content":"answer"}}]}
+                """)
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new ThinkingDelta("think"),
+            new ThinkingDelta("fallback"),
+            new ThinkingDelta("details-only"),
+            new TextDelta("answer")
+        );
+    }
+
+    @Test
+    void separatesThinkingTagsAcrossContentChunkBoundaries() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("{\"choices\":[{\"delta\":{\"content\":\"<thi\"}}]}"),
+            normalizer.normalize("{\"choices\":[{\"delta\":{\"content\":\"nk>plan</th\"}}]}"),
+            normalizer.normalize("{\"choices\":[{\"delta\":{\"content\":\"ink>answer\"}}]}"),
+            normalizer.normalize("[DONE]")
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new ThinkingDelta("plan"),
+            new TextDelta("answer"),
+            new AssistantDone(Optional.empty(), Optional.of("stop"))
+        );
+    }
+
+    @Test
+    void flushesUnclosedTaggedContentInTheCurrentModeOnDone() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("{\"choices\":[{\"delta\":{\"content\":\"before<think>unfinished</th\"}}]}"),
+            normalizer.normalize("[DONE]")
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new TextDelta("before"),
+            new ThinkingDelta("unfinished"),
+            new ThinkingDelta("</th"),
+            new AssistantDone(Optional.empty(), Optional.of("stop"))
+        );
+    }
+
+    @Test
+    void flushesUnclosedTaggedContentBeforeUsageCompletion() {
+        OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
+
+        List<AssistantStreamEvent> events = List.of(
+            normalizer.normalize("{\"choices\":[{\"delta\":{\"content\":\"<think>plan</th\"}}]}"),
+            normalizer.normalize("""
+                {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2}}
+                """)
+        ).stream().flatMap(List::stream).toList();
+
+        assertThat(events).containsExactly(
+            new ThinkingDelta("plan"),
+            new ThinkingDelta("</th"),
+            new AssistantDone(Optional.of(new TokenUsage(4, 2, 0, 0)), Optional.of("stop"))
+        );
+    }
+
+    @Test
     void normalizesTextReasoningToolCallAndDoneChunks() {
         OpenAiChatCompletionsStreamNormalizer normalizer = new OpenAiChatCompletionsStreamNormalizer();
 

@@ -4,11 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
+import cn.lypi.ai.spec.LypiContentBlock;
 import cn.lypi.ai.spec.LypiGenerationOptions;
 import cn.lypi.ai.spec.LypiMessage;
 import cn.lypi.ai.spec.LypiModelRequest;
 import cn.lypi.ai.spec.LypiRole;
 import cn.lypi.ai.spec.LypiTextBlock;
+import cn.lypi.ai.spec.LypiThinkingBlock;
 import cn.lypi.ai.spec.LypiToolCallBlock;
 import cn.lypi.ai.spec.LypiToolResultBlock;
 import cn.lypi.ai.spec.LypiToolSpec;
@@ -23,6 +25,9 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class OpenAiChatCompletionsRequestBuilderTest {
+    private static final String REASONING_CONTENT_COMPAT =
+        "requires-reasoning-content-on-assistant-messages";
+
     @Test
     void buildsChatCompletionsRequestWithMessagesToolsAndReasoningEffort() {
         LypiToolSpec tool = new LypiToolSpec(
@@ -138,6 +143,63 @@ class OpenAiChatCompletionsRequestBuilderTest {
     }
 
     @Test
+    void replaysAssistantThinkingSeparatelyWhenCompatIsEnabled() {
+        LypiModelRequest request = assistantToolHistory(List.of(
+            new LypiThinkingBlock("private plan", Map.of()),
+            new LypiTextBlock("I will read it.", Map.of()),
+            new LypiToolCallBlock("call-1", "read_file", "", Map.of("input", Map.of("path", "pom.xml")))
+        ));
+
+        for (Object enabled : List.of(true, "true")) {
+            JsonNode body = new OpenAiChatCompletionsRequestBuilder().build(
+                request,
+                config(Map.of(REASONING_CONTENT_COMPAT, enabled))
+            );
+
+            assertThat(body.get("messages")).hasSize(1);
+            assertThat(body.at("/messages/0/role").asText()).isEqualTo("assistant");
+            assertThat(body.at("/messages/0/reasoning_content").asText()).isEqualTo("private plan");
+            assertThat(body.at("/messages/0/content").asText()).isEqualTo("I will read it.");
+            assertThat(body.at("/messages/0/tool_calls/0/id").asText()).isEqualTo("call-1");
+            assertThat(body.at("/messages/0/tool_calls/0/function/name").asText()).isEqualTo("read_file");
+            assertThat(body.at("/messages/0/tool_calls/0/function/arguments").asText())
+                .isEqualTo("{\"path\":\"pom.xml\"}");
+        }
+    }
+
+    @Test
+    void writesEmptyReasoningContentForAssistantToolCallWithoutThinking() {
+        LypiModelRequest request = assistantToolHistory(List.of(
+            new LypiToolCallBlock("call-1", "read_file", "", Map.of("input", Map.of("path", "pom.xml")))
+        ));
+
+        JsonNode body = new OpenAiChatCompletionsRequestBuilder().build(
+            request,
+            config(Map.of(REASONING_CONTENT_COMPAT, true))
+        );
+
+        assertThat(body.at("/messages/0/reasoning_content").isTextual()).isTrue();
+        assertThat(body.at("/messages/0/reasoning_content").asText()).isEmpty();
+        assertThat(body.at("/messages/0/content").isNull()).isTrue();
+        assertThat(body.at("/messages/0/tool_calls/0/id").asText()).isEqualTo("call-1");
+    }
+
+    @Test
+    void keepsThinkingInVisibleContentWhenReasoningCompatIsDisabled() {
+        LypiModelRequest request = assistantToolHistory(List.of(
+            new LypiThinkingBlock("private plan", Map.of()),
+            new LypiTextBlock("I will read it.", Map.of()),
+            new LypiToolCallBlock("call-1", "read_file", "", Map.of("input", Map.of("path", "pom.xml")))
+        ));
+
+        JsonNode body = new OpenAiChatCompletionsRequestBuilder().build(request, config());
+
+        assertThat(body.at("/messages/0/reasoning_content").isMissingNode()).isTrue();
+        assertThat(body.at("/messages/0/content").asText()).isEqualTo("private plan\nI will read it.");
+        assertThat(body.at("/messages/0/tool_calls/0/id").asText()).isEqualTo("call-1");
+    }
+
+    @Test
     void omitsBlankSystemPromptAndReasoningWhenOff() {
         LypiModelRequest request = new LypiModelRequest(
             "req-2",
@@ -175,6 +237,10 @@ class OpenAiChatCompletionsRequestBuilderTest {
     }
 
     private static OpenAiProviderConfig config() {
+        return config(Map.of());
+    }
+
+    private static OpenAiProviderConfig config(Map<String, Object> compat) {
         return new OpenAiProviderConfig(
             "openai",
             URI.create("https://api.openai.com/v1"),
@@ -186,6 +252,19 @@ class OpenAiChatCompletionsRequestBuilderTest {
             TransportMode.AUTO,
             Duration.ofSeconds(30),
             1,
+            compat
+        );
+    }
+
+    private static LypiModelRequest assistantToolHistory(List<LypiContentBlock> content) {
+        return new LypiModelRequest(
+            "req-thinking-history",
+            new ModelSelection("openai", "gpt-4o-mini", ThinkingLevel.HIGH),
+            ThinkingLevel.HIGH,
+            "",
+            List.of(new LypiMessage(LypiRole.ASSISTANT, content, Map.of())),
+            List.of(),
+            LypiGenerationOptions.defaults(),
             Map.of()
         );
     }

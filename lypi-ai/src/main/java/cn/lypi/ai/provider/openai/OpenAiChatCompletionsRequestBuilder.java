@@ -22,6 +22,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class OpenAiChatCompletionsRequestBuilder {
+    private static final String REASONING_CONTENT_COMPAT =
+        "requires-reasoning-content-on-assistant-messages";
+
     private final ObjectMapper objectMapper;
 
     public OpenAiChatCompletionsRequestBuilder() {
@@ -46,7 +49,7 @@ public final class OpenAiChatCompletionsRequestBuilder {
         request.options().maxOutputTokens().ifPresent(tokens -> body.put("max_tokens", tokens));
         request.options().temperature().ifPresent(temperature -> body.put("temperature", temperature));
         promptCacheKey(request).ifPresent(key -> body.put("prompt_cache_key", key));
-        body.set("messages", messages(request));
+        body.set("messages", messages(request, config));
         if (!request.tools().isEmpty()) {
             body.set("tools", tools(request));
         }
@@ -54,7 +57,7 @@ public final class OpenAiChatCompletionsRequestBuilder {
         return body;
     }
 
-    private ArrayNode messages(LypiModelRequest request) {
+    private ArrayNode messages(LypiModelRequest request, OpenAiProviderConfig config) {
         ArrayNode messages = objectMapper.createArrayNode();
         if (!request.systemPrompt().isBlank()) {
             ObjectNode system = objectMapper.createObjectNode();
@@ -62,32 +65,16 @@ public final class OpenAiChatCompletionsRequestBuilder {
             system.put("content", request.systemPrompt());
             messages.add(system);
         }
+        boolean requiresReasoningContent = compatEnabled(config, REASONING_CONTENT_COMPAT);
         for (LypiMessage message : request.messages()) {
-            appendMessage(messages, message);
+            appendMessage(messages, message, requiresReasoningContent);
         }
         return messages;
     }
 
-    private void appendMessage(ArrayNode messages, LypiMessage message) {
-        List<LypiToolCallBlock> toolCallBlocks = message.content().stream()
-            .filter(LypiToolCallBlock.class::isInstance)
-            .map(LypiToolCallBlock.class::cast)
-            .toList();
-        if (message.role() == LypiRole.ASSISTANT && !toolCallBlocks.isEmpty()) {
-            ObjectNode node = objectMapper.createObjectNode();
-            node.put("role", "assistant");
-            String content = assistantToolCallContent(message);
-            if (content.isBlank()) {
-                node.putNull("content");
-            } else {
-                node.put("content", content);
-            }
-            ArrayNode toolCalls = objectMapper.createArrayNode();
-            for (LypiToolCallBlock block : toolCallBlocks) {
-                toolCalls.add(toolCall(block));
-            }
-            node.set("tool_calls", toolCalls);
-            messages.add(node);
+    private void appendMessage(ArrayNode messages, LypiMessage message, boolean requiresReasoningContent) {
+        if (message.role() == LypiRole.ASSISTANT) {
+            messages.add(assistantMessage(message, requiresReasoningContent));
             return;
         }
         for (LypiContentBlock block : message.content()) {
@@ -106,10 +93,46 @@ public final class OpenAiChatCompletionsRequestBuilder {
         }
     }
 
-    private String assistantToolCallContent(LypiMessage message) {
+    private ObjectNode assistantMessage(LypiMessage message, boolean requiresReasoningContent) {
+        List<LypiToolCallBlock> toolCallBlocks = message.content().stream()
+            .filter(LypiToolCallBlock.class::isInstance)
+            .map(LypiToolCallBlock.class::cast)
+            .toList();
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("role", "assistant");
+        String content = assistantContent(message, requiresReasoningContent);
+        if (content.isBlank()) {
+            node.putNull("content");
+        } else {
+            node.put("content", content);
+        }
+        if (requiresReasoningContent) {
+            node.put("reasoning_content", assistantThinking(message));
+        }
+        if (!toolCallBlocks.isEmpty()) {
+            ArrayNode toolCalls = objectMapper.createArrayNode();
+            for (LypiToolCallBlock block : toolCallBlocks) {
+                toolCalls.add(toolCall(block));
+            }
+            node.set("tool_calls", toolCalls);
+        }
+        return node;
+    }
+
+    private String assistantContent(LypiMessage message, boolean excludesThinking) {
         return message.content().stream()
             .filter(block -> !(block instanceof LypiToolCallBlock))
+            .filter(block -> !excludesThinking || !(block instanceof LypiThinkingBlock))
             .map(this::blockText)
+            .filter(text -> text != null && !text.isBlank())
+            .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private String assistantThinking(LypiMessage message) {
+        return message.content().stream()
+            .filter(LypiThinkingBlock.class::isInstance)
+            .map(LypiThinkingBlock.class::cast)
+            .map(LypiThinkingBlock::text)
             .filter(text -> text != null && !text.isBlank())
             .collect(java.util.stream.Collectors.joining("\n"));
     }
@@ -181,5 +204,13 @@ public final class OpenAiChatCompletionsRequestBuilder {
         }
         String value = String.valueOf(key);
         return value.isBlank() ? Optional.empty() : Optional.of(value);
+    }
+
+    private boolean compatEnabled(OpenAiProviderConfig config, String key) {
+        Object value = config.compat().get(key);
+        if (value instanceof Boolean enabled) {
+            return enabled;
+        }
+        return value instanceof String text && Boolean.parseBoolean(text);
     }
 }
