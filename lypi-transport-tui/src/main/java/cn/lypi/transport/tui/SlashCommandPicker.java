@@ -7,6 +7,7 @@ import java.util.Optional;
 final class SlashCommandPicker {
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/model",
+        "/login",
         "/thinking",
         "/plan",
         "/permission-mode",

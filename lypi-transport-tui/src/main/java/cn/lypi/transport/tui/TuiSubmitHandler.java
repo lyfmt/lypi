@@ -18,6 +18,12 @@ interface TuiSubmitHandler {
         submitUserInput(input);
     }
 
+    /**
+     * Submits temporary provider-login credentials without creating a user turn.
+     */
+    default void submitProviderLogin(String baseUrl, String authKey) {
+    }
+
     default List<SteeringMessage> pendingSteeringMessages() {
         return List.of();
     }

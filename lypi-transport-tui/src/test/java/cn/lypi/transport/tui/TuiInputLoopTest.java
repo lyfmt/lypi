@@ -875,7 +875,7 @@ class TuiInputLoopTest {
         loop.acceptText("/");
 
         assertTrue(frames.getLast().contains("> /model"));
-        assertTrue(frames.getLast().contains("  /compact"));
+        assertTrue(frames.getLast().contains("  /login"));
 
         loop.acceptText("th");
         assertTrue(frames.getLast().contains("> /thinking"));
@@ -884,6 +884,68 @@ class TuiInputLoopTest {
 
         assertEquals("/thinking ", loop.draft());
         assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void loginOverlayMasksAuthKeyAndSubmitsOutsideEditorHistory() {
+        String authKey = "test-secret";
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9)
+        );
+
+        loop.acceptText("ordinary input");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("/login");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptPaste("https://api.example.test/v1");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptPaste(authKey);
+
+        assertEquals("", loop.draft());
+        assertEquals(List.of(
+            "Base URL: https://api.example.test/v1",
+            "Auth key: ***********"
+        ), loop.overlayLines());
+        assertFalse(String.join("\n", loop.overlayLines()).contains(authKey));
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("ordinary input"), submit.submitted);
+        assertEquals(1, submit.providerLogins.size());
+        assertEquals("https://api.example.test/v1", submit.providerLogins.getFirst().baseUrl());
+        assertTrue(authKey.equals(submit.providerLogins.getFirst().authKey()));
+        assertEquals(List.of(), loop.overlayLines());
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("ordinary input", loop.draft());
+    }
+
+    @Test
+    void escapeAndCtrlCCancelLoginOverlayWithoutInterruptingTheActiveTurn() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9)
+        );
+
+        loop.acceptText("/login");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("https://api.example.test/v1");
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptText("/login");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("https://api.example.test/v1");
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals(List.of(), loop.overlayLines());
+        assertEquals(List.of(), submit.providerLogins);
+        assertEquals(0, submit.interrupts);
+        assertEquals(0, submit.exits);
     }
 
     @Test
@@ -1705,6 +1767,7 @@ class TuiInputLoopTest {
         private final List<String> permissionOptions = new ArrayList<>();
         private final List<String> resumes = new ArrayList<>();
         private final List<String> interruptReasons = new ArrayList<>();
+        private final List<LoginSubmission> providerLogins = new ArrayList<>();
         private int interrupts;
         private int exits;
 
@@ -1718,6 +1781,11 @@ class TuiInputLoopTest {
         public void submitUserInput(String input, List<SkillMention> skillMentions) {
             submitted.add(input);
             this.skillMentions.add(skillMentions);
+        }
+
+        @Override
+        public void submitProviderLogin(String baseUrl, String authKey) {
+            providerLogins.add(new LoginSubmission(baseUrl, authKey));
         }
 
         @Override
@@ -1760,6 +1828,13 @@ class TuiInputLoopTest {
         @Override
         public void resumeSession(String sessionId, String leafId) {
             resumes.add(sessionId + ":" + leafId);
+        }
+
+        private record LoginSubmission(String baseUrl, String authKey) {
+            @Override
+            public String toString() {
+                return "LoginSubmission[baseUrl=" + baseUrl + ", authKey=<redacted>]";
+            }
         }
     }
 

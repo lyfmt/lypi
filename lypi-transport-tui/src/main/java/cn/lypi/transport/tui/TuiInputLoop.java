@@ -39,6 +39,8 @@ final class TuiInputLoop {
     private final SkillMentionSuppressions skillSuppressions = new SkillMentionSuppressions();
     private boolean slashOverlayClosed;
     private boolean modelOverlayOpen;
+    private final LoginOverlay loginOverlay = new LoginOverlay();
+    private boolean loginOverlayOpen;
     private boolean interruptibleRunning;
     private boolean exitRequested;
     private boolean toolOutputExpanded;
@@ -159,6 +161,11 @@ final class TuiInputLoop {
             render();
             return;
         }
+        if (loginOverlayOpen) {
+            loginOverlay.append(text);
+            render();
+            return;
+        }
         if (modelOverlayOpen) {
             render();
             return;
@@ -174,6 +181,11 @@ final class TuiInputLoop {
 
     void acceptPaste(String text) {
         if (compactRunning()) {
+            render();
+            return;
+        }
+        if (loginOverlayOpen) {
+            loginOverlay.append(text);
             render();
             return;
         }
@@ -220,6 +232,10 @@ final class TuiInputLoop {
                 render();
                 return;
             }
+        }
+        if (loginOverlayOpen && !resumeOverlayOpen()) {
+            handleLoginOverlayKey(key);
+            return;
         }
         if ((key == TerminalKey.ESC || key == TerminalKey.CTRL_C)
             && interruptibleRunning
@@ -394,6 +410,14 @@ final class TuiInputLoop {
             render();
             return;
         }
+        if ("/login".equals(draft.trim())) {
+            editor.clear();
+            skillBindings.clear();
+            skillSuppressions.clear();
+            openLoginOverlay();
+            render();
+            return;
+        }
         editor.acceptHistoryEntry();
         slashOverlayClosed = true;
         List<SkillMention> mentions = new SkillMentionParser(skillIndexSupplier.get().skills())
@@ -532,6 +556,7 @@ final class TuiInputLoop {
     private boolean slashOverlayOpen() {
         return viewSupplier.get().permissionPrompt().isEmpty()
             && !resumeOverlayOpen()
+            && !loginOverlayOpen
             && !modelOverlayOpen
             && !slashOverlayClosed
             && slashFilter().isPresent();
@@ -600,6 +625,10 @@ final class TuiInputLoop {
                 return resumeLines;
             }
         }
+        List<String> loginLines = loginOverlayLines();
+        if (!loginLines.isEmpty()) {
+            return loginLines;
+        }
         List<String> modelLines = modelOverlayLines();
         if (!modelLines.isEmpty()) {
             return modelLines;
@@ -630,6 +659,10 @@ final class TuiInputLoop {
             skillBindings.clear();
             skillSuppressions.clear();
             openModelOverlay();
+        } else if (selected.isPresent() && "/login".equals(selected.orElseThrow())) {
+            skillBindings.clear();
+            skillSuppressions.clear();
+            openLoginOverlay();
         } else {
             selected.ifPresent(command -> editor.replaceFirstToken(command + " "));
         }
@@ -646,6 +679,44 @@ final class TuiInputLoop {
     private void closeModelOverlay() {
         modelOverlayOpen = false;
         modelPicker = null;
+    }
+
+    private void openLoginOverlay() {
+        editor.clear();
+        closeModelOverlay();
+        loginOverlay.open();
+        loginOverlayOpen = true;
+        slashOverlayClosed = true;
+        skillToken = null;
+    }
+
+    private void closeLoginOverlay() {
+        loginOverlay.clear();
+        loginOverlayOpen = false;
+    }
+
+    private void handleLoginOverlayKey(TerminalKey key) {
+        if (key == TerminalKey.ESC || key == TerminalKey.CTRL_C) {
+            closeLoginOverlay();
+            render();
+            return;
+        }
+        if (key == TerminalKey.BACKSPACE) {
+            loginOverlay.backspace();
+            render();
+            return;
+        }
+        if (key == TerminalKey.ENTER) {
+            Optional<LoginOverlay.Submission> submission = loginOverlay.accept();
+            if (submission.isPresent()) {
+                LoginOverlay.Submission value = submission.orElseThrow();
+                closeLoginOverlay();
+                submitHandler.submitProviderLogin(value.baseUrl(), value.authKey());
+            }
+            render();
+            return;
+        }
+        render();
     }
 
     private void handleModelOverlayKey(TerminalKey key) {
@@ -706,12 +777,18 @@ final class TuiInputLoop {
     private boolean modelOverlayVisible() {
         return modelOverlayOpen
             && viewSupplier.get().permissionPrompt().isEmpty()
-            && !resumeOverlayOpen();
+            && !resumeOverlayOpen()
+            && !loginOverlayOpen;
+    }
+
+    private List<String> loginOverlayLines() {
+        return loginOverlayOpen ? loginOverlay.lines() : List.of();
     }
 
     private boolean skillOverlayOpen() {
         if (viewSupplier.get().permissionPrompt().isPresent()
             || resumeOverlayOpen()
+            || loginOverlayOpen
             || modelOverlayOpen
             || slashOverlayOpen()) {
             return false;

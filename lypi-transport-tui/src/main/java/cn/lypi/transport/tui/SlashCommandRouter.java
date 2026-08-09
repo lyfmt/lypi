@@ -2,6 +2,7 @@ package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.model.ModelCatalogPort;
+import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
@@ -37,6 +38,7 @@ import java.util.UUID;
 final class SlashCommandRouter {
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/compact",
+        "/login",
         "/model",
         "/new",
         "/permission-mode",
@@ -149,6 +151,7 @@ final class SlashCommandRouter {
             return SlashCommandResult.notMatched();
         }
         return switch (match.command().orElseThrow()) {
+            case "/login" -> routeLogin(arguments);
             case "/model" -> routeModel(arguments, input);
             case "/thinking" -> routeThinking(arguments, input);
             case "/permission-mode" -> routePermissionMode(arguments, input);
@@ -403,10 +406,18 @@ final class SlashCommandRouter {
             provider = modelId.substring(0, separator);
             modelId = modelId.substring(separator + 1);
         }
-        ModelSelection selection = new ModelSelection(provider, modelId, context.thinkingLevel());
-        if (modelCatalog != null && modelCatalog.find(selection).isEmpty()) {
-            return SlashCommandResult.error("unknown model: " + provider + "/" + modelId);
+        ThinkingLevel thinkingLevel = context.thinkingLevel();
+        if (modelCatalog != null) {
+            ModelSelection lookup = new ModelSelection(provider, modelId, thinkingLevel);
+            Optional<ModelDescriptor> descriptor = modelCatalog.find(lookup);
+            if (descriptor.isEmpty()) {
+                return SlashCommandResult.error("unknown model: " + provider + "/" + modelId);
+            }
+            if (!descriptor.orElseThrow().supportsThinking()) {
+                thinkingLevel = ThinkingLevel.OFF;
+            }
         }
+        ModelSelection selection = new ModelSelection(provider, modelId, thinkingLevel);
         append(new ModelChangeEntry(
             newEntryId(),
             leafId,
@@ -415,6 +426,13 @@ final class SlashCommandRouter {
             Instant.now()
         ));
         return SlashCommandResult.stateChangedNotice("model: " + provider + "/" + modelId);
+    }
+
+    private SlashCommandResult routeLogin(SlashCommandArguments arguments) {
+        if (!arguments.positionals().isEmpty() || !arguments.named().isEmpty()) {
+            return SlashCommandResult.error("usage: /login");
+        }
+        return SlashCommandResult.consumedCommand();
     }
 
     private SlashCommandResult routeThinking(SlashCommandArguments arguments, String reason) {

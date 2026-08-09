@@ -160,6 +160,34 @@ class SlashCommandRouterTest {
     }
 
     @Test
+    void catalogSelectionTurnsThinkingOffForModelsThatDoNotSupportIt() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.ASK
+        ));
+        SlashCommandRouter router = new SlashCommandRouter(
+            "ses_1",
+            Path.of("."),
+            session,
+            emptyResources(),
+            null,
+            null,
+            List.of(),
+            catalog(model("login-fixture", "discovered-model", false))
+        );
+
+        router.route("/model login-fixture/discovered-model");
+
+        ModelChangeEntry entry = assertInstanceOf(ModelChangeEntry.class, session.entries.getFirst());
+        assertEquals(
+            new ModelSelection("login-fixture", "discovered-model", ThinkingLevel.OFF),
+            entry.model()
+        );
+    }
+
+    @Test
     void catalogRejectsUnknownModelWithoutAppendingEntry() {
         RecordingSessionManager session = new RecordingSessionManager(context(
             new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
@@ -304,6 +332,26 @@ class SlashCommandRouterTest {
 
         assertFalse(result.matched());
         assertFalse(result.consumed());
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void loginCommandIsBuiltInAndRejectsArgumentsWithoutChangingSessionState() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.ASK
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
+
+        SlashCommandResult exact = router.route("/login");
+        SlashCommandResult withArgument = router.route("/login https://example.test/v1");
+
+        assertTrue(router.commandNames().contains("/login"));
+        assertTrue(exact.matched());
+        assertTrue(exact.consumed());
+        assertEquals("usage: /login", withArgument.message().orElseThrow());
         assertEquals(List.of(), session.entries);
     }
 
@@ -623,6 +671,10 @@ class SlashCommandRouterTest {
     }
 
     private static ModelDescriptor model(String provider, String modelId) {
+        return model(provider, modelId, true);
+    }
+
+    private static ModelDescriptor model(String provider, String modelId, boolean supportsThinking) {
         return new ModelDescriptor(
             provider,
             modelId,
@@ -630,7 +682,7 @@ class SlashCommandRouterTest {
             ApiStyle.OPENAI_COMPATIBLE,
             128_000,
             16_384,
-            true,
+            supportsThinking,
             false,
             new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
             Map.of()
