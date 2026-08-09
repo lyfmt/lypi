@@ -33,6 +33,7 @@ import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
@@ -526,7 +527,8 @@ final class RuntimeBeanFactories {
         SessionManagerPort sessionManager,
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime,
-        ModelCatalogPort modelCatalog
+        ModelCatalogPort modelCatalog,
+        ProviderLoginPort providerLogin
     ) {
         return (state, core, events, terminal, diffViewProvider, resumeController, newSessionController, slashCommands) ->
             JLineTuiTransport.open(
@@ -541,7 +543,8 @@ final class RuntimeBeanFactories {
                 sessionManager,
                 resourceRuntime,
                 compactionRuntime,
-                modelCatalog
+                modelCatalog,
+                providerLogin
             );
     }
 

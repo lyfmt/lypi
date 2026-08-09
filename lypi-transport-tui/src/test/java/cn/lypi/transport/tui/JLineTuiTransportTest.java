@@ -31,6 +31,8 @@ import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
+import cn.lypi.contracts.runtime.ProviderLoginResult;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.AgentMode;
@@ -68,6 +70,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
 import org.jline.utils.NonBlockingReader;
@@ -147,6 +151,48 @@ class JLineTuiTransportTest {
                 + TerminalSession.RESTORE_CURSOR
                 + TerminalSession.SHOW_CURSOR
         ));
+    }
+
+    @Test
+    void loginOverlaySubmitsCredentialsThroughInjectedProviderPort() throws Exception {
+        String authKey = "test-secret";
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingCore core = new RecordingCore();
+        RecordingSessionManager session = new RecordingSessionManager();
+        RecordingProviderLoginPort login = new RecordingProviderLoginPort(
+            "https://api.example.test/v1",
+            authKey
+        );
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            core,
+            events,
+            io,
+            new QueueInputSource("/login", "\r", "https://api.example.test/v1", "\r", authKey, "\r"),
+            List.of(),
+            session,
+            emptyResources(),
+            null,
+            NOOP_DIFF_PROVIDER,
+            null,
+            null,
+            null,
+            login,
+            80,
+            8
+        );
+
+        transport.drainInputForTest();
+
+        assertTrue(login.registered.await(2, TimeUnit.SECONDS));
+        assertTrue(login.acceptedBaseUrl);
+        assertTrue(login.acceptedAuthKey);
+        assertTrue(core.requests.isEmpty());
+        assertTrue(session.entries.isEmpty());
+        assertFalse(io.output.toString().contains(authKey));
+
+        transport.close();
     }
 
     @Test
@@ -1111,6 +1157,27 @@ class JLineTuiTransportTest {
 
         @Override
         public void requestInterrupt(String reason) {
+        }
+    }
+
+    private static final class RecordingProviderLoginPort implements ProviderLoginPort {
+        private final String expectedBaseUrl;
+        private final String expectedAuthKey;
+        private final CountDownLatch registered = new CountDownLatch(1);
+        private volatile boolean acceptedBaseUrl;
+        private volatile boolean acceptedAuthKey;
+
+        private RecordingProviderLoginPort(String expectedBaseUrl, String expectedAuthKey) {
+            this.expectedBaseUrl = expectedBaseUrl;
+            this.expectedAuthKey = expectedAuthKey;
+        }
+
+        @Override
+        public ProviderLoginResult register(String baseUrl, String authKey) {
+            acceptedBaseUrl = expectedBaseUrl.equals(baseUrl);
+            acceptedAuthKey = expectedAuthKey.equals(authKey);
+            registered.countDown();
+            return new ProviderLoginResult("login-example", List.of(model("login-example", "alpha")));
         }
     }
 

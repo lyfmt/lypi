@@ -54,6 +54,8 @@ import cn.lypi.contracts.runtime.CompactionResult;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
+import cn.lypi.contracts.runtime.ProviderLoginResult;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -1605,6 +1607,16 @@ class LyPiRuntimeAutoConfigurationTest {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
             .withBean(ModelCatalogPort.class, () -> catalog)
+            .run(context -> assertThat(context).hasSingleBean(JLineTuiTransportFactory.class));
+    }
+
+    @Test
+    void registersTuiTransportFactoryWithProviderLoginPort() {
+        ProviderLoginPort login = (baseUrl, authKey) -> new ProviderLoginResult("login-test", List.of());
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(ProviderLoginPort.class, () -> login)
             .run(context -> assertThat(context).hasSingleBean(JLineTuiTransportFactory.class));
     }
 

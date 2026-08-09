@@ -10,6 +10,7 @@ import cn.lypi.contracts.event.MessageDeltaEvent;
 import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.session.SessionContext;
@@ -466,6 +467,41 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         CompactionRuntimePort compactionRuntime,
         ModelCatalogPort modelCatalog
     ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            terminal,
+            diffViewProvider,
+            slashCommands,
+            resumeController,
+            newSessionController,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            modelCatalog,
+            ProviderLoginPort.unavailable()
+        );
+    }
+
+    /**
+     * 打开真实 JLine TUI transport，并提供只读模型目录和 provider 登录端口。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        DiffViewProvider diffViewProvider,
+        List<SlashCommand> slashCommands,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        ModelCatalogPort modelCatalog,
+        ProviderLoginPort providerLogin
+    ) throws IOException {
         SlashCommandRouter router = new SlashCommandRouter(
             state.sessionId(),
             state.cwd(),
@@ -487,7 +523,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 if (holder[0] != null) {
                     holder[0].replaceRuntimeState(runtimeState);
                 }
-            }
+            },
+            () -> new SkillIndex(List.of(), List.of()),
+            providerLogin
         );
         JLineTuiTransport transport = openTerminal(
             state,
@@ -641,6 +679,44 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int width,
         int height
     ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            io,
+            inputSource,
+            slashCommands,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            diffViewProvider,
+            resumeController,
+            newSessionController,
+            modelCatalog,
+            ProviderLoginPort.unavailable(),
+            width,
+            height
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        List<SlashCommand> slashCommands,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        ModelCatalogPort modelCatalog,
+        ProviderLoginPort providerLogin,
+        int width,
+        int height
+    ) throws IOException {
         SlashCommandRouter router = new SlashCommandRouter(
             state.sessionId(),
             state.cwd(),
@@ -662,7 +738,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 if (holder[0] != null) {
                     holder[0].replaceRuntimeState(runtimeState);
                 }
-            }
+            },
+            () -> new SkillIndex(List.of(), List.of()),
+            providerLogin
         );
         JLineTuiTransport transport = open(
             state,
