@@ -54,6 +54,34 @@ class BubblewrapCommandBuilderTest {
     }
 
     @Test
+    void reappliesExplicitTmpReadPathAfterPrivateTmpMount() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace-tmp-read"));
+        Path stateDir = Files.createDirectory(tempDir.resolve("shell-state"));
+        Path stateFile = Files.writeString(stateDir.resolve("env.sh"), "export VALUE=ok\n");
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(Path.of("/usr"), Path.of("/bin"), stateFile),
+            List.of(),
+            List.of(workspace),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            false
+        );
+
+        List<String> argv = BubblewrapCommandBuilder.defaults().build(request(workspace, policy));
+
+        int privateTmp = indexOfSequence(argv, "--tmpfs", "/tmp");
+        int stateFileBind = lastIndexOfSequence(
+            argv,
+            "--ro-bind-try",
+            stateFile.toString(),
+            stateFile.toString()
+        );
+        assertTrue(privateTmp >= 0, "sandbox must mount a private /tmp");
+        assertTrue(stateFileBind > privateTmp, "explicit /tmp read paths must remain visible after the private /tmp mount");
+    }
+
+    @Test
     void usesReadonlyFullRootWhenAllowReadContainsRoot() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
         Path cwd = Files.createDirectory(workspace.resolve("src"));
