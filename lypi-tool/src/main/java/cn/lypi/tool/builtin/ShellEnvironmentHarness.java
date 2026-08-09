@@ -166,6 +166,9 @@ public final class ShellEnvironmentHarness {
         Path cwdCapture = Files.createTempFile(dir, ".cwd-", ".capture");
         List<Path> readOnlyFiles = new ArrayList<>();
         StringBuilder wrapped = new StringBuilder();
+        if ("bash".equals(canonicalShell)) {
+            wrapped.append("shopt -s expand_aliases; ");
+        }
         if (useSnapshot) {
             readOnlyFiles.add(snapshot);
             wrapped.append(". ").append(shellQuote(snapshot.toString())).append(" 2>/dev/null || true; ");
@@ -176,7 +179,7 @@ public final class ShellEnvironmentHarness {
         }
         wrapped.append("eval ").append(shellQuote(Objects.requireNonNull(command, "command must not be null"))).append("; ");
         wrapped.append("lypi_rc=$?; ");
-        wrapped.append("pwd -P > ").append(shellQuote(cwdCapture.toString())).append(" 2>/dev/null; ");
+        wrapped.append("pwd -P >| ").append(shellQuote(cwdCapture.toString())).append(" 2>/dev/null; ");
         wrapped.append("exit $lypi_rc");
         return new CommandPlan(
             canonicalShell,
@@ -205,13 +208,21 @@ public final class ShellEnvironmentHarness {
             if (!candidate.isAbsolute()) {
                 return Optional.empty();
             }
-            Path normalized = candidate.toAbsolutePath().normalize();
-            Path realWorkspace = workspaceRoot.toAbsolutePath().normalize().toRealPath();
-            Path realCandidate = normalized.toRealPath();
+            Path lexicalWorkspace = workspaceRoot.toAbsolutePath().normalize();
+            Path realWorkspace = lexicalWorkspace.toRealPath();
+            Path realCandidate = candidate.toAbsolutePath().normalize().toRealPath();
             if (!Files.isDirectory(realCandidate) || !realCandidate.startsWith(realWorkspace)) {
                 return Optional.empty();
             }
-            return Optional.of(normalized);
+            Path lexicalCandidate = lexicalWorkspace
+                .resolve(realWorkspace.relativize(realCandidate))
+                .normalize();
+            if (!lexicalCandidate.startsWith(lexicalWorkspace)
+                || !Files.isDirectory(lexicalCandidate)
+                || !lexicalCandidate.toRealPath().equals(realCandidate)) {
+                return Optional.empty();
+            }
+            return Optional.of(lexicalCandidate);
         } catch (IOException | RuntimeException exception) {
             return Optional.empty();
         } finally {
@@ -313,7 +324,7 @@ public final class ShellEnvironmentHarness {
             case "zsh" -> "{ export -p; alias -L; functions; }";
             default -> throw new IllegalArgumentException("unsupported shell: " + shell);
         };
-        return dump + " > " + shellQuote(captureFile.toString()) + " 2>/dev/null";
+        return dump + " >| " + shellQuote(captureFile.toString()) + " 2>/dev/null";
     }
 
     private String canonicalShell(String shell) {

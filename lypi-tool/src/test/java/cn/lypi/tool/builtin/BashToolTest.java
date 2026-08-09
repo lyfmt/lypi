@@ -329,6 +329,83 @@ class BashToolTest {
     }
 
     @Test
+    void cwdDeltaStaysLexicalWhenWorkspaceRootIsSymlink() throws Exception {
+        Path realWorkspace = Files.createDirectory(tempDir.resolve("real-workspace"));
+        Files.createDirectory(realWorkspace.resolve("nested"));
+        Path workspaceLink = Files.createSymbolicLink(tempDir.resolve("workspace-link"), realWorkspace);
+        ShellEnvironmentHarness harness = new ShellEnvironmentHarness(tempDir.resolve("state-symlink"));
+        BashTool tool = new BashTool(
+            new cn.lypi.tool.shell.HostExecutor(),
+            new RecordingSandboxPolicyResolver(policyForWorkspace(workspaceLink)),
+            harness
+        );
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "cd nested", "loginShell", false),
+            context(workspaceLink, workspaceLink, Map.of()),
+            ignored -> {
+            }
+        );
+
+        assertFalse(result.isError(), result.output());
+        assertEquals(workspaceLink.resolve("nested"), result.stateDelta().orElseThrow().cwd());
+    }
+
+    @Test
+    void restoredBashAliasExecutesInNonInteractiveCommand() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace-alias"));
+        ShellEnvironmentHarness harness = new ShellEnvironmentHarness(tempDir.resolve("state-alias"));
+        ShellEnvironmentHarness.SnapshotPlan snapshot = harness
+            .prepareSnapshot(workspace, "ses_1", "bash")
+            .orElseThrow();
+        try (snapshot) {
+            Files.writeString(snapshot.captureFile(), "alias lypi_alias='printf alias-restored'\n");
+            harness.completeSnapshot(
+                snapshot,
+                new ExecutionResult(0, "", "", false, Optional.empty())
+            );
+        }
+        BashTool tool = new BashTool(
+            new cn.lypi.tool.shell.HostExecutor(),
+            new RecordingSandboxPolicyResolver(policyForWorkspace(workspace)),
+            harness
+        );
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "lypi_alias"),
+            context(workspace, workspace, Map.of()),
+            ignored -> {
+            }
+        );
+
+        assertFalse(result.isError(), result.output());
+        assertTrue(result.output().contains("exitCode=0"), result.output());
+        assertTrue(result.output().contains("alias-restored"), result.output());
+    }
+
+    @Test
+    void cwdCaptureOverridesNoclobberEnabledByUserCommand() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace-noclobber"));
+        Path nested = Files.createDirectory(workspace.resolve("nested"));
+        ShellEnvironmentHarness harness = new ShellEnvironmentHarness(tempDir.resolve("state-noclobber"));
+        BashTool tool = new BashTool(
+            new cn.lypi.tool.shell.HostExecutor(),
+            new RecordingSandboxPolicyResolver(policyForWorkspace(workspace)),
+            harness
+        );
+
+        ToolResult<String> result = tool.execute(
+            Map.of("command", "set -C; cd nested", "loginShell", false),
+            context(workspace, workspace, Map.of()),
+            ignored -> {
+            }
+        );
+
+        assertFalse(result.isError(), result.output());
+        assertEquals(nested, result.stateDelta().orElseThrow().cwd());
+    }
+
+    @Test
     void wrapsCommandWithHarnessAndCapturesShellCwd() throws Exception {
         ShellEnvironmentHarness harness = testHarness();
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));

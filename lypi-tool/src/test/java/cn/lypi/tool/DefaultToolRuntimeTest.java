@@ -71,6 +71,7 @@ import cn.lypi.tool.builtin.WriteTool;
 import cn.lypi.tool.mcp.McpToolAdapter;
 import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.ExecutorRegistry;
+import cn.lypi.tool.shell.HostExecutor;
 import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
 import cn.lypi.tool.shell.SandboxPolicyResolver;
@@ -380,6 +381,56 @@ class DefaultToolRuntimeTest {
         assertFalse(results.get(2).isError());
         assertEquals(workspace, captured.get().workspaceRoot());
         assertEquals(nested, captured.get().cwd());
+    }
+
+    @Test
+    void bashCwdDeltaFromSymlinkWorkspaceAppliesToFollowingRead() throws Exception {
+        Path realWorkspace = Files.createDirectory(tempDir.resolve("runtime-real-workspace"));
+        Path nested = Files.createDirectory(realWorkspace.resolve("nested"));
+        Files.writeString(nested.resolve("marker.txt"), "nested-marker\n");
+        Path workspaceLink = Files.createSymbolicLink(
+            tempDir.resolve("runtime-workspace-link"),
+            realWorkspace
+        );
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(),
+            List.of(),
+            List.of(workspaceLink),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            true
+        );
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(workspaceLink).build(),
+            allowAllSecurity(),
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
+            null
+        );
+        runtime.register(bashTool(new HostExecutor(), (workspace, cwd) -> policy));
+        runtime.register(new ReadTool());
+
+        List<ToolResult<?>> results = runtime.execute(
+            List.of(
+                new ToolUseRequest(
+                    "toolu_cd",
+                    "bash",
+                    Map.of("command", "cd nested", "loginShell", false),
+                    "msg_1"
+                ),
+                new ToolUseRequest("toolu_read", "read", Map.of("path", "marker.txt"), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(workspaceLink)
+        );
+
+        assertFalse(results.get(0).isError(), results.get(0).output().toString());
+        assertEquals(
+            workspaceLink.resolve("nested"),
+            results.get(0).stateDelta().orElseThrow().cwd()
+        );
+        assertFalse(results.get(1).isError(), results.get(1).output().toString());
+        assertTrue(results.get(1).output().toString().contains("nested-marker"));
     }
 
     @Test

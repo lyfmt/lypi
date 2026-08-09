@@ -5,10 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import cn.lypi.contracts.runtime.ExecutionRequest;
 import cn.lypi.contracts.runtime.ExecutionResult;
+import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
+import cn.lypi.tool.shell.HostExecutor;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -103,12 +107,41 @@ class ShellEnvironmentHarnessTest {
             assertTrue(wrapped.contains(". '" + plan.snapshotFile() + "'"), wrapped);
             assertTrue(wrapped.indexOf(first.toString()) < wrapped.indexOf(second.toString()), wrapped);
             assertTrue(wrapped.contains("eval 'printf '"), wrapped);
-            assertTrue(wrapped.contains("pwd -P > '" + plan.cwdCaptureFile() + "'"), wrapped);
+            assertTrue(wrapped.contains("pwd -P >| '" + plan.cwdCaptureFile() + "'"), wrapped);
             assertFalse(wrapped.contains("source "), wrapped);
-            assertFalse(wrapped.contains(">|"), wrapped);
             assertEquals(List.of(plan.snapshotFile(), first, second), plan.readOnlyFiles());
             assertEquals(List.of(plan.cwdCaptureFile()), plan.writableFiles());
         }
+    }
+
+    @Test
+    void snapshotCaptureOverridesNoclobberForPrecreatedFile() throws Exception {
+        ShellEnvironmentHarness harness = harness();
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace-noclobber-snapshot"));
+        Path bashEnv = Files.writeString(tempDir.resolve("enable-noclobber.sh"), "set -C\n");
+        ShellEnvironmentHarness.SnapshotPlan plan = harness
+            .prepareSnapshot(workspace, "ses_noclobber", "bash")
+            .orElseThrow();
+
+        try (plan) {
+            ExecutionResult result = new HostExecutor().execute(
+                new ExecutionRequest(
+                    plan.command(),
+                    workspace,
+                    Map.of("BASH_ENV", bashEnv.toString()),
+                    Duration.ofSeconds(5),
+                    SandboxRuntimePolicy.disabled()
+                ),
+                ignored -> {
+                },
+                () -> false
+            );
+
+            assertEquals(0, result.exitCode(), result.stderr());
+            harness.completeSnapshot(plan, result);
+        }
+
+        assertTrue(harness.snapshotExists(workspace, "ses_noclobber", "bash"));
     }
 
     @Test

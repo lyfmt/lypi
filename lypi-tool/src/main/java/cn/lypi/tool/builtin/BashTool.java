@@ -307,9 +307,14 @@ public final class BashTool extends AbstractFileTool {
     }
 
     private Path resolveBashCwd(ToolUseContext context) throws IOException {
-        Path workspaceRoot = context.workspaceRoot().toAbsolutePath().normalize().toRealPath();
-        Path cwd = context.cwd().toAbsolutePath().normalize().toRealPath();
-        if (!Files.isDirectory(cwd) || !cwd.startsWith(workspaceRoot)) {
+        Path workspaceRoot = context.workspaceRoot().toAbsolutePath().normalize();
+        Path cwd = context.cwd().toAbsolutePath().normalize();
+        if (!cwd.startsWith(workspaceRoot)) {
+            throw new IOException("当前工作目录不在 workspace 内: " + context.cwd());
+        }
+        Path realWorkspaceRoot = workspaceRoot.toRealPath();
+        Path realCwd = cwd.toRealPath();
+        if (!Files.isDirectory(realCwd) || !realCwd.startsWith(realWorkspaceRoot)) {
             throw new IOException("当前工作目录不在 workspace 内: " + context.cwd());
         }
         return cwd;
