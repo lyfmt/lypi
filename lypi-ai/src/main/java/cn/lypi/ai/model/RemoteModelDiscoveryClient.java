@@ -11,8 +11,12 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalInt;
 
 public class RemoteModelDiscoveryClient {
     private final HttpClient httpClient;
@@ -28,6 +32,17 @@ public class RemoteModelDiscoveryClient {
     }
 
     public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
+        return discoverModels(baseUrl, apiKey, paths, timeout).stream()
+            .map(DiscoveredModel::modelId)
+            .toList();
+    }
+
+    public List<DiscoveredModel> discoverModels(
+        URI baseUrl,
+        String apiKey,
+        List<String> paths,
+        Duration timeout
+    ) {
         Objects.requireNonNull(baseUrl, "baseUrl");
         Objects.requireNonNull(paths, "paths");
         Duration requestTimeout = timeout == null ? Duration.ofSeconds(30) : timeout;
@@ -35,8 +50,8 @@ public class RemoteModelDiscoveryClient {
         for (String path : paths) {
             URI endpoint = endpoint(baseUrl, path);
             DiscoveryAttempt attempt = request(endpoint, apiKey, requestTimeout);
-            if (!attempt.modelIds().isEmpty()) {
-                return attempt.modelIds().stream().distinct().toList();
+            if (!attempt.models().isEmpty()) {
+                return attempt.models();
             }
             diagnostics.add(safeEndpoint(endpoint) + ": " + attempt.diagnostic());
             if (attempt.interrupted()) {
@@ -84,17 +99,17 @@ public class RemoteModelDiscoveryClient {
             return DiscoveryAttempt.failure("HTTP " + response.statusCode());
         }
         try {
-            List<String> modelIds = parse(response.body());
-            if (modelIds.isEmpty()) {
+            List<DiscoveredModel> models = parse(response.body());
+            if (models.isEmpty()) {
                 return DiscoveryAttempt.failure("response contained no usable model ids");
             }
-            return DiscoveryAttempt.success(modelIds);
+            return DiscoveryAttempt.success(models);
         } catch (IOException | RuntimeException error) {
             return DiscoveryAttempt.failure("invalid JSON response");
         }
     }
 
-    private List<String> parse(String body) throws IOException {
+    private List<DiscoveredModel> parse(String body) throws IOException {
         if (body == null || body.isBlank()) {
             return List.of();
         }
@@ -102,35 +117,130 @@ public class RemoteModelDiscoveryClient {
         if (root.isArray()) {
             return stringArray(root);
         }
-        List<String> dataModels = objectArrayIds(root.path("data"));
+        List<DiscoveredModel> dataModels = objectArrayModels(root.path("data"));
         if (!dataModels.isEmpty()) {
             return dataModels;
         }
-        return objectArrayIds(root.path("models"));
+        return objectArrayModels(root.path("models"));
     }
 
-    private static List<String> stringArray(JsonNode node) {
-        List<String> modelIds = new ArrayList<>();
+    private static List<DiscoveredModel> stringArray(JsonNode node) {
+        Map<String, DiscoveredModel> models = new LinkedHashMap<>();
         for (JsonNode item : node) {
             if (item.isTextual() && !item.asText().isBlank()) {
-                modelIds.add(item.asText());
+                models.putIfAbsent(item.asText(), DiscoveredModel.idOnly(item.asText()));
             }
         }
-        return List.copyOf(modelIds);
+        return List.copyOf(models.values());
     }
 
-    private static List<String> objectArrayIds(JsonNode node) {
+    private static List<DiscoveredModel> objectArrayModels(JsonNode node) {
         if (!node.isArray()) {
             return List.of();
         }
-        List<String> modelIds = new ArrayList<>();
+        Map<String, DiscoveredModel> models = new LinkedHashMap<>();
         for (JsonNode item : node) {
             JsonNode id = item.path("id");
             if (id.isTextual() && !id.asText().isBlank()) {
-                modelIds.add(id.asText());
+                models.putIfAbsent(id.asText(), discoveredModel(id.asText(), item));
             }
         }
-        return List.copyOf(modelIds);
+        return List.copyOf(models.values());
+    }
+
+    private static DiscoveredModel discoveredModel(String modelId, JsonNode item) {
+        Optional<Boolean> supportsThinking = firstBoolean(
+            item.path("supportsThinking"),
+            item.path("supports_thinking"),
+            item.path("supportsReasoning"),
+            item.path("supports_reasoning")
+        );
+        if (supportsThinking.isEmpty() && supportsReasoningParameter(item.path("supported_parameters"))) {
+            supportsThinking = Optional.of(true);
+        }
+
+        Optional<Boolean> supportsImageInput = firstBoolean(
+            item.path("supportsImageInput"),
+            item.path("supports_image_input")
+        );
+        if (supportsImageInput.isEmpty()) {
+            supportsImageInput = firstImageCapability(
+                item.path("input_modalities"),
+                item.path("architecture").path("input_modalities")
+            );
+        }
+
+        return new DiscoveredModel(
+            modelId,
+            firstPositiveInt(
+                item.path("contextWindow"),
+                item.path("context_length"),
+                item.path("context_window")
+            ),
+            firstPositiveInt(
+                item.path("maxOutputTokens"),
+                item.path("max_output_tokens"),
+                item.path("max_tokens"),
+                item.path("top_provider").path("max_completion_tokens")
+            ),
+            supportsThinking,
+            supportsImageInput
+        );
+    }
+
+    private static OptionalInt firstPositiveInt(JsonNode... candidates) {
+        for (JsonNode candidate : candidates) {
+            if (candidate.isIntegralNumber() && candidate.canConvertToInt() && candidate.intValue() > 0) {
+                return OptionalInt.of(candidate.intValue());
+            }
+        }
+        return OptionalInt.empty();
+    }
+
+    private static Optional<Boolean> firstBoolean(JsonNode... candidates) {
+        for (JsonNode candidate : candidates) {
+            if (candidate.isBoolean()) {
+                return Optional.of(candidate.booleanValue());
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static boolean supportsReasoningParameter(JsonNode parameters) {
+        if (!parameters.isArray()) {
+            return false;
+        }
+        for (JsonNode parameter : parameters) {
+            if (!parameter.isTextual()) {
+                continue;
+            }
+            String value = parameter.asText();
+            if ("reasoning".equals(value) || "reasoning_effort".equals(value) || "thinking".equals(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Optional<Boolean> firstImageCapability(JsonNode... modalitiesCandidates) {
+        for (JsonNode modalities : modalitiesCandidates) {
+            if (!modalities.isArray() || modalities.isEmpty()) {
+                continue;
+            }
+            boolean onlyText = true;
+            for (JsonNode modality : modalities) {
+                if (modality.isTextual() && "image".equals(modality.asText())) {
+                    return Optional.of(true);
+                }
+                if (!modality.isTextual() || !"text".equals(modality.asText())) {
+                    onlyText = false;
+                }
+            }
+            if (onlyText) {
+                return Optional.of(false);
+            }
+        }
+        return Optional.empty();
     }
 
     private static URI endpoint(URI baseUrl, String path) {
@@ -150,14 +260,14 @@ public class RemoteModelDiscoveryClient {
         return endpoint.getScheme() + "://" + endpoint.getHost() + port + path;
     }
 
-    private record DiscoveryAttempt(List<String> modelIds, String diagnostic, boolean interrupted) {
+    private record DiscoveryAttempt(List<DiscoveredModel> models, String diagnostic, boolean interrupted) {
         private DiscoveryAttempt {
-            modelIds = List.copyOf(modelIds);
+            models = List.copyOf(models);
             diagnostic = diagnostic == null ? "unknown failure" : diagnostic;
         }
 
-        private static DiscoveryAttempt success(List<String> modelIds) {
-            return new DiscoveryAttempt(modelIds, "", false);
+        private static DiscoveryAttempt success(List<DiscoveredModel> models) {
+            return new DiscoveryAttempt(models, "", false);
         }
 
         private static DiscoveryAttempt failure(String diagnostic) {

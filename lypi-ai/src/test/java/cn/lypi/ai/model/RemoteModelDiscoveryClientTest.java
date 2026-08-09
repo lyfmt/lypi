@@ -12,6 +12,8 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -43,6 +45,197 @@ class RemoteModelDiscoveryClientTest {
     }
 
     @Test
+    void discoversOptionalCapabilitiesFromCommonModelMetadataShapes() throws IOException {
+        startServer(exchange -> respond(exchange, 200, """
+            {"data":[
+              {
+                "id":"direct-fields",
+                "context_window":131072,
+                "max_output_tokens":16384,
+                "supports_reasoning":false,
+                "supports_image_input":false
+              },
+              {
+                "id":"nested-fields",
+                "context_length":262144,
+                "top_provider":{"max_completion_tokens":32768},
+                "supported_parameters":["reasoning_effort"],
+                "architecture":{"input_modalities":["text","image"]}
+              },
+              {"id":"id-only","object":"model"}
+            ]}
+            """));
+
+        RemoteModelDiscoveryClient client = new RemoteModelDiscoveryClient();
+
+        List<DiscoveredModel> models = client.discoverModels(
+            baseUrl(),
+            "test-key",
+            List.of("/models"),
+            Duration.ofSeconds(2)
+        );
+
+        assertThat(models).containsExactly(
+            new DiscoveredModel(
+                "direct-fields",
+                OptionalInt.of(131_072),
+                OptionalInt.of(16_384),
+                Optional.of(false),
+                Optional.of(false)
+            ),
+            new DiscoveredModel(
+                "nested-fields",
+                OptionalInt.of(262_144),
+                OptionalInt.of(32_768),
+                Optional.of(true),
+                Optional.of(true)
+            ),
+            DiscoveredModel.idOnly("id-only")
+        );
+    }
+
+    @Test
+    void readsTheFirstValidCapabilityFieldInDocumentedPriorityOrder() throws IOException {
+        startServer(exchange -> respond(exchange, 200, """
+            {"data":[
+              {
+                "id":"priority",
+                "contextWindow":-1,
+                "context_length":111,
+                "context_window":222,
+                "maxOutputTokens":"invalid",
+                "max_output_tokens":333,
+                "max_tokens":444,
+                "top_provider":{"max_completion_tokens":555},
+                "supportsThinking":"invalid",
+                "supports_thinking":false,
+                "supportsReasoning":true,
+                "supports_reasoning":true,
+                "supportsImageInput":"invalid",
+                "supports_image_input":false,
+                "input_modalities":["text","image"]
+              },
+              {
+                "id":"camel-case",
+                "contextWindow":64000,
+                "maxOutputTokens":4096,
+                "supportsThinking":true,
+                "supportsImageInput":true
+              },
+              {
+                "id":"remaining-aliases",
+                "context_window":96000,
+                "max_tokens":2048,
+                "supportsReasoning":false,
+                "input_modalities":["text"]
+              }
+            ]}
+            """));
+
+        List<DiscoveredModel> models = new RemoteModelDiscoveryClient().discoverModels(
+            baseUrl(),
+            "test-key",
+            List.of("/models"),
+            Duration.ofSeconds(2)
+        );
+
+        assertThat(models).containsExactly(
+            new DiscoveredModel(
+                "priority",
+                OptionalInt.of(111),
+                OptionalInt.of(333),
+                Optional.of(false),
+                Optional.of(false)
+            ),
+            new DiscoveredModel(
+                "camel-case",
+                OptionalInt.of(64_000),
+                OptionalInt.of(4_096),
+                Optional.of(true),
+                Optional.of(true)
+            ),
+            new DiscoveredModel(
+                "remaining-aliases",
+                OptionalInt.of(96_000),
+                OptionalInt.of(2_048),
+                Optional.of(false),
+                Optional.of(false)
+            )
+        );
+    }
+
+    @Test
+    void treatsInvalidOrAbsentCapabilitiesAsUnknown() throws IOException {
+        startServer(exchange -> respond(exchange, 200, """
+            {"data":[
+              {
+                "id":"invalid",
+                "contextWindow":0,
+                "context_length":-1,
+                "context_window":2147483648,
+                "maxOutputTokens":"8192",
+                "max_output_tokens":0,
+                "max_tokens":-2,
+                "top_provider":{"max_completion_tokens":9223372036854775808},
+                "supportsThinking":"true",
+                "supported_parameters":["temperature"],
+                "supportsImageInput":1,
+                "input_modalities":["audio"]
+              },
+              {
+                "id":"inferred",
+                "supported_parameters":["thinking"],
+                "architecture":{"input_modalities":["text","image"]}
+              },
+              {
+                "id":"reasoning-alias",
+                "supported_parameters":["reasoning"]
+              }
+            ]}
+            """));
+
+        List<DiscoveredModel> models = new RemoteModelDiscoveryClient().discoverModels(
+            baseUrl(),
+            "test-key",
+            List.of("/models"),
+            Duration.ofSeconds(2)
+        );
+
+        assertThat(models.get(0)).isEqualTo(DiscoveredModel.idOnly("invalid"));
+        assertThat(models.get(1).supportsThinking()).contains(true);
+        assertThat(models.get(1).supportsImageInput()).contains(true);
+        assertThat(models.get(2).supportsThinking()).contains(true);
+        assertThat(models.get(2).supportsImageInput()).isEmpty();
+    }
+
+    @Test
+    void keepsTheFirstCompleteRecordForDuplicateIdsAndPreservesLegacyIdOrder() throws IOException {
+        startServer(exchange -> respond(exchange, 200, """
+            {"data":[
+              {"id":"model-a","context_window":128000,"supports_reasoning":true},
+              {"id":"model-b"},
+              {"id":"model-a","context_window":1,"supports_reasoning":false}
+            ]}
+            """));
+
+        RemoteModelDiscoveryClient client = new RemoteModelDiscoveryClient();
+
+        assertThat(client.discoverModels(baseUrl(), "test-key", List.of("/models"), Duration.ofSeconds(2)))
+            .containsExactly(
+                new DiscoveredModel(
+                    "model-a",
+                    OptionalInt.of(128_000),
+                    OptionalInt.empty(),
+                    Optional.of(true),
+                    Optional.empty()
+                ),
+                DiscoveredModel.idOnly("model-b")
+            );
+        assertThat(client.discover(baseUrl(), "test-key", List.of("/models"), Duration.ofSeconds(2)))
+            .containsExactly("model-a", "model-b");
+    }
+
+    @Test
     void triesFallbackModelPathWhenModelsPathIsMissing() throws IOException {
         startServer(exchange -> {
             if (exchange.getRequestURI().getPath().endsWith("/models")) {
@@ -60,7 +253,7 @@ class RemoteModelDiscoveryClientTest {
 
     @Test
     void parsesTopLevelStringArray() throws IOException {
-        startServer(exchange -> respond(exchange, 200, "[\"model-a\",\"model-b\"]"));
+        startServer(exchange -> respond(exchange, 200, "[\"model-a\",\"model-b\",\"model-a\"]"));
 
         RemoteModelDiscoveryClient client = new RemoteModelDiscoveryClient();
 
