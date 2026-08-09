@@ -190,26 +190,4 @@ public record SessionHeader(
         );
     }
 
-    /**
-     * 返回替换 shellState 后的副本。
-     */
-    public SessionHeader withShellState(ShellState newShellState) {
-        return new SessionHeader(
-            type,
-            version,
-            id,
-            cwd,
-            parentSessionId,
-            parentSpawnEntryId,
-            depth,
-            agentName,
-            agentRole,
-            timestamp,
-            initialModel,
-            initialThinkingLevel,
-            initialAgentMode,
-            initialPermissionRuntimeState,
-            newShellState
-        );
-    }
 }

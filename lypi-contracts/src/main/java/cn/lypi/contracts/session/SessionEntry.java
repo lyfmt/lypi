@@ -13,6 +13,7 @@ import java.time.Instant;
     @JsonSubTypes.Type(value = PermissionModeChangeEntry.class, name = "permission_mode_change"),
     @JsonSubTypes.Type(value = PermissionRuntimeStateChangeEntry.class, name = "permission_runtime_state_change"),
     @JsonSubTypes.Type(value = PermissionAmendmentEntry.class, name = "permission_amendment"),
+    @JsonSubTypes.Type(value = ShellStateChangeEntry.class, name = "shell_state_change"),
     @JsonSubTypes.Type(value = CompactionEntry.class, name = "compaction"),
     @JsonSubTypes.Type(value = BranchSummaryEntry.class, name = "branch_summary"),
     @JsonSubTypes.Type(value = CustomEntry.class, name = "custom"),

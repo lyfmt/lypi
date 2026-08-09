@@ -25,11 +25,9 @@ public interface SessionManagerPort {
     }
 
     /**
-     * 更新当前 session header 中的 shell 状态。
-     *
-     * NOTE: 实现必须原子替换 JSONL 首行 header，不得改写历史 entry。
+     * Append a shell state transition to the current session branch.
      */
-    default SessionHandle updateShellState(cn.lypi.contracts.session.ShellState shellState) {
+    default SessionHandle appendShellStateChange(cn.lypi.contracts.session.ShellState shellState) {
         throw new UnsupportedOperationException("shell state is not supported");
     }
 

@@ -40,7 +40,7 @@ public record ToolRuntimeInvocation(
     }
 
     /**
-     * 本轮工具调用的工作目录覆盖；为空时由 runtime 默认 cwd 决定。
+     * Dynamic working directory for this tool invocation. The runtime workspace root remains stable.
      */
     public ToolRuntimeInvocation withCwd(java.nio.file.Path cwdOverride) {
         return new ToolRuntimeInvocation(sessionId, turnId, parentEntryId, abortSignal, steeringMessages, cwdOverride);
