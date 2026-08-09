@@ -119,6 +119,15 @@
 #       # NOTE: 确定性摘要器已删除，fallback_deterministic 仅保留旧配置兼容；当前行为与 skip_compaction 一样回到原上下文。
 #       fallback-policy: fallback_deterministic
 #
+#     model-discovery:
+#       # 重要性：可选覆盖。远端模型目录缺少能力字段时使用这组全局默认描述。
+#       # 优先级：静态同名完整模型描述 > 远端显式字段 > 本组默认值。
+#       defaults:
+#         context-window: 256000
+#         max-output-tokens: 8192
+#         supports-thinking: true
+#         supports-image-input: true
+#
 #     # 重要性：可选覆盖或扩展。providers 用于覆盖内置 Provider 或新增 OpenAI 兼容或 Anthropic Provider。
 #     # 说明：内置 openai 可省略；配置 openai 会覆盖同名内置 adapter，配置新名称会追加 provider。
 #     # 关闭内置 openai 时，只需要取消注释：
@@ -234,14 +243,16 @@
 #         max-retries: 1
 #         compat:
 #           vendor: fixture
+#           # 部分 Chat Completions 服务要求 assistant 工具调用历史携带 reasoning_content。
+#           requires-reasoning-content-on-assistant-messages: true
 #         model-discovery:
 #           # 启动时按顺序请求候选路径；所有路径都没有返回有效模型时，应用启动失败。
 #           enabled: true
 #           paths:
 #             - /models
 #             - /model
-#         # 开启 model-discovery 后，静态 models 只补充远端返回的同名模型元数据；
-#         # 远端未返回的 model-id 不会进入模型目录。
+#         # 开启 model-discovery 后，静态 models 作为远端同名模型的完整描述覆盖；
+#         # 远端未返回的静态 model-id 仍不会进入模型目录。
 #         models:
 #           - model-id: fixture-model
 #             context-window: 64000
