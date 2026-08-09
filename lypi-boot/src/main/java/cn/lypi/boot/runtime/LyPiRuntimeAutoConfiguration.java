@@ -429,9 +429,15 @@ public class LyPiRuntimeAutoConfiguration {
     public JLineTuiTransportFactory jLineTuiTransportFactory(
         SessionManagerPort sessionManager,
         ResourceRuntimePort resourceRuntime,
-        CompactionRuntimePort compactionRuntime
+        CompactionRuntimePort compactionRuntime,
+        ObjectProvider<ModelCatalogPort> modelCatalog
     ) {
-        return RuntimeBeanFactories.jLineTuiTransportFactory(sessionManager, resourceRuntime, compactionRuntime);
+        return RuntimeBeanFactories.jLineTuiTransportFactory(
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            modelCatalog.getIfAvailable()
+        );
     }
 
     /**

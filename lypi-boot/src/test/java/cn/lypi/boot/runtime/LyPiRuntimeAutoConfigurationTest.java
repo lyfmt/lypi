@@ -33,6 +33,7 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.AssistantStreamResult;
+import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.model.TokenUsage;
@@ -1594,6 +1595,16 @@ class LyPiRuntimeAutoConfigurationTest {
     void registersTuiTransportFactoryThatAcceptsSlashCommands() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .run(context -> assertThat(context).hasSingleBean(JLineTuiTransportFactory.class));
+    }
+
+    @Test
+    void registersTuiTransportFactoryWithModelCatalog() {
+        ModelCatalogPort catalog = selection -> Optional.empty();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(ModelCatalogPort.class, () -> catalog)
             .run(context -> assertThat(context).hasSingleBean(JLineTuiTransportFactory.class));
     }
 

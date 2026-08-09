@@ -525,7 +525,8 @@ final class RuntimeBeanFactories {
     static JLineTuiTransportFactory jLineTuiTransportFactory(
         SessionManagerPort sessionManager,
         ResourceRuntimePort resourceRuntime,
-        CompactionRuntimePort compactionRuntime
+        CompactionRuntimePort compactionRuntime,
+        ModelCatalogPort modelCatalog
     ) {
         return (state, core, events, terminal, diffViewProvider, resumeController, newSessionController, slashCommands) ->
             JLineTuiTransport.open(
@@ -539,7 +540,8 @@ final class RuntimeBeanFactories {
                 newSessionController,
                 sessionManager,
                 resourceRuntime,
-                compactionRuntime
+                compactionRuntime,
+                modelCatalog
             );
     }
 

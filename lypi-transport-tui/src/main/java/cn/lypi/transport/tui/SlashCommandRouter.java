@@ -1,8 +1,9 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
-import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.prompt.PromptRenderRequest;
 import cn.lypi.contracts.prompt.PromptRenderResult;
@@ -50,6 +51,7 @@ final class SlashCommandRouter {
     private final CompactionRuntimePort compactionRuntime;
     private final NewSessionController newSessionController;
     private final List<SlashCommand> slashCommands;
+    private final ModelCatalogPort modelCatalog;
 
     SlashCommandRouter(
         String sessionId,
@@ -90,6 +92,28 @@ final class SlashCommandRouter {
         NewSessionController newSessionController,
         List<SlashCommand> slashCommands
     ) {
+        this(
+            sessionId,
+            cwd,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            newSessionController,
+            slashCommands,
+            null
+        );
+    }
+
+    SlashCommandRouter(
+        String sessionId,
+        Path cwd,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        NewSessionController newSessionController,
+        List<SlashCommand> slashCommands,
+        ModelCatalogPort modelCatalog
+    ) {
         this.sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
         this.cwd = cwd == null ? Path.of(".") : cwd;
         this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
@@ -97,6 +121,7 @@ final class SlashCommandRouter {
         this.compactionRuntime = compactionRuntime;
         this.newSessionController = newSessionController;
         this.slashCommands = safeSlashCommands(slashCommands);
+        this.modelCatalog = modelCatalog;
     }
 
     SlashCommandRouter(List<SlashCommand> slashCommands) {
@@ -107,6 +132,7 @@ final class SlashCommandRouter {
         this.compactionRuntime = null;
         this.newSessionController = null;
         this.slashCommands = safeSlashCommands(slashCommands);
+        this.modelCatalog = null;
     }
 
     SlashCommandResult route(String input) {

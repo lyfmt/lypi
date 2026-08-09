@@ -7,6 +7,7 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
@@ -426,6 +427,39 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            terminal,
+            diffViewProvider,
+            slashCommands,
+            resumeController,
+            newSessionController,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            null
+        );
+    }
+
+    /**
+     * 打开真实 JLine TUI transport，并提供只读模型目录。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        DiffViewProvider diffViewProvider,
+        List<SlashCommand> slashCommands,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        ModelCatalogPort modelCatalog
+    ) throws IOException {
         SlashCommandRouter router = new SlashCommandRouter(
             state.sessionId(),
             state.cwd(),
@@ -433,7 +467,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             resourceRuntime,
             compactionRuntime,
             newSessionController,
-            slashCommands
+            slashCommands,
+            modelCatalog
         );
         JLineTuiTransport[] holder = new JLineTuiTransport[1];
         RuntimeTuiSubmitHandler submitHandler = new RuntimeTuiSubmitHandler(

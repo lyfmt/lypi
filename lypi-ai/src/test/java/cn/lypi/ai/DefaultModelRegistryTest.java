@@ -45,9 +45,10 @@ class DefaultModelRegistryTest {
     void registryExposesContractsModelCatalogPort() {
         ModelDescriptor descriptor = descriptor("openai", "gpt-5");
         ModelCatalogPort catalog = new DefaultModelRegistry(List.of(descriptor));
+        ModelSelection selection = new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM);
 
-        assertThat(catalog.find(new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM)))
-            .contains(descriptor);
+        assertThat(catalog.list()).containsExactly(descriptor);
+        assertThat(catalog.find(selection)).contains(descriptor);
     }
 
     @Test
