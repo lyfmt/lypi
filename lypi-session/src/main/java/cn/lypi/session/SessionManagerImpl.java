@@ -18,6 +18,7 @@ import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionView;
 import cn.lypi.contracts.session.ShellState;
+import cn.lypi.contracts.session.ShellStateChangeEntry;
 import cn.lypi.contracts.tui.SessionFileView;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -216,17 +217,25 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     @Override
     public synchronized ShellState shellState() {
         ensureOpen();
-        return header.shellState();
+        refreshFromStoreIfPersistent();
+        ShellState current = header.shellState();
+        for (SessionEntry entry : index.branch(index.leafId())) {
+            if (entry instanceof ShellStateChangeEntry change) {
+                current = change.shellState();
+            }
+        }
+        return current;
     }
 
     @Override
-    public synchronized SessionHandle updateShellState(ShellState shellState) {
+    public synchronized SessionHandle appendShellStateChange(ShellState shellState) {
         ensureOpen();
-        header = header.withShellState(shellState);
-        if (persistent) {
-            store.rewriteHeader(header);
-        }
-        return new SessionHandle(sessionId, store.sessionFile(sessionId), index.leafId(), index.byId());
+        return append(new ShellStateChangeEntry(
+            SessionEntryIds.newEntryId(),
+            index.leafId(),
+            Objects.requireNonNull(shellState, "shellState must not be null"),
+            Instant.now(clock)
+        ));
     }
 
     @Override

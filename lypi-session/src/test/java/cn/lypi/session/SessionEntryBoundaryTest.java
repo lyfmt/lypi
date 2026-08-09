@@ -4,7 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.contracts.memory.MemoryWriteEntry;
 import cn.lypi.contracts.session.SessionEntry;
+import cn.lypi.contracts.session.ShellState;
+import cn.lypi.contracts.session.ShellStateChangeEntry;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -27,6 +31,7 @@ class SessionEntryBoundaryTest {
             "permission_mode_change",
             "permission_runtime_state_change",
             "permission_amendment",
+            "shell_state_change",
             "compaction",
             "branch_summary",
             "custom",
@@ -34,6 +39,19 @@ class SessionEntryBoundaryTest {
             "label",
             "session_info"
         );
+    }
+
+    @Test
+    void shellStateChangesStayInTheBranchButDoNotBecomeNavigableLeaves() {
+        ShellStateChangeEntry entry = new ShellStateChangeEntry(
+            "entry-shell",
+            "entry-tool",
+            ShellState.of(Path.of("/tmp/project/dir with spaces")),
+            Instant.parse("2026-06-01T00:00:00Z")
+        );
+
+        assertThat(entry).isInstanceOf(SessionEntry.class);
+        assertThat(SessionLeafSelector.advancesNavigableLeaf(entry)).isFalse();
     }
 
     @Test

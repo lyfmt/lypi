@@ -14,6 +14,7 @@ import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.session.ShellStateChangeEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -40,6 +41,7 @@ final class SessionJsonMapper {
         Map.entry("permission_mode_change", PermissionModeChangeEntry.class),
         Map.entry("permission_runtime_state_change", PermissionRuntimeStateChangeEntry.class),
         Map.entry("permission_amendment", PermissionAmendmentEntry.class),
+        Map.entry("shell_state_change", ShellStateChangeEntry.class),
         Map.entry("compaction", CompactionEntry.class),
         Map.entry("branch_summary", BranchSummaryEntry.class),
         Map.entry("custom", CustomEntry.class),
@@ -55,6 +57,7 @@ final class SessionJsonMapper {
         Map.entry(PermissionModeChangeEntry.class, "permission_mode_change"),
         Map.entry(PermissionRuntimeStateChangeEntry.class, "permission_runtime_state_change"),
         Map.entry(PermissionAmendmentEntry.class, "permission_amendment"),
+        Map.entry(ShellStateChangeEntry.class, "shell_state_change"),
         Map.entry(CompactionEntry.class, "compaction"),
         Map.entry(BranchSummaryEntry.class, "branch_summary"),
         Map.entry(CustomEntry.class, "custom"),

@@ -13,6 +13,7 @@ import cn.lypi.contracts.session.PermissionModeChangeEntry;
 import cn.lypi.contracts.session.PermissionRuntimeStateChangeEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.session.ShellStateChangeEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import java.util.List;
 
@@ -42,6 +43,7 @@ final class SessionLeafSelector {
             && !(entry instanceof PermissionModeChangeEntry)
             && !(entry instanceof PermissionRuntimeStateChangeEntry)
             && !(entry instanceof PermissionAmendmentEntry)
+            && !(entry instanceof ShellStateChangeEntry)
             && !(entry instanceof SessionInfoEntry)
             && !(entry instanceof LabelEntry)
             && !(entry instanceof CustomEntry);

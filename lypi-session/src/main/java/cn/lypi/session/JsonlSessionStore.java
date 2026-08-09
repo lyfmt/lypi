@@ -105,25 +105,6 @@ final class JsonlSessionStore {
     }
 
     /**
-     * 原子替换 session 文件首行 header，保留其余 entry 行不变。
-     */
-    void rewriteHeader(SessionHeader header) {
-        Path file = sessionFile(header.id());
-        try {
-            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            if (lines.isEmpty()) {
-                throw new SessionEngineException("Session file is empty: " + file);
-            }
-            lines.set(0, mapper.writeHeader(header));
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            Files.write(tmp, lines, StandardCharsets.UTF_8);
-            Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException e) {
-            throw new SessionEngineException("Failed to rewrite session header: " + file, e);
-        }
-    }
-
-    /**
      * 读取 session 文件并解析 header 与 entries。
      */
     SessionFile read(String sessionId) {

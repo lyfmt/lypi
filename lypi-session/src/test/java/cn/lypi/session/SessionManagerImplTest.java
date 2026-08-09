@@ -25,6 +25,8 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.session.ShellState;
+import cn.lypi.contracts.session.ShellStateChangeEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -64,6 +66,40 @@ class SessionManagerImplTest {
         assertThat(reopenedEngine.branch("entry_2"))
             .extracting(SessionEntry::id)
             .containsExactly("entry_1", "entry_2");
+    }
+
+    @Test
+    void appendShellStateChangeKeepsHeaderAppendOnlyAndReplaysCurrentBranch() throws Exception {
+        SessionManager manager = new SessionManagerImpl(tempDir);
+        SessionHandle opened = manager.openOrCreate("ses_shell");
+        ShellState initialState = manager.shellState();
+        manager.append(new CustomMessageEntry(
+            "entry-tool",
+            null,
+            "tool result",
+            Instant.parse("2026-06-01T00:00:00Z")
+        ));
+        List<String> linesBefore = Files.readAllLines(opened.sessionFile());
+        Path changedCwd = tempDir.resolve("dir with spaces");
+
+        SessionHandle changed = manager.appendShellStateChange(ShellState.of(changedCwd));
+
+        List<String> linesAfter = Files.readAllLines(opened.sessionFile());
+        assertThat(linesAfter.getFirst()).isEqualTo(linesBefore.getFirst());
+        assertThat(linesAfter).hasSize(linesBefore.size() + 1);
+        assertThat(changed.byId().get(changed.leafId()))
+            .isInstanceOfSatisfying(ShellStateChangeEntry.class, entry -> {
+                assertThat(entry.parentId()).isEqualTo("entry-tool");
+                assertThat(entry.shellState()).isEqualTo(ShellState.of(changedCwd));
+            });
+        assertThat(manager.shellState()).isEqualTo(ShellState.of(changedCwd));
+
+        SessionManager reopened = new SessionManagerImpl(tempDir);
+        reopened.openOrCreate("ses_shell");
+        assertThat(reopened.shellState()).isEqualTo(ShellState.of(changedCwd));
+
+        manager.switchLeaf("entry-tool");
+        assertThat(manager.shellState()).isEqualTo(initialState);
     }
 
     @Test
