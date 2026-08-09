@@ -1,10 +1,13 @@
 package cn.lypi.boot.ai;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.lypi.ai.ApiProviderRegistry;
 import cn.lypi.ai.ModelPort;
 import cn.lypi.ai.ModelRegistry;
+import cn.lypi.ai.ProviderAdapterApiProvider;
+import cn.lypi.ai.RuntimeModelRegistry;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
@@ -18,16 +21,23 @@ import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
 import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
 import java.lang.reflect.Field;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 class LyPiAiAutoConfigurationTest {
+    @TempDir
+    Path tempDir;
+
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
         .withUserConfiguration(LyPiAiAutoConfiguration.class)
         .withPropertyValues(
@@ -161,6 +171,78 @@ class LyPiAiAutoConfigurationTest {
             .run(context -> {
                 assertThat(context.getBean("openAiCompatibleProviderAdapters", List.class)).isEmpty();
                 assertThat(context.getBean(ModelRegistry.class).list()).isEmpty();
+            });
+    }
+
+    @Test
+    void exposesMutableOpenAiDispatcherEvenWithoutInitialOpenAiAdapter() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withPropertyValues("lypi.ai.providers.openai.enabled=false")
+            .run(context -> {
+                assertThat(context).hasSingleBean(ProviderAdapterApiProvider.class);
+                assertThat(context).hasSingleBean(RuntimeModelRegistry.class);
+                assertThat(context).hasSingleBean(ProviderLoginPort.class);
+                assertThat(context.getBean("openAiCompatibleProviderAdapters", List.class)).isEmpty();
+                assertThat(context.getBean(ApiProviderRegistry.class)
+                    .find(cn.lypi.contracts.model.ApiStyle.OPENAI_COMPATIBLE)).isPresent();
+            });
+    }
+
+    @Test
+    void exposesUnavailableLoginPortWhenModelRegistryIsReplacedWithoutRuntimeMutationSupport() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(ModelRegistry.class, () -> new ModelRegistry() {
+                @Override
+                public List<ModelDescriptor> list() {
+                    return List.of();
+                }
+
+                @Override
+                public java.util.Optional<ModelDescriptor> find(cn.lypi.contracts.model.ModelSelection selection) {
+                    return java.util.Optional.empty();
+                }
+            })
+            .run(context -> assertThatThrownBy(() -> context.getBean(ProviderLoginPort.class)
+                .register("https://example.test/v1", "fixture-key"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("provider login is unavailable"));
+    }
+
+    @Test
+    void importsManagedLoginProviderAndDiscoversItsModelsAtStartup() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path configRoot = Files.createDirectories(home.resolve(".ly-pi"));
+        Files.writeString(configRoot.resolve("login-providers.properties"), """
+            lypi.ai.providers.login-fixture.enabled=true
+            lypi.ai.providers.login-fixture.api-style=openai_compatible
+            lypi.ai.providers.login-fixture.base-url=https://fixture.test/v1
+            lypi.ai.providers.login-fixture.api-key=fixture-login-key
+            lypi.ai.providers.login-fixture.request-style=chat_completions
+            lypi.ai.providers.login-fixture.fallback-request-style=chat_completions
+            lypi.ai.providers.login-fixture.transport=sse
+            lypi.ai.providers.login-fixture.model-discovery.enabled=true
+            lypi.ai.providers.login-fixture.model-discovery.paths[0]=/models
+            lypi.ai.providers.login-fixture.model-discovery.paths[1]=/model
+            """);
+
+        new ApplicationContextRunner()
+            .withInitializer(new ConfigDataApplicationContextInitializer())
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(RemoteModelDiscoveryClient.class, () -> new FixedRemoteModelDiscoveryClient("discovered-login-model"))
+            .withSystemProperties("user.home=" + home)
+            .run(context -> {
+                ModelDescriptor descriptor = model(
+                    context.getBean(ModelRegistry.class),
+                    "login-fixture",
+                    "discovered-login-model"
+                );
+
+                assertThat(descriptor.baseUrl()).hasToString("https://fixture.test/v1");
+                assertThat(context.getBean(ProviderLoginPort.class)).isNotNull();
+                assertThat(context.getBean(ApiProviderRegistry.class)
+                    .find(cn.lypi.contracts.model.ApiStyle.OPENAI_COMPATIBLE)).isPresent();
             });
     }
 

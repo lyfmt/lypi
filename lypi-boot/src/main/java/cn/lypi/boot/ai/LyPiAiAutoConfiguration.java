@@ -8,6 +8,7 @@ import cn.lypi.ai.ModelPort;
 import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.ProviderAdapter;
 import cn.lypi.ai.ProviderAdapterApiProvider;
+import cn.lypi.ai.RuntimeModelRegistry;
 import cn.lypi.ai.model.BuiltinModelDescriptorSource;
 import cn.lypi.ai.model.CompatSanitizer;
 import cn.lypi.ai.model.CompositeModelDescriptorSource;
@@ -33,7 +34,9 @@ import cn.lypi.boot.ai.LyPiAiProperties.ProviderProperties;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.CostProfile;
 import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
 import java.math.BigDecimal;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -43,6 +46,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -57,8 +61,8 @@ public class LyPiAiAutoConfiguration {
     private static final Duration BUILTIN_OPENAI_TIMEOUT = Duration.ofSeconds(30);
 
     @Bean
-    @ConditionalOnMissingBean
-    public ModelRegistry modelRegistry(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
+    @ConditionalOnMissingBean(ModelRegistry.class)
+    public RuntimeModelRegistry modelRegistry(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
         return new DefaultModelRegistry(modelDescriptorSource(properties, discoveryClient).list());
     }
 
@@ -74,20 +78,23 @@ public class LyPiAiAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public ApiProviderRegistry apiProviderRegistry(
-        @Qualifier("openAiCompatibleProviderAdapters") List<ProviderAdapter> openAiAdapters,
+        @Qualifier("openAiCompatibleApiProvider") ProviderAdapterApiProvider openAiCompatibleApiProvider,
         @Qualifier("anthropicProviderAdapters") List<ProviderAdapter> anthropicAdapters
     ) {
         List<ProviderAdapterApiProvider> providers = new ArrayList<>();
-        if (!openAiAdapters.isEmpty()) {
-            providers.add(new ProviderAdapterApiProvider(ApiStyle.OPENAI_COMPATIBLE, openAiAdapters));
-        }
+        providers.add(openAiCompatibleApiProvider);
         if (!anthropicAdapters.isEmpty()) {
             providers.add(new ProviderAdapterApiProvider(ApiStyle.ANTHROPIC, anthropicAdapters));
         }
-        if (providers.isEmpty()) {
-            return new DefaultApiProviderRegistry(List.of());
-        }
         return new DefaultApiProviderRegistry(providers);
+    }
+
+    @Bean(name = "openAiCompatibleApiProvider")
+    @ConditionalOnMissingBean(name = "openAiCompatibleApiProvider")
+    public ProviderAdapterApiProvider openAiCompatibleApiProvider(
+        @Qualifier("openAiCompatibleProviderAdapters") List<ProviderAdapter> openAiAdapters
+    ) {
+        return new ProviderAdapterApiProvider(ApiStyle.OPENAI_COMPATIBLE, openAiAdapters);
     }
 
     @Bean
@@ -106,6 +113,33 @@ public class LyPiAiAutoConfiguration {
     @ConditionalOnMissingBean
     public RemoteModelDiscoveryClient remoteModelDiscoveryClient() {
         return new RemoteModelDiscoveryClient();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public LoginProviderPropertiesStore loginProviderPropertiesStore() {
+        return new LoginProviderPropertiesStore(Path.of(System.getProperty("user.home", ".")));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ProviderLoginPort.class)
+    public ProviderLoginPort providerLoginPort(
+        RemoteModelDiscoveryClient discoveryClient,
+        ObjectProvider<RuntimeModelRegistry> modelRegistry,
+        @Qualifier("openAiCompatibleApiProvider") ObjectProvider<ProviderAdapterApiProvider> openAiDispatcher,
+        LoginProviderPropertiesStore propertiesStore
+    ) {
+        RuntimeModelRegistry runtimeModelRegistry = modelRegistry.getIfAvailable();
+        ProviderAdapterApiProvider dispatcher = openAiDispatcher.getIfAvailable();
+        if (runtimeModelRegistry == null || dispatcher == null) {
+            return ProviderLoginPort.unavailable();
+        }
+        return new OpenAiCompatibleProviderLoginService(
+            discoveryClient,
+            runtimeModelRegistry,
+            dispatcher,
+            propertiesStore
+        );
     }
 
     @Bean

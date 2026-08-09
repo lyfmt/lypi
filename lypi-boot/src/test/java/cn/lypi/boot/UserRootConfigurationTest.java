@@ -82,6 +82,33 @@ class UserRootConfigurationTest {
                 .isEqualTo(CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC));
     }
 
+    @Test
+    void importsManagedLoginProviderConfigurationBeforeUserConfiguration() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("login-provider-home"));
+        Path configRoot = Files.createDirectories(home.resolve(".ly-pi"));
+        Files.writeString(configRoot.resolve("login-providers.properties"), """
+            lypi.ai.providers.login-fixture.enabled=true
+            lypi.ai.providers.login-fixture.base-url=https://generated.test/v1
+            """);
+        Files.writeString(configRoot.resolve("application.yml"), """
+            lypi:
+              ai:
+                providers:
+                  login-fixture:
+                    base-url: https://user.test/v1
+            """);
+
+        runner(home).run(context -> {
+            LyPiAiProperties.ProviderProperties provider = context.getBean(LyPiAiProperties.class)
+                .getProviders()
+                .get("login-fixture");
+
+            assertThat(provider).isNotNull();
+            assertThat(provider.isEnabled()).isTrue();
+            assertThat(provider.getBaseUrl()).hasToString("https://user.test/v1");
+        });
+    }
+
     private ApplicationContextRunner runner(Path home) {
         return new ApplicationContextRunner()
             .withInitializer(new ConfigDataApplicationContextInitializer())
