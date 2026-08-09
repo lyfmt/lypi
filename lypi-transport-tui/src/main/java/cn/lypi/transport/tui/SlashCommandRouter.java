@@ -403,10 +403,14 @@ final class SlashCommandRouter {
             provider = modelId.substring(0, separator);
             modelId = modelId.substring(separator + 1);
         }
+        ModelSelection selection = new ModelSelection(provider, modelId, context.thinkingLevel());
+        if (modelCatalog != null && modelCatalog.find(selection).isEmpty()) {
+            return SlashCommandResult.error("unknown model: " + provider + "/" + modelId);
+        }
         append(new ModelChangeEntry(
             newEntryId(),
             leafId,
-            new ModelSelection(provider, modelId, context.thinkingLevel()),
+            selection,
             reason,
             Instant.now()
         ));

@@ -12,6 +12,11 @@ import cn.lypi.contracts.security.PermissionOptionKind;
 import cn.lypi.contracts.event.MessageBlockSnapshot;
 import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
+import cn.lypi.contracts.model.ApiStyle;
+import cn.lypi.contracts.model.CostProfile;
+import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.model.ModelSelection;
+import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.tui.BranchSummaryOffer;
 import cn.lypi.contracts.tui.PermissionPromptView;
 import cn.lypi.contracts.tui.ResumeSessionController;
@@ -34,14 +39,17 @@ import cn.lypi.contracts.skill.SkillDescriptor;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.skill.SkillSource;
+import java.math.BigDecimal;
+import java.net.URI;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import java.nio.file.Path;
-import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 class TuiInputLoopTest {
@@ -126,6 +134,30 @@ class TuiInputLoopTest {
         Consumer<SessionRuntimeState> resumeStateConsumer,
         Supplier<SkillIndex> skillIndexSupplier
     ) {
+        return testLoop(
+            submitHandler,
+            frameConsumer,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            skillIndexSupplier,
+            null
+        );
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier,
+        Supplier<ModelPicker> modelPickerSupplier
+    ) {
         TestRenderRequest renderRequest = new TestRenderRequest(frameConsumer, layout);
         TuiInputLoop loop = new TuiInputLoop(
             submitHandler,
@@ -135,10 +167,31 @@ class TuiInputLoopTest {
             slashPickerSupplier,
             resumeController,
             resumeStateConsumer,
-            skillIndexSupplier
+            skillIndexSupplier,
+            modelPickerSupplier
         );
         renderRequest.bind(loop);
         return loop;
+    }
+
+    private static TuiInputLoop modelLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<ModelPicker> modelPickerSupplier
+    ) {
+        return testLoop(
+            submitHandler,
+            frameConsumer,
+            layout,
+            viewSupplier,
+            () -> new SlashCommandPicker(List.of("/model")),
+            null,
+            null,
+            null,
+            modelPickerSupplier
+        );
     }
 
     private static final class TestRenderRequest implements Runnable {
@@ -834,6 +887,183 @@ class TuiInputLoopTest {
     }
 
     @Test
+    void modelSlashOpensPickerAndSubmitsSelectedModel() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(
+                List.of(model("zen", "kimi-k2.6"), model("openai", "gpt-5-mini")),
+                new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM)
+            )
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("> openai/gpt-5-mini", "  zen/kimi-k2.6"), loop.overlayLines());
+        assertEquals(List.of(), submit.submitted);
+
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("/model zen/kimi-k2.6"), submit.submitted);
+        assertEquals(List.of(), loop.overlayLines());
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void exactModelDraftOpensPickerAfterSlashOverlayWasClosed() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(List.of(model("openai", "gpt-5-mini")), null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("> openai/gpt-5-mini"), loop.overlayLines());
+        assertEquals(List.of(), submit.submitted);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void escapeClosesModelPickerWithoutSubmitting() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(List.of(model("openai", "gpt-5-mini")), null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ESC);
+
+        assertEquals(List.of(), loop.overlayLines());
+        assertEquals(List.of(), submit.submitted);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void emptyModelPickerStaysOpenOnEnter() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(List.of(), null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("No models available"), loop.overlayLines());
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("No models available"), loop.overlayLines());
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void modelPickerBlocksTextAndPasteUntilClosed() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(List.of(model("openai", "gpt-5-mini")), null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("ignored");
+        loop.acceptPaste("also ignored");
+
+        assertEquals("", loop.draft());
+        assertEquals(List.of("> openai/gpt-5-mini"), loop.overlayLines());
+    }
+
+    @Test
+    void permissionPromptTakesPriorityOverOpenModelPicker() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        AtomicReference<TuiViewModel> view = new AtomicReference<>(null);
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            () -> view.get() == null
+                ? new TuiViewModel(
+                    List.of(),
+                    new StatusBarState("ses_1", "gpt-5-mini", "ready", "ASK"),
+                    List.of(),
+                    Optional.empty(),
+                    Optional.empty()
+                )
+                : view.get(),
+            () -> new ModelPicker(
+                List.of(model("openai", "gpt-5-mini"), model("zen", "kimi-k2.6")),
+                null
+            )
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+        view.set(permissionViewWithOptions("allow_once", "escape_cancel"));
+
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("perm_toolu_1:toolu_1:remember"), submit.permissionOptions);
+        assertEquals(List.of(), submit.submitted);
+        assertEquals(List.of(), loop.overlayLines());
+    }
+
+    @Test
+    void modelPickerScrollsSelectedModelIntoVisibleWindow() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<ModelDescriptor> models = java.util.stream.IntStream.range(0, 8)
+            .mapToObj(index -> model("provider", "model-%02d".formatted(index)))
+            .toList();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 7),
+            null,
+            () -> new ModelPicker(models, null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+        for (int index = 0; index < 5; index++) {
+            loop.acceptKey(TerminalKey.DOWN);
+        }
+
+        assertEquals(3, loop.overlayLines().size());
+        assertTrue(loop.overlayLines().contains("> provider/model-05"));
+        assertFalse(loop.overlayLines().stream().anyMatch(line -> line.contains("provider/model-00")));
+    }
+
+    @Test
     void slashOverlayUsesArrowKeysAndEscWithoutHistoryNavigation() {
         RecordingSubmitHandler submit = new RecordingSubmitHandler();
         TuiInputLoop loop = testLoop(
@@ -1380,6 +1610,21 @@ class TuiInputLoopTest {
 
     private static String inputContent(String content) {
         return INPUT_BACKGROUND + content + ANSI_RESET;
+    }
+
+    private static ModelDescriptor model(String provider, String modelId) {
+        return new ModelDescriptor(
+            provider,
+            modelId,
+            URI.create("https://api.example.test/v1"),
+            ApiStyle.OPENAI_COMPATIBLE,
+            128_000,
+            16_384,
+            true,
+            false,
+            new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
+            Map.of()
+        );
     }
 
     private static ResumeSessionController emptyResumeController() {

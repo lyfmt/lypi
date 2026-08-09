@@ -1,6 +1,7 @@
 package cn.lypi.transport.tui;
 
 import cn.lypi.contracts.agent.SteeringMessage;
+import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.tui.TuiBlock;
 import cn.lypi.contracts.tui.TuiMessageBlock;
 import cn.lypi.contracts.tui.PermissionPromptView;
@@ -25,16 +26,19 @@ final class TuiInputLoop {
     private final KeyBindingRegistry bindings = KeyBindingRegistry.defaults();
     private final TerminalInputPolicy inputPolicy = new TerminalInputPolicy();
     private final Supplier<SlashCommandPicker> slashPickerSupplier;
+    private final Supplier<ModelPicker> modelPickerSupplier;
     private final Supplier<SkillIndex> skillIndexSupplier;
     private final Runnable renderRequest;
     private final ResumeSessionController resumeController;
     private final ResumeOverlayController resumeOverlayController;
     private SlashCommandPicker slashPicker;
+    private ModelPicker modelPicker;
     private SkillMentionToken skillToken;
     private int skillSelectedIndex;
     private final List<SkillMentionBinding> skillBindings = new java.util.ArrayList<>();
     private final SkillMentionSuppressions skillSuppressions = new SkillMentionSuppressions();
     private boolean slashOverlayClosed;
+    private boolean modelOverlayOpen;
     private boolean interruptibleRunning;
     private boolean exitRequested;
     private boolean toolOutputExpanded;
@@ -101,12 +105,39 @@ final class TuiInputLoop {
         Consumer<SessionRuntimeState> resumeStateConsumer,
         Supplier<SkillIndex> skillIndexSupplier
     ) {
+        this(
+            submitHandler,
+            renderRequest,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            skillIndexSupplier,
+            null
+        );
+    }
+
+    TuiInputLoop(
+        TuiSubmitHandler submitHandler,
+        Runnable renderRequest,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier,
+        Supplier<ModelPicker> modelPickerSupplier
+    ) {
         this.submitHandler = submitHandler;
         this.layout = layout;
         this.viewSupplier = viewSupplier == null ? this::emptyView : viewSupplier;
         this.slashPickerSupplier = slashPickerSupplier == null
             ? () -> SlashCommandPicker.withTemplates(List.of())
             : slashPickerSupplier;
+        this.modelPickerSupplier = modelPickerSupplier == null
+            ? () -> new ModelPicker(List.of(), null)
+            : modelPickerSupplier;
         this.skillIndexSupplier = skillIndexSupplier == null ? () -> new SkillIndex(List.of(), List.of()) : skillIndexSupplier;
         this.renderRequest = renderRequest == null ? () -> {
         } : renderRequest;
@@ -128,6 +159,10 @@ final class TuiInputLoop {
             render();
             return;
         }
+        if (modelOverlayOpen) {
+            render();
+            return;
+        }
         if (resumeOverlayController != null) {
             resumeOverlayController.clearTransientLine();
         }
@@ -139,6 +174,10 @@ final class TuiInputLoop {
 
     void acceptPaste(String text) {
         if (compactRunning()) {
+            render();
+            return;
+        }
+        if (modelOverlayOpen) {
             render();
             return;
         }
@@ -204,6 +243,10 @@ final class TuiInputLoop {
         }
         if (resumeOverlayOpen()) {
             handleResumeOverlayKey(key);
+            return;
+        }
+        if (modelOverlayOpen) {
+            handleModelOverlayKey(key);
             return;
         }
         if (key == TerminalKey.ENTER && "/resume".equals(editor.text().trim()) && resumeController != null) {
@@ -339,6 +382,15 @@ final class TuiInputLoop {
             openResumeSessions();
             editor.clear();
             slashOverlayClosed = true;
+            render();
+            return;
+        }
+        if ("/model".equals(draft.trim())) {
+            editor.clear();
+            slashOverlayClosed = true;
+            skillBindings.clear();
+            skillSuppressions.clear();
+            openModelOverlay();
             render();
             return;
         }
@@ -480,6 +532,7 @@ final class TuiInputLoop {
     private boolean slashOverlayOpen() {
         return viewSupplier.get().permissionPrompt().isEmpty()
             && !resumeOverlayOpen()
+            && !modelOverlayOpen
             && !slashOverlayClosed
             && slashFilter().isPresent();
     }
@@ -547,6 +600,10 @@ final class TuiInputLoop {
                 return resumeLines;
             }
         }
+        List<String> modelLines = modelOverlayLines();
+        if (!modelLines.isEmpty()) {
+            return modelLines;
+        }
         List<String> skillLines = skillOverlayLines();
         if (!skillLines.isEmpty()) {
             return skillLines;
@@ -567,13 +624,96 @@ final class TuiInputLoop {
     }
 
     private void acceptSlashSelection() {
-        slashPicker().accept().ifPresent(command -> editor.replaceFirstToken(command + " "));
+        Optional<String> selected = slashPicker().accept();
+        if (selected.isPresent() && "/model".equals(selected.orElseThrow())) {
+            editor.clear();
+            skillBindings.clear();
+            skillSuppressions.clear();
+            openModelOverlay();
+        } else {
+            selected.ifPresent(command -> editor.replaceFirstToken(command + " "));
+        }
         slashOverlayClosed = true;
         render();
     }
 
+    private void openModelOverlay() {
+        ModelPicker next = modelPickerSupplier.get();
+        modelPicker = next == null ? new ModelPicker(List.of(), null) : next;
+        modelOverlayOpen = true;
+    }
+
+    private void closeModelOverlay() {
+        modelOverlayOpen = false;
+        modelPicker = null;
+    }
+
+    private void handleModelOverlayKey(TerminalKey key) {
+        if (key == TerminalKey.ESC) {
+            closeModelOverlay();
+            render();
+            return;
+        }
+        if (key == TerminalKey.UP) {
+            modelPicker().moveUp();
+            render();
+            return;
+        }
+        if (key == TerminalKey.DOWN) {
+            modelPicker().moveDown();
+            render();
+            return;
+        }
+        if (key == TerminalKey.ENTER) {
+            Optional<ModelDescriptor> selected = modelPicker().accept();
+            if (selected.isPresent()) {
+                submitHandler.submitUserInput("/model " + ModelPicker.label(selected.orElseThrow()));
+                editor.clear();
+                closeModelOverlay();
+            }
+            render();
+            return;
+        }
+        render();
+    }
+
+    private ModelPicker modelPicker() {
+        if (modelPicker == null) {
+            openModelOverlay();
+        }
+        return modelPicker;
+    }
+
+    private List<String> modelOverlayLines() {
+        if (!modelOverlayVisible()) {
+            return List.of();
+        }
+        ModelPicker picker = modelPicker();
+        List<String> labels = picker.labels();
+        if (labels.isEmpty()) {
+            return List.of("No models available");
+        }
+        int limit = Math.min(labels.size(), Math.max(1, Math.min(10, layout.height() - 4)));
+        int selected = Math.max(0, Math.min(picker.selectedIndex(), labels.size() - 1));
+        int start = Math.max(0, Math.min(selected, labels.size() - limit));
+        List<String> lines = new ArrayList<>(limit);
+        for (int index = start; index < start + limit; index++) {
+            lines.add((index == selected ? "> " : "  ") + labels.get(index));
+        }
+        return List.copyOf(lines);
+    }
+
+    private boolean modelOverlayVisible() {
+        return modelOverlayOpen
+            && viewSupplier.get().permissionPrompt().isEmpty()
+            && !resumeOverlayOpen();
+    }
+
     private boolean skillOverlayOpen() {
-        if (viewSupplier.get().permissionPrompt().isPresent() || resumeOverlayOpen() || slashOverlayOpen()) {
+        if (viewSupplier.get().permissionPrompt().isPresent()
+            || resumeOverlayOpen()
+            || modelOverlayOpen
+            || slashOverlayOpen()) {
             return false;
         }
         SkillMentionParser parser = new SkillMentionParser(skillIndexSupplier.get().skills());
