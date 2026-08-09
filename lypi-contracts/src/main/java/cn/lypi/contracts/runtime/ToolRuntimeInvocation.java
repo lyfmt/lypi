@@ -16,6 +16,9 @@ public record ToolRuntimeInvocation(
     SteeringMessageSource steeringMessages,
     java.nio.file.Path cwd
 ) {
+    private static final AbortSignal INHERIT_ABORT_SIGNAL = () -> false;
+    private static final SteeringMessageSource INHERIT_STEERING_MESSAGES = java.util.Optional::empty;
+
     public ToolRuntimeInvocation(String sessionId, String turnId) {
         this(sessionId, turnId, null);
     }
@@ -37,6 +40,24 @@ public record ToolRuntimeInvocation(
     public ToolRuntimeInvocation {
         abortSignal = abortSignal == null ? AbortSignal.none() : abortSignal;
         steeringMessages = steeringMessages == null ? SteeringMessageSource.none() : steeringMessages;
+    }
+
+    /**
+     * Creates an invocation that overrides only cwd and inherits runtime-configured activity signals.
+     */
+    public static ToolRuntimeInvocation cwdOnly(java.nio.file.Path cwd) {
+        return new ToolRuntimeInvocation(
+            null,
+            null,
+            null,
+            INHERIT_ABORT_SIGNAL,
+            INHERIT_STEERING_MESSAGES,
+            cwd
+        );
+    }
+
+    public boolean inheritsRuntimeSignals() {
+        return abortSignal == INHERIT_ABORT_SIGNAL && steeringMessages == INHERIT_STEERING_MESSAGES;
     }
 
     /**

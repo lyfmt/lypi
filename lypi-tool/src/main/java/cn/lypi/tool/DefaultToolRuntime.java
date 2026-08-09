@@ -24,6 +24,8 @@ import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -551,17 +553,31 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         }
 
         TurnPermissionState turnState = turnState(invocation);
+        ToolRuntimeInvocation currentInvocation = invocationWithInitialCwd(invocation);
         List<ToolCallResolver.ResolvedCall> resolvedSegment = new ArrayList<>();
         for (ToolCallResolver.ResolvedCall call : callResolver.resolve(requests)) {
             if (!call.known()) {
-                executeResolvedSegment(resolvedSegment, context, invocation, results, turnState);
+                currentInvocation = executeResolvedSegment(
+                    resolvedSegment,
+                    context,
+                    currentInvocation,
+                    results,
+                    turnState
+                );
                 resolvedSegment.clear();
-                results.set(call.index(), executeUnknownCall(call.request(), context, invocation, turnState));
+                ToolResult<?> unknownResult = executeUnknownCall(
+                    call.request(),
+                    context,
+                    currentInvocation,
+                    turnState
+                );
+                results.set(call.index(), unknownResult);
+                currentInvocation = invocationAfterResults(currentInvocation, List.of(unknownResult));
                 continue;
             }
             resolvedSegment.add(call);
         }
-        executeResolvedSegment(resolvedSegment, context, invocation, results, turnState);
+        executeResolvedSegment(resolvedSegment, context, currentInvocation, results, turnState);
         return List.copyOf(results);
     }
 
@@ -573,7 +589,7 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         }
     }
 
-    private void executeResolvedSegment(
+    private ToolRuntimeInvocation executeResolvedSegment(
         List<ToolCallResolver.ResolvedCall> resolvedCalls,
         ContextSnapshot context,
         ToolRuntimeInvocation invocation,
@@ -581,21 +597,31 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         TurnPermissionState turnState
     ) {
         if (resolvedCalls.isEmpty()) {
-            return;
+            return invocation;
         }
         List<ToolExecutionPlanner.ResolvedToolCall> calls = resolvedCalls.stream()
             .map(call -> new ToolExecutionPlanner.ResolvedToolCall(call.request(), call.tool()))
             .toList();
         List<ToolExecutionPlanner.Batch> batches = executionPlanner.plan(calls);
         int cursor = 0;
+        ToolRuntimeInvocation currentInvocation = invocation;
         for (ToolExecutionPlanner.Batch batch : batches) {
             List<ToolCallResolver.ResolvedCall> indexedBatch = resolvedCalls.subList(cursor, cursor + batch.calls().size());
-            executeBatch(batch, indexedBatch, context, invocation, results, turnState);
+            List<ToolResult<?>> batchResults = executeBatch(
+                batch,
+                indexedBatch,
+                context,
+                currentInvocation,
+                results,
+                turnState
+            );
+            currentInvocation = invocationAfterResults(currentInvocation, batchResults);
             cursor += batch.calls().size();
         }
+        return currentInvocation;
     }
 
-    private void executeBatch(
+    private List<ToolResult<?>> executeBatch(
         ToolExecutionPlanner.Batch batch,
         List<ToolCallResolver.ResolvedCall> indexedBatch,
         ContextSnapshot context,
@@ -617,6 +643,65 @@ public final class DefaultToolRuntime implements ToolRuntimePort, ToolOrchestrat
         for (int index = 0; index < batchResults.size(); index++) {
             results.set(indexedBatch.get(index).index(), batchResults.get(index));
         }
+        return batchResults;
+    }
+
+    private ToolRuntimeInvocation invocationWithInitialCwd(ToolRuntimeInvocation invocation) {
+        if (invocation == null) {
+            return null;
+        }
+        Path initialCwd = validStateCwd(invocation.cwd())
+            .orElse(contextFactory.cwd().toAbsolutePath().normalize());
+        return withCwd(invocation, initialCwd);
+    }
+
+    private ToolRuntimeInvocation invocationAfterResults(
+        ToolRuntimeInvocation invocation,
+        List<ToolResult<?>> results
+    ) {
+        Path nextCwd = invocation == null || invocation.cwd() == null
+            ? contextFactory.cwd().toAbsolutePath().normalize()
+            : invocation.cwd();
+        boolean changed = false;
+        for (ToolResult<?> result : results) {
+            if (result == null || result.stateDelta().isEmpty()) {
+                continue;
+            }
+            Optional<Path> candidate = validStateCwd(result.stateDelta().orElseThrow().cwd());
+            if (candidate.isPresent() && !candidate.orElseThrow().equals(nextCwd)) {
+                nextCwd = candidate.orElseThrow();
+                changed = true;
+            }
+        }
+        return changed ? withCwd(invocation, nextCwd) : invocation;
+    }
+
+    private Optional<Path> validStateCwd(Path candidate) {
+        if (candidate == null) {
+            return Optional.empty();
+        }
+        Path workspaceRoot = contextFactory.cwd().toAbsolutePath().normalize();
+        Path normalized = candidate.toAbsolutePath().normalize();
+        if (!normalized.startsWith(workspaceRoot)) {
+            return Optional.empty();
+        }
+        try {
+            Path realWorkspaceRoot = workspaceRoot.toRealPath();
+            Path realCandidate = normalized.toRealPath();
+            if (Files.isDirectory(realCandidate) && realCandidate.startsWith(realWorkspaceRoot)) {
+                return Optional.of(normalized);
+            }
+        } catch (IOException exception) {
+            return Optional.empty();
+        }
+        return Optional.empty();
+    }
+
+    private ToolRuntimeInvocation withCwd(ToolRuntimeInvocation invocation, Path cwd) {
+        ToolRuntimeInvocation base = invocation == null
+            ? ToolRuntimeInvocation.cwdOnly(cwd)
+            : invocation;
+        return invocation == null ? base : base.withCwd(cwd);
     }
 
     private ToolResult<?> executeCall(

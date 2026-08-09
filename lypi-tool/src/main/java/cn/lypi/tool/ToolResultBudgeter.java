@@ -34,7 +34,8 @@ public final class ToolResultBudgeter {
             result.output(),
             result.isError(),
             budgetResult.messages(),
-            replacement
+            replacement,
+            result.stateDelta()
         );
     }
 

@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.context.ToolResultContentBlock;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolStateDelta;
+import java.nio.file.Path;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class ToolResultBudgeterTest {
@@ -20,7 +23,9 @@ class ToolResultBudgeterTest {
 
     @Test
     void replacesOversizedToolResultTextWithPreview() {
-        ToolResult<String> result = TestTools.result("toolu_1", "0123456789abcdef", false);
+        ToolStateDelta delta = new ToolStateDelta(Path.of("/tmp/project/nested"));
+        ToolResult<String> result = TestTools.result("toolu_1", "0123456789abcdef", false)
+            .withStateDelta(Optional.of(delta));
 
         ToolResult<String> budgeted = new ToolResultBudgeter().apply("toolu_1", "read", result, 8);
 
@@ -29,5 +34,6 @@ class ToolResultBudgeterTest {
         assertTrue(block.text().contains("工具结果已超出预算"));
         assertTrue(budgeted.replacement().isPresent());
         assertEquals("toolu_1", budgeted.replacement().orElseThrow().toolUseId());
+        assertEquals(Optional.of(delta), budgeted.stateDelta());
     }
 }

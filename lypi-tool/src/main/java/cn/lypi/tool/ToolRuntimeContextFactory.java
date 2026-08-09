@@ -65,7 +65,7 @@ public final class ToolRuntimeContextFactory {
         if (parentEntryId != null && !parentEntryId.isBlank()) {
             metadata.put("parentEntryId", parentEntryId);
         }
-        if (invocation != null) {
+        if (invocation != null && !invocation.inheritsRuntimeSignals()) {
             metadata.put(ToolAbortSupport.METADATA_ABORT_SIGNAL, invocation.abortSignal());
             metadata.put(ToolSteeringSupport.METADATA_STEERING_MESSAGES, invocation.steeringMessages());
         }

@@ -351,6 +351,118 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void propagatesCwdDeltaAcrossPlannerSegmentsAndUnknownCalls() throws Exception {
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Path nested = Files.createDirectories(workspace.resolve("nested"));
+        AtomicReference<ToolUseContext> captured = new AtomicReference<>();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(workspace).build(),
+            allowAllSecurity()
+        );
+        runtime.register(TestTools.stateDeltaEcho("cd", nested));
+        runtime.register(TestTools.contextCapturingEcho("probe", captured));
+
+        List<ToolResult<?>> results = runtime.execute(
+            List.of(
+                new ToolUseRequest("toolu_cd", "cd", Map.of("text", "changed"), "msg_1"),
+                new ToolUseRequest("toolu_unknown", "missing", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_probe", "probe", Map.of("text", "probe"), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(workspace)
+        );
+
+        assertFalse(results.get(0).isError());
+        assertTrue(results.get(1).isError());
+        assertFalse(results.get(2).isError());
+        assertEquals(workspace, captured.get().workspaceRoot());
+        assertEquals(nested, captured.get().cwd());
+    }
+
+    @Test
+    void ignoresInvalidCwdDeltasAndKeepsLastValidDirectory() throws Exception {
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace-invalid"));
+        Path nested = Files.createDirectories(workspace.resolve("nested"));
+        Path outside = Files.createDirectories(tempDir.resolve("outside"));
+        Path symlinkEscape = workspace.resolve("escape");
+        Files.createSymbolicLink(symlinkEscape, outside);
+        AtomicReference<ToolUseContext> afterMissing = new AtomicReference<>();
+        AtomicReference<ToolUseContext> afterOutside = new AtomicReference<>();
+        AtomicReference<ToolUseContext> afterSymlink = new AtomicReference<>();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(workspace).build(),
+            allowAllSecurity()
+        );
+        runtime.register(TestTools.stateDeltaEcho("cd_valid", nested));
+        runtime.register(TestTools.stateDeltaEcho("cd_missing", workspace.resolve("missing")));
+        runtime.register(TestTools.stateDeltaEcho("cd_outside", outside));
+        runtime.register(TestTools.stateDeltaEcho("cd_symlink", symlinkEscape));
+        runtime.register(TestTools.contextCapturingEcho("probe_missing", afterMissing));
+        runtime.register(TestTools.contextCapturingEcho("probe_outside", afterOutside));
+        runtime.register(TestTools.contextCapturingEcho("probe_symlink", afterSymlink));
+
+        runtime.execute(
+            List.of(
+                new ToolUseRequest("toolu_valid", "cd_valid", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_missing", "cd_missing", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_probe_missing", "probe_missing", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_outside", "cd_outside", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_probe_outside", "probe_outside", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_symlink", "cd_symlink", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_probe_symlink", "probe_symlink", Map.of(), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(workspace)
+        );
+
+        assertEquals(nested, afterMissing.get().cwd());
+        assertEquals(nested, afterOutside.get().cwd());
+        assertEquals(nested, afterSymlink.get().cwd());
+    }
+
+    @Test
+    void cwdOnlyCursorKeepsRuntimeAbortSignal() throws Exception {
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace-abort"));
+        Path nested = Files.createDirectories(workspace.resolve("nested"));
+        AtomicBoolean aborted = new AtomicBoolean(false);
+        AtomicInteger secondToolCalls = new AtomicInteger();
+        ToolExecutionInterceptor interceptor = ToolExecutionInterceptor.after((request, tool, context, result) -> {
+            if ("cd".equals(request.toolName())) {
+                aborted.set(true);
+            }
+            return result;
+        });
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .cwd(workspace)
+                .metadata(Map.of(ToolAbortSupport.METADATA_ABORT_SIGNAL, (AbortSignal) aborted::get))
+                .build()),
+            interceptor,
+            allowAllSecurity()
+        );
+        runtime.register(TestTools.stateDeltaEcho("cd", nested));
+        runtime.register(TestTools.countingTool(
+            "after_cd",
+            InterruptBehavior.CANCEL,
+            secondToolCalls
+        ));
+
+        runtime.execute(
+            List.of(
+                new ToolUseRequest("toolu_cd", "cd", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_after", "after_cd", Map.of(), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK)
+        );
+
+        assertEquals(0, secondToolCalls.get());
+    }
+
+    @Test
     void publishesLifecycleWhenInputContainsNullValue() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());

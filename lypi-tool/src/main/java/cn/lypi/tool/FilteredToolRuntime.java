@@ -13,6 +13,8 @@ import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolRegistrySnapshot;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -85,6 +87,7 @@ public final class FilteredToolRuntime implements ToolRuntimePort {
             return List.of();
         }
         List<ToolResult<?>> results = new ArrayList<>(requests.size());
+        ToolRuntimeInvocation currentInvocation = invocationWithInitialCwd(invocation);
         for (ToolUseRequest request : requests) {
             Optional<Tool<?, ?>> resolved = delegate.resolve(request.toolName());
             if (resolved.isEmpty()
@@ -97,7 +100,9 @@ public final class FilteredToolRuntime implements ToolRuntimePort {
                 ));
                 continue;
             }
-            results.add(delegate.execute(List.of(request), context, invocation).getFirst());
+            ToolResult<?> result = delegate.execute(List.of(request), context, currentInvocation).getFirst();
+            results.add(result);
+            currentInvocation = invocationAfterResult(currentInvocation, result);
         }
         return List.copyOf(results);
     }
@@ -109,6 +114,52 @@ public final class FilteredToolRuntime implements ToolRuntimePort {
 
     private boolean isAllowed(String canonicalName) {
         return canonicalName != null && effectiveTools.contains(canonicalName);
+    }
+
+    private ToolRuntimeInvocation invocationWithInitialCwd(ToolRuntimeInvocation invocation) {
+        if (invocation == null) {
+            return null;
+        }
+        Path initialCwd = validStateCwd(invocation.cwd())
+            .orElse(delegate.cwd().toAbsolutePath().normalize());
+        return withCwd(invocation, initialCwd);
+    }
+
+    private ToolRuntimeInvocation invocationAfterResult(ToolRuntimeInvocation invocation, ToolResult<?> result) {
+        if (result == null || result.stateDelta().isEmpty()) {
+            return invocation;
+        }
+        return validStateCwd(result.stateDelta().orElseThrow().cwd())
+            .map(cwd -> withCwd(invocation, cwd))
+            .orElse(invocation);
+    }
+
+    private Optional<Path> validStateCwd(Path candidate) {
+        if (candidate == null) {
+            return Optional.empty();
+        }
+        Path workspaceRoot = delegate.cwd().toAbsolutePath().normalize();
+        Path normalized = candidate.toAbsolutePath().normalize();
+        if (!normalized.startsWith(workspaceRoot)) {
+            return Optional.empty();
+        }
+        try {
+            Path realWorkspaceRoot = workspaceRoot.toRealPath();
+            Path realCandidate = normalized.toRealPath();
+            if (Files.isDirectory(realCandidate) && realCandidate.startsWith(realWorkspaceRoot)) {
+                return Optional.of(normalized);
+            }
+        } catch (IOException exception) {
+            return Optional.empty();
+        }
+        return Optional.empty();
+    }
+
+    private ToolRuntimeInvocation withCwd(ToolRuntimeInvocation invocation, Path cwd) {
+        ToolRuntimeInvocation base = invocation == null
+            ? ToolRuntimeInvocation.cwdOnly(cwd)
+            : invocation;
+        return invocation == null ? base : base.withCwd(cwd);
     }
 
     private ToolResult<String> errorResult(ToolUseRequest request, String canonicalName, boolean alias) {
