@@ -83,6 +83,10 @@ Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册
 
 OpenAI 兼容适配支持 Responses、Chat Completions、SSE、WebSocket 和 fallback request style。上层收到的是项目内部的 `AssistantStreamEvent`，不需要直接处理供应商原始事件。模型描述中的 context window、最大输出 token、thinking 支持和图片输入支持会影响请求构建与上下文预算。
 
+启用 `model-discovery` 的 OpenAI 兼容 Provider 会在应用启动时按配置顺序拉取模型列表；第一个非空结果成为该 Provider 的权威模型集合，静态 `models[]` 只覆盖远端同名模型的元数据。所有候选端点都没有返回有效模型时，应用会以不含凭据的端点诊断终止启动。
+
+TUI 输入无参数 `/model` 会打开启动期模型快照，候选项统一显示为 `provider/model`；使用上下方向键移动，Enter 切换，Esc 取消。选择结果仍写入会话模型变更条目，恢复会话后继续生效。
+
 Anthropic 适配负责 Messages 请求、SSE 事件归一化、tool call/result 映射和 usage 合并。当前版本不启用 Anthropic extended thinking：Anthropic 模型的 `supports-thinking` 应保持 `false`，作为默认模型时还需把 `lypi.runtime.thinking-level` 设为 `off`。
 
 ### 资源与记忆

@@ -110,6 +110,24 @@ class ApplicationExampleConfigTest {
     }
 
     @Test
+    void applicationExampleDocumentsDiscoveredChatCompletionsProvider() throws IOException {
+        String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
+        String fixtureBlock = example.substring(
+            example.indexOf("#       fixture:"),
+            example.indexOf("#       anthropic:")
+        );
+
+        assertThat(fixtureBlock).contains("#         request-style: chat_completions");
+        assertThat(fixtureBlock).contains("#         fallback-request-style: chat_completions");
+        assertThat(fixtureBlock).contains("#         transport: sse");
+        assertThat(fixtureBlock).contains("#           enabled: true");
+        assertThat(fixtureBlock).contains("#             - /models");
+        assertThat(fixtureBlock).contains("#             - /model");
+        assertThat(fixtureBlock).contains("只补充远端返回的同名模型元数据");
+        assertThat(fixtureBlock).contains("远端未返回的 model-id 不会进入模型目录");
+    }
+
+    @Test
     void applicationExampleDocumentsPermissionsAtLypiTopLevel() throws IOException {
         String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
 

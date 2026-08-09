@@ -225,7 +225,7 @@
 #         api-style: openai_compatible
 #         request-style: chat_completions
 #         fallback-request-style: chat_completions
-#         transport: auto
+#         transport: sse
 #         base-url: https://api.fixture.example/v1
 #         websocket-path: /v1/responses
 #         websocket-url:
@@ -235,9 +235,13 @@
 #         compat:
 #           vendor: fixture
 #         model-discovery:
-#           enabled: false
+#           # 启动时按顺序请求候选路径；所有路径都没有返回有效模型时，应用启动失败。
+#           enabled: true
 #           paths:
 #             - /models
+#             - /model
+#         # 开启 model-discovery 后，静态 models 只补充远端返回的同名模型元数据；
+#         # 远端未返回的 model-id 不会进入模型目录。
 #         models:
 #           - model-id: fixture-model
 #             context-window: 64000
