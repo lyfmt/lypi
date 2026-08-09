@@ -833,7 +833,7 @@ class DefaultTurnExecutorTest {
     }
 
     @Test
-    void persistsTypedShellCwdAfterToolResultAndUsesItInTheNextRound(@TempDir Path tempDir) throws IOException {
+    void persistsTypedShellCwdForToolsButKeepsResourceRootStable(@TempDir Path tempDir) throws IOException {
         Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
         Path nested = Files.createDirectories(workspace.resolve("dir with spaces"));
         AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
@@ -929,7 +929,7 @@ class DefaultTurnExecutorTest {
         ShellStateChangeEntry change = (ShellStateChangeEntry) branch.get(toolResultIndex + 1);
         assertThat(change.parentId()).isEqualTo(branch.get(toolResultIndex).id());
         assertThat(change.shellState().cwd()).isEqualTo(nested);
-        assertThat(resourceCwds).containsExactly(workspace, nested, nested);
+        assertThat(resourceCwds).containsExactly(workspace, workspace, workspace);
         assertThat(tools.invocations).extracting(ToolRuntimeInvocation::cwd)
             .containsExactly(workspace, nested);
     }

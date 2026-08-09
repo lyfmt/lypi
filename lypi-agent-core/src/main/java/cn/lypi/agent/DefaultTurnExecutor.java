@@ -234,8 +234,8 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ContextBuildRequest contextBuildRequest = new ContextBuildRequest(
             request.sessionId(),
             leafEntryId,
-            // NOTE: lypi-resource 负责从 cwd 探索 project root 和资源层级；cwd 跟随当前 shell 状态（cd 后随之迁移）。
-            currentShellCwd(),
+            // Resource scope stays at the session root; shell cwd is tool-runtime state only.
+            ports.cwd(),
             true,
             skillMentions
         );
