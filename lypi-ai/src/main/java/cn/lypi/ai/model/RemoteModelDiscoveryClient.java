@@ -1,5 +1,7 @@
 package cn.lypi.ai.model;
 
+import cn.lypi.contracts.error.ErrorSeverity;
+import cn.lypi.contracts.error.ModelProviderException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -29,33 +31,66 @@ public class RemoteModelDiscoveryClient {
         Objects.requireNonNull(baseUrl, "baseUrl");
         Objects.requireNonNull(paths, "paths");
         Duration requestTimeout = timeout == null ? Duration.ofSeconds(30) : timeout;
+        List<String> diagnostics = new ArrayList<>();
         for (String path : paths) {
-            List<String> modelIds = request(baseUrl, apiKey, path, requestTimeout);
-            if (!modelIds.isEmpty()) {
-                return modelIds;
+            URI endpoint = endpoint(baseUrl, path);
+            DiscoveryAttempt attempt = request(endpoint, apiKey, requestTimeout);
+            if (!attempt.modelIds().isEmpty()) {
+                return attempt.modelIds().stream().distinct().toList();
+            }
+            diagnostics.add(safeEndpoint(endpoint) + ": " + attempt.diagnostic());
+            if (attempt.interrupted()) {
+                break;
             }
         }
-        return List.of();
+        String details = diagnostics.isEmpty()
+            ? "no candidate endpoints configured"
+            : String.join("; ", diagnostics);
+        throw new ModelProviderException(
+            "model.discovery_unavailable",
+            ErrorSeverity.ERROR,
+            false,
+            "Remote model discovery returned no usable models. " + details
+        );
     }
 
-    private List<String> request(URI baseUrl, String apiKey, String path, Duration timeout) {
-        HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint(baseUrl, path))
-            .timeout(timeout)
-            .GET();
-        if (apiKey != null && !apiKey.isBlank()) {
-            builder.header("Authorization", "Bearer " + apiKey);
+    private DiscoveryAttempt request(URI endpoint, String apiKey, Duration timeout) {
+        HttpRequest request;
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint)
+                .timeout(timeout)
+                .GET();
+            if (apiKey != null && !apiKey.isBlank()) {
+                builder.header("Authorization", "Bearer " + apiKey);
+            }
+            request = builder.build();
+        } catch (RuntimeException error) {
+            return DiscoveryAttempt.failure("invalid request configuration");
+        }
+
+        HttpResponse<String> response;
+        try {
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return DiscoveryAttempt.interruptedFailure();
+        } catch (IOException error) {
+            return DiscoveryAttempt.failure("network error: " + error.getClass().getSimpleName());
+        } catch (RuntimeException error) {
+            return DiscoveryAttempt.failure("request error: " + error.getClass().getSimpleName());
+        }
+
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            return DiscoveryAttempt.failure("HTTP " + response.statusCode());
         }
         try {
-            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                return List.of();
+            List<String> modelIds = parse(response.body());
+            if (modelIds.isEmpty()) {
+                return DiscoveryAttempt.failure("response contained no usable model ids");
             }
-            return parse(response.body());
-        } catch (IOException | InterruptedException | RuntimeException error) {
-            if (error instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            return List.of();
+            return DiscoveryAttempt.success(modelIds);
+        } catch (IOException | RuntimeException error) {
+            return DiscoveryAttempt.failure("invalid JSON response");
         }
     }
 
@@ -104,5 +139,33 @@ public class RemoteModelDiscoveryClient {
         String normalizedPath = path == null ? "" : path;
         normalizedPath = normalizedPath.startsWith("/") ? normalizedPath.substring(1) : normalizedPath;
         return URI.create(normalizedBase + "/" + normalizedPath);
+    }
+
+    private static String safeEndpoint(URI endpoint) {
+        String path = endpoint.getRawPath() == null || endpoint.getRawPath().isBlank() ? "/" : endpoint.getRawPath();
+        if (endpoint.getHost() == null) {
+            return path;
+        }
+        String port = endpoint.getPort() < 0 ? "" : ":" + endpoint.getPort();
+        return endpoint.getScheme() + "://" + endpoint.getHost() + port + path;
+    }
+
+    private record DiscoveryAttempt(List<String> modelIds, String diagnostic, boolean interrupted) {
+        private DiscoveryAttempt {
+            modelIds = List.copyOf(modelIds);
+            diagnostic = diagnostic == null ? "unknown failure" : diagnostic;
+        }
+
+        private static DiscoveryAttempt success(List<String> modelIds) {
+            return new DiscoveryAttempt(modelIds, "", false);
+        }
+
+        private static DiscoveryAttempt failure(String diagnostic) {
+            return new DiscoveryAttempt(List.of(), diagnostic, false);
+        }
+
+        private static DiscoveryAttempt interruptedFailure() {
+            return new DiscoveryAttempt(List.of(), "request interrupted", true);
+        }
     }
 }
