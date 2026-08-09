@@ -77,13 +77,13 @@ public final class OpenAiChatCompletionsRequestBuilder {
             messages.add(assistantMessage(message, requiresReasoningContent));
             return;
         }
+        if (hasImageAttachment(message)) {
+            appendMultimodalMessage(messages, message);
+            return;
+        }
         for (LypiContentBlock block : message.content()) {
             if (block instanceof LypiToolResultBlock toolResult) {
-                ObjectNode node = objectMapper.createObjectNode();
-                node.put("role", "tool");
-                node.put("tool_call_id", toolResult.toolUseId());
-                node.put("content", toolResult.text());
-                messages.add(node);
+                messages.add(toolResultMessage(toolResult));
             } else {
                 ObjectNode node = objectMapper.createObjectNode();
                 node.put("role", role(message.role()));
@@ -91,6 +91,81 @@ public final class OpenAiChatCompletionsRequestBuilder {
                 messages.add(node);
             }
         }
+    }
+
+    private void appendMultimodalMessage(ArrayNode messages, LypiMessage message) {
+        if (message.role() == LypiRole.TOOL_RESULT) {
+            message.content().stream()
+                .filter(LypiToolResultBlock.class::isInstance)
+                .map(LypiToolResultBlock.class::cast)
+                .map(this::toolResultMessage)
+                .forEach(messages::add);
+        }
+        List<LypiContentBlock> contentBlocks = message.content().stream()
+            .filter(block -> !(block instanceof LypiToolResultBlock))
+            .toList();
+        if (contentBlocks.isEmpty()) {
+            return;
+        }
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("role", role(message.role()));
+        node.set("content", multimodalContent(contentBlocks));
+        messages.add(node);
+    }
+
+    private ObjectNode toolResultMessage(LypiToolResultBlock toolResult) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("role", "tool");
+        node.put("tool_call_id", toolResult.toolUseId());
+        node.put("content", toolResult.text());
+        return node;
+    }
+
+    private ArrayNode multimodalContent(List<LypiContentBlock> blocks) {
+        ArrayNode content = objectMapper.createArrayNode();
+        for (LypiContentBlock block : blocks) {
+            if (block instanceof LypiAttachmentBlock attachment) {
+                Optional<String> url = imageUrl(attachment);
+                if (url.isPresent()) {
+                    content.add(imageContent(attachment, url.orElseThrow()));
+                    continue;
+                }
+            }
+            String text = blockText(block);
+            if (text != null && !text.isBlank()) {
+                ObjectNode part = objectMapper.createObjectNode();
+                part.put("type", "text");
+                part.put("text", text);
+                content.add(part);
+            }
+        }
+        return content;
+    }
+
+    private ObjectNode imageContent(LypiAttachmentBlock attachment, String url) {
+        ObjectNode part = objectMapper.createObjectNode();
+        part.put("type", "image_url");
+        ObjectNode imageUrl = objectMapper.createObjectNode();
+        imageUrl.put("url", url);
+        imageUrl.put("detail", String.valueOf(attachment.metadata().getOrDefault("detail", "high")));
+        part.set("image_url", imageUrl);
+        return part;
+    }
+
+    private boolean hasImageAttachment(LypiMessage message) {
+        return message.content().stream()
+            .filter(LypiAttachmentBlock.class::isInstance)
+            .map(LypiAttachmentBlock.class::cast)
+            .anyMatch(attachment -> imageUrl(attachment).isPresent());
+    }
+
+    private Optional<String> imageUrl(LypiAttachmentBlock attachment) {
+        Object rawUrl = attachment.metadata().get("imageUrl");
+        if (rawUrl == null) {
+            return Optional.empty();
+        }
+        String url = String.valueOf(rawUrl);
+        return url.isBlank() ? Optional.empty() : Optional.of(url);
     }
 
     private ObjectNode assistantMessage(LypiMessage message, boolean requiresReasoningContent) {

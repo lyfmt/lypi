@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
+import cn.lypi.ai.spec.LypiAttachmentBlock;
 import cn.lypi.ai.spec.LypiContentBlock;
 import cn.lypi.ai.spec.LypiGenerationOptions;
 import cn.lypi.ai.spec.LypiMessage;
@@ -200,6 +201,78 @@ class OpenAiChatCompletionsRequestBuilderTest {
     }
 
     @Test
+    void serializesUserTextAndImageAsOneMultimodalMessage() {
+        LypiModelRequest request = requestWithMessages(List.of(new LypiMessage(
+            LypiRole.USER,
+            List.of(
+                new LypiTextBlock("describe", Map.of()),
+                new LypiAttachmentBlock(
+                    "image-1",
+                    "attached image",
+                    "image/png",
+                    Map.of("imageUrl", "data:image/png;base64,AAA", "detail", "high")
+                )
+            ),
+            Map.of()
+        )));
+
+        JsonNode body = new OpenAiChatCompletionsRequestBuilder().build(request, config());
+
+        assertThat(body.get("messages")).hasSize(1);
+        assertThat(body.at("/messages/0/role").asText()).isEqualTo("user");
+        assertThat(body.at("/messages/0/content/0/type").asText()).isEqualTo("text");
+        assertThat(body.at("/messages/0/content/0/text").asText()).isEqualTo("describe");
+        assertThat(body.at("/messages/0/content/1/type").asText()).isEqualTo("image_url");
+        assertThat(body.at("/messages/0/content/1/image_url/url").asText())
+            .isEqualTo("data:image/png;base64,AAA");
+        assertThat(body.at("/messages/0/content/1/image_url/detail").asText()).isEqualTo("high");
+    }
+
+    @Test
+    void preservesAttachmentTextWhenImageUrlIsMissing() {
+        LypiModelRequest request = requestWithMessages(List.of(new LypiMessage(
+            LypiRole.USER,
+            List.of(new LypiAttachmentBlock("attachment-1", "image description", "image/png", Map.of())),
+            Map.of()
+        )));
+
+        JsonNode body = new OpenAiChatCompletionsRequestBuilder().build(request, config());
+
+        assertThat(body.get("messages")).hasSize(1);
+        assertThat(body.at("/messages/0/content").isTextual()).isTrue();
+        assertThat(body.at("/messages/0/content").asText()).isEqualTo("image description");
+    }
+
+    @Test
+    void sendsToolResultImagesAsAFollowingUserMessage() {
+        LypiModelRequest request = requestWithMessages(List.of(new LypiMessage(
+            LypiRole.TOOL_RESULT,
+            List.of(
+                new LypiToolResultBlock("call-1", "screenshot captured", false, Map.of()),
+                new LypiAttachmentBlock(
+                    "image-1",
+                    "captured screenshot",
+                    "image/png",
+                    Map.of("imageUrl", "data:image/png;base64,AAA")
+                )
+            ),
+            Map.of()
+        )));
+
+        JsonNode body = new OpenAiChatCompletionsRequestBuilder().build(request, config());
+
+        assertThat(body.get("messages")).hasSize(2);
+        assertThat(body.at("/messages/0/role").asText()).isEqualTo("tool");
+        assertThat(body.at("/messages/0/tool_call_id").asText()).isEqualTo("call-1");
+        assertThat(body.at("/messages/0/content").asText()).isEqualTo("screenshot captured");
+        assertThat(body.at("/messages/1/role").asText()).isEqualTo("user");
+        assertThat(body.at("/messages/1/content/0/type").asText()).isEqualTo("image_url");
+        assertThat(body.at("/messages/1/content/0/image_url/url").asText())
+            .isEqualTo("data:image/png;base64,AAA");
+        assertThat(body.at("/messages/1/content/0/image_url/detail").asText()).isEqualTo("high");
+    }
+
+    @Test
     void omitsBlankSystemPromptAndReasoningWhenOff() {
         LypiModelRequest request = new LypiModelRequest(
             "req-2",
@@ -257,12 +330,16 @@ class OpenAiChatCompletionsRequestBuilderTest {
     }
 
     private static LypiModelRequest assistantToolHistory(List<LypiContentBlock> content) {
+        return requestWithMessages(List.of(new LypiMessage(LypiRole.ASSISTANT, content, Map.of())));
+    }
+
+    private static LypiModelRequest requestWithMessages(List<LypiMessage> messages) {
         return new LypiModelRequest(
             "req-thinking-history",
             new ModelSelection("openai", "gpt-4o-mini", ThinkingLevel.HIGH),
             ThinkingLevel.HIGH,
             "",
-            List.of(new LypiMessage(LypiRole.ASSISTANT, content, Map.of())),
+            messages,
             List.of(),
             LypiGenerationOptions.defaults(),
             Map.of()
