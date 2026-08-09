@@ -1,6 +1,7 @@
 package cn.lypi.tool.builtin;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -8,9 +9,10 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -32,12 +34,16 @@ class RipgrepBinaryResolverTest {
         Path binary = vendorBinary("ripgrep/x86_64-linux/rg");
         RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
             new RipgrepPlatform("linux", "x86_64"),
-            tempDir
+            relativeToWorkingDirectory(tempDir)
         );
 
         RipgrepBinary command = resolver.resolve(Map.of());
 
-        assertEquals(binary.toString(), command.command());
+        Path resolved = Path.of(command.command());
+        assertEquals(binary.toRealPath(), resolved);
+        assertTrue(resolved.isAbsolute());
+        assertTrue(Files.isRegularFile(resolved));
+        assertTrue(Files.isExecutable(resolved));
         assertEquals("vendor", command.mode());
     }
 
@@ -50,11 +56,12 @@ class RipgrepBinaryResolverTest {
             output.closeEntry();
         }
         Path cacheRoot = tempDir.resolve("cache");
+        Path relativeCacheRoot = relativeToWorkingDirectory(cacheRoot);
         try (URLClassLoader classLoader = new URLClassLoader(new URL[] {jar.toUri().toURL()}, null)) {
             RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
                 new RipgrepPlatform("linux", "x86_64"),
                 tempDir.resolve("missing-resources"),
-                cacheRoot,
+                relativeCacheRoot,
                 classLoader
             );
 
@@ -62,6 +69,7 @@ class RipgrepBinaryResolverTest {
 
             Path extracted = Path.of(command.command());
             assertTrue(extracted.startsWith(cacheRoot));
+            assertTrue(extracted.isAbsolute());
             assertTrue(Files.isRegularFile(extracted));
             assertTrue(Files.isExecutable(extracted));
             assertEquals("vendor", command.mode());
@@ -96,16 +104,69 @@ class RipgrepBinaryResolverTest {
     }
 
     @Test
-    void systemModeUsesCommandNameOnly() {
+    void systemModeResolvesAnAbsoluteExecutableFile() throws Exception {
+        Path systemDirectory = Files.createDirectories(tempDir.resolve("system-bin"));
+        Path executable = systemDirectory.resolve("rg");
+        Files.writeString(executable, "#!/bin/sh\n");
+        executable.toFile().setExecutable(true);
         RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
             new RipgrepPlatform("linux", "x86_64"),
-            tempDir
+            tempDir,
+            tempDir.resolve("cache"),
+            RipgrepBinaryResolver.class.getClassLoader(),
+            List.of(relativeToWorkingDirectory(systemDirectory))
         );
 
         RipgrepBinary command = resolver.resolve(Map.of("lypi.tool.grep.ripgrep.mode", "system"));
 
-        assertEquals("rg", command.command());
+        Path resolved = Path.of(command.command());
+        assertEquals(executable.toRealPath(), resolved);
+        assertTrue(resolved.isAbsolute());
+        assertTrue(Files.isRegularFile(resolved));
+        assertTrue(Files.isExecutable(resolved));
         assertEquals("system", command.mode());
+    }
+
+    @Test
+    void systemModeRejectsDirectoriesAndNonExecutableFiles() throws Exception {
+        Path directoryCandidate = Files.createDirectories(tempDir.resolve("directory-bin/rg"));
+        Path nonExecutableDirectory = Files.createDirectories(tempDir.resolve("non-executable-bin"));
+        Path nonExecutable = Files.writeString(nonExecutableDirectory.resolve("rg"), "#!/bin/sh\n");
+        assertTrue(Files.isDirectory(directoryCandidate));
+        assertTrue(Files.isRegularFile(nonExecutable));
+        assertFalse(Files.isExecutable(nonExecutable));
+        RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
+            new RipgrepPlatform("linux", "x86_64"),
+            tempDir.resolve("missing-resources"),
+            tempDir.resolve("cache"),
+            RipgrepBinaryResolver.class.getClassLoader(),
+            List.of(directoryCandidate.getParent(), nonExecutableDirectory)
+        );
+
+        IllegalStateException exception = assertThrows(
+            IllegalStateException.class,
+            () -> resolver.resolve(Map.of("lypi.tool.grep.ripgrep.mode", "system"))
+        );
+
+        assertTrue(exception.getMessage().contains("未找到可执行的系统 ripgrep"));
+    }
+
+    @Test
+    void systemModeRejectsAnEmptySearchPath() {
+        RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
+            new RipgrepPlatform("linux", "x86_64"),
+            tempDir.resolve("missing-resources"),
+            tempDir.resolve("cache"),
+            RipgrepBinaryResolver.class.getClassLoader(),
+            List.of()
+        );
+
+        IllegalStateException exception = assertThrows(
+            IllegalStateException.class,
+            () -> resolver.resolve(Map.of("lypi.tool.grep.ripgrep.mode", "system"))
+        );
+
+        assertTrue(exception.getMessage().contains("未找到可执行的系统 ripgrep"));
     }
 
     @Test
@@ -131,5 +192,9 @@ class RipgrepBinaryResolverTest {
         Files.writeString(binary, "#!/bin/sh\n");
         binary.toFile().setExecutable(true);
         return binary;
+    }
+
+    private Path relativeToWorkingDirectory(Path path) {
+        return Path.of("").toAbsolutePath().normalize().relativize(path.toAbsolutePath().normalize());
     }
 }

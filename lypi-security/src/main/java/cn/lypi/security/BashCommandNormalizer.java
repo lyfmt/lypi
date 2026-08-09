@@ -75,17 +75,216 @@ final class BashCommandNormalizer {
      * 拆分复合命令段。
      */
     List<String> splitCommandSegments(String normalizedCommand) {
-        if (normalizedCommand.isBlank()) {
-            return List.of();
+        return scan(normalizedCommand).segments();
+    }
+
+    /**
+     * 扫描可静态分析的外层命令结构。
+     */
+    CommandScan scan(String normalizedCommand) {
+        String command = normalizedCommand == null ? "" : normalizedCommand;
+        HeredocScan heredoc = stripStrictQuotedHeredoc(command);
+        SegmentScan segments = splitOutsideQuotes(heredoc.analyzableCommand());
+        return new CommandScan(
+            segments.segments(),
+            heredoc.analyzableCommand(),
+            heredoc.ambiguous() || segments.ambiguous()
+        );
+    }
+
+    private HeredocScan stripStrictQuotedHeredoc(String command) {
+        HeredocOperator operator = findHeredocOperator(command);
+        if (operator == null) {
+            return new HeredocScan(command, false);
         }
-        List<String> commands = new ArrayList<>();
-        for (String part : normalizedCommand.split("\\s*(?:&&|\\|\\||;|\\n|(?<![&])&(?!&)|(?<!\\|)\\|(?!\\|))\\s*")) {
-            String command = stripSafeWrappers(part.trim());
-            if (!command.isBlank()) {
-                commands.add(command);
+        if (!operator.valid()) {
+            return new HeredocScan(command, true);
+        }
+        int headerEnd = command.indexOf('\n', operator.end());
+        if (headerEnd < 0) {
+            return new HeredocScan(command, true);
+        }
+        int lineStart = headerEnd + 1;
+        while (lineStart <= command.length()) {
+            int lineEnd = command.indexOf('\n', lineStart);
+            if (lineEnd < 0) {
+                lineEnd = command.length();
+            }
+            if (command.substring(lineStart, lineEnd).equals(operator.delimiter())) {
+                int suffixStart = lineEnd < command.length() ? lineEnd + 1 : lineEnd;
+                String header = command.substring(0, operator.start())
+                    + " "
+                    + command.substring(operator.end(), headerEnd);
+                String suffix = command.substring(suffixStart);
+                String analyzable = suffix.isEmpty() ? header : header + "\n" + suffix;
+                return new HeredocScan(analyzable, findHeredocOperator(analyzable) != null);
+            }
+            if (lineEnd == command.length()) {
+                break;
+            }
+            lineStart = lineEnd + 1;
+        }
+        return new HeredocScan(command, true);
+    }
+
+    private HeredocOperator findHeredocOperator(String command) {
+        boolean singleQuoted = false;
+        boolean doubleQuoted = false;
+        boolean escaped = false;
+        for (int index = 0; index < command.length(); index++) {
+            char character = command.charAt(index);
+            if (singleQuoted) {
+                if (character == '\'') {
+                    singleQuoted = false;
+                }
+                continue;
+            }
+            if (doubleQuoted) {
+                if (escaped) {
+                    escaped = false;
+                } else if (character == '\\') {
+                    escaped = true;
+                } else if (character == '"') {
+                    doubleQuoted = false;
+                }
+                continue;
+            }
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (character == '\\') {
+                escaped = true;
+            } else if (character == '\'') {
+                singleQuoted = true;
+            } else if (character == '"') {
+                doubleQuoted = true;
+            } else if (character == '<' && index + 1 < command.length() && command.charAt(index + 1) == '<') {
+                return parseHeredocOperator(command, index);
             }
         }
-        return commands;
+        return null;
+    }
+
+    private HeredocOperator parseHeredocOperator(String command, int start) {
+        int cursor = start + 2;
+        if (cursor < command.length() && (command.charAt(cursor) == '<' || command.charAt(cursor) == '-')) {
+            return HeredocOperator.invalid(start);
+        }
+        while (cursor < command.length() && horizontalWhitespace(command.charAt(cursor))) {
+            cursor++;
+        }
+        if (cursor >= command.length() || command.charAt(cursor) == '\n' || command.charAt(cursor) == '-') {
+            return HeredocOperator.invalid(start);
+        }
+        char quote = command.charAt(cursor);
+        if (quote != '\'' && quote != '"') {
+            return HeredocOperator.invalid(start);
+        }
+        int delimiterStart = ++cursor;
+        while (cursor < command.length() && command.charAt(cursor) != quote && command.charAt(cursor) != '\n') {
+            cursor++;
+        }
+        if (cursor >= command.length() || command.charAt(cursor) != quote) {
+            return HeredocOperator.invalid(start);
+        }
+        String delimiter = command.substring(delimiterStart, cursor);
+        if (!delimiter.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            return HeredocOperator.invalid(start);
+        }
+        int end = cursor + 1;
+        if (end < command.length() && !heredocBoundary(command.charAt(end))) {
+            return HeredocOperator.invalid(start);
+        }
+        return new HeredocOperator(start, end, delimiter, true);
+    }
+
+    private boolean horizontalWhitespace(char character) {
+        return character == ' ' || character == '\t';
+    }
+
+    private boolean heredocBoundary(char character) {
+        return Character.isWhitespace(character) || "&|;()<>".indexOf(character) >= 0;
+    }
+
+    private SegmentScan splitOutsideQuotes(String command) {
+        if (command.isBlank()) {
+            return new SegmentScan(List.of(), false);
+        }
+        List<String> commands = new ArrayList<>();
+        StringBuilder segment = new StringBuilder();
+        boolean singleQuoted = false;
+        boolean doubleQuoted = false;
+        boolean escaped = false;
+        for (int index = 0; index < command.length(); index++) {
+            char character = command.charAt(index);
+            if (singleQuoted) {
+                segment.append(character);
+                if (character == '\'') {
+                    singleQuoted = false;
+                }
+                continue;
+            }
+            if (doubleQuoted) {
+                segment.append(character);
+                if (escaped) {
+                    escaped = false;
+                } else if (character == '\\') {
+                    escaped = true;
+                } else if (character == '"') {
+                    doubleQuoted = false;
+                }
+                continue;
+            }
+            if (escaped) {
+                segment.append(character);
+                escaped = false;
+                continue;
+            }
+            if (character == '\\') {
+                segment.append(character);
+                escaped = true;
+                continue;
+            }
+            if (character == '\'') {
+                segment.append(character);
+                singleQuoted = true;
+                continue;
+            }
+            if (character == '"') {
+                segment.append(character);
+                doubleQuoted = true;
+                continue;
+            }
+            int separatorWidth = separatorWidth(command, index);
+            if (separatorWidth > 0) {
+                addSegment(commands, segment);
+                index += separatorWidth - 1;
+                continue;
+            }
+            segment.append(character);
+        }
+        addSegment(commands, segment);
+        return new SegmentScan(List.copyOf(commands), singleQuoted || doubleQuoted || escaped);
+    }
+
+    private int separatorWidth(String command, int index) {
+        char character = command.charAt(index);
+        if (character == '\n' || character == ';') {
+            return 1;
+        }
+        if (character != '&' && character != '|') {
+            return 0;
+        }
+        return index + 1 < command.length() && command.charAt(index + 1) == character ? 2 : 1;
+    }
+
+    private void addSegment(List<String> commands, StringBuilder segment) {
+        String command = stripSafeWrappers(segment.toString().trim());
+        if (!command.isBlank()) {
+            commands.add(command);
+        }
+        segment.setLength(0);
     }
 
     private int stripTimeout(List<String> words, int index) {
@@ -223,5 +422,28 @@ final class BashCommandNormalizer {
             return List.of();
         }
         return List.of(command.split("\\s+"));
+    }
+
+    record CommandScan(
+        List<String> segments,
+        String analyzableCommand,
+        boolean ambiguous
+    ) {
+        CommandScan {
+            segments = segments == null ? List.of() : List.copyOf(segments);
+            analyzableCommand = analyzableCommand == null ? "" : analyzableCommand;
+        }
+    }
+
+    private record HeredocScan(String analyzableCommand, boolean ambiguous) {
+    }
+
+    private record HeredocOperator(int start, int end, String delimiter, boolean valid) {
+        private static HeredocOperator invalid(int start) {
+            return new HeredocOperator(start, start + 2, "", false);
+        }
+    }
+
+    private record SegmentScan(List<String> segments, boolean ambiguous) {
     }
 }

@@ -115,6 +115,39 @@ class GrepToolTest {
     }
 
     @Test
+    void relativeAndAbsoluteFilePathsUseTheSameDirectoryCwd() throws Exception {
+        vendorBinary();
+        Path nested = Files.createDirectories(tempDir.resolve("src/pkg"));
+        Path file = Files.writeString(nested.resolve("sample.py"), "needle\n");
+        RecordingExecutor relativeExecutor = new RecordingExecutor(
+            new ExecutionResult(1, "", "", false, Optional.empty())
+        );
+        RecordingExecutor absoluteExecutor = new RecordingExecutor(
+            new ExecutionResult(1, "", "", false, Optional.empty())
+        );
+
+        ToolResult<String> relativeResult = tool(relativeExecutor).execute(
+            Map.of("pattern", "needle", "path", "src/pkg/sample.py"),
+            context(),
+            message -> {
+            }
+        );
+        ToolResult<String> absoluteResult = tool(absoluteExecutor).execute(
+            Map.of("pattern", "needle", "path", file.toString()),
+            context(),
+            message -> {
+            }
+        );
+
+        assertFalse(relativeResult.isError());
+        assertFalse(absoluteResult.isError());
+        assertEquals(nested, relativeExecutor.request.cwd());
+        assertEquals(nested, absoluteExecutor.request.cwd());
+        assertEquals(file.toString(), relativeExecutor.request.command().getLast());
+        assertEquals(file.toString(), absoluteExecutor.request.command().getLast());
+    }
+
+    @Test
     void doesNotSearchSymlinkDirectoryOutsideWorkspace(@TempDir Path outsideDir) throws Exception {
         vendorBinary();
         Path outside = outsideDir.resolve("secret");

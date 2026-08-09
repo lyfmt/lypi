@@ -236,4 +236,46 @@ class DefaultBashRiskAnalyzerTest {
         assertThat(destructivePipe.riskLevel()).isEqualTo(BashRiskLevel.DESTRUCTIVE);
         assertThat(destructivePipe.reasons()).contains("包含破坏性命令");
     }
+
+    @Test
+    void analyzeKeepsQuotedPipelinePatternsInTheirCommandSegment() {
+        BashRiskAnalysis analysis = analyzer.analyze(
+            "grep -RInE 'class Nominal|class Categorical|margin' seaborn tests | head -200"
+        );
+
+        assertThat(analysis.parsedCommands()).containsExactly(
+            "grep -RInE 'class Nominal|class Categorical|margin' seaborn tests",
+            "head -200"
+        );
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.MEDIUM);
+        assertThat(analysis.staticallyKnown()).isTrue();
+    }
+
+    @Test
+    void analyzeTreatsStrictQuotedPythonHeredocAsStaticSandboxedCode() {
+        BashRiskAnalysis analysis = analyzer.analyze("""
+            python - <<'PY'
+            print('literal | > $(ignored) rm -rf target')
+            PY
+            """);
+
+        assertThat(analysis.parsedCommands()).containsExactly("python -");
+        assertThat(analysis.redirectTargets()).isEmpty();
+        assertThat(analysis.riskLevel()).isEqualTo(BashRiskLevel.MEDIUM);
+        assertThat(analysis.staticallyKnown()).isTrue();
+    }
+
+    @Test
+    void analyzeKeepsHeredocShellSinksAndUnsupportedFormsUnknown() {
+        for (String command : java.util.List.of(
+            "cat <<'EOF' | sh\necho unsafe\nEOF\n",
+            "cat <<EOF\necho $PATH\nEOF\n",
+            "cat <<'EOF'\nmissing terminator\n"
+        )) {
+            BashRiskAnalysis analysis = analyzer.analyze(command);
+
+            assertThat(analysis.riskLevel()).as(command).isEqualTo(BashRiskLevel.UNKNOWN);
+            assertThat(analysis.staticallyKnown()).as(command).isFalse();
+        }
+    }
 }

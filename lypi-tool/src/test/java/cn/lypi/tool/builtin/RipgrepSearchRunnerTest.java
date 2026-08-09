@@ -52,6 +52,117 @@ class RipgrepSearchRunnerTest {
     }
 
     @Test
+    void fileSearchUsesParentDirectoryAndAbsoluteTargetOperand() throws Exception {
+        Path binary = vendorBinary();
+        Path nested = Files.createDirectories(tempDir.resolve("src/pkg"));
+        Path file = Files.writeString(nested.resolve("sample.py"), "needle\n");
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+
+        RipgrepSearchResult result = runner(executor).search(
+            GrepQuery.fromInput(Map.of("pattern", "needle")),
+            file,
+            context(),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(nested, executor.request.cwd());
+        assertEquals(binary.toAbsolutePath().normalize().toString(), executor.request.command().getFirst());
+        assertTrue(executor.request.command().contains("--with-filename"));
+        assertEquals(
+            List.of("--", file.toAbsolutePath().normalize().toString()),
+            executor.request.command().subList(
+                executor.request.command().size() - 2,
+                executor.request.command().size()
+            )
+        );
+        assertTrue(executor.request.sandboxPolicy().allowRead().contains(file));
+        assertTrue(executor.request.sandboxPolicy().allowRead().contains(nested));
+    }
+
+    @Test
+    void directorySearchKeepsDirectoryAsWorkingDirectoryWithoutTargetOperand() throws Exception {
+        vendorBinary();
+        Path nested = Files.createDirectories(tempDir.resolve("src/pkg"));
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+
+        RipgrepSearchResult result = runner(executor).search(
+            GrepQuery.fromInput(Map.of("pattern", "needle")),
+            nested,
+            context(),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(nested, executor.request.cwd());
+        assertFalse(executor.request.command().contains(nested.toString()));
+    }
+
+    @Test
+    void fileSymlinkMountsLexicalAndRealTargets() throws Exception {
+        vendorBinary();
+        Path realDirectory = Files.createDirectories(tempDir.resolve("real"));
+        Path realFile = Files.writeString(realDirectory.resolve("sample.py"), "needle\n");
+        Path linkDirectory = Files.createDirectories(tempDir.resolve("links"));
+        Path link = Files.createSymbolicLink(linkDirectory.resolve("sample-link.py"), realFile);
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+
+        RipgrepSearchResult result = runner(executor).search(
+            GrepQuery.fromInput(Map.of("pattern", "needle")),
+            link,
+            context(),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(linkDirectory, executor.request.cwd());
+        assertEquals(link.toString(), executor.request.command().getLast());
+        assertTrue(executor.request.sandboxPolicy().allowRead().contains(link));
+        assertTrue(executor.request.sandboxPolicy().allowRead().contains(realFile.toRealPath()));
+    }
+
+    @Test
+    void systemBinaryParentIsMountedReadOnly() throws Exception {
+        Path systemDirectory = Files.createDirectories(tempDir.resolve("custom-bin"));
+        Path executable = Files.writeString(systemDirectory.resolve("rg"), "#!/bin/sh\n");
+        executable.toFile().setExecutable(true);
+        RipgrepBinaryResolver resolver = RipgrepBinaryResolver.forTesting(
+            new RipgrepPlatform("linux", "x86_64"),
+            tempDir.resolve("missing-resources"),
+            tempDir.resolve("cache"),
+            RipgrepSearchRunner.class.getClassLoader(),
+            List.of(systemDirectory)
+        );
+        RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()));
+        RipgrepSearchRunner runner = new RipgrepSearchRunner(
+            executor,
+            new RipgrepCommandBuilder(),
+            resolver,
+            Duration.ofSeconds(20)
+        );
+
+        RipgrepSearchResult result = runner.search(
+            GrepQuery.fromInput(Map.of("pattern", "needle")),
+            tempDir,
+            new ToolUseContext(
+                "ses_1",
+                "msg_1",
+                tempDir,
+                Map.of(RipgrepBinaryResolver.MODE_KEY, "system")
+            ),
+            message -> {
+            }
+        );
+
+        assertFalse(result.isError());
+        assertEquals(executable.toRealPath().toString(), executor.request.command().getFirst());
+        assertTrue(executor.request.sandboxPolicy().allowRead().contains(systemDirectory.toRealPath()));
+    }
+
+    @Test
     void exitOneIsNoMatchSuccess() throws Exception {
         vendorBinary();
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(1, "", "", false, Optional.empty()));

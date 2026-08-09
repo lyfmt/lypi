@@ -8,9 +8,12 @@ import cn.lypi.contracts.runtime.Executor;
 import cn.lypi.contracts.runtime.NetworkMode;
 import cn.lypi.contracts.runtime.SandboxRuntimePolicy;
 import cn.lypi.contracts.tool.ToolUseContext;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -37,20 +40,23 @@ final class RipgrepSearchRunner {
 
     RipgrepSearchResult search(GrepQuery query, Path searchRoot, ToolUseContext context, ProgressSink progress) {
         RipgrepBinary binary;
+        SearchTarget target;
         try {
             binary = binaryResolver.resolve(context == null ? Map.of() : context.metadata());
+            target = searchTarget(searchRoot);
         } catch (RuntimeException exception) {
             return RipgrepSearchResult.error(exception.getMessage());
         }
         List<String> command = new ArrayList<>();
         command.add(binary.command());
         command.addAll(commandBuilder.build(query));
+        command.addAll(target.arguments());
         ExecutionRequest request = new ExecutionRequest(
             command,
-            searchRoot,
+            target.cwd(),
             Map.of(),
             timeout,
-            readOnlyPolicy(searchRoot, binary)
+            readOnlyPolicy(searchRoot, target.cwd(), binary)
         );
         ExecutionResult result = executor.execute(request, progress, abortSignal(context));
         if (result.timedOut()) {
@@ -66,9 +72,23 @@ final class RipgrepSearchRunner {
         return RipgrepSearchResult.error(message);
     }
 
-    private SandboxRuntimePolicy readOnlyPolicy(Path searchRoot, RipgrepBinary binary) {
+    private SearchTarget searchTarget(Path searchRoot) {
+        Path target = Objects.requireNonNull(searchRoot, "searchRoot must not be null")
+            .toAbsolutePath()
+            .normalize();
+        if (Files.isDirectory(target)) {
+            return new SearchTarget(target, List.of());
+        }
+        Path parent = target.getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            throw new IllegalArgumentException("搜索目标的父路径不是目录: " + target);
+        }
+        return new SearchTarget(parent, List.of("--with-filename", "--", target.toString()));
+    }
+
+    private SandboxRuntimePolicy readOnlyPolicy(Path searchRoot, Path executionCwd, RipgrepBinary binary) {
         return new SandboxRuntimePolicy(
-            readOnlyPaths(searchRoot, binary),
+            readOnlyPaths(searchRoot, executionCwd, binary),
             List.of(),
             List.of(),
             List.of(),
@@ -78,8 +98,8 @@ final class RipgrepSearchRunner {
         );
     }
 
-    private List<Path> readOnlyPaths(Path searchRoot, RipgrepBinary binary) {
-        List<Path> paths = new ArrayList<>();
+    private List<Path> readOnlyPaths(Path searchRoot, Path executionCwd, RipgrepBinary binary) {
+        LinkedHashSet<Path> paths = new LinkedHashSet<>();
         paths.add(Path.of("/usr"));
         paths.add(Path.of("/bin"));
         paths.add(Path.of("/sbin"));
@@ -88,7 +108,14 @@ final class RipgrepSearchRunner {
         paths.add(Path.of("/etc"));
         paths.add(Path.of("/nix/store"));
         paths.add(Path.of("/run/current-system/sw"));
-        paths.add(searchRoot);
+        paths.add(executionCwd.toAbsolutePath().normalize());
+        Path lexicalTarget = searchRoot.toAbsolutePath().normalize();
+        paths.add(lexicalTarget);
+        try {
+            paths.add(lexicalTarget.toRealPath());
+        } catch (IOException ignored) {
+            // GrepTool validates existence before reaching the runner; retain the lexical mount on races.
+        }
         Path binaryParent = binaryParent(binary);
         if (binaryParent != null) {
             paths.add(binaryParent);
@@ -97,7 +124,7 @@ final class RipgrepSearchRunner {
     }
 
     private Path binaryParent(RipgrepBinary binary) {
-        if (binary == null || binary.command() == null || binary.command().isBlank() || "system".equals(binary.mode())) {
+        if (binary == null || binary.command() == null || binary.command().isBlank()) {
             return null;
         }
         Path command = Path.of(binary.command());
@@ -125,5 +152,12 @@ final class RipgrepSearchRunner {
             }
         }
         return List.copyOf(lines);
+    }
+
+    private record SearchTarget(Path cwd, List<String> arguments) {
+        private SearchTarget {
+            cwd = Objects.requireNonNull(cwd, "cwd must not be null");
+            arguments = arguments == null ? List.of() : List.copyOf(arguments);
+        }
     }
 }

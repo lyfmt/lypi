@@ -90,6 +90,54 @@ class ApprovalCoordinatorTest {
     }
 
     @Test
+    void denyingGateExplainsUnavailableAskApprovalChannel() {
+        ApprovalCoordinator coordinator = coordinator(
+            PermissionGate.denying(),
+            PermissionUpdateStore.noop(),
+            List.of()
+        );
+        PermissionDecision decision = new PermissionDecision(
+            PermissionBehavior.ASK,
+            PermissionDecisionReason.BASH_RISK,
+            "Bash 命令无法静态确认风险，需要用户确认。",
+            Optional.empty(),
+            Map.of("approvalKind", ApprovalKind.COMMAND)
+        );
+
+        PermissionGateResult result = coordinator.resolve(
+            request("bash", Map.of("command", "echo $(id)")),
+            TestTools.echo("bash", List.of(), false, false, true),
+            context(runtimeState(ApprovalMode.NEVER)),
+            decision
+        );
+
+        assertEquals(PermissionGateResult.Status.DENY, result.status());
+        assertTrue(result.message().orElseThrow().contains("ASK 没有可用审批通道"));
+        assertTrue(result.message().orElseThrow().contains(decision.message()));
+    }
+
+    @Test
+    void denyingGateExplainsUnavailableAskForAdditionalPermissions() {
+        ApprovalCoordinator coordinator = coordinator(
+            PermissionGate.denying(),
+            PermissionUpdateStore.noop(),
+            List.of()
+        );
+
+        PermissionGateResult result = coordinator.resolveAdditionalPermissions(
+            request("request_permissions", Map.of("reason", "need write access")),
+            TestTools.echo("request_permissions", List.of(), false, false, false),
+            context(runtimeState(ApprovalMode.NEVER)),
+            "need write access",
+            AdditionalPermissionProfile.empty()
+        );
+
+        assertEquals(PermissionGateResult.Status.DENY, result.status());
+        assertTrue(result.message().orElseThrow().contains("ASK 没有可用审批通道"));
+        assertTrue(result.message().orElseThrow().contains("need write access"));
+    }
+
+    @Test
     void legacyOnlyBypassModeAllowsWithoutCallingGate() {
         AtomicInteger gateCalls = new AtomicInteger();
         ApprovalCoordinator coordinator = coordinator(
