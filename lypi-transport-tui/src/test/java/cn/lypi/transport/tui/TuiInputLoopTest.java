@@ -901,12 +901,15 @@ class TuiInputLoopTest {
         loop.acceptKey(TerminalKey.ENTER);
         loop.acceptText("/login");
         loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptPaste("zen");
+        loop.acceptKey(TerminalKey.ENTER);
         loop.acceptPaste("https://api.example.test/v1");
         loop.acceptKey(TerminalKey.ENTER);
         loop.acceptPaste(authKey);
 
         assertEquals("", loop.draft());
         assertEquals(List.of(
+            "Channel name: zen",
             "Base URL: https://api.example.test/v1",
             "Auth key: ***********"
         ), loop.overlayLines());
@@ -916,6 +919,7 @@ class TuiInputLoopTest {
 
         assertEquals(List.of("ordinary input"), submit.submitted);
         assertEquals(1, submit.providerLogins.size());
+        assertEquals("zen", submit.providerLogins.getFirst().channelName());
         assertEquals("https://api.example.test/v1", submit.providerLogins.getFirst().baseUrl());
         assertTrue(authKey.equals(submit.providerLogins.getFirst().authKey()));
         assertEquals(List.of(), loop.overlayLines());
@@ -935,11 +939,11 @@ class TuiInputLoopTest {
 
         loop.acceptText("/login");
         loop.acceptKey(TerminalKey.ENTER);
-        loop.acceptText("https://api.example.test/v1");
+        loop.acceptText("zen");
         loop.acceptKey(TerminalKey.ESC);
         loop.acceptText("/login");
         loop.acceptKey(TerminalKey.ENTER);
-        loop.acceptText("https://api.example.test/v1");
+        loop.acceptText("zen");
         loop.acceptKey(TerminalKey.CTRL_C);
 
         assertEquals(List.of(), loop.overlayLines());
@@ -1784,8 +1788,8 @@ class TuiInputLoopTest {
         }
 
         @Override
-        public void submitProviderLogin(String baseUrl, String authKey) {
-            providerLogins.add(new LoginSubmission(baseUrl, authKey));
+        public void submitProviderLogin(String channelName, String baseUrl, String authKey) {
+            providerLogins.add(new LoginSubmission(channelName, baseUrl, authKey));
         }
 
         @Override
@@ -1830,10 +1834,11 @@ class TuiInputLoopTest {
             resumes.add(sessionId + ":" + leafId);
         }
 
-        private record LoginSubmission(String baseUrl, String authKey) {
+        private record LoginSubmission(String channelName, String baseUrl, String authKey) {
             @Override
             public String toString() {
-                return "LoginSubmission[baseUrl=" + baseUrl + ", authKey=<redacted>]";
+                return "LoginSubmission[channelName=" + channelName
+                    + ", baseUrl=" + baseUrl + ", authKey=<redacted>]";
             }
         }
     }

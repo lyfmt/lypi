@@ -36,11 +36,10 @@ public class LoginProviderPropertiesStore {
             .resolve("login-providers.properties");
     }
 
-    public void save(String provider, URI baseUrl, String authKey, List<String> modelIds) throws IOException {
+    public void save(String provider, URI baseUrl, String authKey) throws IOException {
         String requiredProvider = requireProvider(provider);
         URI requiredBaseUrl = Objects.requireNonNull(baseUrl, "baseUrl");
         String requiredAuthKey = Objects.requireNonNull(authKey, "authKey");
-        List<String> requiredModelIds = List.copyOf(Objects.requireNonNull(modelIds, "modelIds"));
         Path directory = file.getParent();
         Path temporary = null;
         boolean moved = false;
@@ -49,7 +48,7 @@ public class LoginProviderPropertiesStore {
             Properties properties = readProperties();
             String prefix = PROVIDERS_PREFIX + requiredProvider + ".";
             removeProviderProperties(properties, prefix);
-            writeProviderProperties(properties, prefix, requiredBaseUrl, requiredAuthKey, requiredModelIds);
+            writeProviderProperties(properties, prefix, requiredBaseUrl, requiredAuthKey);
 
             temporary = Files.createTempFile(directory, ".login-providers-", ".tmp");
             setPrivatePermissionsIfSupported(temporary);
@@ -89,8 +88,7 @@ public class LoginProviderPropertiesStore {
         Properties properties,
         String prefix,
         URI baseUrl,
-        String authKey,
-        List<String> modelIds
+        String authKey
     ) {
         properties.setProperty(prefix + "enabled", "true");
         properties.setProperty(prefix + "api-style", "openai_compatible");
@@ -103,10 +101,7 @@ public class LoginProviderPropertiesStore {
         for (int index = 0; index < DISCOVERY_PATHS.size(); index++) {
             properties.setProperty(prefix + "model-discovery.paths[" + index + "]", DISCOVERY_PATHS.get(index));
         }
-        for (int index = 0; index < modelIds.size(); index++) {
-            properties.setProperty(prefix + "models[" + index + "].model-id", modelIds.get(index));
-            properties.setProperty(prefix + "models[" + index + "].supports-thinking", "false");
-        }
+        properties.setProperty(prefix + "compat.requires-reasoning-content-on-assistant-messages", "true");
     }
 
     private static void writeProperties(Path temporary, Properties properties) throws IOException {

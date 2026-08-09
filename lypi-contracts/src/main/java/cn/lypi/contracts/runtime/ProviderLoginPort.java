@@ -7,10 +7,10 @@ package cn.lypi.contracts.runtime;
  */
 @FunctionalInterface
 public interface ProviderLoginPort {
-    ProviderLoginResult register(String baseUrl, String authKey);
+    ProviderLoginResult register(String channelName, String baseUrl, String authKey);
 
     static ProviderLoginPort unavailable() {
-        return (baseUrl, authKey) -> {
+        return (channelName, baseUrl, authKey) -> {
             throw new IllegalStateException("provider login is unavailable");
         };
     }

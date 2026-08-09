@@ -9,16 +9,18 @@ import org.junit.jupiter.api.Test;
 
 class LoginOverlayTest {
     @Test
-    void collectsBaseUrlThenMasksAuthKeyAndRedactsSubmissionString() {
+    void collectsChannelThenBaseUrlAndMasksAuthKey() {
         String authKey = "test-secret";
         LoginOverlay overlay = new LoginOverlay();
 
+        overlay.append("zen");
+        assertTrue(overlay.accept().isEmpty());
         overlay.append("https://api.example.test/v1");
-
         assertTrue(overlay.accept().isEmpty());
         overlay.append(authKey);
 
         assertEquals(List.of(
+            "Channel name: zen",
             "Base URL: https://api.example.test/v1",
             "Auth key: ***********"
         ), overlay.lines());
@@ -26,6 +28,7 @@ class LoginOverlayTest {
 
         LoginOverlay.Submission submission = overlay.accept().orElseThrow();
 
+        assertEquals("zen", submission.channelName());
         assertEquals("https://api.example.test/v1", submission.baseUrl());
         assertTrue(authKey.equals(submission.authKey()));
         assertFalse(submission.toString().contains(authKey));
@@ -34,12 +37,15 @@ class LoginOverlayTest {
     @Test
     void supportsBackspaceAndClearWithoutRetainingMaskedInput() {
         LoginOverlay overlay = new LoginOverlay();
+        overlay.append("zen");
+        overlay.accept();
         overlay.append("https://api.example.test/v1");
         overlay.accept();
         overlay.append("secret");
         overlay.backspace();
 
         assertEquals(List.of(
+            "Channel name: zen",
             "Base URL: https://api.example.test/v1",
             "Auth key: *****"
         ), overlay.lines());
@@ -48,5 +54,28 @@ class LoginOverlayTest {
 
         assertEquals(List.of(), overlay.lines());
         assertTrue(overlay.accept().isEmpty());
+    }
+
+    @Test
+    void refusesBlankInputAtEveryStep() {
+        LoginOverlay overlay = new LoginOverlay();
+        overlay.open();
+
+        assertTrue(overlay.accept().isEmpty());
+        assertEquals(List.of("Channel name: "), overlay.lines());
+
+        overlay.append("zen");
+        assertTrue(overlay.accept().isEmpty());
+        assertTrue(overlay.accept().isEmpty());
+        assertEquals(List.of("Channel name: zen", "Base URL: "), overlay.lines());
+
+        overlay.append("https://api.example.test/v1");
+        assertTrue(overlay.accept().isEmpty());
+        assertTrue(overlay.accept().isEmpty());
+        assertEquals(List.of(
+            "Channel name: zen",
+            "Base URL: https://api.example.test/v1",
+            "Auth key: "
+        ), overlay.lines());
     }
 }

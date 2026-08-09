@@ -163,22 +163,22 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     }
 
     @Override
-    public void submitProviderLogin(String baseUrl, String authKey) {
+    public void submitProviderLogin(String channelName, String baseUrl, String authKey) {
         if (!providerLoginRunning.compareAndSet(false, true)) {
             publishSlashCommandError("login: provider registration is running");
             return;
         }
         try {
-            executor.execute(() -> runProviderLogin(baseUrl, authKey));
+            executor.execute(() -> runProviderLogin(channelName, baseUrl, authKey));
         } catch (RuntimeException error) {
             providerLoginRunning.set(false);
             publishSlashCommandError("login: provider registration failed");
         }
     }
 
-    private void runProviderLogin(String baseUrl, String authKey) {
+    private void runProviderLogin(String channelName, String baseUrl, String authKey) {
         try {
-            ProviderLoginResult result = providerLogin.register(baseUrl, authKey);
+            ProviderLoginResult result = providerLogin.register(channelName, baseUrl, authKey);
             int modelCount = result.models().size();
             publishSlashCommandNotice(
                 "login: registered " + result.provider() + " (" + modelCount + " model"

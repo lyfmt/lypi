@@ -161,6 +161,7 @@ class JLineTuiTransportTest {
         RecordingCore core = new RecordingCore();
         RecordingSessionManager session = new RecordingSessionManager();
         RecordingProviderLoginPort login = new RecordingProviderLoginPort(
+            "zen",
             "https://api.example.test/v1",
             authKey
         );
@@ -169,7 +170,12 @@ class JLineTuiTransportTest {
             core,
             events,
             io,
-            new QueueInputSource("/login", "\r", "https://api.example.test/v1", "\r", authKey, "\r"),
+            new QueueInputSource(
+                "/login", "\r",
+                "zen", "\r",
+                "https://api.example.test/v1", "\r",
+                authKey, "\r"
+            ),
             List.of(),
             session,
             emptyResources(),
@@ -186,6 +192,7 @@ class JLineTuiTransportTest {
         transport.drainInputForTest();
 
         assertTrue(login.registered.await(2, TimeUnit.SECONDS));
+        assertTrue(login.acceptedChannelName);
         assertTrue(login.acceptedBaseUrl);
         assertTrue(login.acceptedAuthKey);
         assertTrue(core.requests.isEmpty());
@@ -1161,23 +1168,27 @@ class JLineTuiTransportTest {
     }
 
     private static final class RecordingProviderLoginPort implements ProviderLoginPort {
+        private final String expectedChannelName;
         private final String expectedBaseUrl;
         private final String expectedAuthKey;
         private final CountDownLatch registered = new CountDownLatch(1);
+        private volatile boolean acceptedChannelName;
         private volatile boolean acceptedBaseUrl;
         private volatile boolean acceptedAuthKey;
 
-        private RecordingProviderLoginPort(String expectedBaseUrl, String expectedAuthKey) {
+        private RecordingProviderLoginPort(String expectedChannelName, String expectedBaseUrl, String expectedAuthKey) {
+            this.expectedChannelName = expectedChannelName;
             this.expectedBaseUrl = expectedBaseUrl;
             this.expectedAuthKey = expectedAuthKey;
         }
 
         @Override
-        public ProviderLoginResult register(String baseUrl, String authKey) {
+        public ProviderLoginResult register(String channelName, String baseUrl, String authKey) {
+            acceptedChannelName = expectedChannelName.equals(channelName);
             acceptedBaseUrl = expectedBaseUrl.equals(baseUrl);
             acceptedAuthKey = expectedAuthKey.equals(authKey);
             registered.countDown();
-            return new ProviderLoginResult("login-example", List.of(model("login-example", "alpha")));
+            return new ProviderLoginResult(channelName, List.of(model(channelName, "alpha")));
         }
     }
 

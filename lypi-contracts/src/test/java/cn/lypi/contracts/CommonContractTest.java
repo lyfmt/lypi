@@ -2,6 +2,7 @@ package cn.lypi.contracts;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.boundary.BoundaryCheckReport;
@@ -167,10 +168,20 @@ class CommonContractTest {
             () -> assertMethod(ChildSessionPort.class, "create", 1),
             () -> assertMethod(SessionManagerFactoryPort.class, "open", 2),
             () -> assertMethod(SessionStorageRootPort.class, "sessionStorageRoot", 0),
-            () -> assertMethod(ProviderLoginPort.class, "register", 2),
+            () -> assertMethod(ProviderLoginPort.class, "register", 3),
             () -> assertMethod(ProgressSink.class, "progress", 1),
             () -> assertMethod(ToolProgressEvent.class, "progress", 0)
         );
+    }
+
+    @Test
+    void unavailableProviderLoginUsesTheNamedChannelContract() {
+        IllegalStateException error = assertThrows(
+            IllegalStateException.class,
+            () -> ProviderLoginPort.unavailable().register("zen", "https://example.test/v1", "test-key")
+        );
+
+        assertEquals("provider login is unavailable", error.getMessage());
     }
 
     @Test

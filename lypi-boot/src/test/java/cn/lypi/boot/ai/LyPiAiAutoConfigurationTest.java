@@ -23,6 +23,7 @@ import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.runtime.ProviderLoginPort;
+import cn.lypi.contracts.runtime.ProviderLoginResult;
 import java.lang.reflect.Field;
 import java.net.URI;
 import java.nio.file.Files;
@@ -208,7 +209,7 @@ class LyPiAiAutoConfigurationTest {
                 }
             })
             .run(context -> assertThatThrownBy(() -> context.getBean(ProviderLoginPort.class)
-                .register("https://example.test/v1", "fixture-key"))
+                .register("zen", "https://example.test/v1", "fixture-key"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("provider login is unavailable"));
     }
@@ -228,6 +229,7 @@ class LyPiAiAutoConfigurationTest {
             lypi.ai.providers.login-fixture.model-discovery.enabled=true
             lypi.ai.providers.login-fixture.model-discovery.paths[0]=/models
             lypi.ai.providers.login-fixture.model-discovery.paths[1]=/model
+            lypi.ai.providers.login-fixture.compat.requires-reasoning-content-on-assistant-messages=true
             """);
 
         new ApplicationContextRunner()
@@ -246,6 +248,14 @@ class LyPiAiAutoConfigurationTest {
                 assertThat(context.getBean(ProviderLoginPort.class)).isNotNull();
                 assertThat(context.getBean(ApiProviderRegistry.class)
                     .find(cn.lypi.contracts.model.ApiStyle.OPENAI_COMPATIBLE)).isPresent();
+                List<?> adapters = context.getBean("openAiCompatibleProviderAdapters", List.class);
+                OpenAiCompatibleProviderAdapter adapter = adapters.stream()
+                    .map(OpenAiCompatibleProviderAdapter.class::cast)
+                    .filter(candidate -> config(candidate).provider().equals("login-fixture"))
+                    .findFirst()
+                    .orElseThrow();
+                assertThat(config(adapter).compat().get("requires-reasoning-content-on-assistant-messages"))
+                    .isIn(true, "true");
             });
     }
 
@@ -330,6 +340,37 @@ class LyPiAiAutoConfigurationTest {
                     assertThat(descriptor.supportsImageInput()).isFalse();
                 });
                 assertThat(model(registry, "fixture", "remote-defaulted")).satisfies(descriptor -> {
+                    assertThat(descriptor.contextWindow()).isEqualTo(192_000);
+                    assertThat(descriptor.maxOutputTokens()).isEqualTo(12_288);
+                    assertThat(descriptor.supportsThinking()).isTrue();
+                    assertThat(descriptor.supportsImageInput()).isFalse();
+                });
+            });
+    }
+
+    @Test
+    void passesConfiguredDiscoveryDefaultsToRuntimeProviderLogin() {
+        Path home = tempDir.resolve("runtime-login-home");
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(RemoteModelDiscoveryClient.class, () -> new FixedRemoteModelDiscoveryClient("runtime-model"))
+            .withBean(LoginProviderPropertiesStore.class, () -> new LoginProviderPropertiesStore(home))
+            .withPropertyValues(
+                "lypi.ai.model-discovery.defaults.context-window=192000",
+                "lypi.ai.model-discovery.defaults.max-output-tokens=12288",
+                "lypi.ai.model-discovery.defaults.supports-thinking=true",
+                "lypi.ai.model-discovery.defaults.supports-image-input=false",
+                "lypi.ai.providers.openai.enabled=false"
+            )
+            .run(context -> {
+                ProviderLoginResult result = context.getBean(ProviderLoginPort.class).register(
+                    "zen",
+                    "https://api.fixture.test/v1",
+                    "fixture-key"
+                );
+
+                assertThat(result.models()).singleElement().satisfies(descriptor -> {
                     assertThat(descriptor.contextWindow()).isEqualTo(192_000);
                     assertThat(descriptor.maxOutputTokens()).isEqualTo(12_288);
                     assertThat(descriptor.supportsThinking()).isTrue();

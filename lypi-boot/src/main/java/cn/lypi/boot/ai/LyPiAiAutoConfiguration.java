@@ -125,6 +125,7 @@ public class LyPiAiAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(ProviderLoginPort.class)
     public ProviderLoginPort providerLoginPort(
+        LyPiAiProperties properties,
         RemoteModelDiscoveryClient discoveryClient,
         ObjectProvider<RuntimeModelRegistry> modelRegistry,
         @Qualifier("openAiCompatibleApiProvider") ObjectProvider<ProviderAdapterApiProvider> openAiDispatcher,
@@ -139,7 +140,8 @@ public class LyPiAiAutoConfiguration {
             discoveryClient,
             runtimeModelRegistry,
             dispatcher,
-            propertiesStore
+            propertiesStore,
+            descriptorDefaults(properties)
         );
     }
 

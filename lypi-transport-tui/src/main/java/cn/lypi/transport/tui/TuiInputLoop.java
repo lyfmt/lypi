@@ -711,7 +711,7 @@ final class TuiInputLoop {
             if (submission.isPresent()) {
                 LoginOverlay.Submission value = submission.orElseThrow();
                 closeLoginOverlay();
-                submitHandler.submitProviderLogin(value.baseUrl(), value.authKey());
+                submitHandler.submitProviderLogin(value.channelName(), value.baseUrl(), value.authKey());
             }
             render();
             return;

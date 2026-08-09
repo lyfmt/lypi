@@ -2,6 +2,9 @@ package cn.lypi.boot.ai;
 
 import cn.lypi.ai.ProviderAdapterApiProvider;
 import cn.lypi.ai.RuntimeModelRegistry;
+import cn.lypi.ai.model.DiscoveredModel;
+import cn.lypi.ai.model.DiscoveredModelDefaults;
+import cn.lypi.ai.model.DiscoveredModelDescriptorMapper;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.provider.RequestStyle;
 import cn.lypi.ai.provider.TransportMode;
@@ -12,27 +15,23 @@ import cn.lypi.ai.transport.WebSocketProviderTransport;
 import cn.lypi.contracts.error.ErrorSeverity;
 import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.ApiStyle;
-import cn.lypi.contracts.model.CostProfile;
 import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.runtime.ProviderLoginPort;
 import cn.lypi.contracts.runtime.ProviderLoginResult;
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /** Registers a verified OpenAI-compatible Chat Completions provider for the current process. */
 public final class OpenAiCompatibleProviderLoginService implements ProviderLoginPort {
+    private static final Pattern CHANNEL_NAME = Pattern.compile("[a-z0-9][a-z0-9_-]{0,63}");
     private static final List<String> DISCOVERY_PATHS = List.of("/models", "/model");
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
     private static final int MAX_RETRIES = 3;
@@ -41,30 +40,39 @@ public final class OpenAiCompatibleProviderLoginService implements ProviderLogin
     private final RuntimeModelRegistry modelRegistry;
     private final ProviderAdapterApiProvider openAiDispatcher;
     private final LoginProviderPropertiesStore propertiesStore;
+    private final DiscoveredModelDefaults defaults;
 
     public OpenAiCompatibleProviderLoginService(
         RemoteModelDiscoveryClient discoveryClient,
         RuntimeModelRegistry modelRegistry,
         ProviderAdapterApiProvider openAiDispatcher,
-        LoginProviderPropertiesStore propertiesStore
+        LoginProviderPropertiesStore propertiesStore,
+        DiscoveredModelDefaults defaults
     ) {
         this.discoveryClient = Objects.requireNonNull(discoveryClient, "discoveryClient");
         this.modelRegistry = Objects.requireNonNull(modelRegistry, "modelRegistry");
         this.openAiDispatcher = Objects.requireNonNull(openAiDispatcher, "openAiDispatcher");
         this.propertiesStore = Objects.requireNonNull(propertiesStore, "propertiesStore");
+        this.defaults = Objects.requireNonNull(defaults, "defaults");
     }
 
     @Override
-    public ProviderLoginResult register(String rawBaseUrl, String authKey) {
+    public ProviderLoginResult register(String channelName, String rawBaseUrl, String authKey) {
+        String provider = requireChannelName(channelName);
         URI baseUrl = normalizeBaseUrl(rawBaseUrl);
         String requiredAuthKey = requireAuthKey(authKey);
-        String provider = providerId(baseUrl);
-        List<String> modelIds = discoverModelIds(baseUrl, requiredAuthKey);
-        List<ModelDescriptor> descriptors = descriptors(provider, baseUrl, modelIds);
+        List<DiscoveredModel> discovered = discoverModels(baseUrl, requiredAuthKey);
+        DiscoveredModelDescriptorMapper mapper = new DiscoveredModelDescriptorMapper(
+            provider,
+            baseUrl,
+            ApiStyle.OPENAI_COMPATIBLE,
+            defaults
+        );
+        List<ModelDescriptor> descriptors = discovered.stream().map(mapper::map).toList();
         OpenAiCompatibleProviderAdapter adapter = chatCompletionsAdapter(provider, baseUrl, requiredAuthKey);
 
         try {
-            propertiesStore.save(provider, baseUrl, requiredAuthKey, modelIds);
+            propertiesStore.save(provider, baseUrl, requiredAuthKey);
         } catch (IOException | RuntimeException error) {
             throw providerLoginFailure(
                 "provider.login_persistence_failed",
@@ -77,10 +85,10 @@ public final class OpenAiCompatibleProviderLoginService implements ProviderLogin
         return new ProviderLoginResult(provider, descriptors);
     }
 
-    private List<String> discoverModelIds(URI baseUrl, String authKey) {
-        List<String> discovered;
+    private List<DiscoveredModel> discoverModels(URI baseUrl, String authKey) {
+        List<DiscoveredModel> discovered;
         try {
-            discovered = discoveryClient.discover(baseUrl, authKey, DISCOVERY_PATHS, REQUEST_TIMEOUT);
+            discovered = discoveryClient.discoverModels(baseUrl, authKey, DISCOVERY_PATHS, REQUEST_TIMEOUT);
         } catch (ModelProviderException error) {
             if (error.getMessage() != null && error.getMessage().contains(authKey)) {
                 throw providerLoginFailure(
@@ -95,36 +103,13 @@ public final class OpenAiCompatibleProviderLoginService implements ProviderLogin
                 "Provider model discovery failed."
             );
         }
-        List<String> modelIds = discovered.stream()
-            .filter(Objects::nonNull)
-            .filter(modelId -> !modelId.isBlank())
-            .distinct()
-            .sorted()
-            .toList();
-        if (modelIds.isEmpty()) {
+        if (discovered.isEmpty()) {
             throw providerLoginFailure(
                 "model.discovery_unavailable",
                 "Remote model discovery returned no usable models."
             );
         }
-        return modelIds;
-    }
-
-    private static List<ModelDescriptor> descriptors(String provider, URI baseUrl, List<String> modelIds) {
-        return modelIds.stream()
-            .map(modelId -> new ModelDescriptor(
-                provider,
-                modelId,
-                baseUrl,
-                ApiStyle.OPENAI_COMPATIBLE,
-                0,
-                0,
-                false,
-                false,
-                new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
-                Map.of()
-            ))
-            .toList();
+        return List.copyOf(discovered);
     }
 
     private static OpenAiCompatibleProviderAdapter chatCompletionsAdapter(
@@ -143,7 +128,7 @@ public final class OpenAiCompatibleProviderLoginService implements ProviderLogin
             TransportMode.SSE,
             REQUEST_TIMEOUT,
             MAX_RETRIES,
-            Map.of()
+            Map.of("requires-reasoning-content-on-assistant-messages", true)
         );
         return new OpenAiCompatibleProviderAdapter(
             config,
@@ -151,6 +136,16 @@ public final class OpenAiCompatibleProviderLoginService implements ProviderLogin
             new HttpSseProviderTransport(),
             new HttpSseProviderTransport()
         );
+    }
+
+    private static String requireChannelName(String channelName) {
+        if (channelName == null || !CHANNEL_NAME.matcher(channelName).matches()) {
+            throw providerLoginFailure(
+                "provider.login_invalid_channel_name",
+                "Provider channel name must match [a-z0-9][a-z0-9_-]{0,63}."
+            );
+        }
+        return channelName;
     }
 
     private static URI normalizeBaseUrl(String rawBaseUrl) {
@@ -219,51 +214,6 @@ public final class OpenAiCompatibleProviderLoginService implements ProviderLogin
             );
         }
         return authKey;
-    }
-
-    private static String providerId(URI baseUrl) {
-        String canonicalUrl = baseUrl.toString();
-        String readable = sanitizeProviderPart(baseUrl.getHost() + (baseUrl.getPath() == null ? "" : baseUrl.getPath()));
-        String prefix = readable.isBlank() ? "provider" : abbreviate(readable, 36);
-        return "login-" + prefix + "-" + sha256(canonicalUrl).substring(0, 10);
-    }
-
-    private static String sanitizeProviderPart(String value) {
-        StringBuilder sanitized = new StringBuilder(value.length());
-        boolean previousDash = false;
-        for (int index = 0; index < value.length(); index++) {
-            char character = value.charAt(index);
-            if (isAsciiLetterOrDigit(character)) {
-                sanitized.append(Character.toLowerCase(character));
-                previousDash = false;
-            } else if (!previousDash) {
-                sanitized.append('-');
-                previousDash = true;
-            }
-        }
-        int start = sanitized.length() > 0 && sanitized.charAt(0) == '-' ? 1 : 0;
-        int end = sanitized.length() > start && sanitized.charAt(sanitized.length() - 1) == '-'
-            ? sanitized.length() - 1
-            : sanitized.length();
-        return sanitized.substring(start, end);
-    }
-
-    private static boolean isAsciiLetterOrDigit(char character) {
-        return (character >= 'a' && character <= 'z')
-            || (character >= 'A' && character <= 'Z')
-            || (character >= '0' && character <= '9');
-    }
-
-    private static String abbreviate(String value, int maximumLength) {
-        return value.length() <= maximumLength ? value : value.substring(0, maximumLength);
-    }
-
-    private static String sha256(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException error) {
-            throw new IllegalStateException("SHA-256 is unavailable", error);
-        }
     }
 
     private static ModelProviderException providerLoginFailure(String errorId, String message) {

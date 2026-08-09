@@ -466,9 +466,11 @@ class RuntimeTuiSubmitHandlerTest {
         RecordingEventBus events = new RecordingEventBus();
         RecordingSessionManager session = new RecordingSessionManager();
         QueuedExecutor executor = new QueuedExecutor();
+        AtomicBoolean acceptedChannelName = new AtomicBoolean();
         AtomicBoolean acceptedBaseUrl = new AtomicBoolean();
         AtomicBoolean acceptedAuthKey = new AtomicBoolean();
-        ProviderLoginPort login = (baseUrl, key) -> {
+        ProviderLoginPort login = (channelName, baseUrl, key) -> {
+            acceptedChannelName.set("zen".equals(channelName));
             acceptedBaseUrl.set("https://api.example.test/v1".equals(baseUrl));
             acceptedAuthKey.set(authKey.equals(key));
             return loginResult();
@@ -484,7 +486,7 @@ class RuntimeTuiSubmitHandlerTest {
             login
         );
 
-        handler.submitProviderLogin("https://api.example.test/v1", authKey);
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", authKey);
 
         assertEquals(1, executor.size());
         assertTrue(core.requests.isEmpty());
@@ -492,6 +494,7 @@ class RuntimeTuiSubmitHandlerTest {
 
         executor.runNext();
 
+        assertTrue(acceptedChannelName.get());
         assertTrue(acceptedBaseUrl.get());
         assertTrue(acceptedAuthKey.get());
         assertEquals("login: registered login-example (1 model)", systemMessages(events).getFirst());
@@ -507,7 +510,7 @@ class RuntimeTuiSubmitHandlerTest {
         RecordingEventBus events = new RecordingEventBus();
         QueuedExecutor executor = new QueuedExecutor();
         AtomicInteger registrations = new AtomicInteger();
-        ProviderLoginPort login = (baseUrl, key) -> {
+        ProviderLoginPort login = (channelName, baseUrl, key) -> {
             registrations.incrementAndGet();
             throw new ModelProviderException(
                 "provider.login_failed",
@@ -527,8 +530,8 @@ class RuntimeTuiSubmitHandlerTest {
             login
         );
 
-        handler.submitProviderLogin("https://api.example.test/v1", authKey);
-        handler.submitProviderLogin("https://api.example.test/v1", authKey);
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", authKey);
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", authKey);
 
         assertEquals(1, executor.size());
         ErrorEvent concurrent = assertInstanceOf(ErrorEvent.class, events.published.getFirst());
@@ -551,7 +554,7 @@ class RuntimeTuiSubmitHandlerTest {
         QueuedExecutor executor = new QueuedExecutor();
         RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
 
-        handler.submitProviderLogin("https://api.example.test/v1", authKey);
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", authKey);
         executor.runNext();
 
         ErrorEvent error = assertInstanceOf(ErrorEvent.class, events.published.getFirst());
@@ -565,7 +568,7 @@ class RuntimeTuiSubmitHandlerTest {
         RecordingCore core = new RecordingCore();
         RecordingEventBus events = new RecordingEventBus();
         QueuedExecutor executor = new QueuedExecutor();
-        ProviderLoginPort login = (baseUrl, authKey) -> {
+        ProviderLoginPort login = (channelName, baseUrl, authKey) -> {
             throw new ModelProviderException(
                 "provider.login_invalid_auth_key",
                 ErrorSeverity.ERROR,
@@ -584,7 +587,7 @@ class RuntimeTuiSubmitHandlerTest {
             login
         );
 
-        handler.submitProviderLogin("https://api.example.test/v1", "test-secret");
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", "test-secret");
         executor.runNext();
 
         ErrorEvent error = assertInstanceOf(ErrorEvent.class, events.published.getFirst());

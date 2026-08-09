@@ -1612,7 +1612,8 @@ class LyPiRuntimeAutoConfigurationTest {
 
     @Test
     void registersTuiTransportFactoryWithProviderLoginPort() {
-        ProviderLoginPort login = (baseUrl, authKey) -> new ProviderLoginResult("login-test", List.of());
+        ProviderLoginPort login = (channelName, baseUrl, authKey) ->
+            new ProviderLoginResult(channelName, List.of());
 
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
