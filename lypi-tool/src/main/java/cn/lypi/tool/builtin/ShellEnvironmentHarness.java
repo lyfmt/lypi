@@ -43,6 +43,10 @@ public final class ShellEnvironmentHarness {
         return Path.of(System.getProperty("user.home"), ".lypi", "shell-state");
     }
 
+    public Path stateRoot() {
+        return stateRoot;
+    }
+
     record SnapshotPlan(
         String shell,
         Path snapshotFile,

@@ -1,11 +1,14 @@
 package cn.lypi.boot.tool;
 
 import cn.lypi.contracts.runtime.NetworkMode;
+import cn.lypi.tool.builtin.ShellEnvironmentHarness;
+import java.nio.file.Path;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "lypi.tool")
 public class LyPiToolProperties {
     private SandboxProperties sandbox = new SandboxProperties();
+    private ShellProperties shell = new ShellProperties();
 
     public SandboxProperties getSandbox() {
         return sandbox;
@@ -13,6 +16,14 @@ public class LyPiToolProperties {
 
     public void setSandbox(SandboxProperties sandbox) {
         this.sandbox = sandbox == null ? new SandboxProperties() : sandbox;
+    }
+
+    public ShellProperties getShell() {
+        return shell;
+    }
+
+    public void setShell(ShellProperties shell) {
+        this.shell = shell == null ? new ShellProperties() : shell;
     }
 
     public static class SandboxProperties {
@@ -51,6 +62,18 @@ public class LyPiToolProperties {
 
         public void setAutoAllowBashIfSandboxed(boolean autoAllowBashIfSandboxed) {
             this.autoAllowBashIfSandboxed = autoAllowBashIfSandboxed;
+        }
+    }
+
+    public static class ShellProperties {
+        private Path stateRoot = ShellEnvironmentHarness.defaultStateRoot();
+
+        public Path getStateRoot() {
+            return stateRoot;
+        }
+
+        public void setStateRoot(Path stateRoot) {
+            this.stateRoot = stateRoot == null ? ShellEnvironmentHarness.defaultStateRoot() : stateRoot;
         }
     }
 }

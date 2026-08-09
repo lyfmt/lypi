@@ -65,6 +65,7 @@ import cn.lypi.contracts.subagent.SubagentWaitRequest;
 import cn.lypi.contracts.subagent.SubagentWaitResult;
 import cn.lypi.tool.PermissionGateResult;
 import cn.lypi.tool.PermissionPromptPort;
+import cn.lypi.tool.builtin.ShellEnvironmentHarness;
 import cn.lypi.tool.mcp.McpClient;
 import cn.lypi.tool.mcp.McpClientManager;
 import cn.lypi.tool.mcp.McpClientManagerFactory;
@@ -91,10 +92,64 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class LyPiToolAutoConfigurationTest {
+    @Test
+    void configuresDefaultShellStateRoot() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                assertThat(context).hasSingleBean(ShellEnvironmentHarness.class);
+                assertThat(context.getBean(ShellEnvironmentHarness.class).stateRoot())
+                    .isEqualTo(ShellEnvironmentHarness.defaultStateRoot().toAbsolutePath().normalize());
+            });
+    }
+
+    @Test
+    void configuresCustomShellStateRootAndRegistersBash() {
+        Path stateRoot = Path.of("build/custom-shell-state").toAbsolutePath().normalize();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withPropertyValues("lypi.tool.shell.state-root=" + stateRoot)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .run(context -> {
+                ShellEnvironmentHarness harness = context.getBean(ShellEnvironmentHarness.class);
+
+                assertThat(harness.stateRoot()).isEqualTo(stateRoot);
+                assertThat(context.getBean(ToolRuntimePort.class).resolve("bash")).isPresent();
+            });
+    }
+
+    @Test
+    void sharesUserProvidedShellHarnessAcrossRuntimeFactoryPaths() {
+        ShellEnvironmentHarness shellHarness = new ShellEnvironmentHarness(Path.of("build/shared-shell-state"));
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiToolAutoConfiguration.class)
+            .withBean(SecurityRuntimePort.class, () -> LyPiToolAutoConfigurationTest::allowAllSecurity)
+            .withBean(ShellEnvironmentHarness.class, () -> shellHarness)
+            .run(context -> {
+                ToolRuntimeFactoryPort factory = context.getBean(ToolRuntimeFactoryPort.class);
+                ToolRuntimePort main = context.getBean(ToolRuntimePort.class);
+                ToolRuntimePort child = factory.create(Path.of("."));
+                ToolRuntimePort filtered = factory.create(
+                    Path.of("."),
+                    new SubagentToolPolicy(List.of("bash"), List.of("bash"))
+                );
+
+                assertThat(context).hasSingleBean(ShellEnvironmentHarness.class);
+                assertThat(context.getBean(ShellEnvironmentHarness.class)).isSameAs(shellHarness);
+                assertThat(shellHarnessFrom(main)).isSameAs(shellHarness);
+                assertThat(shellHarnessFrom(child)).isSameAs(shellHarness);
+                assertThat(shellHarnessFrom(filtered)).isSameAs(shellHarness);
+            });
+    }
+
     @Test
     void createsSandboxExecutorChainAndRegistersDefaultTools() {
         new ApplicationContextRunner()
@@ -772,6 +827,10 @@ class LyPiToolAutoConfigurationTest {
             Optional.empty(),
             Map.of()
         );
+    }
+
+    private static Object shellHarnessFrom(ToolRuntimePort runtime) {
+        return ReflectionTestUtils.getField(runtime.resolve("bash").orElseThrow(), "shellHarness");
     }
 
     private static ContextSnapshot context() {
