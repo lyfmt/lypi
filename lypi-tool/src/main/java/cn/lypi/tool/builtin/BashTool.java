@@ -42,6 +42,7 @@ public final class BashTool extends AbstractFileTool {
     private static final String INPUT_JUSTIFICATION = "justification";
     private static final String INPUT_SHELL = "shell";
     private static final String INPUT_LOGIN_SHELL = "loginShell";
+    private static final String UNSUPPORTED_CWD_MESSAGE = "不支持的工具输入字段: cwd。";
     private static final String METADATA_ADDITIONAL_PERMISSIONS = "additionalPermissions";
     private static final String METADATA_APPROVED_ADDITIONAL_PERMISSIONS = "approvedAdditionalPermissions";
     private static final String METADATA_PERMISSION_APPROVED_FOR_HOST_EXECUTION = "permissionApprovedForHostExecution";
@@ -76,13 +77,7 @@ public final class BashTool extends AbstractFileTool {
 
     @Override
     public String description() {
-        return "Execute shell commands in the session's persistent shell state. "
-            + "The working directory persists across calls: `cd dir` in one command applies to all subsequent "
-            + "bash commands and file tools (read/write/grep/glob resolve relative paths against it), "
-            + "so do not pass absolute paths or repeat cd. "
-            + "Your login shell environment (aliases, functions, exports) is replayed from a snapshot on every call. "
-            + "Note: `export`/`source` inside a command do NOT persist to the next call; cross-command environment "
-            + "must come from session env scripts or the login profile.";
+        return "Execute shell commands.";
     }
 
     @Override
@@ -91,10 +86,7 @@ public final class BashTool extends AbstractFileTool {
             "type", "object",
             "required", List.of("command"),
             "properties", Map.of(
-                "command", Map.of(
-                    "type", "string",
-                    "description", "Shell command executed in the session working directory (persists via cd)."
-                ),
+                "command", Map.of("type", "string"),
                 INPUT_SHELL, Map.of("type", "string", "enum", ALLOWED_SHELLS),
                 INPUT_LOGIN_SHELL, Map.of("type", "boolean"),
                 "timeoutSeconds", Map.of("type", "integer", "minimum", 1),
@@ -138,7 +130,7 @@ public final class BashTool extends AbstractFileTool {
             return new ValidationResult(false, List.of("shell 仅支持 bash、sh 或 zsh。"));
         }
         if (input.containsKey("cwd")) {
-            return new ValidationResult(false, List.of("cwd 由会话状态管理，不接受工具输入覆盖。"));
+            return new ValidationResult(false, List.of(UNSUPPORTED_CWD_MESSAGE));
         }
         return new ValidationResult(true, List.of());
     }
@@ -437,7 +429,7 @@ public final class BashTool extends AbstractFileTool {
 
     private void rejectExecutionOnlyOverrides(Map<String, Object> input) {
         if (input.containsKey("cwd")) {
-            throw new IllegalArgumentException("cwd 由会话状态管理，不接受工具输入覆盖。");
+            throw new IllegalArgumentException(UNSUPPORTED_CWD_MESSAGE);
         }
     }
 

@@ -367,7 +367,16 @@ class BashToolTest {
         );
 
         assertFalse(validation.valid());
-        assertTrue(validation.messages().getFirst().contains("cwd"));
+        assertEquals(List.of("不支持的工具输入字段: cwd。"), validation.messages());
+
+        ToolResult<String> execution = tool.execute(
+            Map.of("command", "echo hi", "cwd", "."),
+            context(Map.of()),
+            message -> {
+            }
+        );
+        assertTrue(execution.isError());
+        assertEquals("不支持的工具输入字段: cwd。", execution.output());
     }
 
     @Test
