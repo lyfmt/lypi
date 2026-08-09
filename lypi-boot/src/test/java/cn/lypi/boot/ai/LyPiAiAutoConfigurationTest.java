@@ -7,6 +7,7 @@ import cn.lypi.ai.ModelPort;
 import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
 import cn.lypi.ai.provider.RequestStyle;
+import cn.lypi.ai.provider.TransportMode;
 import cn.lypi.ai.provider.anthropic.AnthropicCompatibleProviderAdapter;
 import cn.lypi.ai.provider.anthropic.AnthropicProviderConfig;
 import cn.lypi.ai.provider.openai.OpenAiCompatibleProviderAdapter;
@@ -273,6 +274,35 @@ class LyPiAiAutoConfigurationTest {
                 assertThat(rootCause(context.getStartupFailure()))
                     .isInstanceOfSatisfying(ModelProviderException.class, error ->
                         assertThat(error.errorId()).isEqualTo("model.discovery_unavailable"));
+            });
+    }
+
+    @Test
+    void configuresDiscoveredCompatibleProviderForChatCompletionsSseOnly() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(RemoteModelDiscoveryClient.class, () -> new FixedRemoteModelDiscoveryClient("remote-a"))
+            .withPropertyValues(
+                "lypi.ai.providers.fixture.enabled=true",
+                "lypi.ai.providers.fixture.api-style=openai_compatible",
+                "lypi.ai.providers.fixture.base-url=https://api.fixture.test/v1",
+                "lypi.ai.providers.fixture.api-key=${LYPI_FIXTURE_TOKEN}",
+                "lypi.ai.providers.fixture.request-style=chat_completions",
+                "lypi.ai.providers.fixture.fallback-request-style=chat_completions",
+                "lypi.ai.providers.fixture.transport=sse",
+                "lypi.ai.providers.fixture.model-discovery.enabled=true"
+            )
+            .run(context -> {
+                List<?> adapters = context.getBean("openAiCompatibleProviderAdapters", List.class);
+                OpenAiCompatibleProviderAdapter adapter = adapters.stream()
+                    .map(OpenAiCompatibleProviderAdapter.class::cast)
+                    .filter(candidate -> config(candidate).provider().equals("fixture"))
+                    .findFirst()
+                    .orElseThrow();
+
+                assertThat(config(adapter).requestStyle()).isEqualTo(RequestStyle.CHAT_COMPLETIONS);
+                assertThat(config(adapter).fallbackRequestStyle()).isEqualTo(RequestStyle.CHAT_COMPLETIONS);
+                assertThat(config(adapter).transportMode()).isEqualTo(TransportMode.SSE);
             });
     }
 
