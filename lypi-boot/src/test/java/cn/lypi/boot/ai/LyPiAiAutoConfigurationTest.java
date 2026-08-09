@@ -14,11 +14,14 @@ import cn.lypi.ai.provider.openai.OpenAiProviderConfig;
 import cn.lypi.agent.compact.AiCompactionSummarizer;
 import cn.lypi.agent.compact.CompactionSummarizer;
 import cn.lypi.agent.compact.CompactionSummaryFallbackPolicy;
+import cn.lypi.contracts.error.ErrorSeverity;
+import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.model.ModelDescriptor;
 import java.lang.reflect.Field;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -196,9 +199,80 @@ class LyPiAiAutoConfigurationTest {
                 "lypi.ai.providers.openai.models[1].max-output-tokens=8192"
             )
             .run(context -> {
-                ModelDescriptor descriptor = openAiModel(context.getBean(ModelRegistry.class), "gpt-5-mini");
+                ModelRegistry registry = context.getBean(ModelRegistry.class);
+                ModelDescriptor descriptor = openAiModel(registry, "gpt-5-mini");
 
                 assertThat(descriptor.contextWindow()).isEqualTo(64_000);
+                assertThat(registry.list())
+                    .filteredOn(model -> model.provider().equals("openai"))
+                    .extracting(ModelDescriptor::modelId)
+                    .containsExactly("gpt-5-mini");
+            });
+    }
+
+    @Test
+    void discoveredModelsAreAuthoritativeWhileMatchingLocalMetadataOverridesDefaults() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(RemoteModelDiscoveryClient.class, () -> new FixedRemoteModelDiscoveryClient("remote-a"))
+            .withPropertyValues(
+                "lypi.ai.providers.fixture.enabled=true",
+                "lypi.ai.providers.fixture.api-style=openai_compatible",
+                "lypi.ai.providers.fixture.base-url=https://api.fixture.test/v1",
+                "lypi.ai.providers.fixture.model-discovery.enabled=true",
+                "lypi.ai.providers.fixture.models[0].model-id=remote-a",
+                "lypi.ai.providers.fixture.models[0].context-window=96000",
+                "lypi.ai.providers.fixture.models[0].max-output-tokens=8192",
+                "lypi.ai.providers.fixture.models[1].model-id=local-only",
+                "lypi.ai.providers.fixture.models[1].context-window=64000",
+                "lypi.ai.providers.fixture.models[1].max-output-tokens=4096"
+            )
+            .run(context -> {
+                ModelRegistry registry = context.getBean(ModelRegistry.class);
+
+                assertThat(registry.list())
+                    .filteredOn(model -> model.provider().equals("fixture"))
+                    .extracting(ModelDescriptor::modelId)
+                    .containsExactly("remote-a");
+                assertThat(model(registry, "fixture", "remote-a").contextWindow()).isEqualTo(96_000);
+            });
+    }
+
+    @Test
+    void discoversEachProviderOnceWhileCreatingTheRegistry() {
+        CountingRemoteModelDiscoveryClient discovery = new CountingRemoteModelDiscoveryClient("remote-a");
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(RemoteModelDiscoveryClient.class, () -> discovery)
+            .withPropertyValues(
+                "lypi.ai.providers.fixture.enabled=true",
+                "lypi.ai.providers.fixture.api-style=openai_compatible",
+                "lypi.ai.providers.fixture.base-url=https://api.fixture.test/v1",
+                "lypi.ai.providers.fixture.model-discovery.enabled=true"
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(ModelRegistry.class);
+                assertThat(discovery.calls()).isOne();
+            });
+    }
+
+    @Test
+    void failsStartupWhenRemoteModelDiscoveryIsUnavailable() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiAiAutoConfiguration.class)
+            .withBean(RemoteModelDiscoveryClient.class, FailingRemoteModelDiscoveryClient::new)
+            .withPropertyValues(
+                "lypi.ai.providers.fixture.enabled=true",
+                "lypi.ai.providers.fixture.api-style=openai_compatible",
+                "lypi.ai.providers.fixture.base-url=https://api.fixture.test/v1",
+                "lypi.ai.providers.fixture.model-discovery.enabled=true"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(rootCause(context.getStartupFailure()))
+                    .isInstanceOfSatisfying(ModelProviderException.class, error ->
+                        assertThat(error.errorId()).isEqualTo("model.discovery_unavailable"));
             });
     }
 
@@ -399,6 +473,37 @@ class LyPiAiAutoConfigurationTest {
         }
     }
 
+    private static final class CountingRemoteModelDiscoveryClient extends RemoteModelDiscoveryClient {
+        private final AtomicInteger calls = new AtomicInteger();
+        private final String modelId;
+
+        private CountingRemoteModelDiscoveryClient(String modelId) {
+            this.modelId = modelId;
+        }
+
+        @Override
+        public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
+            calls.incrementAndGet();
+            return List.of(modelId);
+        }
+
+        private int calls() {
+            return calls.get();
+        }
+    }
+
+    private static final class FailingRemoteModelDiscoveryClient extends RemoteModelDiscoveryClient {
+        @Override
+        public List<String> discover(URI baseUrl, String apiKey, List<String> paths, Duration timeout) {
+            throw new ModelProviderException(
+                "model.discovery_unavailable",
+                ErrorSeverity.ERROR,
+                false,
+                "Remote model discovery returned no usable models."
+            );
+        }
+    }
+
     private static OpenAiProviderConfig config(OpenAiCompatibleProviderAdapter adapter) {
         try {
             Field field = OpenAiCompatibleProviderAdapter.class.getDeclaredField("config");
@@ -420,11 +525,23 @@ class LyPiAiAutoConfigurationTest {
     }
 
     private static ModelDescriptor openAiModel(ModelRegistry registry, String modelId) {
+        return model(registry, "openai", modelId);
+    }
+
+    private static ModelDescriptor model(ModelRegistry registry, String provider, String modelId) {
         return registry.list().stream()
-            .filter(descriptor -> descriptor.provider().equals("openai"))
+            .filter(descriptor -> descriptor.provider().equals(provider))
             .filter(descriptor -> descriptor.modelId().equals(modelId))
             .findFirst()
-            .orElseThrow(() -> new AssertionError("Missing openai model: " + modelId));
+            .orElseThrow(() -> new AssertionError("Missing model: " + provider + "/" + modelId));
+    }
+
+    private static Throwable rootCause(Throwable failure) {
+        Throwable current = failure;
+        while (current != null && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
 }

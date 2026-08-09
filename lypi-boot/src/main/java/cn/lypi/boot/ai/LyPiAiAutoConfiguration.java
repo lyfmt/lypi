@@ -40,6 +40,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -118,11 +120,48 @@ public class LyPiAiAutoConfiguration {
     }
 
     private ModelDescriptorSource modelDescriptorSource(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
-        List<ModelDescriptorSource> sources = new ArrayList<>();
-        sources.add(new StaticModelDescriptorSource(builtinModelDescriptors(properties)));
-        sources.add(new StaticModelDescriptorSource(remoteModelDescriptors(properties, discoveryClient)));
-        sources.add(new StaticModelDescriptorSource(modelDescriptors(properties)));
-        return new CompositeModelDescriptorSource(sources);
+        List<ModelDescriptor> remote = remoteModelDescriptors(properties, discoveryClient);
+        Set<ModelKey> discovered = remote.stream()
+            .map(model -> new ModelKey(model.provider(), model.modelId()))
+            .collect(Collectors.toUnmodifiableSet());
+        List<ModelDescriptor> builtin = authoritativeLocalDescriptors(
+            properties,
+            builtinModelDescriptors(properties),
+            discovered
+        );
+        List<ModelDescriptor> configured = authoritativeLocalDescriptors(
+            properties,
+            modelDescriptors(properties),
+            discovered
+        );
+        return new CompositeModelDescriptorSource(List.of(
+            new StaticModelDescriptorSource(remote),
+            new StaticModelDescriptorSource(builtin),
+            new StaticModelDescriptorSource(configured)
+        ));
+    }
+
+    private List<ModelDescriptor> authoritativeLocalDescriptors(
+        LyPiAiProperties properties,
+        List<ModelDescriptor> local,
+        Set<ModelKey> discovered
+    ) {
+        Map<String, ProviderProperties> providers = effectiveProviders(properties);
+        return local.stream()
+            .filter(descriptor -> {
+                ProviderProperties provider = providers.get(descriptor.provider());
+                return !usesRemoteModelDiscovery(provider)
+                    || discovered.contains(new ModelKey(descriptor.provider(), descriptor.modelId()));
+            })
+            .toList();
+    }
+
+    private boolean usesRemoteModelDiscovery(ProviderProperties provider) {
+        return provider != null
+            && provider.isEnabled()
+            && provider.getBaseUrl() != null
+            && valueOrDefault(provider.getApiStyle(), ApiStyle.OPENAI_COMPATIBLE) == ApiStyle.OPENAI_COMPATIBLE
+            && provider.getModelDiscovery().isEnabled();
     }
 
     private List<ModelDescriptor> builtinModelDescriptors(LyPiAiProperties properties) {
@@ -402,5 +441,8 @@ public class LyPiAiAutoConfiguration {
 
     private static <T> T valueOrDefault(T value, T defaultValue) {
         return value == null ? defaultValue : value;
+    }
+
+    private record ModelKey(String provider, String modelId) {
     }
 }
