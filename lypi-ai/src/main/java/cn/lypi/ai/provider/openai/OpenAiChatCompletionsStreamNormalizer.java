@@ -4,7 +4,6 @@ import cn.lypi.contracts.model.AssistantDone;
 import cn.lypi.contracts.model.AssistantError;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
-import cn.lypi.contracts.model.TextDelta;
 import cn.lypi.contracts.model.ThinkingDelta;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.model.ToolCallDelta;
@@ -14,11 +13,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
 public final class OpenAiChatCompletionsStreamNormalizer implements OpenAiStreamNormalizer {
     private final ObjectMapper objectMapper;
+    private final TaggedThinkingContentParser taggedThinkingContentParser = new TaggedThinkingContentParser();
     private final Map<String, ToolCallAccumulator> toolCalls = new LinkedHashMap<>();
     private boolean started;
     private boolean doneEmitted;
@@ -73,11 +74,17 @@ public final class OpenAiChatCompletionsStreamNormalizer implements OpenAiStream
             return normalized;
         }
         JsonNode delta = choice.path("delta");
-        if (delta.hasNonNull("content")) {
-            normalized.add(new TextDelta(delta.path("content").asText()));
+        Optional<String> reasoning = firstNonBlankText(
+            delta.get("reasoning_content"),
+            delta.get("reasoning"),
+            delta.get("reasoning_text")
+        );
+        if (reasoning.isEmpty()) {
+            reasoning = firstReasoningDetailText(delta.path("reasoning_details"));
         }
-        if (delta.hasNonNull("reasoning_content")) {
-            normalized.add(new ThinkingDelta(delta.path("reasoning_content").asText()));
+        reasoning.ifPresent(value -> normalized.add(new ThinkingDelta(value)));
+        if (delta.path("content").isTextual()) {
+            normalized.addAll(taggedThinkingContentParser.accept(delta.path("content").asText()));
         }
         if (delta.path("tool_calls").isArray()) {
             delta.path("tool_calls").forEach(toolCall -> normalized.add(toolCallDelta(toolCall)));
@@ -121,7 +128,38 @@ public final class OpenAiChatCompletionsStreamNormalizer implements OpenAiStream
             return List.of();
         }
         doneEmitted = true;
-        return List.of(new AssistantDone(usage, Optional.of("stop")));
+        List<AssistantStreamEvent> events = new ArrayList<>(taggedThinkingContentParser.finish());
+        events.add(new AssistantDone(usage, Optional.of("stop")));
+        return List.copyOf(events);
+    }
+
+    private Optional<String> firstNonBlankText(JsonNode... candidates) {
+        for (JsonNode candidate : candidates) {
+            if (candidate != null && candidate.isTextual() && !candidate.asText().isBlank()) {
+                return Optional.of(candidate.asText());
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<String> firstReasoningDetailText(JsonNode details) {
+        if (!details.isArray()) {
+            return Optional.empty();
+        }
+        for (JsonNode detail : details) {
+            if (!detail.isObject()) {
+                continue;
+            }
+            String type = detail.path("type").asText("").toLowerCase(Locale.ROOT);
+            if (type.contains("encrypted") || type.contains("signature")) {
+                continue;
+            }
+            Optional<String> text = firstNonBlankText(detail.get("text"));
+            if (text.isPresent()) {
+                return text;
+            }
+        }
+        return Optional.empty();
     }
 
     private final class ToolCallAccumulator {

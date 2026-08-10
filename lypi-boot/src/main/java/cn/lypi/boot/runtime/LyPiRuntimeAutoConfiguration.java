@@ -19,6 +19,7 @@ import cn.lypi.contracts.runtime.ChildSessionPort;
 import cn.lypi.contracts.runtime.CompactStateBackfillPort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
@@ -429,9 +430,17 @@ public class LyPiRuntimeAutoConfiguration {
     public JLineTuiTransportFactory jLineTuiTransportFactory(
         SessionManagerPort sessionManager,
         ResourceRuntimePort resourceRuntime,
-        CompactionRuntimePort compactionRuntime
+        CompactionRuntimePort compactionRuntime,
+        ObjectProvider<ModelCatalogPort> modelCatalog,
+        ObjectProvider<ProviderLoginPort> providerLogin
     ) {
-        return RuntimeBeanFactories.jLineTuiTransportFactory(sessionManager, resourceRuntime, compactionRuntime);
+        return RuntimeBeanFactories.jLineTuiTransportFactory(
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            modelCatalog.getIfAvailable(),
+            providerLogin.getIfAvailable()
+        );
     }
 
     /**

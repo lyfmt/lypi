@@ -83,6 +83,25 @@ Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册
 
 OpenAI 兼容适配支持 Responses、Chat Completions、SSE、WebSocket 和 fallback request style。上层收到的是项目内部的 `AssistantStreamEvent`，不需要直接处理供应商原始事件。模型描述中的 context window、最大输出 token、thinking 支持和图片输入支持会影响请求构建与上下文预算。
 
+启用 `model-discovery` 的 OpenAI 兼容 Provider 会在应用启动时按配置顺序拉取模型列表；第一个非空结果成为该 Provider 的权威模型集合。远端显式能力字段覆盖 `lypi.ai.model-discovery.defaults`，用户配置的静态同名 `models[]` 再以完整模型描述覆盖远端结果；远端没有返回的静态 model ID 不会进入目录。缺失能力字段默认使用 `context-window=256000`、`max-output-tokens=8192`、`supports-thinking=true` 和 `supports-image-input=true`。所有候选端点都没有返回有效模型时，应用会以不含凭据的端点诊断终止启动。
+
+TUI 输入无参数 `/model` 会打开启动期模型快照，候选项统一显示为 `provider/model`；使用上下方向键移动，Enter 切换，Esc 取消。选择结果仍写入会话模型变更条目，恢复会话后继续生效。
+
+TUI 的 `/login` 可注册 OpenAI-compatible Provider，交互顺序为：
+
+```text
+/login
+1. Channel name
+2. Base URL
+3. Auth key（掩码显示）
+```
+
+渠道名必须匹配 `[a-z0-9][a-z0-9_-]{0,63}`，成功后模型以 `<channelName>/<modelId>` 出现在 `/model`。同名再次登录表示替换该渠道；URL、凭据、模型发现和持久化任一步失败时，已有运行时渠道保持不变。
+
+登录固定使用 OpenAI-compatible Chat Completions over SSE。系统会依次探测 `<base-url>/models` 和 `<base-url>/model`，仅在至少发现一个可用模型后才保存并注册 Provider；成功后不会自动切换当前会话模型。日常登录只发现模型目录，不逐模型发送收费能力探针；仓库中的显式真实 E2E 会验证 HIGH thinking、工具续轮和图片 Chat Completions。
+
+登录数据仅写入受管文件 `<user-home>/.ly-pi/login-providers.properties`，不会改写用户维护的 `<user-home>/.ly-pi/application.yml`，也不缓存发现到的模型列表。应用重启时会重新发现模型，并重新应用当前全局默认值和静态同名完整描述覆盖。
+
 Anthropic 适配负责 Messages 请求、SSE 事件归一化、tool call/result 映射和 usage 合并。当前版本不启用 Anthropic extended thinking：Anthropic 模型的 `supports-thinking` 应保持 `false`，作为默认模型时还需把 `lypi.runtime.thinking-level` 设为 `off`。
 
 ### 资源与记忆

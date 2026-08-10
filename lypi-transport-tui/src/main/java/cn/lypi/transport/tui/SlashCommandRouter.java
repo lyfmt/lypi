@@ -1,8 +1,10 @@
 package cn.lypi.transport.tui;
 
+import cn.lypi.contracts.common.AbortSignal;
+import cn.lypi.contracts.model.ModelCatalogPort;
+import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
-import cn.lypi.contracts.common.AbortSignal;
 import cn.lypi.contracts.prompt.PromptParameter;
 import cn.lypi.contracts.prompt.PromptRenderRequest;
 import cn.lypi.contracts.prompt.PromptRenderResult;
@@ -36,6 +38,7 @@ import java.util.UUID;
 final class SlashCommandRouter {
     private static final List<String> BUILT_IN_COMMANDS = List.of(
         "/compact",
+        "/login",
         "/model",
         "/new",
         "/permission-mode",
@@ -50,6 +53,7 @@ final class SlashCommandRouter {
     private final CompactionRuntimePort compactionRuntime;
     private final NewSessionController newSessionController;
     private final List<SlashCommand> slashCommands;
+    private final ModelCatalogPort modelCatalog;
 
     SlashCommandRouter(
         String sessionId,
@@ -90,6 +94,28 @@ final class SlashCommandRouter {
         NewSessionController newSessionController,
         List<SlashCommand> slashCommands
     ) {
+        this(
+            sessionId,
+            cwd,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            newSessionController,
+            slashCommands,
+            null
+        );
+    }
+
+    SlashCommandRouter(
+        String sessionId,
+        Path cwd,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        NewSessionController newSessionController,
+        List<SlashCommand> slashCommands,
+        ModelCatalogPort modelCatalog
+    ) {
         this.sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
         this.cwd = cwd == null ? Path.of(".") : cwd;
         this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
@@ -97,6 +123,7 @@ final class SlashCommandRouter {
         this.compactionRuntime = compactionRuntime;
         this.newSessionController = newSessionController;
         this.slashCommands = safeSlashCommands(slashCommands);
+        this.modelCatalog = modelCatalog;
     }
 
     SlashCommandRouter(List<SlashCommand> slashCommands) {
@@ -107,6 +134,7 @@ final class SlashCommandRouter {
         this.compactionRuntime = null;
         this.newSessionController = null;
         this.slashCommands = safeSlashCommands(slashCommands);
+        this.modelCatalog = null;
     }
 
     SlashCommandResult route(String input) {
@@ -123,6 +151,7 @@ final class SlashCommandRouter {
             return SlashCommandResult.notMatched();
         }
         return switch (match.command().orElseThrow()) {
+            case "/login" -> routeLogin(arguments);
             case "/model" -> routeModel(arguments, input);
             case "/thinking" -> routeThinking(arguments, input);
             case "/permission-mode" -> routePermissionMode(arguments, input);
@@ -377,14 +406,33 @@ final class SlashCommandRouter {
             provider = modelId.substring(0, separator);
             modelId = modelId.substring(separator + 1);
         }
+        ThinkingLevel thinkingLevel = context.thinkingLevel();
+        if (modelCatalog != null) {
+            ModelSelection lookup = new ModelSelection(provider, modelId, thinkingLevel);
+            Optional<ModelDescriptor> descriptor = modelCatalog.find(lookup);
+            if (descriptor.isEmpty()) {
+                return SlashCommandResult.error("unknown model: " + provider + "/" + modelId);
+            }
+            if (!descriptor.orElseThrow().supportsThinking()) {
+                thinkingLevel = ThinkingLevel.OFF;
+            }
+        }
+        ModelSelection selection = new ModelSelection(provider, modelId, thinkingLevel);
         append(new ModelChangeEntry(
             newEntryId(),
             leafId,
-            new ModelSelection(provider, modelId, context.thinkingLevel()),
+            selection,
             reason,
             Instant.now()
         ));
         return SlashCommandResult.stateChangedNotice("model: " + provider + "/" + modelId);
+    }
+
+    private SlashCommandResult routeLogin(SlashCommandArguments arguments) {
+        if (!arguments.positionals().isEmpty() || !arguments.named().isEmpty()) {
+            return SlashCommandResult.error("usage: /login");
+        }
+        return SlashCommandResult.consumedCommand();
     }
 
     private SlashCommandResult routeThinking(SlashCommandArguments arguments, String reason) {

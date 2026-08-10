@@ -22,15 +22,23 @@ import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.ErrorEvent;
 import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.event.SessionStateEvent;
+import cn.lypi.contracts.model.ApiStyle;
+import cn.lypi.contracts.model.CostProfile;
+import cn.lypi.contracts.model.ModelCatalogPort;
+import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AgentCorePort;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
+import cn.lypi.contracts.runtime.ProviderLoginResult;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.AgentMode;
 import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.session.ForkRequest;
+import cn.lypi.contracts.session.ModelChangeEntry;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
@@ -53,6 +61,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -61,6 +70,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
 import org.jline.utils.NonBlockingReader;
@@ -140,6 +151,55 @@ class JLineTuiTransportTest {
                 + TerminalSession.RESTORE_CURSOR
                 + TerminalSession.SHOW_CURSOR
         ));
+    }
+
+    @Test
+    void loginOverlaySubmitsCredentialsThroughInjectedProviderPort() throws Exception {
+        String authKey = "test-secret";
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingCore core = new RecordingCore();
+        RecordingSessionManager session = new RecordingSessionManager();
+        RecordingProviderLoginPort login = new RecordingProviderLoginPort(
+            "zen",
+            "https://api.example.test/v1",
+            authKey
+        );
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            core,
+            events,
+            io,
+            new QueueInputSource(
+                "/login", "\r",
+                "zen", "\r",
+                "https://api.example.test/v1", "\r",
+                authKey, "\r"
+            ),
+            List.of(),
+            session,
+            emptyResources(),
+            null,
+            NOOP_DIFF_PROVIDER,
+            null,
+            null,
+            null,
+            login,
+            80,
+            8
+        );
+
+        transport.drainInputForTest();
+
+        assertTrue(login.registered.await(2, TimeUnit.SECONDS));
+        assertTrue(login.acceptedChannelName);
+        assertTrue(login.acceptedBaseUrl);
+        assertTrue(login.acceptedAuthKey);
+        assertTrue(core.requests.isEmpty());
+        assertTrue(session.entries.isEmpty());
+        assertFalse(io.output.toString().contains(authKey));
+
+        transport.close();
     }
 
     @Test
@@ -598,6 +658,54 @@ class JLineTuiTransportTest {
     }
 
     @Test
+    void openWithModelCatalogSelectsModelAndPublishesSessionState() throws Exception {
+        RecordingTerminalIo io = new RecordingTerminalIo();
+        io.width = 80;
+        io.height = 10;
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingCore core = new RecordingCore();
+        RecordingSessionManager session = new RecordingSessionManager();
+        ModelCatalogPort catalog = modelCatalog(List.of(
+            model("openai", "gpt-5"),
+            model("zen", "kimi-k2.6")
+        ));
+
+        JLineTuiTransport transport = JLineTuiTransport.open(
+            runtimeState(),
+            core,
+            events,
+            io,
+            new QueueInputSource("/model", "\r", "\033[B", "\r"),
+            List.of(),
+            session,
+            emptyResources(),
+            null,
+            NOOP_DIFF_PROVIDER,
+            null,
+            null,
+            catalog,
+            80,
+            10
+        );
+
+        transport.drainInputForTest();
+
+        ModelChangeEntry entry = assertInstanceOf(ModelChangeEntry.class, session.entries.getFirst());
+        assertEquals(new ModelSelection("zen", "kimi-k2.6", ThinkingLevel.MEDIUM), entry.model());
+        SessionStateEvent stateEvent = events.published.stream()
+            .filter(SessionStateEvent.class::isInstance)
+            .map(SessionStateEvent.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertEquals(entry.model(), stateEvent.model());
+        assertEquals(0, core.requests.size());
+        assertTrue(io.output.toString().contains("openai/gpt-5"));
+        assertTrue(io.output.toString().contains("zen/kimi-k2.6"));
+
+        transport.close();
+    }
+
+    @Test
     void resumeRuntimeStateRebindsEventSubscriptionToResumedSession() throws Exception {
         RecordingTerminalIo io = new RecordingTerminalIo();
         io.width = 80;
@@ -946,9 +1054,43 @@ class JLineTuiTransportTest {
         };
     }
 
+    private static ModelCatalogPort modelCatalog(List<ModelDescriptor> descriptors) {
+        List<ModelDescriptor> models = List.copyOf(descriptors);
+        return new ModelCatalogPort() {
+            @Override
+            public List<ModelDescriptor> list() {
+                return models;
+            }
+
+            @Override
+            public Optional<ModelDescriptor> find(ModelSelection selection) {
+                return models.stream()
+                    .filter(candidate -> candidate.provider().equals(selection.provider()))
+                    .filter(candidate -> candidate.modelId().equals(selection.modelId()))
+                    .findFirst();
+            }
+        };
+    }
+
+    private static ModelDescriptor model(String provider, String modelId) {
+        return new ModelDescriptor(
+            provider,
+            modelId,
+            URI.create("https://api.example.test/v1"),
+            ApiStyle.OPENAI_COMPATIBLE,
+            128_000,
+            16_384,
+            true,
+            false,
+            new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
+            Map.of()
+        );
+    }
+
     private static final class RecordingSessionManager implements SessionManagerPort {
         private final List<SessionEntry> entries = new ArrayList<>();
         private String leafId = "root";
+        private ModelSelection model = new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM);
 
         @Override
         public SessionHandle openOrCreate(String sessionId) {
@@ -958,6 +1100,9 @@ class JLineTuiTransportTest {
         @Override
         public SessionHandle append(SessionEntry entry) {
             entries.add(entry);
+            if (entry instanceof ModelChangeEntry modelChange) {
+                model = modelChange.model();
+            }
             leafId = entry.id();
             return openOrCreate("ses_1");
         }
@@ -994,7 +1139,7 @@ class JLineTuiTransportTest {
                 List.of(),
                 List.of(this.leafId),
                 List.of(),
-                new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+                model,
                 ThinkingLevel.MEDIUM,
                 AgentMode.EXECUTE,
                 PermissionMode.ASK
@@ -1019,6 +1164,31 @@ class JLineTuiTransportTest {
 
         @Override
         public void requestInterrupt(String reason) {
+        }
+    }
+
+    private static final class RecordingProviderLoginPort implements ProviderLoginPort {
+        private final String expectedChannelName;
+        private final String expectedBaseUrl;
+        private final String expectedAuthKey;
+        private final CountDownLatch registered = new CountDownLatch(1);
+        private volatile boolean acceptedChannelName;
+        private volatile boolean acceptedBaseUrl;
+        private volatile boolean acceptedAuthKey;
+
+        private RecordingProviderLoginPort(String expectedChannelName, String expectedBaseUrl, String expectedAuthKey) {
+            this.expectedChannelName = expectedChannelName;
+            this.expectedBaseUrl = expectedBaseUrl;
+            this.expectedAuthKey = expectedAuthKey;
+        }
+
+        @Override
+        public ProviderLoginResult register(String channelName, String baseUrl, String authKey) {
+            acceptedChannelName = expectedChannelName.equals(channelName);
+            acceptedBaseUrl = expectedBaseUrl.equals(baseUrl);
+            acceptedAuthKey = expectedAuthKey.equals(authKey);
+            registered.countDown();
+            return new ProviderLoginResult(channelName, List.of(model(channelName, "alpha")));
         }
     }
 

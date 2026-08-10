@@ -7,10 +7,13 @@ import cn.lypi.contracts.event.EventBus;
 import cn.lypi.contracts.event.EventFilter;
 import cn.lypi.contracts.event.EventSubscription;
 import cn.lypi.contracts.event.MessageDeltaEvent;
+import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
+import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.tui.DiffViewProvider;
 import cn.lypi.contracts.tui.NewSessionController;
@@ -134,7 +137,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         Supplier<SlashCommandPicker> slashPickerSupplier,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
-        Supplier<SkillIndex> skillIndexSupplier
+        Supplier<SkillIndex> skillIndexSupplier,
+        Supplier<ModelPicker> modelPickerSupplier
     ) {
         this(
             frameSink,
@@ -150,6 +154,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             diffViewProvider,
             resumeController,
             skillIndexSupplier,
+            modelPickerSupplier,
             Clock.systemUTC()
         );
     }
@@ -168,6 +173,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
         Supplier<SkillIndex> skillIndexSupplier,
+        Supplier<ModelPicker> modelPickerSupplier,
         Clock clock
     ) {
         this.renderer = null;
@@ -188,7 +194,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             slashPickerSupplier,
             resumeController,
             this::replaceRuntimeState,
-            skillIndexSupplier
+            skillIndexSupplier,
+            modelPickerSupplier
         );
         this.inputPump = new TerminalInputPump(inputSource, new KeyMapper(), inputLoop);
         this.terminalSession = terminalSession;
@@ -266,6 +273,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             null,
             diffViewProvider,
             resumeController,
+            null,
             null
         );
     }
@@ -426,6 +434,74 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         ResourceRuntimePort resourceRuntime,
         CompactionRuntimePort compactionRuntime
     ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            terminal,
+            diffViewProvider,
+            slashCommands,
+            resumeController,
+            newSessionController,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            null
+        );
+    }
+
+    /**
+     * 打开真实 JLine TUI transport，并提供只读模型目录。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        DiffViewProvider diffViewProvider,
+        List<SlashCommand> slashCommands,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        ModelCatalogPort modelCatalog
+    ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            terminal,
+            diffViewProvider,
+            slashCommands,
+            resumeController,
+            newSessionController,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            modelCatalog,
+            ProviderLoginPort.unavailable()
+        );
+    }
+
+    /**
+     * 打开真实 JLine TUI transport，并提供只读模型目录和 provider 登录端口。
+     */
+    public static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        Terminal terminal,
+        DiffViewProvider diffViewProvider,
+        List<SlashCommand> slashCommands,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        ModelCatalogPort modelCatalog,
+        ProviderLoginPort providerLogin
+    ) throws IOException {
         SlashCommandRouter router = new SlashCommandRouter(
             state.sessionId(),
             state.cwd(),
@@ -433,7 +509,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             resourceRuntime,
             compactionRuntime,
             newSessionController,
-            slashCommands
+            slashCommands,
+            modelCatalog
         );
         JLineTuiTransport[] holder = new JLineTuiTransport[1];
         RuntimeTuiSubmitHandler submitHandler = new RuntimeTuiSubmitHandler(
@@ -446,7 +523,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 if (holder[0] != null) {
                     holder[0].replaceRuntimeState(runtimeState);
                 }
-            }
+            },
+            () -> new SkillIndex(List.of(), List.of()),
+            providerLogin
         );
         JLineTuiTransport transport = openTerminal(
             state,
@@ -456,10 +535,22 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             () -> new SlashCommandPicker(router.commandNames()),
             diffViewProvider,
             resumeController,
-            () -> resourceRuntime.load(state.cwd()).skillIndex()
+            () -> resourceRuntime.load(state.cwd()).skillIndex(),
+            modelPickerSupplier(modelCatalog, router, state)
         );
         holder[0] = transport;
         return transport;
+    }
+
+    private static Supplier<ModelPicker> modelPickerSupplier(
+        ModelCatalogPort modelCatalog,
+        SlashCommandRouter router,
+        SessionRuntimeState state
+    ) {
+        return () -> new ModelPicker(
+            modelCatalog == null ? List.of() : Optional.ofNullable(modelCatalog.list()).orElse(List.of()),
+            router.sessionContext().map(SessionContext::model).orElse(state.model())
+        );
     }
 
     public static JLineTuiTransport open(
@@ -552,6 +643,80 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int width,
         int height
     ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            io,
+            inputSource,
+            slashCommands,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            diffViewProvider,
+            resumeController,
+            newSessionController,
+            null,
+            width,
+            height
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        List<SlashCommand> slashCommands,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        ModelCatalogPort modelCatalog,
+        int width,
+        int height
+    ) throws IOException {
+        return open(
+            state,
+            core,
+            events,
+            io,
+            inputSource,
+            slashCommands,
+            sessionManager,
+            resourceRuntime,
+            compactionRuntime,
+            diffViewProvider,
+            resumeController,
+            newSessionController,
+            modelCatalog,
+            ProviderLoginPort.unavailable(),
+            width,
+            height
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        AgentCorePort core,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        List<SlashCommand> slashCommands,
+        SessionManagerPort sessionManager,
+        ResourceRuntimePort resourceRuntime,
+        CompactionRuntimePort compactionRuntime,
+        DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
+        NewSessionController newSessionController,
+        ModelCatalogPort modelCatalog,
+        ProviderLoginPort providerLogin,
+        int width,
+        int height
+    ) throws IOException {
         SlashCommandRouter router = new SlashCommandRouter(
             state.sessionId(),
             state.cwd(),
@@ -559,7 +724,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             resourceRuntime,
             compactionRuntime,
             newSessionController,
-            slashCommands
+            slashCommands,
+            modelCatalog
         );
         JLineTuiTransport[] holder = new JLineTuiTransport[1];
         RuntimeTuiSubmitHandler submitHandler = new RuntimeTuiSubmitHandler(
@@ -572,7 +738,9 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 if (holder[0] != null) {
                     holder[0].replaceRuntimeState(runtimeState);
                 }
-            }
+            },
+            () -> new SkillIndex(List.of(), List.of()),
+            providerLogin
         );
         JLineTuiTransport transport = open(
             state,
@@ -584,6 +752,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             diffViewProvider,
             resumeController,
             () -> resourceRuntime.load(state.cwd()).skillIndex(),
+            modelPickerSupplier(modelCatalog, router, state),
             width,
             height
         );
@@ -669,6 +838,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             null,
             NOOP_DIFF_VIEW_PROVIDER,
             null,
+            null,
             null
         );
     }
@@ -713,6 +883,7 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
             NOOP_DIFF_VIEW_PROVIDER,
             null,
             null,
+            null,
             clock
         );
     }
@@ -736,7 +907,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         Supplier<SlashCommandPicker> slashPickerSupplier,
         DiffViewProvider diffViewProvider,
         ResumeSessionController resumeController,
-        Supplier<SkillIndex> skillIndexSupplier
+        Supplier<SkillIndex> skillIndexSupplier,
+        Supplier<ModelPicker> modelPickerSupplier
     ) throws IOException {
         JLineTerminalIo io = new JLineTerminalIo(terminal);
         JLineTuiTransport[] holder = new JLineTuiTransport[1];
@@ -780,7 +952,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 slashPickerSupplier,
                 diffViewProvider,
                 resumeController,
-                skillIndexSupplier
+                skillIndexSupplier,
+                modelPickerSupplier
             );
             holder[0] = transport;
             transport.attach(events, state);
@@ -861,6 +1034,36 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
         int width,
         int height
     ) throws IOException {
+        return open(
+            state,
+            events,
+            io,
+            inputSource,
+            submitHandler,
+            slashPickerSupplier,
+            diffViewProvider,
+            resumeController,
+            skillIndexSupplier,
+            null,
+            width,
+            height
+        );
+    }
+
+    static JLineTuiTransport open(
+        SessionRuntimeState state,
+        EventBus events,
+        TerminalIo io,
+        TerminalInputSource inputSource,
+        TuiSubmitHandler submitHandler,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        DiffViewProvider diffViewProvider,
+        ResumeSessionController resumeController,
+        Supplier<SkillIndex> skillIndexSupplier,
+        Supplier<ModelPicker> modelPickerSupplier,
+        int width,
+        int height
+    ) throws IOException {
         JLineTuiTransport[] holder = new JLineTuiTransport[1];
         TerminalSession session = TerminalSession.open(io, () -> {
             if (holder[0] != null) {
@@ -894,7 +1097,8 @@ public final class JLineTuiTransport implements TuiTransport, AutoCloseable {
                 slashPickerSupplier,
                 diffViewProvider,
                 resumeController,
-                skillIndexSupplier
+                skillIndexSupplier,
+                modelPickerSupplier
             );
             holder[0] = transport;
             transport.attach(events, state);

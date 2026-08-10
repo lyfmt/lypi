@@ -33,6 +33,7 @@ import cn.lypi.contracts.model.AssistantEventStream;
 import cn.lypi.contracts.model.AssistantStart;
 import cn.lypi.contracts.model.AssistantStreamEvent;
 import cn.lypi.contracts.model.AssistantStreamResult;
+import cn.lypi.contracts.model.ModelCatalogPort;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.model.TokenUsage;
@@ -53,6 +54,8 @@ import cn.lypi.contracts.runtime.CompactionResult;
 import cn.lypi.contracts.runtime.CompactionRuntimePort;
 import cn.lypi.contracts.runtime.LyPiRuntime;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
+import cn.lypi.contracts.runtime.ProviderLoginResult;
 import cn.lypi.contracts.runtime.SecurityRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerFactoryPort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
@@ -1594,6 +1597,27 @@ class LyPiRuntimeAutoConfigurationTest {
     void registersTuiTransportFactoryThatAcceptsSlashCommands() {
         new ApplicationContextRunner()
             .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .run(context -> assertThat(context).hasSingleBean(JLineTuiTransportFactory.class));
+    }
+
+    @Test
+    void registersTuiTransportFactoryWithModelCatalog() {
+        ModelCatalogPort catalog = selection -> Optional.empty();
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(ModelCatalogPort.class, () -> catalog)
+            .run(context -> assertThat(context).hasSingleBean(JLineTuiTransportFactory.class));
+    }
+
+    @Test
+    void registersTuiTransportFactoryWithProviderLoginPort() {
+        ProviderLoginPort login = (channelName, baseUrl, authKey) ->
+            new ProviderLoginResult(channelName, List.of());
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(LyPiRuntimeAutoConfiguration.class)
+            .withBean(ProviderLoginPort.class, () -> login)
             .run(context -> assertThat(context).hasSingleBean(JLineTuiTransportFactory.class));
     }
 

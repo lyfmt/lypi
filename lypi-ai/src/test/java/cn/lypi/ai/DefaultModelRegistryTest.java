@@ -45,9 +45,10 @@ class DefaultModelRegistryTest {
     void registryExposesContractsModelCatalogPort() {
         ModelDescriptor descriptor = descriptor("openai", "gpt-5");
         ModelCatalogPort catalog = new DefaultModelRegistry(List.of(descriptor));
+        ModelSelection selection = new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM);
 
-        assertThat(catalog.find(new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM)))
-            .contains(descriptor);
+        assertThat(catalog.list()).containsExactly(descriptor);
+        assertThat(catalog.find(selection)).contains(descriptor);
     }
 
     @Test
@@ -59,6 +60,31 @@ class DefaultModelRegistryTest {
         descriptors.clear();
 
         assertThat(registry.list()).containsExactly(descriptor);
+    }
+
+    @Test
+    void replaceProviderRemovesStaleModelsAndPreservesOtherProviders() {
+        RuntimeModelRegistry registry = new DefaultModelRegistry(List.of(descriptor("fixed", "fixed-model")));
+
+        registry.replaceProvider("login-example", List.of(
+            descriptor("login-example", "model-a"),
+            descriptor("login-example", "model-b")
+        ));
+        registry.replaceProvider("login-example", List.of(descriptor("login-example", "model-c")));
+
+        assertThat(registry.list())
+            .extracting(candidate -> candidate.provider() + "/" + candidate.modelId())
+            .containsExactlyInAnyOrder("fixed/fixed-model", "login-example/model-c");
+        assertThat(registry.find(new ModelSelection("login-example", "model-a", ThinkingLevel.OFF))).isEmpty();
+    }
+
+    @Test
+    void replaceProviderRejectsDescriptorsForAnotherProvider() {
+        RuntimeModelRegistry registry = new DefaultModelRegistry(List.of());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            registry.replaceProvider("login-example", List.of(descriptor("other", "model-a")))
+        ).isInstanceOf(IllegalArgumentException.class);
     }
 
     private static ModelDescriptor descriptor(String provider, String modelId) {

@@ -18,9 +18,12 @@ import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.SessionStateEvent;
+import cn.lypi.contracts.error.ModelProviderException;
 import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.CompactionResult;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
+import cn.lypi.contracts.runtime.ProviderLoginResult;
 import cn.lypi.contracts.skill.SkillIndex;
 import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tui.SessionRuntimeState;
@@ -47,10 +50,12 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private final SlashCommandRouter slashCommandRouter;
     private final Consumer<SessionRuntimeState> runtimeStateConsumer;
     private final Supplier<SkillIndex> skillIndexSupplier;
+    private final ProviderLoginPort providerLogin;
     private final Object activeTurnLock = new Object();
     private volatile MutableAbortSignal activeSignal;
     private ActiveTurn activeTurn;
     private volatile boolean compactRunning;
+    private final AtomicBoolean providerLoginRunning = new AtomicBoolean();
 
     RuntimeTuiSubmitHandler(String sessionId, AgentCorePort core, EventBus events) {
         this(sessionId, core, events, command -> Thread.ofVirtual().name("lypi-tui-turn-", 0).start(command));
@@ -118,6 +123,28 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         Consumer<SessionRuntimeState> runtimeStateConsumer,
         Supplier<SkillIndex> skillIndexSupplier
     ) {
+        this(
+            sessionId,
+            core,
+            events,
+            executor,
+            slashCommandRouter,
+            runtimeStateConsumer,
+            skillIndexSupplier,
+            ProviderLoginPort.unavailable()
+        );
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        SlashCommandRouter slashCommandRouter,
+        Consumer<SessionRuntimeState> runtimeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier,
+        ProviderLoginPort providerLogin
+    ) {
         this.currentSessionId = sessionId;
         this.core = core;
         this.events = events;
@@ -127,11 +154,41 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
         this.skillIndexSupplier = skillIndexSupplier == null
             ? () -> new SkillIndex(List.of(), List.of())
             : skillIndexSupplier;
+        this.providerLogin = providerLogin == null ? ProviderLoginPort.unavailable() : providerLogin;
     }
 
     @Override
     public void submitUserInput(String input) {
         submitUserInput(input, List.of());
+    }
+
+    @Override
+    public void submitProviderLogin(String channelName, String baseUrl, String authKey) {
+        if (!providerLoginRunning.compareAndSet(false, true)) {
+            publishSlashCommandError("login: provider registration is running");
+            return;
+        }
+        try {
+            executor.execute(() -> runProviderLogin(channelName, baseUrl, authKey));
+        } catch (RuntimeException error) {
+            providerLoginRunning.set(false);
+            publishSlashCommandError("login: provider registration failed");
+        }
+    }
+
+    private void runProviderLogin(String channelName, String baseUrl, String authKey) {
+        try {
+            ProviderLoginResult result = providerLogin.register(channelName, baseUrl, authKey);
+            int modelCount = result.models().size();
+            publishSlashCommandNotice(
+                "login: registered " + result.provider() + " (" + modelCount + " model"
+                    + (modelCount == 1 ? "" : "s") + ")"
+            );
+        } catch (RuntimeException error) {
+            publishSlashCommandError("login: " + safeLoginError(error, authKey));
+        } finally {
+            providerLoginRunning.set(false);
+        }
     }
 
     @Override
@@ -433,6 +490,20 @@ final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
     private String errorMessage(RuntimeException exception) {
         String message = exception.getMessage();
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
+    }
+
+    private static String safeLoginError(RuntimeException exception, String authKey) {
+        if (exception instanceof ModelProviderException) {
+            String message = exception.getMessage();
+            if (message != null && !message.isBlank() && (authKey == null || !message.contains(authKey))) {
+                return message;
+            }
+        }
+        if (exception instanceof IllegalStateException
+            && "provider login is unavailable".equals(exception.getMessage())) {
+            return "provider login is unavailable";
+        }
+        return "provider registration failed";
     }
 
     private void publishSessionState() {

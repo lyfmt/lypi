@@ -19,11 +19,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.ClassPathResource;
 
 class ApplicationExampleConfigTest {
@@ -107,6 +109,58 @@ class ApplicationExampleConfigTest {
 
         assertThat(openAiBlock).contains("#             supports-thinking: true");
         assertThat(openAiBlock).doesNotContain("Anthropic extended thinking");
+    }
+
+    @Test
+    void applicationExampleDocumentsDiscoveredChatCompletionsProvider() throws IOException {
+        String example = new ClassPathResource("application.yml.example").getContentAsString(StandardCharsets.UTF_8);
+        String fixtureBlock = example.substring(
+            example.indexOf("#       fixture:"),
+            example.indexOf("#       anthropic:")
+        );
+
+        assertThat(fixtureBlock).contains("#         request-style: chat_completions");
+        assertThat(fixtureBlock).contains("#         fallback-request-style: chat_completions");
+        assertThat(fixtureBlock).contains("#         transport: sse");
+        assertThat(fixtureBlock).contains("#           enabled: true");
+        assertThat(fixtureBlock).contains("#             - /models");
+        assertThat(fixtureBlock).contains("#             - /model");
+        assertThat(fixtureBlock).contains("作为远端同名模型的完整描述覆盖");
+        assertThat(fixtureBlock).contains("远端未返回的静态 model-id 仍不会进入模型目录");
+        assertThat(fixtureBlock)
+            .contains("#           requires-reasoning-content-on-assistant-messages: true");
+    }
+
+    @Test
+    void applicationExampleParsesDiscoveryDefaultsAndChatCompatibility() throws IOException {
+        StandardEnvironment environment = environmentForAiExample();
+
+        assertThat(environment.getProperty(
+            "lypi.ai.model-discovery.defaults.context-window",
+            Integer.class
+        )).isEqualTo(256000);
+        assertThat(environment.getProperty(
+            "lypi.ai.model-discovery.defaults.max-output-tokens",
+            Integer.class
+        )).isEqualTo(8192);
+        assertThat(environment.getProperty(
+            "lypi.ai.model-discovery.defaults.supports-thinking",
+            Boolean.class
+        )).isTrue();
+        assertThat(environment.getProperty(
+            "lypi.ai.model-discovery.defaults.supports-image-input",
+            Boolean.class
+        )).isTrue();
+        assertThat(environment.getProperty("lypi.ai.providers.fixture.request-style"))
+            .isEqualTo("chat_completions");
+        assertThat(environment.getProperty("lypi.ai.providers.fixture.fallback-request-style"))
+            .isEqualTo("chat_completions");
+        assertThat(environment.getProperty("lypi.ai.providers.fixture.transport"))
+            .isEqualTo("sse");
+        assertThat(environment.getProperty(
+            "lypi.ai.providers.fixture.compat.requires-reasoning-content-on-assistant-messages",
+            Boolean.class
+        )).isTrue();
     }
 
     @Test
@@ -262,5 +316,25 @@ class ApplicationExampleConfigTest {
             .load("application-example", new ClassPathResource("application.yml.example"))
             .forEach(environment.getPropertySources()::addLast);
         return Binder.get(environment);
+    }
+
+    private StandardEnvironment environmentForAiExample() throws IOException {
+        String example = new ClassPathResource("application.yml.example")
+            .getContentAsString(StandardCharsets.UTF_8);
+        String aiBlock = example.substring(
+            example.indexOf("#   ai:"),
+            example.indexOf("#   tool:")
+        );
+        String yaml = "lypi:\n" + aiBlock.lines()
+            .map(line -> line.equals("#") ? "" : line.startsWith("# ") ? line.substring(2) : line)
+            .collect(Collectors.joining("\n"));
+        StandardEnvironment environment = new StandardEnvironment();
+        new YamlPropertySourceLoader()
+            .load(
+                "application-example-ai",
+                new ByteArrayResource(yaml.getBytes(StandardCharsets.UTF_8))
+            )
+            .forEach(environment.getPropertySources()::addLast);
+        return environment;
     }
 }

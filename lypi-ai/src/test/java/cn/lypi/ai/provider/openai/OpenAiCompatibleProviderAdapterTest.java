@@ -564,7 +564,7 @@ class OpenAiCompatibleProviderAdapterTest {
     }
 
     @Test
-    void respectsChatCompletionsAsPrimaryRequestStyle() {
+    void chatCompletionsOnlyConfigurationUsesOnlyChatEndpoint() throws Exception {
         RecordingTransport websocket = RecordingTransport.events();
         RecordingTransport sse = RecordingTransport.events();
         RecordingTransport chat = RecordingTransport.events(
@@ -572,7 +572,7 @@ class OpenAiCompatibleProviderAdapterTest {
             "[DONE]"
         );
         OpenAiCompatibleProviderAdapter adapter = new OpenAiCompatibleProviderAdapter(
-            config(TransportMode.AUTO, "test-key", RequestStyle.CHAT_COMPLETIONS, RequestStyle.RESPONSES),
+            config(TransportMode.SSE, "test-key", RequestStyle.CHAT_COMPLETIONS, RequestStyle.CHAT_COMPLETIONS),
             websocket,
             sse,
             chat
@@ -584,6 +584,8 @@ class OpenAiCompatibleProviderAdapterTest {
         assertThat(sse.requests).isEmpty();
         assertThat(chat.requests).hasSize(1);
         assertThat(chat.requests.getFirst().uri().getPath()).isEqualTo("/v1/chat/completions");
+        assertThat(OBJECT_MAPPER.readTree(chat.requests.getFirst().body()).path("model").asText())
+            .isEqualTo("gpt-5-mini");
         assertThat(events).contains(new TextDelta("hello"));
     }
 

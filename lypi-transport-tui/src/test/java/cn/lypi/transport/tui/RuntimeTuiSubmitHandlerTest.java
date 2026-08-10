@@ -24,6 +24,11 @@ import cn.lypi.contracts.event.MessageEndEvent;
 import cn.lypi.contracts.event.MessageStartEvent;
 import cn.lypi.contracts.event.PermissionResponseEvent;
 import cn.lypi.contracts.event.SessionStateEvent;
+import cn.lypi.contracts.error.ErrorSeverity;
+import cn.lypi.contracts.error.ModelProviderException;
+import cn.lypi.contracts.model.ApiStyle;
+import cn.lypi.contracts.model.CostProfile;
+import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
@@ -35,6 +40,8 @@ import cn.lypi.contracts.resource.ResourceSnapshot;
 import cn.lypi.contracts.runtime.AgentCorePort;
 import cn.lypi.contracts.runtime.CompactionRequest;
 import cn.lypi.contracts.runtime.CompactionResult;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
+import cn.lypi.contracts.runtime.ProviderLoginResult;
 import cn.lypi.contracts.runtime.ResourceRuntimePort;
 import cn.lypi.contracts.runtime.SessionManagerPort;
 import cn.lypi.contracts.security.AgentMode;
@@ -56,6 +63,7 @@ import cn.lypi.contracts.tui.SessionRuntimeState;
 import cn.lypi.contracts.tui.SlashCommand;
 import cn.lypi.contracts.tui.SlashCommandHandler;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -449,6 +457,142 @@ class RuntimeTuiSubmitHandlerTest {
         assertEquals("perm_toolu_1", event.requestId());
         assertEquals("allow_once", event.selectedOptionId());
         assertEquals(false, event.fromKeyboardCancel());
+    }
+
+    @Test
+    void providerLoginRunsAsynchronouslyWithoutCreatingTurnOrSessionEntry() {
+        String authKey = "test-secret";
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        RecordingSessionManager session = new RecordingSessionManager();
+        QueuedExecutor executor = new QueuedExecutor();
+        AtomicBoolean acceptedChannelName = new AtomicBoolean();
+        AtomicBoolean acceptedBaseUrl = new AtomicBoolean();
+        AtomicBoolean acceptedAuthKey = new AtomicBoolean();
+        ProviderLoginPort login = (channelName, baseUrl, key) -> {
+            acceptedChannelName.set("zen".equals(channelName));
+            acceptedBaseUrl.set("https://api.example.test/v1".equals(baseUrl));
+            acceptedAuthKey.set(authKey.equals(key));
+            return loginResult();
+        };
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            executor,
+            new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources()),
+            null,
+            skills(),
+            login
+        );
+
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", authKey);
+
+        assertEquals(1, executor.size());
+        assertTrue(core.requests.isEmpty());
+        assertTrue(session.entries.isEmpty());
+
+        executor.runNext();
+
+        assertTrue(acceptedChannelName.get());
+        assertTrue(acceptedBaseUrl.get());
+        assertTrue(acceptedAuthKey.get());
+        assertEquals("login: registered login-example (1 model)", systemMessages(events).getFirst());
+        assertFalse(events.published.stream().anyMatch(event -> event.toString().contains(authKey)));
+        assertTrue(core.requests.isEmpty());
+        assertTrue(session.entries.isEmpty());
+    }
+
+    @Test
+    void providerLoginRejectsConcurrentSubmissionAndRedactsFailureMessages() {
+        String authKey = "test-secret";
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        AtomicInteger registrations = new AtomicInteger();
+        ProviderLoginPort login = (channelName, baseUrl, key) -> {
+            registrations.incrementAndGet();
+            throw new ModelProviderException(
+                "provider.login_failed",
+                ErrorSeverity.ERROR,
+                false,
+                "provider rejected " + key
+            );
+        };
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            executor,
+            null,
+            null,
+            skills(),
+            login
+        );
+
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", authKey);
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", authKey);
+
+        assertEquals(1, executor.size());
+        ErrorEvent concurrent = assertInstanceOf(ErrorEvent.class, events.published.getFirst());
+        assertEquals("login: provider registration is running", concurrent.message());
+
+        executor.runNext();
+
+        assertEquals(1, registrations.get());
+        ErrorEvent failure = assertInstanceOf(ErrorEvent.class, events.published.getLast());
+        assertEquals("login: provider registration failed", failure.message());
+        assertFalse(failure.message().contains(authKey));
+        assertTrue(core.requests.isEmpty());
+    }
+
+    @Test
+    void unavailableProviderLoginProducesFixedErrorWithoutStartingTurn() {
+        String authKey = "test-secret";
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler("ses_1", core, events, executor);
+
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", authKey);
+        executor.runNext();
+
+        ErrorEvent error = assertInstanceOf(ErrorEvent.class, events.published.getFirst());
+        assertEquals("login: provider login is unavailable", error.message());
+        assertFalse(error.message().contains(authKey));
+        assertTrue(core.requests.isEmpty());
+    }
+
+    @Test
+    void providerLoginShowsSanitizedProviderError() {
+        RecordingCore core = new RecordingCore();
+        RecordingEventBus events = new RecordingEventBus();
+        QueuedExecutor executor = new QueuedExecutor();
+        ProviderLoginPort login = (channelName, baseUrl, authKey) -> {
+            throw new ModelProviderException(
+                "provider.login_invalid_auth_key",
+                ErrorSeverity.ERROR,
+                false,
+                "Provider auth key is required."
+            );
+        };
+        RuntimeTuiSubmitHandler handler = new RuntimeTuiSubmitHandler(
+            "ses_1",
+            core,
+            events,
+            executor,
+            null,
+            null,
+            skills(),
+            login
+        );
+
+        handler.submitProviderLogin("zen", "https://api.example.test/v1", "test-secret");
+        executor.runNext();
+
+        ErrorEvent error = assertInstanceOf(ErrorEvent.class, events.published.getFirst());
+        assertEquals("login: Provider auth key is required.", error.message());
+        assertTrue(core.requests.isEmpty());
     }
 
     @Test
@@ -1038,6 +1182,29 @@ class RuntimeTuiSubmitHandlerTest {
 
     private static ResourceRuntimePort emptyResources() {
         return resources(List.of());
+    }
+
+    private static ProviderLoginResult loginResult() {
+        return new ProviderLoginResult("login-example", List.of(new ModelDescriptor(
+            "login-example",
+            "alpha",
+            URI.create("https://api.example.test/v1"),
+            ApiStyle.OPENAI_COMPATIBLE,
+            0,
+            0,
+            false,
+            false,
+            new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
+            Map.of()
+        )));
+    }
+
+    private static List<String> systemMessages(RecordingEventBus events) {
+        return events.published.stream()
+            .filter(MessageDeltaEvent.class::isInstance)
+            .map(MessageDeltaEvent.class::cast)
+            .map(MessageDeltaEvent::delta)
+            .toList();
     }
 
     private static ResourceRuntimePort reviewResources() {

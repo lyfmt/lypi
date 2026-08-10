@@ -7,6 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cn.lypi.contracts.context.AgentMessage;
 import cn.lypi.contracts.context.ContextBudget;
+import cn.lypi.contracts.model.ApiStyle;
+import cn.lypi.contracts.model.CostProfile;
+import cn.lypi.contracts.model.ModelCatalogPort;
+import cn.lypi.contracts.model.ModelDescriptor;
 import cn.lypi.contracts.model.ModelSelection;
 import cn.lypi.contracts.model.ThinkingLevel;
 import cn.lypi.contracts.prompt.PromptParameter;
@@ -34,6 +38,7 @@ import cn.lypi.contracts.session.ThinkingChangeEntry;
 import cn.lypi.contracts.tui.NewSessionController;
 import cn.lypi.contracts.tui.SessionRuntimeState;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -126,6 +131,85 @@ class SlashCommandRouterTest {
 
         ModelChangeEntry model = assertInstanceOf(ModelChangeEntry.class, session.entries.getFirst());
         assertEquals(new ModelSelection("openai", "gpt-5.4", ThinkingLevel.HIGH), model.model());
+    }
+
+    @Test
+    void catalogAllowsKnownQualifiedModelAndPreservesThinkingLevel() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.LOW,
+            AgentMode.EXECUTE,
+            PermissionMode.ASK
+        ));
+        SlashCommandRouter router = new SlashCommandRouter(
+            "ses_1",
+            Path.of("."),
+            session,
+            emptyResources(),
+            null,
+            null,
+            List.of(),
+            catalog(model("zen", "kimi-k2.6"))
+        );
+
+        SlashCommandResult result = router.route("/model zen/kimi-k2.6");
+
+        ModelChangeEntry entry = assertInstanceOf(ModelChangeEntry.class, session.entries.getFirst());
+        assertEquals(new ModelSelection("zen", "kimi-k2.6", ThinkingLevel.LOW), entry.model());
+        assertEquals("model: zen/kimi-k2.6", result.notice().orElseThrow());
+    }
+
+    @Test
+    void catalogSelectionTurnsThinkingOffForModelsThatDoNotSupportIt() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.HIGH,
+            AgentMode.EXECUTE,
+            PermissionMode.ASK
+        ));
+        SlashCommandRouter router = new SlashCommandRouter(
+            "ses_1",
+            Path.of("."),
+            session,
+            emptyResources(),
+            null,
+            null,
+            List.of(),
+            catalog(model("login-fixture", "discovered-model", false))
+        );
+
+        router.route("/model login-fixture/discovered-model");
+
+        ModelChangeEntry entry = assertInstanceOf(ModelChangeEntry.class, session.entries.getFirst());
+        assertEquals(
+            new ModelSelection("login-fixture", "discovered-model", ThinkingLevel.OFF),
+            entry.model()
+        );
+    }
+
+    @Test
+    void catalogRejectsUnknownModelWithoutAppendingEntry() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.ASK
+        ));
+        SlashCommandRouter router = new SlashCommandRouter(
+            "ses_1",
+            Path.of("."),
+            session,
+            emptyResources(),
+            null,
+            null,
+            List.of(),
+            catalog(model("zen", "kimi-k2.6"))
+        );
+
+        SlashCommandResult result = router.route("/model zen/not-listed");
+
+        assertEquals("unknown model: zen/not-listed", result.message().orElseThrow());
+        assertEquals(List.of(), session.entries);
     }
 
     @Test
@@ -248,6 +332,26 @@ class SlashCommandRouterTest {
 
         assertFalse(result.matched());
         assertFalse(result.consumed());
+        assertEquals(List.of(), session.entries);
+    }
+
+    @Test
+    void loginCommandIsBuiltInAndRejectsArgumentsWithoutChangingSessionState() {
+        RecordingSessionManager session = new RecordingSessionManager(context(
+            new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM),
+            ThinkingLevel.MEDIUM,
+            AgentMode.EXECUTE,
+            PermissionMode.ASK
+        ));
+        SlashCommandRouter router = new SlashCommandRouter("ses_1", Path.of("."), session, emptyResources());
+
+        SlashCommandResult exact = router.route("/login");
+        SlashCommandResult withArgument = router.route("/login https://example.test/v1");
+
+        assertTrue(router.commandNames().contains("/login"));
+        assertTrue(exact.matched());
+        assertTrue(exact.consumed());
+        assertEquals("usage: /login", withArgument.message().orElseThrow());
         assertEquals(List.of(), session.entries);
     }
 
@@ -546,6 +650,43 @@ class SlashCommandRouterTest {
         PermissionMode permissionMode
     ) {
         return new SessionContext(List.of(), List.of("root"), List.of(), model, thinking, mode, permissionMode);
+    }
+
+    private static ModelCatalogPort catalog(ModelDescriptor... descriptors) {
+        List<ModelDescriptor> models = List.of(descriptors);
+        return new ModelCatalogPort() {
+            @Override
+            public List<ModelDescriptor> list() {
+                return models;
+            }
+
+            @Override
+            public Optional<ModelDescriptor> find(ModelSelection selection) {
+                return models.stream()
+                    .filter(candidate -> candidate.provider().equals(selection.provider()))
+                    .filter(candidate -> candidate.modelId().equals(selection.modelId()))
+                    .findFirst();
+            }
+        };
+    }
+
+    private static ModelDescriptor model(String provider, String modelId) {
+        return model(provider, modelId, true);
+    }
+
+    private static ModelDescriptor model(String provider, String modelId, boolean supportsThinking) {
+        return new ModelDescriptor(
+            provider,
+            modelId,
+            URI.create("https://api.example.test/v1"),
+            ApiStyle.OPENAI_COMPATIBLE,
+            128_000,
+            16_384,
+            supportsThinking,
+            false,
+            new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
+            Map.of()
+        );
     }
 
     private static ResourceRuntimePort emptyResources() {

@@ -8,9 +8,11 @@ import cn.lypi.ai.ModelPort;
 import cn.lypi.ai.ModelRegistry;
 import cn.lypi.ai.ProviderAdapter;
 import cn.lypi.ai.ProviderAdapterApiProvider;
+import cn.lypi.ai.RuntimeModelRegistry;
 import cn.lypi.ai.model.BuiltinModelDescriptorSource;
 import cn.lypi.ai.model.CompatSanitizer;
 import cn.lypi.ai.model.CompositeModelDescriptorSource;
+import cn.lypi.ai.model.DiscoveredModelDefaults;
 import cn.lypi.ai.model.ModelDescriptorSource;
 import cn.lypi.ai.model.RemoteModelDescriptorSource;
 import cn.lypi.ai.model.RemoteModelDiscoveryClient;
@@ -33,14 +35,19 @@ import cn.lypi.boot.ai.LyPiAiProperties.ProviderProperties;
 import cn.lypi.contracts.model.ApiStyle;
 import cn.lypi.contracts.model.CostProfile;
 import cn.lypi.contracts.model.ModelDescriptor;
+import cn.lypi.contracts.runtime.ProviderLoginPort;
 import java.math.BigDecimal;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -55,8 +62,8 @@ public class LyPiAiAutoConfiguration {
     private static final Duration BUILTIN_OPENAI_TIMEOUT = Duration.ofSeconds(30);
 
     @Bean
-    @ConditionalOnMissingBean
-    public ModelRegistry modelRegistry(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
+    @ConditionalOnMissingBean(ModelRegistry.class)
+    public RuntimeModelRegistry modelRegistry(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
         return new DefaultModelRegistry(modelDescriptorSource(properties, discoveryClient).list());
     }
 
@@ -72,20 +79,23 @@ public class LyPiAiAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public ApiProviderRegistry apiProviderRegistry(
-        @Qualifier("openAiCompatibleProviderAdapters") List<ProviderAdapter> openAiAdapters,
+        @Qualifier("openAiCompatibleApiProvider") ProviderAdapterApiProvider openAiCompatibleApiProvider,
         @Qualifier("anthropicProviderAdapters") List<ProviderAdapter> anthropicAdapters
     ) {
         List<ProviderAdapterApiProvider> providers = new ArrayList<>();
-        if (!openAiAdapters.isEmpty()) {
-            providers.add(new ProviderAdapterApiProvider(ApiStyle.OPENAI_COMPATIBLE, openAiAdapters));
-        }
+        providers.add(openAiCompatibleApiProvider);
         if (!anthropicAdapters.isEmpty()) {
             providers.add(new ProviderAdapterApiProvider(ApiStyle.ANTHROPIC, anthropicAdapters));
         }
-        if (providers.isEmpty()) {
-            return new DefaultApiProviderRegistry(List.of());
-        }
         return new DefaultApiProviderRegistry(providers);
+    }
+
+    @Bean(name = "openAiCompatibleApiProvider")
+    @ConditionalOnMissingBean(name = "openAiCompatibleApiProvider")
+    public ProviderAdapterApiProvider openAiCompatibleApiProvider(
+        @Qualifier("openAiCompatibleProviderAdapters") List<ProviderAdapter> openAiAdapters
+    ) {
+        return new ProviderAdapterApiProvider(ApiStyle.OPENAI_COMPATIBLE, openAiAdapters);
     }
 
     @Bean
@@ -108,6 +118,35 @@ public class LyPiAiAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public LoginProviderPropertiesStore loginProviderPropertiesStore() {
+        return new LoginProviderPropertiesStore(Path.of(System.getProperty("user.home", ".")));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ProviderLoginPort.class)
+    public ProviderLoginPort providerLoginPort(
+        LyPiAiProperties properties,
+        RemoteModelDiscoveryClient discoveryClient,
+        ObjectProvider<RuntimeModelRegistry> modelRegistry,
+        @Qualifier("openAiCompatibleApiProvider") ObjectProvider<ProviderAdapterApiProvider> openAiDispatcher,
+        LoginProviderPropertiesStore propertiesStore
+    ) {
+        RuntimeModelRegistry runtimeModelRegistry = modelRegistry.getIfAvailable();
+        ProviderAdapterApiProvider dispatcher = openAiDispatcher.getIfAvailable();
+        if (runtimeModelRegistry == null || dispatcher == null) {
+            return ProviderLoginPort.unavailable();
+        }
+        return new OpenAiCompatibleProviderLoginService(
+            discoveryClient,
+            runtimeModelRegistry,
+            dispatcher,
+            propertiesStore,
+            descriptorDefaults(properties)
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public CompactionSummarizer compactionSummarizer(ModelPort modelPort, LyPiAiProperties properties) {
         LyPiAiProperties.CompactionSummaryProperties summary = properties.getCompactionSummary();
         return new AiCompactionSummarizer(
@@ -118,11 +157,49 @@ public class LyPiAiAutoConfiguration {
     }
 
     private ModelDescriptorSource modelDescriptorSource(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
-        List<ModelDescriptorSource> sources = new ArrayList<>();
-        sources.add(new StaticModelDescriptorSource(builtinModelDescriptors(properties)));
-        sources.add(new StaticModelDescriptorSource(remoteModelDescriptors(properties, discoveryClient)));
-        sources.add(new StaticModelDescriptorSource(modelDescriptors(properties)));
-        return new CompositeModelDescriptorSource(sources);
+        DiscoveredModelDefaults defaults = descriptorDefaults(properties);
+        List<ModelDescriptor> remote = remoteModelDescriptors(properties, discoveryClient, defaults);
+        Set<ModelKey> discovered = remote.stream()
+            .map(model -> new ModelKey(model.provider(), model.modelId()))
+            .collect(Collectors.toUnmodifiableSet());
+        List<ModelDescriptor> builtin = authoritativeLocalDescriptors(
+            properties,
+            builtinModelDescriptors(properties),
+            discovered
+        );
+        List<ModelDescriptor> configured = authoritativeLocalDescriptors(
+            properties,
+            modelDescriptors(properties),
+            discovered
+        );
+        return new CompositeModelDescriptorSource(List.of(
+            new StaticModelDescriptorSource(remote),
+            new StaticModelDescriptorSource(builtin),
+            new StaticModelDescriptorSource(configured)
+        ));
+    }
+
+    private List<ModelDescriptor> authoritativeLocalDescriptors(
+        LyPiAiProperties properties,
+        List<ModelDescriptor> local,
+        Set<ModelKey> discovered
+    ) {
+        Map<String, ProviderProperties> providers = effectiveProviders(properties);
+        return local.stream()
+            .filter(descriptor -> {
+                ProviderProperties provider = providers.get(descriptor.provider());
+                return !usesRemoteModelDiscovery(provider)
+                    || discovered.contains(new ModelKey(descriptor.provider(), descriptor.modelId()));
+            })
+            .toList();
+    }
+
+    private boolean usesRemoteModelDiscovery(ProviderProperties provider) {
+        return provider != null
+            && provider.isEnabled()
+            && provider.getBaseUrl() != null
+            && valueOrDefault(provider.getApiStyle(), ApiStyle.OPENAI_COMPATIBLE) == ApiStyle.OPENAI_COMPATIBLE
+            && provider.getModelDiscovery().isEnabled();
     }
 
     private List<ModelDescriptor> builtinModelDescriptors(LyPiAiProperties properties) {
@@ -156,7 +233,11 @@ public class LyPiAiAutoConfiguration {
         return descriptors;
     }
 
-    private List<ModelDescriptor> remoteModelDescriptors(LyPiAiProperties properties, RemoteModelDiscoveryClient discoveryClient) {
+    private List<ModelDescriptor> remoteModelDescriptors(
+        LyPiAiProperties properties,
+        RemoteModelDiscoveryClient discoveryClient,
+        DiscoveredModelDefaults defaults
+    ) {
         List<ModelDescriptor> descriptors = new ArrayList<>();
         effectiveProviders(properties).forEach((providerName, provider) -> {
             if (!provider.isEnabled() || provider.getBaseUrl() == null || !provider.getModelDiscovery().isEnabled()) {
@@ -165,7 +246,6 @@ public class LyPiAiAutoConfiguration {
             if (valueOrDefault(provider.getApiStyle(), ApiStyle.OPENAI_COMPATIBLE) != ApiStyle.OPENAI_COMPATIBLE) {
                 return;
             }
-            RemoteModelDescriptorSource.DescriptorDefaults defaults = descriptorDefaults(provider);
             descriptors.addAll(new RemoteModelDescriptorSource(
                 true,
                 providerName,
@@ -181,19 +261,18 @@ public class LyPiAiAutoConfiguration {
         return descriptors;
     }
 
-    private RemoteModelDescriptorSource.DescriptorDefaults descriptorDefaults(ProviderProperties provider) {
-        ModelProperties firstModel = provider.getModels().isEmpty() ? new ModelProperties() : provider.getModels().getFirst();
-        return new RemoteModelDescriptorSource.DescriptorDefaults(
-            firstModel.getContextWindow(),
-            firstModel.getMaxOutputTokens(),
-            firstModel.isSupportsThinking(),
-            firstModel.isSupportsImageInput(),
-            new CostProfile(
-                valueOrDefault(firstModel.getInputTokenCost(), BigDecimal.ZERO),
-                valueOrDefault(firstModel.getOutputTokenCost(), BigDecimal.ZERO),
-                valueOrDefault(firstModel.getCurrency(), "USD")
-            ),
-            sanitizedCompat(provider.getCompat(), firstModel.getCompat())
+    private DiscoveredModelDefaults descriptorDefaults(LyPiAiProperties properties) {
+        LyPiAiProperties.ModelDefaultsProperties defaults = properties.getModelDiscovery().getDefaults();
+        if (defaults.getContextWindow() <= 0 || defaults.getMaxOutputTokens() <= 0) {
+            throw new IllegalArgumentException("Model discovery default token limits must be positive.");
+        }
+        return new DiscoveredModelDefaults(
+            defaults.getContextWindow(),
+            defaults.getMaxOutputTokens(),
+            defaults.isSupportsThinking(),
+            defaults.isSupportsImageInput(),
+            new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
+            Map.of()
         );
     }
 
@@ -402,5 +481,8 @@ public class LyPiAiAutoConfiguration {
 
     private static <T> T valueOrDefault(T value, T defaultValue) {
         return value == null ? defaultValue : value;
+    }
+
+    private record ModelKey(String provider, String modelId) {
     }
 }

@@ -14,7 +14,7 @@ class SlashCommandPickerTest {
         picker.updateFilter("/");
 
         assertEquals(
-            List.of("/model", "/thinking", "/plan", "/permission-mode", "/compact", "/review", "/commit"),
+            List.of("/model", "/login", "/thinking", "/plan", "/permission-mode", "/compact", "/review", "/commit"),
             picker.visibleCommands()
         );
     }
