@@ -30,6 +30,8 @@ import cn.lypi.contracts.session.SessionContext;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionInfoEntry;
+import cn.lypi.contracts.session.ShellState;
+import cn.lypi.contracts.session.ShellStateChangeEntry;
 import cn.lypi.contracts.session.ThinkingChangeEntry;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -169,6 +171,41 @@ class SessionManagerReplayTest {
         assertThat(context.thinkingLevel()).isEqualTo(ThinkingLevel.HIGH);
         assertThat(context.mode()).isEqualTo(AgentMode.PLAN);
         assertThat(context.permissionMode()).isEqualTo(PermissionMode.AUTO);
+    }
+
+    @Test
+    void shellStateUsesLegacyHeaderUntilCurrentBranchContainsAChangeEntry() {
+        Path initialCwd = tempDir.resolve("legacy cwd");
+        Path firstChangedCwd = tempDir.resolve("first changed cwd");
+        Path latestChangedCwd = tempDir.resolve("latest changed cwd");
+        JsonlSessionStore store = new JsonlSessionStore(tempDir);
+        store.create(sessionHeaderWithShellState("ses_shell_replay", initialCwd));
+
+        SessionManager withoutChanges = new SessionManagerImpl(tempDir);
+        withoutChanges.openOrCreate("ses_shell_replay");
+        assertThat(withoutChanges.shellState()).isEqualTo(ShellState.of(initialCwd));
+
+        store.append(
+            "ses_shell_replay",
+            new ShellStateChangeEntry("entry-shell-first", null, ShellState.of(firstChangedCwd), NOW)
+        );
+        store.append(
+            "ses_shell_replay",
+            new ShellStateChangeEntry(
+                "entry-shell-latest",
+                "entry-shell-first",
+                ShellState.of(latestChangedCwd),
+                NOW.plusSeconds(1)
+            )
+        );
+        SessionManager withChange = new SessionManagerImpl(tempDir);
+        withChange.openOrCreate("ses_shell_replay");
+
+        assertThat(withChange.shellState()).isEqualTo(ShellState.of(latestChangedCwd));
+        withChange.switchLeaf("entry-shell-first");
+        assertThat(withChange.shellState()).isEqualTo(ShellState.of(firstChangedCwd));
+        withChange.switchLeaf(null);
+        assertThat(withChange.shellState()).isEqualTo(ShellState.of(initialCwd));
     }
 
     @Test
@@ -474,6 +511,26 @@ class SessionManagerReplayTest {
             NOW,
             Optional.empty(),
             Optional.empty()
+        );
+    }
+
+    private SessionHeader sessionHeaderWithShellState(String sessionId, Path shellCwd) {
+        return new SessionHeader(
+            "session",
+            1,
+            sessionId,
+            tempDir,
+            Optional.empty(),
+            Optional.empty(),
+            0,
+            Optional.empty(),
+            Optional.empty(),
+            NOW,
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            null,
+            ShellState.of(shellCwd)
         );
     }
 }

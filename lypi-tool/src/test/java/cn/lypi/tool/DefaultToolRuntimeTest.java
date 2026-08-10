@@ -61,15 +61,20 @@ import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.tool.builtin.BashTool;
 import cn.lypi.tool.builtin.ReadTool;
 import cn.lypi.tool.builtin.RequestPermissionsTool;
+import cn.lypi.tool.builtin.ShellEnvironmentHarness;
 import cn.lypi.tool.builtin.WriteTool;
 import cn.lypi.tool.mcp.McpToolAdapter;
+import cn.lypi.tool.shell.DefaultSandboxPolicyResolver;
 import cn.lypi.tool.shell.ExecutorRegistry;
+import cn.lypi.tool.shell.HostExecutor;
 import cn.lypi.tool.shell.PermissionProfileSandboxPolicyResolver;
 import cn.lypi.tool.shell.SandboxPolicyOptions;
+import cn.lypi.tool.shell.SandboxPolicyResolver;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -209,7 +214,7 @@ class DefaultToolRuntimeTest {
     void publishesBoundedSingleLineBashSummary() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
-        runtime.register(new BashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()))));
+        runtime.register(bashTool(new RecordingExecutor(new ExecutionResult(0, "", "", false, Optional.empty()))));
         String command = "printf 'one\ntwo'\r\n" + "🙂".repeat(200);
 
         runtime.execute(
@@ -316,6 +321,202 @@ class DefaultToolRuntimeTest {
     }
 
     @Test
+    void preservesWorkspaceRootWhileAddingCallAndAuthorizationMetadata() throws Exception {
+        Path nested = Files.createDirectories(tempDir.resolve("nested"));
+        AtomicReference<ToolUseContext> captured = new AtomicReference<>();
+        ToolExecutionInterceptor interceptor = ToolExecutionInterceptor.before((request, tool, context) -> {
+            captured.set(context);
+            return ToolExecutionInterceptor.BeforeResult.allow();
+        });
+        SecurityRuntimePort security = (request, context) ->
+            TestTools.decision(PermissionBehavior.ASK, "review");
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder().cwd(tempDir).build()),
+            interceptor,
+            security,
+            (request, tool, context, decision) -> PermissionGateResult.allow()
+        );
+        runtime.register(TestTools.permission("write", PermissionBehavior.ALLOW));
+
+        ToolResult<?> result = runtime.execute(
+            List.of(new ToolUseRequest("toolu_1", "write", Map.of("text", "ok"), "msg_1")),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(nested)
+        ).getFirst();
+
+        assertFalse(result.isError());
+        assertEquals(tempDir, captured.get().workspaceRoot());
+        assertEquals(nested, captured.get().cwd());
+        assertEquals(true, captured.get().metadata().get("permissionApprovedForHostExecution"));
+    }
+
+    @Test
+    void propagatesCwdDeltaAcrossPlannerSegmentsAndUnknownCalls() throws Exception {
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Path nested = Files.createDirectories(workspace.resolve("nested"));
+        AtomicReference<ToolUseContext> captured = new AtomicReference<>();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(workspace).build(),
+            allowAllSecurity()
+        );
+        runtime.register(TestTools.stateDeltaEcho("cd", nested));
+        runtime.register(TestTools.contextCapturingEcho("probe", captured));
+
+        List<ToolResult<?>> results = runtime.execute(
+            List.of(
+                new ToolUseRequest("toolu_cd", "cd", Map.of("text", "changed"), "msg_1"),
+                new ToolUseRequest("toolu_unknown", "missing", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_probe", "probe", Map.of("text", "probe"), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(workspace)
+        );
+
+        assertFalse(results.get(0).isError());
+        assertTrue(results.get(1).isError());
+        assertFalse(results.get(2).isError());
+        assertEquals(workspace, captured.get().workspaceRoot());
+        assertEquals(nested, captured.get().cwd());
+    }
+
+    @Test
+    void bashCwdDeltaFromSymlinkWorkspaceAppliesToFollowingRead() throws Exception {
+        Path realWorkspace = Files.createDirectory(tempDir.resolve("runtime-real-workspace"));
+        Path nested = Files.createDirectory(realWorkspace.resolve("nested"));
+        Files.writeString(nested.resolve("marker.txt"), "nested-marker\n");
+        Path workspaceLink = Files.createSymbolicLink(
+            tempDir.resolve("runtime-workspace-link"),
+            realWorkspace
+        );
+        SandboxRuntimePolicy policy = new SandboxRuntimePolicy(
+            List.of(),
+            List.of(),
+            List.of(workspaceLink),
+            List.of(),
+            NetworkMode.DISABLED,
+            false,
+            true
+        );
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(workspaceLink).build(),
+            allowAllSecurity(),
+            (request, tool, context, decision) -> PermissionGateResult.allow(),
+            null
+        );
+        runtime.register(bashTool(new HostExecutor(), (workspace, cwd) -> policy));
+        runtime.register(new ReadTool());
+
+        List<ToolResult<?>> results = runtime.execute(
+            List.of(
+                new ToolUseRequest(
+                    "toolu_cd",
+                    "bash",
+                    Map.of("command", "cd nested", "loginShell", false),
+                    "msg_1"
+                ),
+                new ToolUseRequest("toolu_read", "read", Map.of("path", "marker.txt"), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(workspaceLink)
+        );
+
+        assertFalse(results.get(0).isError(), results.get(0).output().toString());
+        assertEquals(
+            workspaceLink.resolve("nested"),
+            results.get(0).stateDelta().orElseThrow().cwd()
+        );
+        assertFalse(results.get(1).isError(), results.get(1).output().toString());
+        assertTrue(results.get(1).output().toString().contains("nested-marker"));
+    }
+
+    @Test
+    void ignoresInvalidCwdDeltasAndKeepsLastValidDirectory() throws Exception {
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace-invalid"));
+        Path nested = Files.createDirectories(workspace.resolve("nested"));
+        Path outside = Files.createDirectories(tempDir.resolve("outside"));
+        Path symlinkEscape = workspace.resolve("escape");
+        Files.createSymbolicLink(symlinkEscape, outside);
+        AtomicReference<ToolUseContext> afterMissing = new AtomicReference<>();
+        AtomicReference<ToolUseContext> afterOutside = new AtomicReference<>();
+        AtomicReference<ToolUseContext> afterSymlink = new AtomicReference<>();
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(workspace).build(),
+            allowAllSecurity()
+        );
+        runtime.register(TestTools.stateDeltaEcho("cd_valid", nested));
+        runtime.register(TestTools.stateDeltaEcho("cd_missing", workspace.resolve("missing")));
+        runtime.register(TestTools.stateDeltaEcho("cd_outside", outside));
+        runtime.register(TestTools.stateDeltaEcho("cd_symlink", symlinkEscape));
+        runtime.register(TestTools.contextCapturingEcho("probe_missing", afterMissing));
+        runtime.register(TestTools.contextCapturingEcho("probe_outside", afterOutside));
+        runtime.register(TestTools.contextCapturingEcho("probe_symlink", afterSymlink));
+
+        runtime.execute(
+            List.of(
+                new ToolUseRequest("toolu_valid", "cd_valid", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_missing", "cd_missing", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_probe_missing", "probe_missing", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_outside", "cd_outside", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_probe_outside", "probe_outside", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_symlink", "cd_symlink", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_probe_symlink", "probe_symlink", Map.of(), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(workspace)
+        );
+
+        assertEquals(nested, afterMissing.get().cwd());
+        assertEquals(nested, afterOutside.get().cwd());
+        assertEquals(nested, afterSymlink.get().cwd());
+    }
+
+    @Test
+    void cwdOnlyCursorKeepsRuntimeAbortSignal() throws Exception {
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace-abort"));
+        Path nested = Files.createDirectories(workspace.resolve("nested"));
+        AtomicBoolean aborted = new AtomicBoolean(false);
+        AtomicInteger secondToolCalls = new AtomicInteger();
+        ToolExecutionInterceptor interceptor = ToolExecutionInterceptor.after((request, tool, context, result) -> {
+            if ("cd".equals(request.toolName())) {
+                aborted.set(true);
+            }
+            return result;
+        });
+        DefaultToolRuntime runtime = new DefaultToolRuntime(
+            new DefaultToolRegistry(),
+            new ToolSchemaValidator(),
+            new ToolExecutionPlanner(),
+            new ToolResultBudgeter(),
+            new ToolRuntimeContextFactory(ToolRuntimeOptions.builder()
+                .cwd(workspace)
+                .metadata(Map.of(ToolAbortSupport.METADATA_ABORT_SIGNAL, (AbortSignal) aborted::get))
+                .build()),
+            interceptor,
+            allowAllSecurity()
+        );
+        runtime.register(TestTools.stateDeltaEcho("cd", nested));
+        runtime.register(TestTools.countingTool(
+            "after_cd",
+            InterruptBehavior.CANCEL,
+            secondToolCalls
+        ));
+
+        runtime.execute(
+            List.of(
+                new ToolUseRequest("toolu_cd", "cd", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_after", "after_cd", Map.of(), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK)
+        );
+
+        assertEquals(0, secondToolCalls.get());
+    }
+
+    @Test
     void publishesLifecycleWhenInputContainsNullValue() {
         RecordingEventBus events = new RecordingEventBus();
         DefaultToolRuntime runtime = runtimeWithEvents(events, allowAllSecurity());
@@ -367,7 +568,7 @@ class DefaultToolRuntimeTest {
             (request, tool, context, decision) -> PermissionGateResult.allow(),
             null
         );
-        runtime.register(new BashTool(executor, (workspace, cwd) -> policy));
+        runtime.register(bashTool(executor, (workspace, cwd) -> policy));
 
         ToolResult<?> result = runtime.execute(
             List.of(new ToolUseRequest("toolu_1", "bash", Map.of("command", "echo done"), "msg_1")),
@@ -375,8 +576,9 @@ class DefaultToolRuntimeTest {
         ).getFirst();
 
         assertFalse(result.isError());
-        assertEquals(1, executor.calls.get());
-        assertEquals(List.of("bash", "-lc", "echo done"), executor.request.get().command());
+        assertEquals(2, executor.calls.get());
+        assertEquals("bash", executor.request.get().command().get(0));
+        assertTrue(executor.request.get().command().get(2).contains("eval 'echo done'"));
         assertTrue(result.newMessages().getFirst().content().getFirst().text().contains("stdout:\ndone"));
     }
 
@@ -389,7 +591,7 @@ class DefaultToolRuntimeTest {
             (request, tool, context, decision) -> PermissionGateResult.allow(),
             null
         );
-        runtime.register(new BashTool(
+        runtime.register(bashTool(
             executor,
             new PermissionProfileSandboxPolicyResolver(
                 PermissionProfiles.workspace(),
@@ -413,7 +615,7 @@ class DefaultToolRuntimeTest {
         assertEquals(SandboxRuntimePolicyKind.MANAGED, askPolicy.kind());
         assertFalse(bypassResult.isError());
         assertEquals(SandboxRuntimePolicyKind.DISABLED, bypassPolicy.kind());
-        assertEquals(2, executor.calls.get());
+        assertEquals(4, executor.calls.get());
     }
 
     @Test
@@ -481,7 +683,7 @@ class DefaultToolRuntimeTest {
         assertEquals(0, gateCalls.get());
         assertEquals(0, reviewerCalls.get());
         assertEquals(0, host.calls.get());
-        assertEquals(commands.size() * 2, bubblewrap.calls.get());
+        assertEquals(commands.size() * 4, bubblewrap.calls.get());
         assertTrue(bubblewrap.requests.stream().allMatch(request ->
             request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.MANAGED
         ));
@@ -556,7 +758,7 @@ class DefaultToolRuntimeTest {
 
         assertEquals(commands.size(), gateCalls.get());
         assertEquals(commands.size(), reviewerCalls.get());
-        assertEquals(commands.size() * 2, host.calls.get());
+        assertEquals(commands.size() * 4, host.calls.get());
         assertEquals(0, bubblewrap.calls.get());
         assertTrue(host.requests.stream().allMatch(request ->
             request.sandboxPolicy().kind() == SandboxRuntimePolicyKind.DISABLED
@@ -611,12 +813,15 @@ class DefaultToolRuntimeTest {
         }
 
         assertEquals(3, gateCalls.get());
-        assertEquals(3, host.calls.get());
+        assertEquals(6, host.calls.get());
         assertEquals(0, bubblewrap.calls.get());
         assertEquals(
             List.of(
                 SandboxPermissions.USE_DEFAULT,
+                SandboxPermissions.USE_DEFAULT,
                 SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+                SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+                SandboxPermissions.REQUIRE_ESCALATED,
                 SandboxPermissions.REQUIRE_ESCALATED
             ),
             host.requests.stream().map(ExecutionRequest::sandboxPermissions).toList()
@@ -672,7 +877,7 @@ class DefaultToolRuntimeTest {
             assertTrue(text.contains(stderr));
             assertNoSandboxRetryHint(result);
             assertEquals(0, host.calls.get());
-            assertEquals(1, bubblewrap.calls.get());
+            assertEquals(2, bubblewrap.calls.get());
         }
 
         RecordingExecutor unavailableHost = recordingHostExecutor();
@@ -702,7 +907,7 @@ class DefaultToolRuntimeTest {
         assertTrue(unavailableText.contains("sandboxUnavailable=true"));
         assertTrue(unavailableText.contains("diagnostic=user namespaces unavailable"));
         assertEquals(0, unavailableHost.calls.get());
-        assertEquals(1, unavailableBubblewrap.calls.get());
+        assertEquals(2, unavailableBubblewrap.calls.get());
         assertEquals(0, gateCalls.get());
         assertEquals(0, reviewerCalls.get());
     }
@@ -804,9 +1009,9 @@ class DefaultToolRuntimeTest {
         assertFalse(firstResult.isError());
         assertFalse(secondResult.isError());
         assertEquals(1, gateCalls.get());
-        assertEquals(1, host.calls.get());
+        assertEquals(2, host.calls.get());
         assertEquals(SandboxRuntimePolicyKind.DISABLED, host.request.get().sandboxPolicy().kind());
-        assertEquals(1, bubblewrap.calls.get());
+        assertEquals(2, bubblewrap.calls.get());
         assertEquals(SandboxRuntimePolicyKind.MANAGED, bubblewrap.request.get().sandboxPolicy().kind());
     }
 
@@ -1122,7 +1327,7 @@ class DefaultToolRuntimeTest {
             new FilePermissionUpdateStore(tempDir)
         );
         RecordingExecutor executor = new RecordingExecutor(new ExecutionResult(0, "done", "", false, Optional.empty()));
-        runtime.register(new BashTool(executor, (workspace, cwd) -> policy));
+        runtime.register(bashTool(executor, (workspace, cwd) -> policy));
 
         ToolUseRequest request = new ToolUseRequest(
             "toolu_1",
@@ -1140,7 +1345,7 @@ class DefaultToolRuntimeTest {
 
         assertFalse(result.isError());
         assertEquals(0, gateCalls.get());
-        assertEquals(1, executor.calls.get());
+        assertEquals(2, executor.calls.get());
     }
 
     @Test
@@ -2810,7 +3015,7 @@ class DefaultToolRuntimeTest {
             allowAllSecurity(),
             gate
         );
-        runtime.register(new BashTool(executor));
+        runtime.register(bashTool(executor));
         AdditionalPermissionProfile permissions = additionalFileSystem(approved);
 
         ToolResult<?> bashResult = runtime.execute(
@@ -2843,7 +3048,7 @@ class DefaultToolRuntimeTest {
         assertEquals(Optional.of(permissions), executor.request.get().additionalPermissions());
         assertEquals(SandboxRuntimePolicyKind.DISABLED, executor.request.get().sandboxPolicy().kind());
         assertTrue(nextResult.isError());
-        assertEquals(1, executor.calls.get());
+        assertEquals(2, executor.calls.get());
     }
 
     @Test
@@ -2950,7 +3155,7 @@ class DefaultToolRuntimeTest {
             null,
             reviewer
         );
-        runtime.register(new BashTool(
+        runtime.register(bashTool(
             new ExecutorRegistry(host, bubblewrap, true),
             new PermissionProfileSandboxPolicyResolver(
                 PermissionProfiles.workspace(),
@@ -2959,6 +3164,18 @@ class DefaultToolRuntimeTest {
             )
         ));
         return runtime;
+    }
+
+    private BashTool bashTool(Executor executor) {
+        return bashTool(executor, new DefaultSandboxPolicyResolver(SandboxPolicyOptions.defaults()));
+    }
+
+    private BashTool bashTool(Executor executor, SandboxPolicyResolver sandboxPolicyResolver) {
+        return new BashTool(
+            executor,
+            sandboxPolicyResolver,
+            new ShellEnvironmentHarness(tempDir.resolve("shell-state"))
+        );
     }
 
     private RecordingExecutor recordingHostExecutor() {

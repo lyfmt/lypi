@@ -30,6 +30,9 @@ import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolUseRequest;
 import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
+import cn.lypi.contracts.session.ShellState;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -139,6 +142,13 @@ public final class DefaultTurnExecutor implements TurnExecutor {
                             contextLeafId = appendNewMessage(request.sessionId(), pendingToolMessage);
                             newMessages.add(pendingToolMessage);
                         }
+                        Optional<Path> nextCwd = toolResult.stateDelta()
+                            .flatMap(delta -> validShellCwd(delta.cwd()));
+                        if (nextCwd.isPresent()) {
+                            contextLeafId = ports.sessionManager()
+                                .appendShellStateChange(ShellState.of(nextCwd.orElseThrow()))
+                                .leafId();
+                        }
                     }
                 }
                 if (request.abortSignal().aborted()) {
@@ -224,7 +234,7 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         ContextBuildRequest contextBuildRequest = new ContextBuildRequest(
             request.sessionId(),
             leafEntryId,
-            // NOTE: lypi-resource 负责从 cwd 探索 project root 和资源层级；agent-core 只传入启动层确定的 cwd 起点。
+            // Resource scope stays at the session root; shell cwd is tool-runtime state only.
             ports.cwd(),
             true,
             skillMentions
@@ -478,28 +488,49 @@ public final class DefaultTurnExecutor implements TurnExecutor {
         TurnRequest turnRequest
     ) {
         ensureToolRuntimeCwdMatches();
-        List<ToolResult<?>> results;
-        try {
-            results = ports.toolRuntime().execute(
-                toolRequests,
-                context,
-                new ToolRuntimeInvocation(
-                    sessionId,
-                    turnId,
-                    parentEntryId,
-                    turnRequest.abortSignal(),
-                    turnRequest.steeringMessages()
-                )
+        List<ToolResult<?>> results = ports.toolRuntime().execute(
+            toolRequests,
+            context,
+            new ToolRuntimeInvocation(
+                sessionId,
+                turnId,
+                parentEntryId,
+                turnRequest.abortSignal(),
+                turnRequest.steeringMessages(),
+                currentShellCwd()
+            )
+        );
+        if (results.size() != toolRequests.size()) {
+            throw new IllegalStateException(
+                "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
             );
-            if (results.size() != toolRequests.size()) {
-                throw new IllegalStateException(
-                    "Tool runtime returned " + results.size() + " result(s) for " + toolRequests.size() + " request(s)"
-                );
-            }
-        } catch (RuntimeException failure) {
-            throw failure;
         }
         return results;
+    }
+
+    private Path currentShellCwd() {
+        return validShellCwd(ports.sessionManager().shellState().cwd()).orElse(ports.cwd());
+    }
+
+    private Optional<Path> validShellCwd(Path candidate) {
+        if (candidate == null) {
+            return Optional.empty();
+        }
+        Path workspaceRoot = ports.cwd().toAbsolutePath().normalize();
+        Path normalized = candidate.toAbsolutePath().normalize();
+        if (!normalized.startsWith(workspaceRoot)) {
+            return Optional.empty();
+        }
+        try {
+            Path realWorkspaceRoot = workspaceRoot.toRealPath();
+            Path realCandidate = normalized.toRealPath();
+            if (Files.isDirectory(realCandidate) && realCandidate.startsWith(realWorkspaceRoot)) {
+                return Optional.of(normalized);
+            }
+        } catch (IOException | SecurityException ignored) {
+            return Optional.empty();
+        }
+        return Optional.empty();
     }
 
     private void ensureToolRuntimeCwdMatches() {

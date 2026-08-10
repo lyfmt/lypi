@@ -7,6 +7,8 @@ import cn.lypi.contracts.security.PermissionMode;
 import cn.lypi.contracts.security.PermissionRuntimeState;
 import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -44,6 +46,7 @@ public final class ToolRuntimeContextFactory {
      */
     public ToolUseContext create(ToolUseRequest request, ContextSnapshot context, ToolRuntimeInvocation invocation) {
         Objects.requireNonNull(request, "request must not be null");
+        Path workspaceRoot = options.cwd().toAbsolutePath().normalize();
         Map<String, Object> metadata = new LinkedHashMap<>();
         AgentMode agentMode = context == null ? AgentMode.EXECUTE : context.mode();
         PermissionRuntimeState permissionRuntimeState = context == null
@@ -62,16 +65,37 @@ public final class ToolRuntimeContextFactory {
         if (parentEntryId != null && !parentEntryId.isBlank()) {
             metadata.put("parentEntryId", parentEntryId);
         }
-        if (invocation != null) {
+        if (invocation != null && !invocation.inheritsRuntimeSignals()) {
             metadata.put(ToolAbortSupport.METADATA_ABORT_SIGNAL, invocation.abortSignal());
             metadata.put(ToolSteeringSupport.METADATA_STEERING_MESSAGES, invocation.steeringMessages());
         }
         return new ToolUseContext(
             sessionId(invocation),
             request.parentMessageId(),
-            options.cwd(),
+            workspaceRoot,
+            validatedInvocationCwd(invocation, workspaceRoot),
             Map.copyOf(metadata)
         );
+    }
+
+    private Path validatedInvocationCwd(ToolRuntimeInvocation invocation, Path workspaceRoot) {
+        if (invocation == null || invocation.cwd() == null) {
+            return workspaceRoot;
+        }
+        Path candidate = invocation.cwd().toAbsolutePath().normalize();
+        if (!candidate.startsWith(workspaceRoot)) {
+            return workspaceRoot;
+        }
+        try {
+            Path realWorkspace = workspaceRoot.toRealPath();
+            Path realCandidate = candidate.toRealPath();
+            if (Files.isDirectory(realCandidate) && realCandidate.startsWith(realWorkspace)) {
+                return candidate;
+            }
+        } catch (IOException exception) {
+            // Invalid persisted state falls back to the configured workspace root.
+        }
+        return workspaceRoot;
     }
 
     private String sessionId(ToolRuntimeInvocation invocation) {

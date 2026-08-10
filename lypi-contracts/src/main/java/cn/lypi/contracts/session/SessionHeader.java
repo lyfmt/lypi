@@ -28,9 +28,11 @@ public record SessionHeader(
     Optional<ModelSelection> initialModel,
     Optional<ThinkingLevel> initialThinkingLevel,
     Optional<AgentMode> initialAgentMode,
-    PermissionRuntimeState initialPermissionRuntimeState
+    PermissionRuntimeState initialPermissionRuntimeState,
+    ShellState shellState
 ) {
     public SessionHeader {
+        shellState = shellState == null ? ShellState.of(cwd) : shellState;
         parentSessionId = parentSessionId == null ? Optional.empty() : parentSessionId;
         parentSpawnEntryId = parentSpawnEntryId == null ? Optional.empty() : parentSpawnEntryId;
         agentName = agentName == null ? Optional.empty() : agentName;
@@ -62,7 +64,8 @@ public record SessionHeader(
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),
-            Optional.empty()
+            (PermissionRuntimeState) null,
+            null
         );
     }
 
@@ -98,7 +101,8 @@ public record SessionHeader(
             initialAgentMode,
             initialPermissionMode == null
                 ? null
-                : initialPermissionMode.map(PermissionRuntimeState::fromLegacy).orElse(null)
+                : initialPermissionMode.map(PermissionRuntimeState::fromLegacy).orElse(null),
+            null
         );
     }
 
@@ -128,7 +132,8 @@ public record SessionHeader(
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),
-            Optional.empty()
+            (PermissionRuntimeState) null,
+            null
         );
     }
 
@@ -159,7 +164,8 @@ public record SessionHeader(
         @JsonProperty("initialThinkingLevel") Optional<ThinkingLevel> initialThinkingLevel,
         @JsonProperty("initialAgentMode") Optional<AgentMode> initialAgentMode,
         @JsonProperty("initialPermissionRuntimeState") PermissionRuntimeState initialPermissionRuntimeState,
-        @JsonProperty("initialPermissionMode") Optional<PermissionMode> initialPermissionMode
+        @JsonProperty("initialPermissionMode") Optional<PermissionMode> initialPermissionMode,
+        @JsonProperty("shellState") ShellState shellState
     ) {
         PermissionRuntimeState normalizedRuntimeState = initialPermissionRuntimeState;
         if (normalizedRuntimeState == null && initialPermissionMode != null) {
@@ -179,7 +185,9 @@ public record SessionHeader(
             initialModel,
             initialThinkingLevel,
             initialAgentMode,
-            normalizedRuntimeState
+            normalizedRuntimeState,
+            shellState
         );
     }
+
 }

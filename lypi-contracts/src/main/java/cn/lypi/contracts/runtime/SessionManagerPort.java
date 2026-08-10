@@ -18,6 +18,20 @@ public interface SessionManagerPort {
     SessionHandle openOrCreate(String sessionId);
 
     /**
+     * 返回当前 session 的 shell 状态。
+     */
+    default cn.lypi.contracts.session.ShellState shellState() {
+        throw new UnsupportedOperationException("shell state is not supported");
+    }
+
+    /**
+     * Append a shell state transition to the current session branch.
+     */
+    default SessionHandle appendShellStateChange(cn.lypi.contracts.session.ShellState shellState) {
+        throw new UnsupportedOperationException("shell state is not supported");
+    }
+
+    /**
      * 打开临时 session。
      *
      * NOTE: 临时 session 只有追加用户消息时才写入 JSONL。

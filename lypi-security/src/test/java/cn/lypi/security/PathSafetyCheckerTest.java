@@ -77,6 +77,29 @@ class PathSafetyCheckerTest {
     }
 
     @Test
+    void deniesProtectedWorkspacePathResolvedFromNestedCwd(@TempDir Path tempDir) throws IOException {
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Path nested = Files.createDirectories(workspace.resolve("nested"));
+        Files.createDirectories(workspace.resolve(".git"));
+        PathSafetyChecker checker = new PathSafetyChecker();
+
+        Optional<PermissionDecision> decision = checker.check(
+            request("read_file", Map.of("path", "../.git/config")),
+            new ToolUseContext(
+                "ses_1",
+                "msg_1",
+                workspace,
+                nested,
+                Map.of("permissionMode", PermissionMode.BYPASS)
+            )
+        );
+
+        assertThat(decision).isPresent();
+        assertThat(decision.orElseThrow().behavior()).isEqualTo(PermissionBehavior.DENY);
+        assertThat(decision.orElseThrow().reason()).isEqualTo(PermissionDecisionReason.PATH_SAFETY);
+    }
+
+    @Test
     void allowsExistingSymlinkThatEscapesCurrentWorkingDirectoryForProfileBoundary(@TempDir Path tempDir) throws IOException {
         Path workspace = tempDir.resolve("workspace");
         Path outside = tempDir.resolve("outside");

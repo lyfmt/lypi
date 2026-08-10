@@ -31,6 +31,7 @@ import cn.lypi.tool.PermissionReviewer;
 import cn.lypi.tool.PermissionResponseGate;
 import cn.lypi.tool.ToolRuntimeOptions;
 import cn.lypi.tool.builtin.BuiltInTools;
+import cn.lypi.tool.builtin.ShellEnvironmentHarness;
 import cn.lypi.tool.mcp.McpClientManager;
 import cn.lypi.tool.mcp.McpClientManagerFactory;
 import cn.lypi.tool.mcp.McpToolAdapter;
@@ -165,6 +166,15 @@ public class LyPiToolAutoConfiguration {
     }
 
     /**
+     * 创建跨主代理和子代理 runtime 共享的 shell 状态 harness。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ShellEnvironmentHarness.class)
+    public ShellEnvironmentHarness shellEnvironmentHarness(LyPiToolProperties properties) {
+        return new ShellEnvironmentHarness(properties.getShell().getStateRoot());
+    }
+
+    /**
      * 创建工具运行时。
      *
      * NOTE: 缺少本地权限 prompt 时保持 fail-safe deny；存在 prompt 和事件总线时，
@@ -177,6 +187,7 @@ public class LyPiToolAutoConfiguration {
         Executor executor,
         ObjectProvider<AgentCenterPort> agentCenter,
         SandboxPolicyResolver sandboxPolicyResolver,
+        ShellEnvironmentHarness shellEnvironmentHarness,
         ObjectProvider<EventBus> eventBus,
         ObjectProvider<PermissionResponseGate> responseGate,
         ObjectProvider<PermissionPromptPort> promptPort,
@@ -248,7 +259,7 @@ public class LyPiToolAutoConfiguration {
                     new FilePermissionAmendmentStore(runtimeCwd),
                     permissionReviewer
                 );
-                BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver);
+                BuiltInTools.registerDefaults(runtime, executor, sandboxPolicyResolver, shellEnvironmentHarness);
                 WebResultStore webResultStore = webResultStore(webProperties, runtimeCwd);
                 if (webProperties.isEnabled()) {
                     registerWebFetchTool(runtime, webProperties, webResultStore);

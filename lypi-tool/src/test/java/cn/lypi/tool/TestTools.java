@@ -21,6 +21,7 @@ import cn.lypi.contracts.security.PermissionUpdate;
 import cn.lypi.contracts.tool.InterruptBehavior;
 import cn.lypi.contracts.tool.Tool;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolStateDelta;
 import cn.lypi.contracts.tool.ToolUseContext;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -30,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 final class TestTools {
     private TestTools() {
@@ -77,6 +79,28 @@ final class TestTools {
             @Override
             public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
                 progress.progress(ToolProgress.status(progressMessage, null));
+                return super.execute(input, context, progress);
+            }
+        };
+    }
+
+    static Tool<Map<String, Object>, String> stateDeltaEcho(String name, Path cwd) {
+        return new EchoTool(name, List.of(), false, false, false, Duration.ZERO) {
+            @Override
+            public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+                return super.execute(input, context, progress).withStateDelta(Optional.of(new ToolStateDelta(cwd)));
+            }
+        };
+    }
+
+    static Tool<Map<String, Object>, String> contextCapturingEcho(
+        String name,
+        AtomicReference<ToolUseContext> captured
+    ) {
+        return new EchoTool(name, List.of(), false, false, false, Duration.ZERO) {
+            @Override
+            public ToolResult<String> execute(Map<String, Object> input, ToolUseContext context, ProgressSink progress) {
+                captured.set(context);
                 return super.execute(input, context, progress);
             }
         };

@@ -62,12 +62,14 @@ final class PathSafetyChecker {
     }
 
     Optional<PermissionDecision> checkPath(String fieldName, String rawPath, ToolUseContext context) {
+        Path workspace = context.workspaceRoot().toAbsolutePath().normalize();
         Path cwd = context.cwd().toAbsolutePath().normalize();
         Path target = cwd.resolve(rawPath).normalize();
-        Optional<Path> realCwd = realPathForCwd(cwd);
-        Optional<Path> realPath = realCwd.map(path -> realPathForSafetyCheck(rawPath, path));
-        if (realPath.isPresent() && realPath.get().startsWith(realCwd.get())) {
-            String realRelativePath = realCwd.get().relativize(realPath.get()).toString().replace('\\', '/');
+        Optional<Path> realWorkspace = realPathForCwd(workspace);
+        Optional<Path> realBase = realPathForCwd(cwd);
+        Optional<Path> realPath = realBase.map(path -> realPathForSafetyCheck(rawPath, path));
+        if (realWorkspace.isPresent() && realPath.isPresent() && realPath.get().startsWith(realWorkspace.get())) {
+            String realRelativePath = realWorkspace.get().relativize(realPath.get()).toString().replace('\\', '/');
             if (isProtectedPath(realRelativePath)) {
                 return Optional.of(decision(
                     "工具路径经符号链接命中受保护路径: " + rawPath,
@@ -77,7 +79,8 @@ final class PathSafetyChecker {
                 ));
             }
         }
-        if (target.startsWith(cwd) && isProtectedPath(cwd.relativize(target).toString().replace('\\', '/'))) {
+        if (target.startsWith(workspace)
+            && isProtectedPath(workspace.relativize(target).toString().replace('\\', '/'))) {
             return Optional.of(decision(
                 "工具路径命中受保护路径: " + rawPath,
                 fieldName,
@@ -94,7 +97,7 @@ final class PathSafetyChecker {
         ToolUseContext context,
         Path baseCwd
     ) {
-        Path workspace = context.cwd().toAbsolutePath().normalize();
+        Path workspace = context.workspaceRoot().toAbsolutePath().normalize();
         Path base = baseCwd.toAbsolutePath().normalize();
         Path target = base.resolve(rawPath).normalize();
         Optional<Path> realWorkspace = realPathForCwd(workspace);

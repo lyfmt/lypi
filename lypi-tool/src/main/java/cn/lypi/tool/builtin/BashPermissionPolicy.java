@@ -33,7 +33,7 @@ final class BashPermissionPolicy {
         PermissionRuntimeState permissionRuntimeState
     ) {
         SandboxRuntimePolicy sandboxPolicy = sandboxPolicyResolver.resolve(
-            context.cwd(),
+            context.workspaceRoot(),
             cwd,
             permissionRuntimeState
         );

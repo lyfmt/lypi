@@ -115,8 +115,8 @@ public final class FileSystemPolicyChecker {
     private boolean matchesPath(FileSystemPath path, Path candidate, ToolUseContext context) {
         return switch (path.kind()) {
             case SPECIAL -> matchesSpecialPath(path, candidate, context);
-            case EXACT_PATH -> matchesExactPath(path.value(), candidate, context.cwd());
-            case GLOB_PATTERN -> matchesGlob(path.value(), candidate, context.cwd());
+            case EXACT_PATH -> matchesExactPath(path.value(), candidate, context.workspaceRoot());
+            case GLOB_PATTERN -> matchesGlob(path.value(), candidate, context.workspaceRoot());
         };
     }
 
@@ -124,7 +124,7 @@ public final class FileSystemPolicyChecker {
         FileSystemSpecialPath specialPath = FileSystemSpecialPath.fromJson(path.value());
         return switch (specialPath) {
             case ROOT -> true;
-            case PROJECT_ROOTS -> matchesWorkspaceRoot(candidate, context.cwd());
+            case PROJECT_ROOTS -> matchesWorkspaceRoot(candidate, context.workspaceRoot());
             case TMPDIR -> isSameOrDescendant(candidate, Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize());
             case SLASH_TMP -> isSameOrDescendant(candidate, Path.of("/tmp").toAbsolutePath().normalize());
             case MINIMAL -> false;

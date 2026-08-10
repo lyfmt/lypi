@@ -17,6 +17,8 @@ import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHandle;
 import cn.lypi.contracts.session.SessionHeader;
 import cn.lypi.contracts.session.SessionView;
+import cn.lypi.contracts.session.ShellState;
+import cn.lypi.contracts.session.ShellStateChangeEntry;
 import cn.lypi.contracts.tui.SessionFileView;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -213,6 +215,30 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
     }
 
     @Override
+    public synchronized ShellState shellState() {
+        ensureOpen();
+        refreshFromStoreIfPersistent();
+        ShellState current = header.shellState();
+        for (SessionEntry entry : index.branch(index.leafId())) {
+            if (entry instanceof ShellStateChangeEntry change) {
+                current = change.shellState();
+            }
+        }
+        return current;
+    }
+
+    @Override
+    public synchronized SessionHandle appendShellStateChange(ShellState shellState) {
+        ensureOpen();
+        return append(new ShellStateChangeEntry(
+            SessionEntryIds.newEntryId(),
+            index.leafId(),
+            Objects.requireNonNull(shellState, "shellState must not be null"),
+            Instant.now(clock)
+        ));
+    }
+
+    @Override
     public synchronized SessionView view(String leafId) {
         ensureOpen();
         return new SessionView(sessionId, leafId);
@@ -403,7 +429,8 @@ public final class SessionManagerImpl implements SessionManager, SessionStorageR
             Optional.of(replayProjector.defaultModel()),
             Optional.of(replayProjector.defaultThinkingLevel()),
             Optional.of(replayProjector.defaultMode()),
-            replayProjector.defaultPermissionRuntimeState()
+            replayProjector.defaultPermissionRuntimeState(),
+            ShellState.of(cwd)
         );
     }
 

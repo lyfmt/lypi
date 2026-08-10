@@ -88,6 +88,8 @@ import cn.lypi.contracts.session.CustomEntry;
 import cn.lypi.contracts.session.CustomMessageEntry;
 import cn.lypi.contracts.session.SessionEntry;
 import cn.lypi.contracts.session.SessionHeader;
+import cn.lypi.contracts.session.ShellStateChangeEntry;
+import cn.lypi.contracts.session.ShellState;
 import cn.lypi.contracts.session.SessionInfoEntry;
 import cn.lypi.contracts.skill.SkillMention;
 import cn.lypi.contracts.skill.SkillIndex;
@@ -108,7 +110,10 @@ import cn.lypi.contracts.subagent.SubagentWaitResult;
 import cn.lypi.contracts.model.TokenUsage;
 import cn.lypi.contracts.tool.ToolExecutionStatus;
 import cn.lypi.contracts.tool.ToolOutputRef;
+import cn.lypi.contracts.tool.ToolResult;
 import cn.lypi.contracts.tool.ToolResultSummary;
+import cn.lypi.contracts.tool.ToolStateDelta;
+import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tui.DiffView;
 import cn.lypi.contracts.tui.GitDiffFileView;
 import cn.lypi.contracts.tui.GitDiffStatus;
@@ -395,6 +400,73 @@ class ContractSerializationTest {
     }
 
     @Test
+    void shellStateContractsKeepWorkspaceBoundaryAndRoundTripCwdWithSpaces() throws Exception {
+        Path workspace = Path.of("/tmp/project");
+        Path nested = workspace.resolve("dir with spaces");
+        ToolUseContext context = new ToolUseContext("ses_1", "msg_1", workspace, nested, Map.of());
+        ToolUseContext legacyContext = new ToolUseContext("ses_1", "msg_1", workspace, Map.of());
+
+        ToolStateDelta delta = new ToolStateDelta(nested);
+        ToolResult<String> result = new ToolResult<>("ok", false, List.of(), Optional.empty(), Optional.of(delta));
+        ToolResult<String> legacyResult = new ToolResult<>("ok", false, List.of(), Optional.empty());
+
+        Instant now = Instant.parse("2026-06-09T00:00:00Z");
+        SessionEntry entry = new ShellStateChangeEntry(
+            "entry-shell",
+            "entry-tool",
+            ShellState.of(nested),
+            now
+        );
+
+        assertEquals(workspace, context.workspaceRoot());
+        assertEquals(nested, context.cwd());
+        assertEquals(workspace, legacyContext.workspaceRoot());
+        assertEquals(workspace, legacyContext.cwd());
+        assertEquals(delta, result.stateDelta().orElseThrow());
+        assertEquals(Optional.empty(), legacyResult.stateDelta());
+        assertEquals(entry, mapper.readValue(mapper.writeValueAsString(entry), SessionEntry.class));
+    }
+
+    @Test
+    void sessionHeaderRoundTripKeepsShellState() throws Exception {
+        SessionHeader header = new SessionHeader(
+            "session",
+            1,
+            "ses_shell",
+            Path.of("/tmp/project"),
+            Optional.empty(),
+            Optional.empty(),
+            0,
+            Optional.empty(),
+            Optional.empty(),
+            Instant.parse("2026-06-09T00:00:00Z"),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            null,
+            ShellState.of(Path.of("/tmp/project/subdir"))
+        );
+
+        String json = mapper.writeValueAsString(header);
+        SessionHeader restored = mapper.readValue(json, SessionHeader.class);
+
+        assertEquals(Path.of("/tmp/project/subdir"), restored.shellState().cwd());
+        assertEquals(Path.of("/tmp/project"), restored.cwd());
+    }
+
+    @Test
+    void legacySessionHeaderDefaultsShellStateToHeaderCwd() throws Exception {
+        String legacyJson = """
+            {"type":"session","version":1,"id":"ses_old","cwd":"/tmp/legacy",
+             "timestamp":"2026-06-09T00:00:00Z"}
+            """;
+
+        SessionHeader restored = mapper.readValue(legacyJson, SessionHeader.class);
+
+        assertEquals(ShellState.of(Path.of("/tmp/legacy")), restored.shellState());
+    }
+
+    @Test
     void sessionHeaderRoundTripKeepsSubagentRelationshipFields() throws Exception {
         SessionHeader header = new SessionHeader(
             "session",
@@ -435,7 +507,8 @@ class ContractSerializationTest {
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),
-            runtimeState
+            runtimeState,
+            null
         );
 
         String json = mapper.writeValueAsString(header);

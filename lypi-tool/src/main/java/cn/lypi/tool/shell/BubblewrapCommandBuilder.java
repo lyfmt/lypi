@@ -18,6 +18,7 @@ import java.util.Objects;
  */
 public final class BubblewrapCommandBuilder {
     private static final String EMPTY_FILE_FD = "0";
+    private static final Path PRIVATE_TMP = Path.of("/tmp");
     private static final List<String> PROTECTED_METADATA_NAMES = List.of(".git", ".codex", ".agents");
 
     /**
@@ -198,7 +199,8 @@ public final class BubblewrapCommandBuilder {
             argv.add("/proc");
         }
         argv.add("--tmpfs");
-        argv.add("/tmp");
+        argv.add(PRIVATE_TMP.toString());
+        appendExplicitReadOnlyPathsBelowPrivateTmp(argv, readOnlyPaths);
         List<Path> writableMountPaths = new ArrayList<>();
         for (WritableMount writableMount : writableMounts) {
             Path mountPath = writableMount.mountPath();
@@ -234,6 +236,20 @@ public final class BubblewrapCommandBuilder {
 
     private List<Path> readOnlyPaths(SandboxRuntimePolicy policy) {
         return policy.allowRead().isEmpty() ? SandboxPlatformPaths.defaultReadOnlyPaths() : policy.allowRead();
+    }
+
+    private void appendExplicitReadOnlyPathsBelowPrivateTmp(List<String> argv, List<Path> readOnlyPaths) {
+        LinkedHashSet<Path> paths = new LinkedHashSet<>();
+        for (Path path : readOnlyPaths) {
+            if (!path.equals(PRIVATE_TMP) && path.startsWith(PRIVATE_TMP)) {
+                paths.add(path);
+            }
+        }
+        for (Path path : paths) {
+            argv.add("--ro-bind-try");
+            argv.add(path.toString());
+            argv.add(path.toString());
+        }
     }
 
     private List<Path> normalizedReadOnlyPaths(SandboxRuntimePolicy policy, List<WritableMount> writableMounts) {

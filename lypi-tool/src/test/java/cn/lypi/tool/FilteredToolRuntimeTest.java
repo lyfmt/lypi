@@ -6,15 +6,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import cn.lypi.contracts.security.PermissionMode;
+import cn.lypi.contracts.runtime.ToolRuntimeInvocation;
 import cn.lypi.contracts.subagent.SubagentToolPolicy;
 import cn.lypi.contracts.tool.ToolResult;
+import cn.lypi.contracts.tool.ToolUseContext;
 import cn.lypi.contracts.tool.ToolUseRequest;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class FilteredToolRuntimeTest {
+    @TempDir
+    Path tempDir;
+
     @Test
     void snapshotOnlyContainsEffectiveTools() {
         DefaultToolRuntime delegate = runtimeWithReadGrepGlobAndBash();
@@ -90,6 +98,50 @@ class FilteredToolRuntimeTest {
         FilteredToolRuntime runtime = new FilteredToolRuntime(delegate, SubagentToolPolicy.empty());
 
         assertEquals(Path.of("/tmp/project"), runtime.cwd());
+    }
+
+    @Test
+    void propagatesValidCwdAndIgnoresInvalidDeltasBetweenDelegatedCalls() throws Exception {
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Path nested = Files.createDirectories(workspace.resolve("nested"));
+        Path outside = Files.createDirectories(tempDir.resolve("outside"));
+        Path symlinkEscape = workspace.resolve("escape");
+        Files.createSymbolicLink(symlinkEscape, outside);
+        AtomicReference<ToolUseContext> captured = new AtomicReference<>();
+        DefaultToolRuntime delegate = new DefaultToolRuntime(
+            ToolRuntimeOptions.builder().cwd(workspace).build(),
+            (request, context) -> TestTools.decision(
+                cn.lypi.contracts.security.PermissionBehavior.ALLOW,
+                "allowed"
+            )
+        );
+        delegate.register(TestTools.stateDeltaEcho("cd_valid", nested));
+        delegate.register(TestTools.stateDeltaEcho("cd_missing", workspace.resolve("missing")));
+        delegate.register(TestTools.stateDeltaEcho("cd_outside", outside));
+        delegate.register(TestTools.stateDeltaEcho("cd_symlink", symlinkEscape));
+        delegate.register(TestTools.contextCapturingEcho("probe", captured));
+        FilteredToolRuntime runtime = new FilteredToolRuntime(
+            delegate,
+            new SubagentToolPolicy(
+                List.of(),
+                List.of("cd_valid", "cd_missing", "cd_outside", "cd_symlink", "probe")
+            )
+        );
+
+        runtime.execute(
+            List.of(
+                new ToolUseRequest("toolu_valid", "cd_valid", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_missing", "cd_missing", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_outside", "cd_outside", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_symlink", "cd_symlink", Map.of(), "msg_1"),
+                new ToolUseRequest("toolu_probe", "probe", Map.of(), "msg_1")
+            ),
+            TestTools.context(PermissionMode.ASK),
+            new ToolRuntimeInvocation("ses_1", "turn_1").withCwd(workspace)
+        );
+
+        assertEquals(workspace, captured.get().workspaceRoot());
+        assertEquals(nested, captured.get().cwd());
     }
 
     private static DefaultToolRuntime runtimeWithReadGrepGlobAndBash() {
