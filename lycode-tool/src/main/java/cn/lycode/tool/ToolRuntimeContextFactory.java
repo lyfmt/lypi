@@ -1,0 +1,107 @@
+package cn.lycode.tool;
+
+import cn.lycode.contracts.context.ContextSnapshot;
+import cn.lycode.contracts.runtime.ToolRuntimeInvocation;
+import cn.lycode.contracts.security.AgentMode;
+import cn.lycode.contracts.security.PermissionMode;
+import cn.lycode.contracts.security.PermissionRuntimeState;
+import cn.lycode.contracts.tool.ToolUseContext;
+import cn.lycode.contracts.tool.ToolUseRequest;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * 创建工具调用上下文。
+ *
+ * NOTE: 该工厂集中处理 runtime options、模型上下文和单次 tool call 的上下文合并。
+ */
+public final class ToolRuntimeContextFactory {
+    static final String METADATA_AGENT_MODE = "agentMode";
+    static final String METADATA_PERMISSION_MODE = "permissionMode";
+    static final String METADATA_PERMISSION_RUNTIME_STATE = "permissionRuntimeState";
+
+    private final ToolRuntimeOptions options;
+
+    public ToolRuntimeContextFactory(ToolRuntimeOptions options) {
+        this.options = options == null ? ToolRuntimeOptions.defaults() : options;
+    }
+
+    public Path cwd() {
+        return options.cwd();
+    }
+
+    /**
+     * 为单次工具调用创建工具上下文。
+     */
+    public ToolUseContext create(ToolUseRequest request, ContextSnapshot context) {
+        return create(request, context, null);
+    }
+
+    /**
+     * 为带上层归属的单次工具调用创建工具上下文。
+     */
+    public ToolUseContext create(ToolUseRequest request, ContextSnapshot context, ToolRuntimeInvocation invocation) {
+        Objects.requireNonNull(request, "request must not be null");
+        Path workspaceRoot = options.cwd().toAbsolutePath().normalize();
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        AgentMode agentMode = context == null ? AgentMode.EXECUTE : context.mode();
+        PermissionRuntimeState permissionRuntimeState = context == null
+            ? PermissionRuntimeState.forMode(PermissionMode.ASK)
+            : context.permissionRuntimeState();
+        PermissionMode permissionMode = permissionRuntimeState.mode();
+        metadata.putAll(options.metadata());
+        metadata.put(METADATA_AGENT_MODE, agentMode);
+        metadata.put(METADATA_PERMISSION_RUNTIME_STATE, permissionRuntimeState);
+        metadata.put(METADATA_PERMISSION_MODE, permissionMode);
+        String turnId = invocation == null ? null : invocation.turnId();
+        if (turnId != null && !turnId.isBlank()) {
+            metadata.put("turnId", turnId);
+        }
+        String parentEntryId = invocation == null ? null : invocation.parentEntryId();
+        if (parentEntryId != null && !parentEntryId.isBlank()) {
+            metadata.put("parentEntryId", parentEntryId);
+        }
+        if (invocation != null && !invocation.inheritsRuntimeSignals()) {
+            metadata.put(ToolAbortSupport.METADATA_ABORT_SIGNAL, invocation.abortSignal());
+            metadata.put(ToolSteeringSupport.METADATA_STEERING_MESSAGES, invocation.steeringMessages());
+        }
+        return new ToolUseContext(
+            sessionId(invocation),
+            request.parentMessageId(),
+            workspaceRoot,
+            validatedInvocationCwd(invocation, workspaceRoot),
+            Map.copyOf(metadata)
+        );
+    }
+
+    private Path validatedInvocationCwd(ToolRuntimeInvocation invocation, Path workspaceRoot) {
+        if (invocation == null || invocation.cwd() == null) {
+            return workspaceRoot;
+        }
+        Path candidate = invocation.cwd().toAbsolutePath().normalize();
+        if (!candidate.startsWith(workspaceRoot)) {
+            return workspaceRoot;
+        }
+        try {
+            Path realWorkspace = workspaceRoot.toRealPath();
+            Path realCandidate = candidate.toRealPath();
+            if (Files.isDirectory(realCandidate) && realCandidate.startsWith(realWorkspace)) {
+                return candidate;
+            }
+        } catch (IOException exception) {
+            // Invalid persisted state falls back to the configured workspace root.
+        }
+        return workspaceRoot;
+    }
+
+    private String sessionId(ToolRuntimeInvocation invocation) {
+        if (invocation == null || invocation.sessionId() == null || invocation.sessionId().isBlank()) {
+            return options.sessionId();
+        }
+        return invocation.sessionId();
+    }
+}

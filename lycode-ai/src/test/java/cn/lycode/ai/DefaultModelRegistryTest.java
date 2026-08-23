@@ -1,0 +1,104 @@
+package cn.lycode.ai;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import cn.lycode.contracts.model.ApiStyle;
+import cn.lycode.contracts.model.CostProfile;
+import cn.lycode.contracts.model.ModelCatalogPort;
+import cn.lycode.contracts.model.ModelDescriptor;
+import cn.lycode.contracts.model.ModelSelection;
+import cn.lycode.contracts.model.ThinkingLevel;
+import java.math.BigDecimal;
+import java.net.URI;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+class DefaultModelRegistryTest {
+    @Test
+    void listReturnsDescriptorsInRegistrationOrder() {
+        ModelDescriptor openAi = descriptor("openai", "gpt-5");
+        ModelDescriptor anthropic = descriptor("anthropic", "claude-4");
+        ModelRegistry registry = new DefaultModelRegistry(List.of(openAi, anthropic));
+
+        assertThat(registry.list()).containsExactly(openAi, anthropic);
+    }
+
+    @Test
+    void findMatchesProviderAndModelId() {
+        ModelDescriptor descriptor = descriptor("openai", "gpt-5");
+        ModelRegistry registry = new DefaultModelRegistry(List.of(descriptor));
+
+        assertThat(registry.find(new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM)))
+            .contains(descriptor);
+    }
+
+    @Test
+    void findReturnsEmptyWhenSelectionIsUnavailable() {
+        ModelRegistry registry = new DefaultModelRegistry(List.of(descriptor("openai", "gpt-5")));
+
+        assertThat(registry.find(new ModelSelection("openai", "gpt-4.1", ThinkingLevel.MEDIUM)))
+            .isEmpty();
+    }
+
+    @Test
+    void registryExposesContractsModelCatalogPort() {
+        ModelDescriptor descriptor = descriptor("openai", "gpt-5");
+        ModelCatalogPort catalog = new DefaultModelRegistry(List.of(descriptor));
+        ModelSelection selection = new ModelSelection("openai", "gpt-5", ThinkingLevel.MEDIUM);
+
+        assertThat(catalog.list()).containsExactly(descriptor);
+        assertThat(catalog.find(selection)).contains(descriptor);
+    }
+
+    @Test
+    void registryDefensivelyCopiesDescriptors() {
+        ModelDescriptor descriptor = descriptor("openai", "gpt-5");
+        List<ModelDescriptor> descriptors = new java.util.ArrayList<>(List.of(descriptor));
+        ModelRegistry registry = new DefaultModelRegistry(descriptors);
+
+        descriptors.clear();
+
+        assertThat(registry.list()).containsExactly(descriptor);
+    }
+
+    @Test
+    void replaceProviderRemovesStaleModelsAndPreservesOtherProviders() {
+        RuntimeModelRegistry registry = new DefaultModelRegistry(List.of(descriptor("fixed", "fixed-model")));
+
+        registry.replaceProvider("login-example", List.of(
+            descriptor("login-example", "model-a"),
+            descriptor("login-example", "model-b")
+        ));
+        registry.replaceProvider("login-example", List.of(descriptor("login-example", "model-c")));
+
+        assertThat(registry.list())
+            .extracting(candidate -> candidate.provider() + "/" + candidate.modelId())
+            .containsExactlyInAnyOrder("fixed/fixed-model", "login-example/model-c");
+        assertThat(registry.find(new ModelSelection("login-example", "model-a", ThinkingLevel.OFF))).isEmpty();
+    }
+
+    @Test
+    void replaceProviderRejectsDescriptorsForAnotherProvider() {
+        RuntimeModelRegistry registry = new DefaultModelRegistry(List.of());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            registry.replaceProvider("login-example", List.of(descriptor("other", "model-a")))
+        ).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private static ModelDescriptor descriptor(String provider, String modelId) {
+        return new ModelDescriptor(
+            provider,
+            modelId,
+            URI.create("https://example.test/v1"),
+            ApiStyle.OPENAI_COMPATIBLE,
+            128_000,
+            16_384,
+            true,
+            false,
+            new CostProfile(BigDecimal.ONE, BigDecimal.TEN, "USD"),
+            Map.of("profile", "test")
+        );
+    }
+}

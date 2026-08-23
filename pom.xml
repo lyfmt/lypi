@@ -10,25 +10,25 @@
 		<relativePath/>
 	</parent>
 
-	<groupId>cn.lypi</groupId>
-	<artifactId>ly-pi</artifactId>
+	<groupId>cn.lycode</groupId>
+	<artifactId>ly-code</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<packaging>pom</packaging>
-	<name>ly-pi</name>
-	<description>ly-pi coding agent framework</description>
+	<name>ly-code</name>
+	<description>ly-code coding agent framework</description>
 
 	<modules>
-		<module>lypi-contracts</module>
-		<module>lypi-session</module>
-		<module>lypi-agent-core</module>
-		<module>lypi-ai</module>
-		<module>lypi-tool</module>
-		<module>lypi-security</module>
-		<module>lypi-resource</module>
-		<module>lypi-runtime</module>
-		<module>lypi-transport-headless</module>
-		<module>lypi-transport-tui</module>
-		<module>lypi-boot</module>
+		<module>lycode-contracts</module>
+		<module>lycode-session</module>
+		<module>lycode-agent-core</module>
+		<module>lycode-ai</module>
+		<module>lycode-tool</module>
+		<module>lycode-security</module>
+		<module>lycode-resource</module>
+		<module>lycode-runtime</module>
+		<module>lycode-transport-headless</module>
+		<module>lycode-transport-tui</module>
+		<module>lycode-boot</module>
 	</modules>
 
 	<properties>
@@ -42,53 +42,53 @@
 	<dependencyManagement>
 		<dependencies>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-contracts</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-contracts</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-session</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-session</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-agent-core</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-agent-core</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-ai</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-ai</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-tool</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-tool</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-security</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-security</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-resource</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-resource</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-runtime</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-runtime</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-transport-headless</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-transport-headless</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>cn.lypi</groupId>
-				<artifactId>lypi-transport-tui</artifactId>
+				<groupId>cn.lycode</groupId>
+				<artifactId>lycode-transport-tui</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 		</dependencies>

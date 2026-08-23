@@ -1,0 +1,639 @@
+package cn.lycode.transport.tui;
+
+import cn.lycode.contracts.agent.SteeringMessage;
+import cn.lycode.contracts.agent.SteeringMessageSource;
+import cn.lycode.contracts.agent.TurnRequest;
+import cn.lycode.contracts.agent.TurnState;
+import cn.lycode.contracts.agent.TurnStatus;
+import cn.lycode.contracts.common.SignalSubscription;
+import cn.lycode.contracts.context.ContentBlockKind;
+import cn.lycode.contracts.context.MessageKind;
+import cn.lycode.contracts.context.MessageRole;
+import cn.lycode.contracts.event.EventBus;
+import cn.lycode.contracts.event.ErrorEvent;
+import cn.lycode.contracts.event.InterruptEvent;
+import cn.lycode.contracts.event.MessageBlockSnapshot;
+import cn.lycode.contracts.event.MessageDeltaEvent;
+import cn.lycode.contracts.event.MessageEndEvent;
+import cn.lycode.contracts.event.MessageStartEvent;
+import cn.lycode.contracts.event.PermissionResponseEvent;
+import cn.lycode.contracts.event.SessionStateEvent;
+import cn.lycode.contracts.error.ModelProviderException;
+import cn.lycode.contracts.session.SessionContext;
+import cn.lycode.contracts.runtime.AgentCorePort;
+import cn.lycode.contracts.runtime.CompactionResult;
+import cn.lycode.contracts.runtime.ProviderLoginPort;
+import cn.lycode.contracts.runtime.ProviderLoginResult;
+import cn.lycode.contracts.skill.SkillIndex;
+import cn.lycode.contracts.skill.SkillMention;
+import cn.lycode.contracts.tui.SessionRuntimeState;
+import cn.lycode.contracts.tui.SlashCommand;
+import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+
+final class RuntimeTuiSubmitHandler implements TuiSubmitHandler {
+    private String currentSessionId;
+    private final AgentCorePort core;
+    private final EventBus events;
+    private final Executor executor;
+    private final SlashCommandRouter slashCommandRouter;
+    private final Consumer<SessionRuntimeState> runtimeStateConsumer;
+    private final Supplier<SkillIndex> skillIndexSupplier;
+    private final ProviderLoginPort providerLogin;
+    private final Object activeTurnLock = new Object();
+    private volatile MutableAbortSignal activeSignal;
+    private ActiveTurn activeTurn;
+    private volatile boolean compactRunning;
+    private final AtomicBoolean providerLoginRunning = new AtomicBoolean();
+
+    RuntimeTuiSubmitHandler(String sessionId, AgentCorePort core, EventBus events) {
+        this(sessionId, core, events, command -> Thread.ofVirtual().name("lycode-tui-turn-", 0).start(command));
+    }
+
+    RuntimeTuiSubmitHandler(String sessionId, AgentCorePort core, EventBus events, Executor executor) {
+        this(sessionId, core, events, executor, (SlashCommandRouter) null);
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        List<SlashCommand> slashCommands
+    ) {
+        this(sessionId, core, events, executor, slashCommands, null);
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        List<SlashCommand> slashCommands,
+        Consumer<SessionRuntimeState> runtimeStateConsumer
+    ) {
+        this(
+            sessionId,
+            core,
+            events,
+            executor,
+            slashCommands == null || slashCommands.isEmpty() ? null : new SlashCommandRouter(slashCommands),
+            runtimeStateConsumer
+        );
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        SlashCommandRouter slashCommandRouter
+    ) {
+        this(sessionId, core, events, executor, slashCommandRouter, null);
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        SlashCommandRouter slashCommandRouter,
+        Consumer<SessionRuntimeState> runtimeStateConsumer
+    ) {
+        this(sessionId, core, events, executor, slashCommandRouter, runtimeStateConsumer, () -> new SkillIndex(List.of(), List.of()));
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        SlashCommandRouter slashCommandRouter,
+        Consumer<SessionRuntimeState> runtimeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier
+    ) {
+        this(
+            sessionId,
+            core,
+            events,
+            executor,
+            slashCommandRouter,
+            runtimeStateConsumer,
+            skillIndexSupplier,
+            ProviderLoginPort.unavailable()
+        );
+    }
+
+    RuntimeTuiSubmitHandler(
+        String sessionId,
+        AgentCorePort core,
+        EventBus events,
+        Executor executor,
+        SlashCommandRouter slashCommandRouter,
+        Consumer<SessionRuntimeState> runtimeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier,
+        ProviderLoginPort providerLogin
+    ) {
+        this.currentSessionId = sessionId;
+        this.core = core;
+        this.events = events;
+        this.executor = executor;
+        this.slashCommandRouter = slashCommandRouter;
+        this.runtimeStateConsumer = runtimeStateConsumer;
+        this.skillIndexSupplier = skillIndexSupplier == null
+            ? () -> new SkillIndex(List.of(), List.of())
+            : skillIndexSupplier;
+        this.providerLogin = providerLogin == null ? ProviderLoginPort.unavailable() : providerLogin;
+    }
+
+    @Override
+    public void submitUserInput(String input) {
+        submitUserInput(input, List.of());
+    }
+
+    @Override
+    public void submitProviderLogin(String channelName, String baseUrl, String authKey) {
+        if (!providerLoginRunning.compareAndSet(false, true)) {
+            publishSlashCommandError("login: provider registration is running");
+            return;
+        }
+        try {
+            executor.execute(() -> runProviderLogin(channelName, baseUrl, authKey));
+        } catch (RuntimeException error) {
+            providerLoginRunning.set(false);
+            publishSlashCommandError("login: provider registration failed");
+        }
+    }
+
+    private void runProviderLogin(String channelName, String baseUrl, String authKey) {
+        try {
+            ProviderLoginResult result = providerLogin.register(channelName, baseUrl, authKey);
+            int modelCount = result.models().size();
+            publishSlashCommandNotice(
+                "login: registered " + result.provider() + " (" + modelCount + " model"
+                    + (modelCount == 1 ? "" : "s") + ")"
+            );
+        } catch (RuntimeException error) {
+            publishSlashCommandError("login: " + safeLoginError(error, authKey));
+        } finally {
+            providerLoginRunning.set(false);
+        }
+    }
+
+    @Override
+    public void submitUserInput(String input, List<SkillMention> skillMentions) {
+        String routedInput = input == null ? "" : input;
+        if (slashCommandRouter != null) {
+            SlashCommandResult compactValidation = slashCommandRouter.compactValidation(routedInput);
+            if (compactValidation.matched()) {
+                compactValidation.message().ifPresent(this::publishSlashCommandError);
+                if (compactValidation.message().isEmpty()) {
+                    submitCompact(routedInput);
+                }
+                return;
+            }
+        }
+        if (compactRunning) {
+            publishSlashCommandError("compact: compaction is running");
+            return;
+        }
+        if (slashCommandRouter != null) {
+            SlashCommandResult result = slashCommandRouter.route(routedInput);
+            result.message().ifPresent(this::publishSlashCommandError);
+            if (result.consumed()) {
+                result.runtimeState().ifPresent(this::switchRuntimeState);
+                if (result.stateChanged() && result.runtimeState().isEmpty() && slashCommandRouter != null) {
+                    publishSessionState();
+                }
+                result.notice().ifPresent(this::publishSlashCommandNotice);
+                return;
+            }
+            result.notice().ifPresent(this::publishSlashCommandNotice);
+            if (result.prompt().isPresent()) {
+                routedInput = result.prompt().orElseThrow();
+            }
+        }
+        List<SkillMention> resolvedSkillMentions = skillMentions == null || skillMentions.isEmpty()
+            ? new SkillMentionParser(skillIndexSupplier.get().skills()).explicitMentions(routedInput, List.of(), null)
+            : List.copyOf(skillMentions);
+        String sessionId = currentSessionId;
+        ActiveTurn turn;
+        String conflictingSessionId = null;
+        List<SteeringListener> steeringListeners = List.of();
+        synchronized (activeTurnLock) {
+            if (activeTurn != null) {
+                if (activeTurn.sessionId.equals(sessionId)) {
+                    activeTurn.steering.addLast(new SteeringMessage(routedInput, resolvedSkillMentions));
+                    steeringListeners = List.copyOf(activeTurn.steeringListeners);
+                } else {
+                    conflictingSessionId = activeTurn.sessionId;
+                }
+                turn = null;
+            } else {
+                MutableAbortSignal signal = new MutableAbortSignal();
+                turn = new ActiveTurn(sessionId, signal);
+                activeTurn = turn;
+                activeSignal = signal;
+            }
+        }
+        notifySteeringListeners(steeringListeners);
+        if (turn == null) {
+            if (conflictingSessionId != null) {
+                publishSlashCommandError("turn is running for session " + conflictingSessionId);
+            }
+            return;
+        }
+        TurnRequest request = new TurnRequest(
+            sessionId,
+            routedInput,
+            Optional.empty(),
+            turn.signal,
+            TurnRequest.DEFAULT_MAX_TOOL_ROUNDS,
+            resolvedSkillMentions,
+            steeringSource(turn)
+        );
+        executor.execute(() -> runTurn(turn, request));
+    }
+
+    private void runTurn(ActiveTurn turn, TurnRequest request) {
+        try {
+            TurnRequest current = request;
+            while (current != null) {
+                TurnState state = core.execute(current);
+                TurnStatus status = state == null ? TurnStatus.COMPLETED : state.status();
+                if (status == TurnStatus.COMPLETED || status == TurnStatus.ABORTED) {
+                    current = nextRequestOrFinish(turn, current.maxToolRounds());
+                } else {
+                    discardAndFinish(turn);
+                    current = null;
+                }
+            }
+        } finally {
+            synchronized (activeTurnLock) {
+                if (activeTurn == turn) {
+                    clearActiveTurn(turn);
+                }
+            }
+        }
+    }
+
+    private void discardAndFinish(ActiveTurn turn) {
+        synchronized (activeTurnLock) {
+            clearActiveTurn(turn);
+        }
+    }
+
+    private TurnRequest nextRequestOrFinish(ActiveTurn turn, int maxToolRounds) {
+        synchronized (activeTurnLock) {
+            if (activeTurn != turn) {
+                clearActiveTurn(turn);
+                return null;
+            }
+            Optional<SteeringMessage> next = drainMergedSteering(turn);
+            if (next.isEmpty()) {
+                clearActiveTurn(turn);
+                return null;
+            }
+            SteeringMessage message = next.orElseThrow();
+            MutableAbortSignal signal = new MutableAbortSignal();
+            turn.signal = signal;
+            activeSignal = signal;
+            return new TurnRequest(
+                turn.sessionId,
+                message.userInput(),
+                Optional.empty(),
+                signal,
+                maxToolRounds,
+                message.skillMentions(),
+                steeringSource(turn)
+            );
+        }
+    }
+
+    private void clearActiveTurn(ActiveTurn turn) {
+        turn.steering.clear();
+        turn.steeringListeners.forEach(SteeringListener::close);
+        turn.steeringListeners.clear();
+        if (activeTurn == turn) {
+            activeTurn = null;
+        }
+        if (activeSignal == turn.signal) {
+            activeSignal = null;
+        }
+    }
+
+    private Optional<SteeringMessage> pollSteering(ActiveTurn turn) {
+        synchronized (activeTurnLock) {
+            if (activeTurn != turn || turn.signal.aborted()) {
+                return Optional.empty();
+            }
+            return drainMergedSteering(turn);
+        }
+    }
+
+    private SteeringMessageSource steeringSource(ActiveTurn turn) {
+        return new SteeringMessageSource() {
+            @Override
+            public Optional<SteeringMessage> poll() {
+                return pollSteering(turn);
+            }
+
+            @Override
+            public boolean hasPending() {
+                return hasPendingSteering(turn);
+            }
+
+            @Override
+            public SignalSubscription subscribe(Runnable listener) {
+                return subscribeSteering(turn, listener);
+            }
+        };
+    }
+
+    private boolean hasPendingSteering(ActiveTurn turn) {
+        synchronized (activeTurnLock) {
+            return activeTurn == turn && !turn.signal.aborted() && !turn.steering.isEmpty();
+        }
+    }
+
+    private SignalSubscription subscribeSteering(ActiveTurn turn, Runnable listener) {
+        Objects.requireNonNull(listener, "listener must not be null");
+        SteeringListener registration = new SteeringListener(listener);
+        boolean notifyImmediately;
+        synchronized (activeTurnLock) {
+            if (activeTurn != turn) {
+                registration.close();
+                return SignalSubscription.none();
+            }
+            turn.steeringListeners.add(registration);
+            notifyImmediately = !turn.signal.aborted() && !turn.steering.isEmpty();
+        }
+        if (notifyImmediately) {
+            notifySteeringListeners(List.of(registration));
+        }
+        return () -> {
+            registration.close();
+            synchronized (activeTurnLock) {
+                turn.steeringListeners.remove(registration);
+            }
+        };
+    }
+
+    private void notifySteeringListeners(List<SteeringListener> listeners) {
+        for (SteeringListener listener : listeners) {
+            try {
+                listener.notifyActivity();
+            } catch (RuntimeException ignored) {
+            }
+        }
+    }
+
+    @Override
+    public List<SteeringMessage> pendingSteeringMessages() {
+        synchronized (activeTurnLock) {
+            if (activeTurn == null) {
+                return List.of();
+            }
+            return List.copyOf(activeTurn.steering);
+        }
+    }
+
+    @Override
+    public boolean hasPendingSteeringMessages() {
+        synchronized (activeTurnLock) {
+            return activeTurn != null && !activeTurn.steering.isEmpty();
+        }
+    }
+
+    @Override
+    public Optional<SteeringMessage> recallPendingSteering() {
+        synchronized (activeTurnLock) {
+            if (activeTurn == null) {
+                return Optional.empty();
+            }
+            return drainMergedSteering(activeTurn);
+        }
+    }
+
+    private Optional<SteeringMessage> drainMergedSteering(ActiveTurn turn) {
+        if (turn.steering.isEmpty()) {
+            return Optional.empty();
+        }
+        String input = turn.steering.stream()
+            .map(SteeringMessage::userInput)
+            .collect(Collectors.joining("\n"));
+        LinkedHashSet<SkillMention> skillMentions = turn.steering.stream()
+            .flatMap(message -> message.skillMentions().stream())
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        turn.steering.clear();
+        return Optional.of(new SteeringMessage(input, List.copyOf(skillMentions)));
+    }
+
+    private void submitCompact(String input) {
+        if (compactRunning) {
+            publishSlashCommandError("compact: compaction is running");
+            return;
+        }
+        MutableAbortSignal signal = new MutableAbortSignal();
+        Optional<CompactCommandInvocation> invocation = slashCommandRouter.compactInvocation(input, signal);
+        if (invocation.isEmpty()) {
+            publishSlashCommandError("compact: compaction runtime is unavailable");
+            return;
+        }
+        activeSignal = signal;
+        compactRunning = true;
+        executor.execute(() -> runCompact(invocation.orElseThrow(), signal));
+    }
+
+    private void runCompact(CompactCommandInvocation invocation, MutableAbortSignal signal) {
+        try {
+            CompactionResult result = invocation.runtime().compact(invocation.request());
+            if (result.compacted()) {
+                publishSlashCommandNotice("compact: " + result.message());
+            } else {
+                publishSlashCommandError("compact: " + result.message());
+            }
+        } catch (RuntimeException exception) {
+            publishSlashCommandError("compact: " + errorMessage(exception));
+        } finally {
+            compactRunning = false;
+            if (activeSignal == signal) {
+                activeSignal = null;
+            }
+        }
+    }
+
+    private void publishSlashCommandError(String message) {
+        events.publish(new ErrorEvent(
+            currentSessionId,
+            "slash_command_error",
+            message,
+            Instant.now()
+        ));
+    }
+
+    private void publishSlashCommandNotice(String message) {
+        publishSlashOutput("slash_command", message);
+    }
+
+    private String errorMessage(RuntimeException exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
+    }
+
+    private static String safeLoginError(RuntimeException exception, String authKey) {
+        if (exception instanceof ModelProviderException) {
+            String message = exception.getMessage();
+            if (message != null && !message.isBlank() && (authKey == null || !message.contains(authKey))) {
+                return message;
+            }
+        }
+        if (exception instanceof IllegalStateException
+            && "provider login is unavailable".equals(exception.getMessage())) {
+            return "provider login is unavailable";
+        }
+        return "provider registration failed";
+    }
+
+    private void publishSessionState() {
+        slashCommandRouter.sessionContext().ifPresent(context -> events.publish(new SessionStateEvent(
+            currentSessionId,
+            slashCommandRouter.currentLeafIdForState().orElse(""),
+            context.model(),
+            context.thinkingLevel(),
+            context.mode(),
+            context.permissionRuntimeState(),
+            Instant.now()
+        )));
+    }
+
+    @Override
+    public void requestInterrupt(String reason) {
+        List<Runnable> abortListeners = List.of();
+        synchronized (activeTurnLock) {
+            if (activeTurn != null) {
+                abortListeners = activeTurn.signal.abortAndDrainListeners();
+            } else if (activeSignal != null) {
+                abortListeners = activeSignal.abortAndDrainListeners();
+            }
+        }
+        MutableAbortSignal.notifyListeners(abortListeners);
+        events.publish(new InterruptEvent(
+            currentSessionId,
+            reason == null || reason.isBlank() ? "interrupt" : reason,
+            Instant.now()
+        ));
+    }
+
+    @Override
+    public void submitPermissionOption(String requestId, String toolUseId, String optionId) {
+        events.publish(new PermissionResponseEvent(
+            currentSessionId,
+            requestId,
+            optionId,
+            false,
+            Instant.now()
+        ));
+    }
+
+    @Override
+    public void resumeSession(String sessionId, String leafId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        currentSessionId = sessionId;
+    }
+
+    private void switchRuntimeState(SessionRuntimeState state) {
+        if (state == null || state.sessionId() == null || state.sessionId().isBlank()) {
+            return;
+        }
+        currentSessionId = state.sessionId();
+        if (runtimeStateConsumer != null) {
+            runtimeStateConsumer.accept(state);
+        }
+    }
+
+    private void publishSlashOutput(String commandName, String output) {
+        if (output == null || output.isBlank()) {
+            return;
+        }
+        Instant now = Instant.now();
+        String messageId = "msg_slash_" + commandName + "_" + Long.toUnsignedString(now.toEpochMilli());
+        String blockId = messageId + ":text:0";
+        Map<String, Object> metadata = Map.of("slashCommand", commandName);
+        events.publish(new MessageStartEvent(
+            currentSessionId,
+            messageId,
+            MessageRole.SYSTEM_LOCAL,
+            MessageKind.TEXT,
+            metadata,
+            now
+        ));
+        events.publish(new MessageDeltaEvent(
+            currentSessionId,
+            messageId,
+            MessageRole.SYSTEM_LOCAL,
+            MessageKind.TEXT,
+            blockId,
+            ContentBlockKind.TEXT,
+            output,
+            true,
+            metadata,
+            now
+        ));
+        events.publish(new MessageEndEvent(
+            currentSessionId,
+            messageId,
+            MessageRole.SYSTEM_LOCAL,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot(blockId, ContentBlockKind.TEXT, output, metadata)),
+            Optional.empty(),
+            Optional.empty(),
+            metadata,
+            now
+        ));
+    }
+
+    private static final class ActiveTurn {
+        private final String sessionId;
+        private MutableAbortSignal signal;
+        private final ArrayDeque<SteeringMessage> steering = new ArrayDeque<>();
+        private final List<SteeringListener> steeringListeners = new ArrayList<>();
+
+        private ActiveTurn(String sessionId, MutableAbortSignal signal) {
+            this.sessionId = sessionId;
+            this.signal = signal;
+        }
+    }
+
+    private static final class SteeringListener {
+        private final Runnable listener;
+        private final AtomicBoolean active = new AtomicBoolean(true);
+
+        private SteeringListener(Runnable listener) {
+            this.listener = listener;
+        }
+
+        private void notifyActivity() {
+            if (active.get()) {
+                listener.run();
+            }
+        }
+
+        private void close() {
+            active.set(false);
+        }
+    }
+}

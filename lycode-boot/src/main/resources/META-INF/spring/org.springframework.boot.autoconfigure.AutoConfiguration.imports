@@ -1,0 +1,3 @@
+cn.lycode.boot.ai.LyCodeAiAutoConfiguration
+cn.lycode.boot.tool.LyCodeToolAutoConfiguration
+cn.lycode.boot.runtime.LyCodeRuntimeAutoConfiguration

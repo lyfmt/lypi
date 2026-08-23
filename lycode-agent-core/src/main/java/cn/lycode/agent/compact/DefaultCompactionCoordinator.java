@@ -1,0 +1,334 @@
+package cn.lycode.agent.compact;
+
+import cn.lycode.agent.ContextAssembler;
+import cn.lycode.agent.ContextAssembly;
+import cn.lycode.agent.ContextBudgetEstimator;
+import cn.lycode.contracts.context.AgentMessage;
+import cn.lycode.contracts.context.ContextBudget;
+import cn.lycode.contracts.context.ContextSnapshot;
+import cn.lycode.contracts.context.MessageKind;
+import cn.lycode.contracts.context.MessageRole;
+import cn.lycode.contracts.context.TextContentBlock;
+import cn.lycode.contracts.event.CompactEndEvent;
+import cn.lycode.contracts.event.CompactStartEvent;
+import cn.lycode.contracts.event.EventBus;
+import cn.lycode.contracts.runtime.CompactStateBackfillPort;
+import cn.lycode.contracts.runtime.SessionManagerPort;
+import cn.lycode.contracts.session.BranchSummaryEntry;
+import cn.lycode.contracts.session.CompactionEntry;
+import cn.lycode.contracts.session.CompactionPlan;
+import cn.lycode.contracts.session.CustomMessageEntry;
+import cn.lycode.contracts.session.MessageEntry;
+import cn.lycode.contracts.session.SessionEntry;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public final class DefaultCompactionCoordinator implements CompactionCoordinator {
+    private final SessionManagerPort sessionManager;
+    private final EventBus eventBus;
+    private final CompactionPlanner planner;
+    private final CompactionSummarizer summarizer;
+    private final ContextBudgetEstimator budgetEstimator;
+    private final CompactStateBackfillPlanner stateBackfillPlanner;
+    private final Clock clock;
+
+    public DefaultCompactionCoordinator(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionPlanner planner,
+        CompactionSummarizer summarizer,
+        Clock clock
+    ) {
+        this(sessionManager, contextAssembler, eventBus, planner, summarizer, CompactStateBackfillPort.none(), clock);
+    }
+
+    public DefaultCompactionCoordinator(
+        SessionManagerPort sessionManager,
+        ContextAssembler contextAssembler,
+        EventBus eventBus,
+        CompactionPlanner planner,
+        CompactionSummarizer summarizer,
+        CompactStateBackfillPort stateBackfillPort,
+        Clock clock
+    ) {
+        this.sessionManager = sessionManager;
+        this.eventBus = eventBus;
+        this.planner = planner;
+        this.summarizer = summarizer;
+        this.budgetEstimator = new ContextBudgetEstimator();
+        this.stateBackfillPlanner = new CompactStateBackfillPlanner(clock, stateBackfillPort);
+        this.clock = clock;
+    }
+
+    @Override
+    public CompactionDecision preflight(CompactionRequest request) {
+        ContextAssembly assembly = request.assembly();
+        List<SessionEntry> branchEntries = branchEntries(request);
+        Optional<CompactionPlan> plan = planner.plan(branchEntries, assembly.snapshot());
+        if (plan.isEmpty()) {
+            return new CompactionDecision(assembly.snapshot(), Optional.empty(), false, "within budget or no safe compaction plan");
+        }
+
+        CompactionPlan compactionPlan = plan.orElseThrow();
+        try {
+            eventBus.publish(new CompactStartEvent(request.sessionId(), compactionPlan.kind().name(), clock.instant()));
+        } catch (RuntimeException exception) {
+            return new CompactionDecision(assembly.snapshot(), plan, false, "compaction failed: " + exception.getMessage());
+        }
+        String compactionEntryId = "";
+        try {
+            CompactSummaryResult result = summarizer.summarize(new CompactSummaryRequest(
+                assembly.snapshot(),
+                compactionPlan,
+                branchEntries,
+                request.abortSignal()
+            ));
+            String summary = summaryText(result);
+            String compactionId = "entry-compact-" + UUID.randomUUID();
+            Instant compactionTimestamp = clock.instant();
+            List<MessageEntry> backfillEntries = stateBackfillPlanner.plan(
+                branchEntries,
+                compactionPlan,
+                compactionId,
+                compactionTimestamp,
+                request
+            );
+            List<AgentMessage> baseCompactedMessages = compactedMessages(
+                assembly.snapshot(),
+                branchEntries,
+                compactionPlan,
+                summary,
+                compactionId,
+                compactionTimestamp,
+                List.of()
+            );
+            int baseTokensAfter = estimateCompactedTokens(assembly.snapshot(), baseCompactedMessages);
+            List<AgentMessage> compactedMessages = compactedMessages(
+                assembly.snapshot(),
+                branchEntries,
+                compactionPlan,
+                summary,
+                compactionId,
+                compactionTimestamp,
+                backfillEntries.stream().map(MessageEntry::message).toList()
+            );
+            int tokensAfter = estimateCompactedTokens(assembly.snapshot(), compactedMessages);
+            ContextSnapshot compactedContext = compactedContext(
+                assembly.snapshot(),
+                compactedMessages,
+                tokensAfter
+            );
+            CompactionEntry compactionEntry = new CompactionEntry(
+                compactionId,
+                request.leafEntryId().orElse(""),
+                summary,
+                compactionPlan.firstKeptEntryId(),
+                assembly.snapshot().budget().estimatedContextTokens(),
+                tokensAfter,
+                compactionPlan.kind(),
+                compactionTimestamp
+            );
+            sessionManager.append(compactionEntry);
+            compactionEntryId = compactionEntry.id();
+            BackfillAppendResult backfillAppendResult = appendBackfill(backfillEntries);
+            if (backfillAppendResult.failure().isPresent()) {
+                List<AgentMessage> persistedMessages = new ArrayList<>(baseCompactedMessages);
+                persistedMessages.addAll(backfillAppendResult.appendedEntries().stream().map(MessageEntry::message).toList());
+                int persistedTokensAfter = estimateCompactedTokens(assembly.snapshot(), persistedMessages);
+                ContextSnapshot fallbackContext = compactedContext(assembly.snapshot(), persistedMessages, persistedTokensAfter);
+                return new CompactionDecision(
+                    fallbackContext,
+                    plan,
+                    true,
+                    "compacted; state backfill failed: " + backfillAppendResult.failure().orElseThrow(),
+                    Optional.of(compactionEntry.id())
+                );
+            }
+            return new CompactionDecision(compactedContext, plan, true, "compacted", Optional.of(compactionEntry.id()));
+        } catch (RuntimeException exception) {
+            return new CompactionDecision(assembly.snapshot(), plan, false, "compaction failed: " + exception.getMessage());
+        } finally {
+            publishCompactEnd(request, compactionEntryId);
+        }
+    }
+
+    private List<SessionEntry> branchEntries(CompactionRequest request) {
+        if (request.leafEntryId().isEmpty()) {
+            return List.of();
+        }
+        return sessionManager.branch(request.leafEntryId().orElseThrow());
+    }
+
+    private String summaryText(CompactSummaryResult result) {
+        if (result == null) {
+            throw new IllegalStateException("summary result is null");
+        }
+        if (result.summary() == null || result.summary().isBlank()) {
+            throw new IllegalStateException("summary is empty");
+        }
+        return result.summary().strip();
+    }
+
+    private int estimateCompactedTokens(
+        ContextSnapshot snapshot,
+        List<AgentMessage> compactedMessages
+    ) {
+        ContextSnapshot compactedSnapshot = new ContextSnapshot(
+            snapshot.systemPrompt(),
+            compactedMessages,
+            snapshot.model(),
+            snapshot.thinkingLevel(),
+            snapshot.mode(),
+            snapshot.permissionRuntimeState(),
+            snapshot.budget()
+        );
+        return budgetEstimator.estimate(compactedSnapshot).estimatedContextTokens();
+    }
+
+    private List<AgentMessage> compactedMessages(
+        ContextSnapshot snapshot,
+        List<SessionEntry> branchEntries,
+        CompactionPlan plan,
+        String summary,
+        String compactionEntryId,
+        Instant compactionTimestamp,
+        List<AgentMessage> backfillMessages
+    ) {
+        List<AgentMessage> compactedMessages = new ArrayList<>();
+        compactedMessages.add(userSummaryMessage(
+            "summary-" + compactionEntryId,
+            MessageKind.SUMMARY,
+            summary,
+            compactionTimestamp
+        ));
+
+        List<AgentMessage> keptMessages = keptProjectedMessages(branchEntries, plan.firstKeptEntryId());
+        compactedMessages.addAll(keptMessages.isEmpty() ? snapshot.messages() : keptMessages);
+        compactedMessages.addAll(backfillMessages);
+        return List.copyOf(compactedMessages);
+    }
+
+    private List<AgentMessage> keptProjectedMessages(List<SessionEntry> branchEntries, String firstKeptEntryId) {
+        List<AgentMessage> kept = new ArrayList<>();
+        boolean keep = false;
+        for (SessionEntry entry : branchEntries) {
+            if (entry.id().equals(firstKeptEntryId)) {
+                keep = true;
+            }
+            if (keep) {
+                project(entry).ifPresent(kept::add);
+            }
+        }
+        return kept;
+    }
+
+    private Optional<AgentMessage> project(SessionEntry entry) {
+        if (entry instanceof MessageEntry messageEntry) {
+            return Optional.of(messageEntry.message());
+        }
+        if (entry instanceof BranchSummaryEntry branchSummary) {
+            return Optional.of(systemLocalMessage(
+                "branch-summary-" + branchSummary.id(),
+                MessageKind.SUMMARY,
+                branchSummary.summary(),
+                branchSummary.timestamp()
+            ));
+        }
+        if (entry instanceof CustomMessageEntry customMessage) {
+            return Optional.of(systemLocalMessage(
+                "custom-message-" + customMessage.id(),
+                MessageKind.TEXT,
+                customMessage.content(),
+                customMessage.timestamp()
+            ));
+        }
+        return Optional.empty();
+    }
+
+    private AgentMessage systemLocalMessage(String id, MessageKind kind, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.SYSTEM_LOCAL,
+            kind,
+            List.of(new TextContentBlock(text)),
+            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private AgentMessage userSummaryMessage(String id, MessageKind kind, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.USER,
+            kind,
+            List.of(new TextContentBlock(text)),
+            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private ContextSnapshot compactedContext(ContextSnapshot snapshot, List<AgentMessage> compactedMessages, int tokensAfter) {
+        ContextBudget before = snapshot.budget();
+        ContextBudget budget = new ContextBudget(
+            tokensAfter,
+            before.effectiveContextWindow(),
+            before.autoCompactThreshold(),
+            before.turnOutputBudget(),
+            before.toolResultBudget(),
+            before.totalInputTokens(),
+            before.totalOutputTokens(),
+            before.estimatedCost()
+        );
+        return new ContextSnapshot(
+            snapshot.systemPrompt(),
+            compactedMessages,
+            snapshot.model(),
+            snapshot.thinkingLevel(),
+            snapshot.mode(),
+            snapshot.permissionRuntimeState(),
+            budget
+        );
+    }
+
+    private BackfillAppendResult appendBackfill(List<MessageEntry> backfillEntries) {
+        if (backfillEntries == null || backfillEntries.isEmpty()) {
+            return new BackfillAppendResult(List.of(), Optional.empty());
+        }
+        List<MessageEntry> appendedEntries = new ArrayList<>();
+        try {
+            for (MessageEntry entry : backfillEntries) {
+                sessionManager.append(entry);
+                appendedEntries.add(entry);
+            }
+        } catch (RuntimeException exception) {
+            return new BackfillAppendResult(
+                List.copyOf(appendedEntries),
+                Optional.ofNullable(exception.getMessage()).or(() -> Optional.of(exception.getClass().getSimpleName()))
+            );
+        }
+        return new BackfillAppendResult(List.copyOf(appendedEntries), Optional.empty());
+    }
+
+    private void publishCompactEnd(CompactionRequest request, String compactionEntryId) {
+        try {
+            eventBus.publish(new CompactEndEvent(request.sessionId(), compactionEntryId, clock.instant()));
+        } catch (RuntimeException ignored) {
+            // NOTE: Event delivery failure must not alter the already computed compaction decision.
+        }
+    }
+
+    private record BackfillAppendResult(List<MessageEntry> appendedEntries, Optional<String> failure) {
+        private BackfillAppendResult {
+            appendedEntries = appendedEntries == null ? List.of() : List.copyOf(appendedEntries);
+            failure = failure == null ? Optional.empty() : failure;
+        }
+    }
+
+}

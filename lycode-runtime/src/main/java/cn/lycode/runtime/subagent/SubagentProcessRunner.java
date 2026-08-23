@@ -1,0 +1,10 @@
+package cn.lycode.runtime.subagent;
+
+import cn.lycode.contracts.subagent.HeadlessSubagentInput;
+
+public interface SubagentProcessRunner {
+    /**
+     * 启动 headless subagent 子进程。
+     */
+    SubagentProcessHandle start(HeadlessSubagentInput input);
+}

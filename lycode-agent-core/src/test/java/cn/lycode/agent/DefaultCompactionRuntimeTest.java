@@ -1,0 +1,241 @@
+package cn.lycode.agent;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import cn.lycode.agent.compact.CompactionCoordinator;
+import cn.lycode.agent.compact.CompactionDecision;
+import cn.lycode.agent.compact.CompactionSummarizer;
+import cn.lycode.agent.compact.DefaultCompactionCoordinator;
+import cn.lycode.contracts.common.JsonSchema;
+import cn.lycode.contracts.context.ContextSnapshot;
+import cn.lycode.contracts.runtime.CompactionResult;
+import cn.lycode.contracts.runtime.ToolRuntimePort;
+import cn.lycode.contracts.security.PermissionMode;
+import cn.lycode.contracts.session.CompactionKind;
+import cn.lycode.contracts.session.CompactionEntry;
+import cn.lycode.contracts.session.CompactionPlan;
+import cn.lycode.contracts.session.MessageEntry;
+import cn.lycode.contracts.tool.Tool;
+import cn.lycode.contracts.tool.ToolDescriptor;
+import cn.lycode.contracts.tool.ToolRegistrySnapshot;
+import cn.lycode.contracts.tool.ToolResult;
+import cn.lycode.contracts.tool.ToolUseRequest;
+import java.time.Clock;
+import java.time.ZoneOffset;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.junit.jupiter.api.Test;
+
+class DefaultCompactionRuntimeTest {
+    @Test
+    void compactBuildsContextAndDelegatesToCoordinator() {
+        RecordingAssembler assembler = new RecordingAssembler();
+        RecordingCoordinator coordinator = new RecordingCoordinator(new CompactionDecision(
+            new ContextSnapshot(null, java.util.List.of(), null, null, null, PermissionMode.ASK, null),
+            Optional.of(new CompactionPlan("entry-compact-1", "leaf_3", java.util.List.of("leaf_1"), CompactionKind.MANUAL)),
+            true,
+            "compacted",
+            Optional.of("entry-compact-1")
+        ));
+        DefaultCompactionRuntime runtime = new DefaultCompactionRuntime(assembler, coordinator);
+
+        CompactionResult result = runtime.compact(new cn.lycode.contracts.runtime.CompactionRequest(
+            "ses_1",
+            Optional.of("leaf_9"),
+            Path.of("/tmp/project"),
+            () -> false
+        ));
+
+        assertTrue(result.compacted());
+        assertEquals(Optional.of("entry-compact-1"), result.entryId());
+        assertEquals("compacted", result.message());
+        assertEquals("ses_1", assembler.request.sessionId());
+        assertEquals(Optional.of("leaf_9"), assembler.request.leafEntryId());
+        assertEquals(Path.of("/tmp/project"), assembler.request.cwd());
+        assertTrue(assembler.request.includeSystemPrompt());
+        assertEquals(Optional.of("leaf_9"), coordinator.request.leafEntryId());
+        assertEquals(assembler.assembly, coordinator.request.assembly());
+        assertTrue(coordinator.request.tools().tools().isEmpty());
+    }
+
+    @Test
+    void compactDelegatesCurrentToolSnapshotForManualMcpBackfill() {
+        RecordingAssembler assembler = new RecordingAssembler();
+        RecordingCoordinator coordinator = new RecordingCoordinator(new CompactionDecision(
+            new ContextSnapshot(null, java.util.List.of(), null, null, null, PermissionMode.ASK, null),
+            Optional.empty(),
+            false,
+            "within budget"
+        ));
+        ToolRegistrySnapshot snapshot = new ToolRegistrySnapshot(List.of(new ToolDescriptor(
+            "mcp__filesystem__read_file",
+            List.of(),
+            "Read file",
+            new JsonSchema(Map.of("type", "object")),
+            true,
+            false
+        )));
+        DefaultCompactionRuntime runtime = new DefaultCompactionRuntime(
+            assembler,
+            coordinator,
+            new SnapshotToolRuntime(snapshot)
+        );
+
+        runtime.compact(new cn.lycode.contracts.runtime.CompactionRequest(
+            "ses_1",
+            Optional.of("leaf_9"),
+            Path.of("/tmp/project"),
+            () -> false
+        ));
+
+        assertEquals(snapshot, coordinator.request.tools());
+    }
+
+    @Test
+    void compactReturnsNoopWhenCoordinatorFindsNoPlan() {
+        DefaultCompactionRuntime runtime = new DefaultCompactionRuntime(
+            new RecordingAssembler(),
+            request -> new CompactionDecision(null, Optional.empty(), false, "within budget")
+        );
+
+        CompactionResult result = runtime.compact(new cn.lycode.contracts.runtime.CompactionRequest(
+            "ses_1",
+            Optional.empty(),
+            Path.of("."),
+            () -> false
+        ));
+
+        assertFalse(result.compacted());
+        assertEquals("within budget", result.message());
+        assertTrue(result.entryId().isEmpty());
+    }
+
+    @Test
+    void manualCompactCreatesPlanEvenWhenContextIsWithinAutoBudget() {
+        AgentCoreTestFixtures.InMemorySessionManager session = new AgentCoreTestFixtures.InMemorySessionManager();
+        session.openOrCreate("ses_1");
+        session.append(new MessageEntry("entry-user-1", "", AgentCoreTestFixtures.userMessage("msg-user-1", "old user"), AgentCoreTestFixtures.NOW));
+        session.append(new MessageEntry("entry-assistant-1", "entry-user-1", AgentCoreTestFixtures.assistantMessage("msg-assistant-1", "old assistant"), AgentCoreTestFixtures.NOW));
+        session.append(new MessageEntry("entry-user-2", "entry-assistant-1", AgentCoreTestFixtures.userMessage("msg-user-2", "recent user"), AgentCoreTestFixtures.NOW));
+        ContextAssembler assembler = request -> new ContextAssembly(
+            new ContextSnapshot(
+                null,
+                List.of(
+                    AgentCoreTestFixtures.userMessage("msg-user-1", "old user"),
+                    AgentCoreTestFixtures.assistantMessage("msg-assistant-1", "old assistant"),
+                    AgentCoreTestFixtures.userMessage("msg-user-2", "recent user")
+                ),
+                null,
+                null,
+                null,
+                PermissionMode.ASK,
+                new cn.lycode.contracts.context.ContextBudget(10, 128_000, 100_000, 8_192, 16_384, 0, 0, java.math.BigDecimal.ZERO)
+            ),
+            AgentCoreTestFixtures.emptyResources(),
+            List.of("entry-user-1", "entry-assistant-1", "entry-user-2"),
+            List.of(),
+            List.of(),
+            false
+        );
+        CompactionSummarizer summarizer = request -> new cn.lycode.agent.compact.CompactSummaryResult(
+            "manual summary",
+            new cn.lycode.contracts.model.TokenUsage(1, 1, 0, 2)
+        );
+        DefaultCompactionRuntime runtime = new DefaultCompactionRuntime(
+            assembler,
+            new DefaultCompactionCoordinator(
+                session,
+                assembler,
+                new AgentCoreTestFixtures.RecordingEventBus(),
+                DefaultCompactionRuntime.manualPlanner(),
+                summarizer,
+                Clock.fixed(AgentCoreTestFixtures.NOW, ZoneOffset.UTC)
+            )
+        );
+
+        CompactionResult result = runtime.compact(new cn.lycode.contracts.runtime.CompactionRequest(
+            "ses_1",
+            Optional.of("entry-user-2"),
+            Path.of("."),
+            () -> false
+        ));
+
+        assertTrue(result.compacted());
+        assertEquals("compacted", result.message());
+        CompactionEntry entry = session.handle().byId().values().stream()
+            .filter(CompactionEntry.class::isInstance)
+            .map(CompactionEntry.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertEquals(CompactionKind.MANUAL, entry.kind());
+    }
+
+    private static final class RecordingAssembler implements ContextAssembler {
+        private ContextBuildRequest request;
+        private final ContextAssembly assembly = new ContextAssembly(
+            null,
+            AgentCoreTestFixtures.emptyResources(),
+            java.util.List.of(),
+            java.util.List.of(),
+            java.util.List.of(),
+            false
+        );
+
+        @Override
+        public ContextAssembly build(ContextBuildRequest request) {
+            this.request = request;
+            return assembly;
+        }
+    }
+
+    private static final class RecordingCoordinator implements CompactionCoordinator {
+        private final CompactionDecision decision;
+        private cn.lycode.agent.compact.CompactionRequest request;
+
+        private RecordingCoordinator(CompactionDecision decision) {
+            this.decision = decision;
+        }
+
+        @Override
+        public CompactionDecision preflight(cn.lycode.agent.compact.CompactionRequest request) {
+            this.request = request;
+            return decision;
+        }
+    }
+
+    private static final class SnapshotToolRuntime implements ToolRuntimePort {
+        private final ToolRegistrySnapshot snapshot;
+
+        private SnapshotToolRuntime(ToolRegistrySnapshot snapshot) {
+            this.snapshot = snapshot;
+        }
+
+        @Override
+        public void register(Tool<?, ?> tool) {
+        }
+
+        @Override
+        public Optional<Tool<?, ?>> resolve(String nameOrAlias) {
+            return Optional.empty();
+        }
+
+        @Override
+        public ToolRegistrySnapshot snapshot() {
+            return snapshot;
+        }
+
+        @Override
+        public Path cwd() {
+            return Path.of(".").toAbsolutePath().normalize();
+        }
+
+        @Override
+        public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
+            return List.of();
+        }
+    }
+}
