@@ -1,0 +1,82 @@
+package cn.lycode.tool;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class MemoryConsolidationWritePolicyTest {
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void allowsUserMemoryTargets() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path userRoot = tempDir.resolve("home/.ly-code");
+        Files.createDirectories(userRoot.resolve("memory/nested"));
+        Files.createDirectories(userRoot.resolve("memories"));
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
+
+        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memory.md").toString()));
+        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memory/guidance.md").toString()));
+        assertTrue(policy.isAllowedWritePath(userRoot.resolve("memory/nested/guidance.md").toString()));
+        assertFalse(policy.isAllowedWritePath(userRoot.resolve("memories/guidance.md").toString()));
+    }
+
+    @Test
+    void allowsProjectMemoryTargets() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path userRoot = tempDir.resolve("home/.ly-code");
+        Files.createDirectories(cwd.resolve(".ly-code/memory/project"));
+        Files.createDirectories(cwd.resolve(".ly-code/skills/java/nested"));
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
+
+        assertTrue(policy.isAllowedWritePath("MEMORY.md"));
+        assertTrue(policy.isAllowedWritePath(".ly-code/memory.md"));
+        assertTrue(policy.isAllowedWritePath(".ly-code/memory/project/facts.md"));
+        assertTrue(policy.isAllowedWritePath(".ly-code/skills/java/SKILL.md"));
+        assertTrue(policy.isAllowedWritePath(".ly-code/skills/java/nested/SKILL.md"));
+    }
+
+    @Test
+    void deniesNonMemoryTargets() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path userRoot = tempDir.resolve("home/.ly-code");
+        Files.createDirectories(cwd);
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
+
+        assertFalse(policy.isAllowedWritePath("src/Main.java"));
+        assertFalse(policy.isAllowedWritePath("docs/foo.md"));
+        assertFalse(policy.isAllowedWritePath(".git/config"));
+        assertFalse(policy.isAllowedWritePath("pom.xml"));
+    }
+
+    @Test
+    void deniesTraversalOutsideAllowedRoots() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path userRoot = tempDir.resolve("home/.ly-code");
+        Files.createDirectories(cwd.resolve(".ly-code/memory"));
+        Files.createDirectories(userRoot.resolve("memory"));
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, userRoot);
+
+        assertFalse(policy.isAllowedWritePath(".ly-code/memory/../../../src/Main.java"));
+        assertFalse(policy.isAllowedWritePath(userRoot.resolve("memory/../../../secret.md").toString()));
+    }
+
+    @Test
+    void deniesSymlinkEscapeFromAllowedRoots() throws IOException {
+        Path cwd = tempDir.resolve("repo");
+        Path outside = tempDir.resolve("outside");
+        Path memoryParent = cwd.resolve(".ly-code");
+        Files.createDirectories(memoryParent);
+        Files.createDirectories(outside);
+        Files.createSymbolicLink(memoryParent.resolve("memory"), outside);
+        MemoryConsolidationWritePolicy policy = new MemoryConsolidationWritePolicy(cwd, tempDir.resolve("home/.ly-code"));
+
+        assertFalse(policy.isAllowedWritePath(".ly-code/memory/escaped.md"));
+    }
+}

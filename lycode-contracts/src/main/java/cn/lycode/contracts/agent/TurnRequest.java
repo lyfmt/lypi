@@ -1,0 +1,81 @@
+package cn.lycode.contracts.agent;
+
+import cn.lycode.contracts.common.AbortSignal;
+import cn.lycode.contracts.skill.SkillMention;
+import java.util.List;
+import java.util.Optional;
+
+public record TurnRequest(
+    String sessionId,
+    String userInput,
+    Optional<String> parentEntryId,
+    AbortSignal abortSignal,
+    int maxToolRounds,
+    List<SkillMention> skillMentions,
+    SteeringMessageSource steeringMessages
+) {
+    public static final int DEFAULT_MAX_TOOL_ROUNDS = 16;
+
+    public TurnRequest(
+        String sessionId,
+        String userInput,
+        Optional<String> parentEntryId,
+        AbortSignal abortSignal
+    ) {
+        this(
+            sessionId,
+            userInput,
+            parentEntryId,
+            abortSignal,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            List.of(),
+            SteeringMessageSource.none()
+        );
+    }
+
+    public TurnRequest(
+        String sessionId,
+        String userInput,
+        Optional<String> parentEntryId,
+        AbortSignal abortSignal,
+        int maxToolRounds
+    ) {
+        this(
+            sessionId,
+            userInput,
+            parentEntryId,
+            abortSignal,
+            maxToolRounds,
+            List.of(),
+            SteeringMessageSource.none()
+        );
+    }
+
+    public TurnRequest(
+        String sessionId,
+        String userInput,
+        Optional<String> parentEntryId,
+        AbortSignal abortSignal,
+        int maxToolRounds,
+        List<SkillMention> skillMentions
+    ) {
+        this(
+            sessionId,
+            userInput,
+            parentEntryId,
+            abortSignal,
+            maxToolRounds,
+            skillMentions,
+            SteeringMessageSource.none()
+        );
+    }
+
+    public TurnRequest {
+        parentEntryId = parentEntryId == null ? Optional.empty() : parentEntryId;
+        skillMentions = skillMentions == null ? List.of() : List.copyOf(skillMentions);
+        steeringMessages = steeringMessages == null ? SteeringMessageSource.none() : steeringMessages;
+        if (maxToolRounds < 0) {
+            throw new IllegalArgumentException("maxToolRounds must not be negative");
+        }
+    }
+}

@@ -1,0 +1,131 @@
+package cn.lycode.boot;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import cn.lycode.agent.compact.CompactionSummaryFallbackPolicy;
+import cn.lycode.boot.ai.LyCodeAiProperties;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
+
+class UserRootConfigurationTest {
+    private static final String FALLBACK_POLICY = "lycode.ai.compaction-summary.fallback-policy";
+
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void loadsUserRootConfigurationAndOverridesPackagedDefault() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path configRoot = Files.createDirectories(home.resolve(".ly-code"));
+        Files.writeString(configRoot.resolve("application.yml"), """
+            lycode:
+              ai:
+                compaction-summary:
+                  fallback-policy: skip_compaction
+            """);
+
+        runner(home).run(context -> assertThat(boundPolicy(context))
+            .isEqualTo(CompactionSummaryFallbackPolicy.SKIP_COMPACTION));
+    }
+
+    @Test
+    void startsWhenUserRootConfigurationIsMissing() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("empty-home"));
+
+        runner(home).run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test
+    void externalRuntimeConfigurationOverridesUserRootConfiguration() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("override-home"));
+        Path configRoot = Files.createDirectories(home.resolve(".ly-code"));
+        Files.writeString(configRoot.resolve("application.yml"), """
+            lycode:
+              ai:
+                compaction-summary:
+                  fallback-policy: skip_compaction
+            """);
+        Path runtimeConfig = Files.createDirectories(tempDir.resolve("runtime-config"));
+        Files.writeString(runtimeConfig.resolve("application.yml"), """
+            lycode:
+              ai:
+                compaction-summary:
+                  fallback-policy: fallback_deterministic
+            """);
+
+        runner(home)
+            .withSystemProperties("spring.config.additional-location=optional:" + runtimeConfig.toUri())
+            .run(context -> assertThat(boundPolicy(context))
+                .isEqualTo(CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC));
+    }
+
+    @Test
+    void systemPropertyOverridesUserRootConfiguration() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("system-property-home"));
+        Path configRoot = Files.createDirectories(home.resolve(".ly-code"));
+        Files.writeString(configRoot.resolve("application.yml"), """
+            lycode:
+              ai:
+                compaction-summary:
+                  fallback-policy: skip_compaction
+            """);
+
+        runner(home)
+            .withSystemProperties(FALLBACK_POLICY + "=fallback_deterministic")
+            .run(context -> assertThat(boundPolicy(context))
+                .isEqualTo(CompactionSummaryFallbackPolicy.FALLBACK_DETERMINISTIC));
+    }
+
+    @Test
+    void importsManagedLoginProviderConfigurationBeforeUserConfiguration() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("login-provider-home"));
+        Path configRoot = Files.createDirectories(home.resolve(".ly-code"));
+        Files.writeString(configRoot.resolve("login-providers.properties"), """
+            lycode.ai.providers.login-fixture.enabled=true
+            lycode.ai.providers.login-fixture.base-url=https://generated.test/v1
+            """);
+        Files.writeString(configRoot.resolve("application.yml"), """
+            lycode:
+              ai:
+                providers:
+                  login-fixture:
+                    base-url: https://user.test/v1
+            """);
+
+        runner(home).run(context -> {
+            LyCodeAiProperties.ProviderProperties provider = context.getBean(LyCodeAiProperties.class)
+                .getProviders()
+                .get("login-fixture");
+
+            assertThat(provider).isNotNull();
+            assertThat(provider.isEnabled()).isTrue();
+            assertThat(provider.getBaseUrl()).hasToString("https://user.test/v1");
+        });
+    }
+
+    private ApplicationContextRunner runner(Path home) {
+        return new ApplicationContextRunner()
+            .withInitializer(new ConfigDataApplicationContextInitializer())
+            .withUserConfiguration(BoundPropertiesConfiguration.class)
+            .withSystemProperties("user.home=" + home);
+    }
+
+    private CompactionSummaryFallbackPolicy boundPolicy(
+        org.springframework.context.ApplicationContext context
+    ) {
+        return context.getBean(LyCodeAiProperties.class)
+            .getCompactionSummary()
+            .getFallbackPolicy();
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableConfigurationProperties(LyCodeAiProperties.class)
+    static class BoundPropertiesConfiguration {
+    }
+}

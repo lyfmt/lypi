@@ -1,0 +1,261 @@
+package cn.lycode.session;
+
+import cn.lycode.contracts.context.AgentMessage;
+import cn.lycode.contracts.context.MessageKind;
+import cn.lycode.contracts.context.MessageRole;
+import cn.lycode.contracts.context.TextContentBlock;
+import cn.lycode.contracts.model.ModelSelection;
+import cn.lycode.contracts.model.ThinkingLevel;
+import cn.lycode.contracts.security.AgentMode;
+import cn.lycode.contracts.security.PermissionMode;
+import cn.lycode.contracts.security.PermissionRuntimeState;
+import cn.lycode.contracts.session.BranchSummaryEntry;
+import cn.lycode.contracts.session.CompactionEntry;
+import cn.lycode.contracts.session.CustomMessageEntry;
+import cn.lycode.contracts.session.MessageEntry;
+import cn.lycode.contracts.session.ModeChangeEntry;
+import cn.lycode.contracts.session.ModelChangeEntry;
+import cn.lycode.contracts.session.PermissionModeChangeEntry;
+import cn.lycode.contracts.session.PermissionRuntimeStateChangeEntry;
+import cn.lycode.contracts.session.SessionContext;
+import cn.lycode.contracts.session.SessionEntry;
+import cn.lycode.contracts.session.SessionHeader;
+import cn.lycode.contracts.session.ThinkingChangeEntry;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.Objects;
+
+final class SessionReplayProjector {
+    private static final ModelSelection DEFAULT_MODEL = new ModelSelection("default", "default", ThinkingLevel.MEDIUM);
+
+    private final ModelSelection defaultModel;
+    private final ThinkingLevel defaultThinkingLevel;
+    private final AgentMode defaultMode;
+    private final PermissionMode defaultPermissionMode;
+    private final PermissionRuntimeState defaultPermissionRuntimeState;
+
+    SessionReplayProjector() {
+        this(DEFAULT_MODEL, ThinkingLevel.MEDIUM, AgentMode.EXECUTE, PermissionMode.ASK);
+    }
+
+    SessionReplayProjector(
+        ModelSelection defaultModel,
+        ThinkingLevel defaultThinkingLevel,
+        AgentMode defaultMode,
+        PermissionMode defaultPermissionMode
+    ) {
+        this(
+            defaultModel,
+            defaultThinkingLevel,
+            defaultMode,
+            PermissionRuntimeState.fromLegacy(defaultPermissionMode)
+        );
+    }
+
+    SessionReplayProjector(
+        ModelSelection defaultModel,
+        ThinkingLevel defaultThinkingLevel,
+        AgentMode defaultMode,
+        PermissionRuntimeState defaultPermissionRuntimeState
+    ) {
+        this.defaultModel = Objects.requireNonNull(defaultModel, "defaultModel must not be null");
+        this.defaultThinkingLevel = Objects.requireNonNull(defaultThinkingLevel, "defaultThinkingLevel must not be null");
+        this.defaultMode = Objects.requireNonNull(defaultMode, "defaultMode must not be null");
+        this.defaultPermissionRuntimeState = Objects.requireNonNull(
+            defaultPermissionRuntimeState,
+            "defaultPermissionRuntimeState must not be null"
+        );
+        this.defaultPermissionMode = defaultPermissionRuntimeState.legacyPermissionMode();
+    }
+
+    SessionContext context(List<SessionEntry> branch) {
+        return context(null, branch);
+    }
+
+    SessionContext context(SessionHeader header, List<SessionEntry> branch) {
+        boolean childSession = header != null && header.parentSpawnEntryId().isPresent();
+        ModelSelection model = childSession ? header.initialModel().orElse(defaultModel) : defaultModel;
+        ThinkingLevel thinkingLevel = childSession ? header.initialThinkingLevel().orElse(defaultThinkingLevel) : defaultThinkingLevel;
+        AgentMode mode = childSession ? header.initialAgentMode().orElse(defaultMode) : defaultMode;
+        PermissionMode permissionMode = childSession
+            ? header.initialPermissionMode().orElse(defaultPermissionMode)
+            : defaultPermissionMode;
+        PermissionRuntimeState permissionRuntimeState = initialPermissionRuntimeState(header, childSession, permissionMode);
+        List<AgentMessage> messages = new ArrayList<>();
+        List<String> branchEntryIds = new ArrayList<>();
+        CompactionEntry latestCompaction = null;
+
+        for (SessionEntry entry : branch) {
+            branchEntryIds.add(entry.id());
+            if (entry instanceof MessageEntry messageEntry) {
+                messages.add(messageEntry.message());
+            } else if (entry instanceof BranchSummaryEntry branchSummary) {
+                messages.add(project(branchSummary));
+            } else if (entry instanceof CustomMessageEntry customMessage) {
+                messages.add(project(customMessage));
+            } else if (entry instanceof ModelChangeEntry modelChange) {
+                model = modelChange.model();
+            } else if (entry instanceof ThinkingChangeEntry thinkingChange) {
+                thinkingLevel = thinkingChange.thinkingLevel();
+                model = withThinkingLevel(model, thinkingLevel);
+            } else if (entry instanceof ModeChangeEntry modeChange) {
+                mode = modeChange.agentMode();
+            } else if (entry instanceof PermissionModeChangeEntry permissionChange) {
+                permissionMode = permissionChange.permissionMode();
+                permissionRuntimeState = PermissionRuntimeState.fromLegacy(permissionMode);
+            } else if (entry instanceof PermissionRuntimeStateChangeEntry permissionRuntimeChange) {
+                permissionRuntimeState = permissionRuntimeChange.permissionRuntimeState();
+            } else if (entry instanceof CompactionEntry compactionEntry) {
+                latestCompaction = compactionEntry;
+            }
+        }
+
+        List<String> appliedCompactionEntryIds = List.of();
+        if (latestCompaction != null) {
+            messages = applyCompaction(messages, branch, latestCompaction);
+            appliedCompactionEntryIds = List.of(latestCompaction.id());
+        }
+
+        return new SessionContext(
+            List.copyOf(messages),
+            List.copyOf(branchEntryIds),
+            appliedCompactionEntryIds,
+            model,
+            thinkingLevel,
+            mode,
+            permissionRuntimeState
+        );
+    }
+
+    List<AgentMessage> transcript(List<SessionEntry> branch) {
+        return context(branch).messages();
+    }
+
+    List<AgentMessage> transcript(SessionHeader header, List<SessionEntry> branch) {
+        return context(header, branch).messages();
+    }
+
+    ModelSelection defaultModel() {
+        return defaultModel;
+    }
+
+    ThinkingLevel defaultThinkingLevel() {
+        return defaultThinkingLevel;
+    }
+
+    AgentMode defaultMode() {
+        return defaultMode;
+    }
+
+    PermissionMode defaultPermissionMode() {
+        return defaultPermissionMode;
+    }
+
+    PermissionRuntimeState defaultPermissionRuntimeState() {
+        return defaultPermissionRuntimeState;
+    }
+
+    private PermissionRuntimeState initialPermissionRuntimeState(
+        SessionHeader header,
+        boolean childSession,
+        PermissionMode permissionMode
+    ) {
+        if (!childSession) {
+            return defaultPermissionRuntimeState;
+        }
+        if (header.initialPermissionRuntimeState() != null) {
+            return header.initialPermissionRuntimeState();
+        }
+        if (header.initialPermissionMode().isPresent()) {
+            return PermissionRuntimeState.fromLegacy(permissionMode);
+        }
+        return defaultPermissionRuntimeState;
+    }
+
+    private List<AgentMessage> applyCompaction(
+        List<AgentMessage> originalMessages,
+        List<SessionEntry> branch,
+        CompactionEntry compaction
+    ) {
+        List<AgentMessage> kept = new ArrayList<>();
+        boolean keep = false;
+        for (SessionEntry entry : branch) {
+            if (entry.id().equals(compaction.firstKeptEntryId())) {
+                keep = true;
+            }
+            if (keep) {
+                project(entry).ifPresent(kept::add);
+            }
+        }
+
+        List<AgentMessage> projected = new ArrayList<>();
+        projected.add(userSummaryMessage(
+            "summary-" + compaction.id(),
+            compaction.summary(),
+            compaction.timestamp()
+        ));
+        projected.addAll(kept.isEmpty() ? originalMessages : kept);
+        return projected;
+    }
+
+    private Optional<AgentMessage> project(SessionEntry entry) {
+        if (entry instanceof MessageEntry messageEntry) {
+            return Optional.of(messageEntry.message());
+        }
+        if (entry instanceof BranchSummaryEntry branchSummary) {
+            return Optional.of(project(branchSummary));
+        }
+        if (entry instanceof CustomMessageEntry customMessage) {
+            return Optional.of(project(customMessage));
+        }
+        return Optional.empty();
+    }
+
+    private AgentMessage project(BranchSummaryEntry branchSummary) {
+        return systemLocalMessage(
+            "branch-summary-" + branchSummary.id(),
+            MessageKind.SUMMARY,
+            branchSummary.summary(),
+            branchSummary.timestamp()
+        );
+    }
+
+    private AgentMessage project(CustomMessageEntry customMessage) {
+        return systemLocalMessage(
+            "custom-message-" + customMessage.id(),
+            MessageKind.TEXT,
+            customMessage.content(),
+            customMessage.timestamp()
+        );
+    }
+
+    private AgentMessage systemLocalMessage(String id, MessageKind kind, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.SYSTEM_LOCAL,
+            kind,
+            List.of(new TextContentBlock(text)),
+            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private AgentMessage userSummaryMessage(String id, String text, Instant timestamp) {
+        return new AgentMessage(
+            id,
+            MessageRole.USER,
+            MessageKind.SUMMARY,
+            List.of(new TextContentBlock(text)),
+            Optional.ofNullable(timestamp).orElse(Instant.EPOCH),
+            Optional.empty(),
+            Optional.empty()
+        );
+    }
+
+    private ModelSelection withThinkingLevel(ModelSelection model, ThinkingLevel thinkingLevel) {
+        return new ModelSelection(model.provider(), model.modelId(), thinkingLevel);
+    }
+}

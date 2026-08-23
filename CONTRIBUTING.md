@@ -1,4 +1,4 @@
-# ly-pi 开发规范
+# ly-code 开发规范
 
 ## 分支模型
 
@@ -46,7 +46,7 @@ mvn verify
 局部开发时可以先运行模块级测试，例如：
 
 ```bash
-mvn -pl lypi-tool -am test
+mvn -pl lycode-tool -am test
 ```
 
 但提交前以完整 `mvn verify` 为准。

@@ -1,6 +1,6 @@
-# ly-pi
+# ly-code
 
-`ly-pi` 是一个基于 Java 的本地 coding agent，面向代码库理解、文件修改、命令执行、长任务推进和会话沉淀。项目参考了 `pi`、`Codex` 和 `Claude Code` 的代码实现。
+`ly-code` 是一个基于 Java 的本地 coding agent，面向代码库理解、文件修改、命令执行、长任务推进和会话沉淀。项目参考了 `pi`、`Codex` 和 `Claude Code` 的代码实现。
 
 项目关注 coding agent 工程化中容易变复杂的部分：会话如何恢复，历史如何审计，工具如何受控，模型差异如何收敛，资源如何渐进披露，记忆如何沉淀，子任务如何隔离。代码采用 Maven 多模块结构，使用 Spring Boot 做装配，核心边界通过接口和契约类型定义，便于替换模型适配、工具实现、资源发现和交互入口。
 
@@ -22,19 +22,19 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| `lypi-contracts` | 公共契约、会话条目、工具描述、错误类型、事件、权限状态、资源结构、子代理协议和 TUI 视图模型。 |
-| `lypi-session` | 会话创建、恢复、分支查询、JSONL 存储、fork、child session 和工作树 diff 查询。 |
-| `lypi-agent-core` | 单轮编排、上下文组装、模型交互、工具回合、压缩规划、分支摘要和中断处理。 |
-| `lypi-ai` | 模型注册、OpenAI 兼容与 Anthropic Messages Provider、远端模型发现、流式事件归一化、fallback 和 thinking 参数映射。 |
-| `lypi-tool` | 工具注册、Schema 校验、人工或模型权限复核、批次执行、结果预算、内建工具、MCP 工具适配和沙盒执行。 |
-| `lypi-security` | 权限 profile 编译、Bash 风险分析、前缀规则匹配、路径安全、网络策略和审批策略判断。 |
-| `lypi-resource` | context file、memory、Skill、Prompt Template、MCP 配置发现，以及系统提示词构建。 |
-| `lypi-runtime` | 事件总线、AgentCenter、mailbox、子进程管理、运行中 agent 快照和后台记忆沉淀。 |
-| `lypi-transport-headless` | 子代理 stdin/stdout JSON 协议和单次 Headless Run 执行。 |
-| `lypi-transport-tui` | 基于 JLine 的输入与事件投影、inline terminal rendering、原生 scrollback、steering、slash command、权限与 diff 弹层。 |
-| `lypi-boot` | Spring Boot 自动装配、配置绑定、启动入口、默认组件图和示例配置。 |
+| `lycode-contracts` | 公共契约、会话条目、工具描述、错误类型、事件、权限状态、资源结构、子代理协议和 TUI 视图模型。 |
+| `lycode-session` | 会话创建、恢复、分支查询、JSONL 存储、fork、child session 和工作树 diff 查询。 |
+| `lycode-agent-core` | 单轮编排、上下文组装、模型交互、工具回合、压缩规划、分支摘要和中断处理。 |
+| `lycode-ai` | 模型注册、OpenAI 兼容与 Anthropic Messages Provider、远端模型发现、流式事件归一化、fallback 和 thinking 参数映射。 |
+| `lycode-tool` | 工具注册、Schema 校验、人工或模型权限复核、批次执行、结果预算、内建工具、MCP 工具适配和沙盒执行。 |
+| `lycode-security` | 权限 profile 编译、Bash 风险分析、前缀规则匹配、路径安全、网络策略和审批策略判断。 |
+| `lycode-resource` | context file、memory、Skill、Prompt Template、MCP 配置发现，以及系统提示词构建。 |
+| `lycode-runtime` | 事件总线、AgentCenter、mailbox、子进程管理、运行中 agent 快照和后台记忆沉淀。 |
+| `lycode-transport-headless` | 子代理 stdin/stdout JSON 协议和单次 Headless Run 执行。 |
+| `lycode-transport-tui` | 基于 JLine 的输入与事件投影、inline terminal rendering、原生 scrollback、steering、slash command、权限与 diff 弹层。 |
+| `lycode-boot` | Spring Boot 自动装配、配置绑定、启动入口、默认组件图和示例配置。 |
 
-核心原则是上层依赖抽象契约，下层能力通过端口接入。`lypi-agent-core` 不直接绑定具体终端、具体 Provider 或具体工具实现；`lypi-runtime` 只依赖 `lypi-contracts`；`lypi-boot` 负责把默认实现装配成可运行应用。
+核心原则是上层依赖抽象契约，下层能力通过端口接入。`lycode-agent-core` 不直接绑定具体终端、具体 Provider 或具体工具实现；`lycode-runtime` 只依赖 `lycode-contracts`；`lycode-boot` 负责把默认实现装配成可运行应用。
 
 一次 turn 的典型路径是：TUI 或 Headless 入口提交 `TurnRequest`，agent core 从 session 和 resource 组装上下文，AI 层流式返回 assistant 文本和 tool call，工具运行时执行受控动作并生成 tool result，session 层追加 entry，事件总线把状态投影给交互入口。主 turn 完成后，运行层再异步处理记忆沉淀等后台任务。
 
@@ -42,7 +42,7 @@
 
 ### 会话与上下文
 
-每个 session 是一条可追溯的 entry 链。`lypi-session` 用 JSONL 追加写入历史，并用 leaf 表示当前分支位置；从历史节点继续输入会形成新分支，切换分支只移动 leaf，不会改写旧 entry。
+每个 session 是一条可追溯的 entry 链。`lycode-session` 用 JSONL 追加写入历史，并用 leaf 表示当前分支位置；从历史节点继续输入会形成新分支，切换分支只移动 leaf，不会改写旧 entry。
 
 会话回放会恢复 transcript、模型选择、thinking level、agent mode、权限运行态、压缩摘要和分支摘要。`SessionView` 只携带 `sessionId` 和 `leafId`，持久事实通过 entry 回放得到，避免把 UI 或运行时派生状态写回会话历史。
 
@@ -59,11 +59,11 @@
 | 执行工具 | `bash` |
 | 权限工具 | `request_permissions` |
 
-Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册 `web_fetch` 和 `get_search_content`；如果 Exa 启用或至少一个商业 provider API key 可用，还会注册 `web_search`。当前 `web_search` 支持 Exa、Tavily、Brave Search 和 Perplexity Search；`web_fetch` 使用本机 HTTP client 抓取公开网页，不依赖商业 provider。
+Web 工具默认关闭。配置 `lycode.web.enabled=true` 后，运行时会注册 `web_fetch` 和 `get_search_content`；如果 Exa 启用或至少一个商业 provider API key 可用，还会注册 `web_search`。当前 `web_search` 支持 Exa、Tavily、Brave Search 和 Perplexity Search；`web_fetch` 使用本机 HTTP client 抓取公开网页，不依赖商业 provider。
 
 子代理运行层可用时只注册 `spawn_agent` 和 `wait_agent`。`spawn_agent` 必填 `task_name`、`message`，可选 `tools`、`provider`、`model`、`thinking_level`；不暴露 cwd、权限和 Agent mode。`tools` 只接受已注册的 canonical 工具名，在固定的 `read`、`grep`、`glob` 基础集合上追加并去重。`wait_agent` 只接受可选的 `timeout_ms`，区分 completion、用户 steering、turn abort 和 timeout；timeout 不会终止 child。MCP 工具通过 adapter 映射到内部 `Tool` 契约，并使用规范化名称避免与内建工具直接冲突。
 
-公开权限模式由 `lypi.runtime.permission-mode` 选择，默认是 `ASK`：
+公开权限模式由 `lycode.runtime.permission-mode` 选择，默认是 `ASK`：
 
 | 模式 | 非只读工具调用的复核方式 | 默认 profile |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册
 | `AUTO` | 使用当前模型和有界上下文执行独立的 allow/deny 复核；输出无效、provider 失败或复核中断时拒绝执行。 | `:workspace` |
 | `BYPASS` | 跳过人工和模型复核，直接执行；只应在已明确授权的高信任环境使用。 | `:danger-full-access` |
 
-跨模块仍以 `PermissionRuntimeState` 为 canonical state，统一携带公开 mode、approval policy、active profile 和完整 permission profile；旧权限枚举字符串只在 JSON 读取时兼容。可通过 `lypi.permissions.default-permissions` 选择 `:read-only`、`:workspace`、`:danger-full-access`、`:external` 或自定义 profile。
+跨模块仍以 `PermissionRuntimeState` 为 canonical state，统一携带公开 mode、approval policy、active profile 和完整 permission profile；旧权限枚举字符串只在 JSON 读取时兼容。可通过 `lycode.permissions.default-permissions` 选择 `:read-only`、`:workspace`、`:danger-full-access`、`:external` 或自定义 profile。
 
 `request_permissions` 用于请求本轮或本会话 additional permissions。`bash` 只有在对应请求已批准后，才应使用 `sandboxPermissions=withAdditionalPermissions` 扩大 managed sandbox 权限。在 `ASK` 和 `AUTO` 下，路径安全、Bash 风险、网络策略、显式规则以及对应的人工或模型复核都经过统一管线；当沙盒策略无法满足时，工具结果会返回可审计的 retry 提示，而不是自动提权。
 
@@ -79,11 +79,11 @@ Web 工具默认关闭。配置 `lypi.web.enabled=true` 后，运行时会注册
 
 ### 模型适配
 
-`lypi-ai` 维护模型描述和 Provider 适配。内建 OpenAI 兼容配置可通过 `application.yml` 覆盖或关闭；也可以通过配置注册其他 OpenAI 兼容 Provider 或 Anthropic Messages Provider，并把模型追加到统一目录。
+`lycode-ai` 维护模型描述和 Provider 适配。内建 OpenAI 兼容配置可通过 `application.yml` 覆盖或关闭；也可以通过配置注册其他 OpenAI 兼容 Provider 或 Anthropic Messages Provider，并把模型追加到统一目录。
 
 OpenAI 兼容适配支持 Responses、Chat Completions、SSE、WebSocket 和 fallback request style。上层收到的是项目内部的 `AssistantStreamEvent`，不需要直接处理供应商原始事件。模型描述中的 context window、最大输出 token、thinking 支持和图片输入支持会影响请求构建与上下文预算。
 
-启用 `model-discovery` 的 OpenAI 兼容 Provider 会在应用启动时按配置顺序拉取模型列表；第一个非空结果成为该 Provider 的权威模型集合。远端显式能力字段覆盖 `lypi.ai.model-discovery.defaults`，用户配置的静态同名 `models[]` 再以完整模型描述覆盖远端结果；远端没有返回的静态 model ID 不会进入目录。缺失能力字段默认使用 `context-window=256000`、`max-output-tokens=8192`、`supports-thinking=true` 和 `supports-image-input=true`。所有候选端点都没有返回有效模型时，应用会以不含凭据的端点诊断终止启动。
+启用 `model-discovery` 的 OpenAI 兼容 Provider 会在应用启动时按配置顺序拉取模型列表；第一个非空结果成为该 Provider 的权威模型集合。远端显式能力字段覆盖 `lycode.ai.model-discovery.defaults`，用户配置的静态同名 `models[]` 再以完整模型描述覆盖远端结果；远端没有返回的静态 model ID 不会进入目录。缺失能力字段默认使用 `context-window=256000`、`max-output-tokens=8192`、`supports-thinking=true` 和 `supports-image-input=true`。所有候选端点都没有返回有效模型时，应用会以不含凭据的端点诊断终止启动。
 
 TUI 输入无参数 `/model` 会打开启动期模型快照，候选项统一显示为 `provider/model`；使用上下方向键移动，Enter 切换，Esc 取消。选择结果仍写入会话模型变更条目，恢复会话后继续生效。
 
@@ -100,21 +100,21 @@ TUI 的 `/login` 可注册 OpenAI-compatible Provider，交互顺序为：
 
 登录固定使用 OpenAI-compatible Chat Completions over SSE。系统会依次探测 `<base-url>/models` 和 `<base-url>/model`，仅在至少发现一个可用模型后才保存并注册 Provider；成功后不会自动切换当前会话模型。日常登录只发现模型目录，不逐模型发送收费能力探针；仓库中的显式真实 E2E 会验证 HIGH thinking、工具续轮和图片 Chat Completions。
 
-登录数据仅写入受管文件 `<user-home>/.ly-pi/login-providers.properties`，不会改写用户维护的 `<user-home>/.ly-pi/application.yml`，也不缓存发现到的模型列表。应用重启时会重新发现模型，并重新应用当前全局默认值和静态同名完整描述覆盖。
+登录数据仅写入受管文件 `<user-home>/.ly-code/login-providers.properties`，不会改写用户维护的 `<user-home>/.ly-code/application.yml`，也不缓存发现到的模型列表。应用重启时会重新发现模型，并重新应用当前全局默认值和静态同名完整描述覆盖。
 
-Anthropic 适配负责 Messages 请求、SSE 事件归一化、tool call/result 映射和 usage 合并。当前版本不启用 Anthropic extended thinking：Anthropic 模型的 `supports-thinking` 应保持 `false`，作为默认模型时还需把 `lypi.runtime.thinking-level` 设为 `off`。
+Anthropic 适配负责 Messages 请求、SSE 事件归一化、tool call/result 映射和 usage 合并。当前版本不启用 Anthropic extended thinking：Anthropic 模型的 `supports-thinking` 应保持 `false`，作为默认模型时还需把 `lycode.runtime.thinking-level` 设为 `off`。
 
 ### 资源与记忆
 
 资源运行时按用户层、项目层、嵌套项目层和显式路径发现上下文材料：
 
 - context file：`SYSTEM.md`、`APPEND_SYSTEM.md`、`AGENTS.md`、`CLAUDE.md`；
-- memory：用户级 `memory.md`、项目级 `MEMORY.md` 和 `.ly-pi/memory/**` 主题文件；
-- Skill：`skills/**/SKILL.md` 和 `.ly-pi/skills/**/SKILL.md`；
-- Prompt Template：`prompts/*.md` 和 `.ly-pi/prompts/*.md`；
-- MCP 配置：用户级 `mcp.json`、`mcp/*.json`，项目级 `.ly-pi/mcp.json`、`.ly-pi/mcp/*.json`。
+- memory：用户级 `memory.md`、项目级 `MEMORY.md` 和 `.ly-code/memory/**` 主题文件；
+- Skill：`skills/**/SKILL.md` 和 `.ly-code/skills/**/SKILL.md`；
+- Prompt Template：`prompts/*.md` 和 `.ly-code/prompts/*.md`；
+- MCP 配置：用户级 `mcp.json`、`mcp/*.json`，项目级 `.ly-code/mcp.json`、`.ly-code/mcp/*.json`。
 
-`DefaultResourceLoader` 负责发现、解析和诊断；`DefaultSystemPromptBuilder` 决定哪些内容进入系统提示词。memory 会作为长期经验源注入，`MEMORY.md` 可作为 `.ly-pi/memory/**` 主题文件的索引；系统提示词也会提示 agent 在需要 L2 项目记忆时按需读取 `.ly-pi/memory.md` 或 `MEMORY.md`。Skill 默认只披露索引和触发描述，完整正文由激活流程按需读取；Prompt Template 保留 frontmatter 参数并由 renderer 渲染。
+`DefaultResourceLoader` 负责发现、解析和诊断；`DefaultSystemPromptBuilder` 决定哪些内容进入系统提示词。memory 会作为长期经验源注入，`MEMORY.md` 可作为 `.ly-code/memory/**` 主题文件的索引；系统提示词也会提示 agent 在需要 L2 项目记忆时按需读取 `.ly-code/memory.md` 或 `MEMORY.md`。Skill 默认只披露索引和触发描述，完整正文由激活流程按需读取；Prompt Template 保留 frontmatter 参数并由 renderer 渲染。
 
 后台记忆沉淀由 `TurnEndEvent` 触发。运行层先检查本轮是否完成，再在后台读取 fork point transcript；默认达到约 `10_000` token 后初始化，之后要求约 `5_000` token 增长，并满足至少 3 次工具调用或自然对话断点。沉淀流程会跳过已由主 turn 成功写入 memory 的情况，失败也不会阻塞用户可见 turn。
 
@@ -126,9 +126,9 @@ Anthropic 适配负责 Messages 请求、SSE 事件归一化、tool call/result 
 
 completion 进入父 session 的持久 mailbox 后只会被消费一次。父 turn 正在执行时，它在下一模型边界作为 `AGENT_COMMUNICATION` 类型的 `SYSTEM_LOCAL` 消息注入；父 turn 正在 `wait_agent` 时，工具结果直接返回 task、Agent、child session、Run、状态和内容；父 turn 已结束时，消息保留到下一 turn。wait 与模型边界共用同一原子消费入口，不会重复投递。
 
-`lypi-transport-headless` 面向单次 child Run，使用 stdin/stdout JSON 协议。输入贯通 task、Agent、child session、Run、父会话、任务提示、工作目录、工具策略和权限运行态；输出返回相同身份、状态、内容、最终 entry 和错误信息。协议要求 stdout 保持结构化 JSON，避免污染父进程解析。
+`lycode-transport-headless` 面向单次 child Run，使用 stdin/stdout JSON 协议。输入贯通 task、Agent、child session、Run、父会话、任务提示、工作目录、工具策略和权限运行态；输出返回相同身份、状态、内容、最终 entry 和错误信息。协议要求 stdout 保持结构化 JSON，避免污染父进程解析。
 
-`lypi-transport-tui` 通过事件 reducer 把语义事件投影成 `TuiViewModel`。真实终端渲染路径把稳定 transcript 每个 block 只提交一次到终端原生 scrollback，只重绘有界的 live content、输入框、弹层和状态栏，不再维护应用侧的固定行数历史窗口。
+`lycode-transport-tui` 通过事件 reducer 把语义事件投影成 `TuiViewModel`。真实终端渲染路径把稳定 transcript 每个 block 只提交一次到终端原生 scrollback，只重绘有界的 live content、输入框、弹层和状态栏，不再维护应用侧的固定行数历史窗口。
 
 主 turn 执行期间提交的新输入会进入 steering 队列，在下一模型边界合并到当前 turn；如果模型正在 `wait_agent`，steering 会唤醒等待但不消费 pending completion。切换或新建 session 时，TUI 会开启新的 transcript projection epoch 并替换当前动态帧；状态栏同步展示 cwd，provider retry/fallback 通过瞬态事件展示而不写入持久 transcript。
 
@@ -160,69 +160,69 @@ mvn verify
 推荐使用脚本从独立运行目录启动，避免把会话、mailbox、规则和本地运行态写入源码工作树：
 
 ```bash
-scripts/run-lypi.sh --run-dir /tmp/lypi-run -- --lypi.runtime.transport=tui
+scripts/run-lycode.sh --run-dir /tmp/lycode-run -- --lycode.runtime.transport=tui
 ```
 
 一次性执行 prompt 可以放在 `--` 后：
 
 ```bash
-scripts/run-lypi.sh --run-dir /tmp/lypi-run -- "总结这个目录的模块结构"
+scripts/run-lycode.sh --run-dir /tmp/lycode-run -- "总结这个目录的模块结构"
 ```
 
-脚本会构建 `lypi-boot` fat jar，并拒绝使用 Git worktree 内的运行目录。如果已经手动构建 jar，运行时仍应显式指定独立 cwd：
+脚本会构建 `lycode-boot` fat jar，并拒绝使用 Git worktree 内的运行目录。如果已经手动构建 jar，运行时仍应显式指定独立 cwd：
 
 ```bash
-java -jar lypi-boot/target/lypi-boot-0.0.1-SNAPSHOT.jar --lypi.runtime.cwd=/tmp/lypi-run --lypi.runtime.transport=tui
+java -jar lycode-boot/target/lycode-boot-0.0.1-SNAPSHOT.jar --lycode.runtime.cwd=/tmp/lycode-run --lycode.runtime.transport=tui
 ```
 
 配置示例位于：
 
 ```text
-lypi-boot/src/main/resources/application.yml.example
+lycode-boot/src/main/resources/application.yml.example
 ```
 
-用户级配置默认从 `~/.ly-pi/application.yml` 读取；文件不存在时跳过。运行目录中的 `application.yml`、环境变量、JVM 系统属性和命令行参数按 Spring Boot 标准优先级覆盖用户级配置。
+用户级配置默认从 `~/.ly-code/application.yml` 读取；文件不存在时跳过。运行目录中的 `application.yml`、环境变量、JVM 系统属性和命令行参数按 Spring Boot 标准优先级覆盖用户级配置。
 
 默认权限配置为 `ASK + :workspace`；显式配置示例：
 
 ```properties
-lypi.runtime.permission-mode=ask
-lypi.permissions.default-permissions=:workspace
+lycode.runtime.permission-mode=ask
+lycode.permissions.default-permissions=:workspace
 ```
 
 切换到 Anthropic Messages Provider 的最小配置示例：
 
 ```properties
-lypi.runtime.default-provider=anthropic
-lypi.runtime.default-model=claude-sonnet-4-5
-lypi.runtime.thinking-level=off
-lypi.ai.providers.anthropic.enabled=true
-lypi.ai.providers.anthropic.api-style=anthropic
-lypi.ai.providers.anthropic.base-url=https://api.anthropic.com/v1
-lypi.ai.providers.anthropic.api-key=${ANTHROPIC_API_KEY:}
-lypi.ai.providers.anthropic.anthropic-version=2023-06-01
-lypi.ai.providers.anthropic.models[0].model-id=claude-sonnet-4-5
-lypi.ai.providers.anthropic.models[0].context-window=200000
-lypi.ai.providers.anthropic.models[0].max-output-tokens=64000
-lypi.ai.providers.anthropic.models[0].supports-thinking=false
+lycode.runtime.default-provider=anthropic
+lycode.runtime.default-model=claude-sonnet-4-5
+lycode.runtime.thinking-level=off
+lycode.ai.providers.anthropic.enabled=true
+lycode.ai.providers.anthropic.api-style=anthropic
+lycode.ai.providers.anthropic.base-url=https://api.anthropic.com/v1
+lycode.ai.providers.anthropic.api-key=${ANTHROPIC_API_KEY:}
+lycode.ai.providers.anthropic.anthropic-version=2023-06-01
+lycode.ai.providers.anthropic.models[0].model-id=claude-sonnet-4-5
+lycode.ai.providers.anthropic.models[0].context-window=200000
+lycode.ai.providers.anthropic.models[0].max-output-tokens=64000
+lycode.ai.providers.anthropic.models[0].supports-thinking=false
 ```
 
 启用 Web 工具的最小配置示例：
 
 ```properties
-lypi.web.enabled=true
+lycode.web.enabled=true
 ```
 
 启用后，默认会注册：
 
-- `web_search`：默认 provider 顺序优先使用 `lypi.web.default-provider`；未指定或默认 provider 不可用时，按 Exa、Tavily、Brave Search、Perplexity 的注册顺序 fallback。Exa 默认启用，endpoint 为 `https://mcp.exa.ai/mcp`，无需本地商业 API key。
+- `web_search`：默认 provider 顺序优先使用 `lycode.web.default-provider`；未指定或默认 provider 不可用时，按 Exa、Tavily、Brave Search、Perplexity 的注册顺序 fallback。Exa 默认启用，endpoint 为 `https://mcp.exa.ai/mcp`，无需本地商业 API key。
 - `web_fetch`：先本地抓取并用 jsoup 清洗 HTML；遇到 403、406、429、5xx、不支持的 `content-type` 或正文过短时，回退到 Jina Reader。
 - `get_search_content`：按 `responseId`、`url`、`urlIndex`、`query` 或 `queryIndex` 取回 `web_search` / `web_fetch` 保存的结果。`web_search` 仅在 provider 返回正文时保存完整内容；只有摘要的搜索结果会提示改用 `web_fetch` 拉取 URL。
 
-Web 结果缓存默认写入运行 cwd 下的 `.ly-pi/web-results.jsonl`。该文件是本地运行缓存，不应提交。可以关闭缓存：
+Web 结果缓存默认写入运行 cwd 下的 `.ly-code/web-results.jsonl`。该文件是本地运行缓存，不应提交。可以关闭缓存：
 
 ```properties
-lypi.web.cache.enabled=false
+lycode.web.cache.enabled=false
 ```
 
 关闭缓存后，`web_search` 和 `web_fetch` 仍可运行，但结果不会落盘；工具输出会标记 `cache=disabled`，`get_search_content` 会返回明确的缓存未启用错误。
@@ -230,23 +230,23 @@ lypi.web.cache.enabled=false
 启用商业 `web_search` provider 的配置示例：
 
 ```properties
-lypi.web.default-provider=tavily
-lypi.web.timeout-seconds=20
-lypi.web.max-results=10
-lypi.web.providers.tavily.api-key-env=TAVILY_API_KEY
-lypi.web.providers.brave.api-key-env=BRAVE_SEARCH_API_KEY
-lypi.web.providers.perplexity.api-key-env=PERPLEXITY_API_KEY
+lycode.web.default-provider=tavily
+lycode.web.timeout-seconds=20
+lycode.web.max-results=10
+lycode.web.providers.tavily.api-key-env=TAVILY_API_KEY
+lycode.web.providers.brave.api-key-env=BRAVE_SEARCH_API_KEY
+lycode.web.providers.perplexity.api-key-env=PERPLEXITY_API_KEY
 ```
 
-也可以用 `lypi.web.providers.<provider>.api-key` 直接配置 key；该方式只建议用于本地临时验证，避免把密钥写入仓库或会话记录。单个 provider 可通过 `lypi.web.providers.<provider>.enabled=false` 关闭，或通过 `lypi.web.providers.<provider>.endpoint` 指向代理网关、私有中转或兼容服务。要禁用 Exa fallback，可配置 `lypi.web.providers.exa.enabled=false`。
+也可以用 `lycode.web.providers.<provider>.api-key` 直接配置 key；该方式只建议用于本地临时验证，避免把密钥写入仓库或会话记录。单个 provider 可通过 `lycode.web.providers.<provider>.enabled=false` 关闭，或通过 `lycode.web.providers.<provider>.endpoint` 指向代理网关、私有中转或兼容服务。要禁用 Exa fallback，可配置 `lycode.web.providers.exa.enabled=false`。
 
 `web_fetch` 的 Jina fallback 可以单独配置：
 
 ```properties
-lypi.web.fetch.fallback.enabled=true
-lypi.web.fetch.fallback.min-body-chars=200
-lypi.web.fetch.jina.enabled=true
-lypi.web.fetch.jina.endpoint=https://r.jina.ai/http://
+lycode.web.fetch.fallback.enabled=true
+lycode.web.fetch.fallback.min-body-chars=200
+lycode.web.fetch.jina.enabled=true
+lycode.web.fetch.jina.endpoint=https://r.jina.ai/http://
 ```
 
 `get_search_content` 示例：

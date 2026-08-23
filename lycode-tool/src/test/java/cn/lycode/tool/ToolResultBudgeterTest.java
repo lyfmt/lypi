@@ -1,0 +1,39 @@
+package cn.lycode.tool;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import cn.lycode.contracts.context.ToolResultContentBlock;
+import cn.lycode.contracts.tool.ToolResult;
+import cn.lycode.contracts.tool.ToolStateDelta;
+import java.nio.file.Path;
+import java.util.Optional;
+import org.junit.jupiter.api.Test;
+
+class ToolResultBudgeterTest {
+    @Test
+    void leavesSmallToolResultUnchanged() {
+        ToolResult<String> result = TestTools.result("toolu_1", "short", false);
+
+        ToolResult<String> budgeted = new ToolResultBudgeter().apply("toolu_1", "read", result, 20);
+
+        assertSame(result, budgeted);
+    }
+
+    @Test
+    void replacesOversizedToolResultTextWithPreview() {
+        ToolStateDelta delta = new ToolStateDelta(Path.of("/tmp/project/nested"));
+        ToolResult<String> result = TestTools.result("toolu_1", "0123456789abcdef", false)
+            .withStateDelta(Optional.of(delta));
+
+        ToolResult<String> budgeted = new ToolResultBudgeter().apply("toolu_1", "read", result, 8);
+
+        ToolResultContentBlock block = (ToolResultContentBlock) budgeted.newMessages().getFirst().content().getFirst();
+        assertTrue(block.text().startsWith("01234567"));
+        assertTrue(block.text().contains("工具结果已超出预算"));
+        assertTrue(budgeted.replacement().isPresent());
+        assertEquals("toolu_1", budgeted.replacement().orElseThrow().toolUseId());
+        assertEquals(Optional.of(delta), budgeted.stateDelta());
+    }
+}

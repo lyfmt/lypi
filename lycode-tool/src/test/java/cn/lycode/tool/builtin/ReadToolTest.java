@@ -1,0 +1,173 @@
+package cn.lycode.tool.builtin;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import cn.lycode.contracts.common.ToolProgress;
+import cn.lycode.contracts.common.ToolProgressKind;
+import cn.lycode.contracts.context.AttachmentContentBlock;
+import cn.lycode.contracts.context.ToolResultContentBlock;
+import cn.lycode.contracts.security.PermissionBehavior;
+import cn.lycode.contracts.tool.ToolResult;
+import cn.lycode.contracts.tool.ToolUseContext;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class ReadToolTest {
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void readsUtf8FileWithLineNumbers() throws Exception {
+        Path file = tempDir.resolve("notes.txt");
+        Files.writeString(file, "alpha\nbeta\n");
+        ReadTool tool = new ReadTool();
+        List<ToolProgress> progresses = new ArrayList<>();
+
+        ToolResult<String> result = tool.execute(Map.of("path", "notes.txt"), context(), progresses::add);
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("1 | alpha"));
+        assertTrue(result.output().contains("2 | beta"));
+        ToolResultContentBlock block = (ToolResultContentBlock) result.newMessages().getFirst().content().getFirst();
+        assertEquals(result.output(), block.text());
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.PHASE && "reading".equals(progress.phase())));
+        assertTrue(progresses.stream().anyMatch(progress ->
+            progress.kind() == ToolProgressKind.STATUS && "read lines".equals(progress.title()) && progress.current() == 2L));
+    }
+
+    @Test
+    void supportsOffsetAndLimit() throws Exception {
+        Files.writeString(tempDir.resolve("notes.txt"), "one\ntwo\nthree\nfour\n");
+        ReadTool tool = new ReadTool();
+
+        ToolResult<String> result = tool.execute(Map.of("path", "notes.txt", "offset", 2, "limit", 2), context(), message -> {
+        });
+
+        assertFalse(result.isError());
+        assertFalse(result.output().contains("1 | one"));
+        assertTrue(result.output().contains("2 | two"));
+        assertTrue(result.output().contains("3 | three"));
+        assertFalse(result.output().contains("4 | four"));
+    }
+
+    @Test
+    void readsSingleLineFileWithoutTrailingNewline() throws Exception {
+        Files.writeString(tempDir.resolve("notes.txt"), "alpha");
+
+        ToolResult<String> result = new ReadTool().execute(Map.of("path", "notes.txt"), context(), message -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("1 | alpha"));
+    }
+
+    @Test
+    void returnsToolErrorForMissingFileAndDirectory() throws Exception {
+        Files.createDirectory(tempDir.resolve("dir"));
+        ReadTool tool = new ReadTool();
+
+        assertTrue(tool.execute(Map.of("path", "missing.txt"), context(), message -> {
+        }).isError());
+        assertTrue(tool.execute(Map.of("path", "dir"), context(), message -> {
+        }).isError());
+    }
+
+    @Test
+    void readsImageAsAttachmentWithoutPrintingPathOrBase64() throws Exception {
+        Files.write(tempDir.resolve("image.png"), png1x1());
+        ReadTool tool = new ReadTool();
+
+        ToolResult<String> result = tool.execute(Map.of("path", "image.png"), context(), progress -> {
+        });
+
+        assertFalse(result.isError());
+        assertTrue(result.output().contains("Read image file [image/png]"));
+        assertFalse(result.output().contains("image.png"));
+        assertFalse(result.output().contains("base64"));
+        assertEquals(2, result.newMessages().getFirst().content().size());
+        assertTrue(result.newMessages().getFirst().content().get(0) instanceof ToolResultContentBlock);
+        assertTrue(result.newMessages().getFirst().content().get(1) instanceof AttachmentContentBlock);
+    }
+
+    @Test
+    void rejectsUnsupportedBinaryFiles() throws Exception {
+        Files.write(tempDir.resolve("archive.zip"), new byte[] {'P', 'K', 0x03, 0x04});
+
+        ToolResult<String> result = new ReadTool().execute(Map.of("path", "archive.zip"), context(), progress -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("不能读取二进制文件"));
+    }
+
+    @Test
+    void rejectsInvalidUtf8InsteadOfReplacingBytes() throws Exception {
+        Files.write(tempDir.resolve("blob.dat"), new byte[] {(byte) 0xC3, 0x28});
+
+        ToolResult<String> result = new ReadTool().execute(Map.of("path", "blob.dat"), context(), progress -> {
+        });
+
+        assertTrue(result.isError());
+        assertTrue(result.output().contains("不能读取二进制文件"));
+    }
+
+    @Test
+    void reservedFutureFormatsDoNotBypassBinaryRejection() throws Exception {
+        Files.write(tempDir.resolve("paper.pdf"), new byte[] {'%', 'P', 'D', 'F', 0});
+        Files.write(tempDir.resolve("notes.ipynb"), new byte[] {'{', 0, '}'});
+
+        ReadTool tool = new ReadTool();
+
+        ToolResult<String> pdf = tool.execute(Map.of("path", "paper.pdf"), context(), progress -> {
+        });
+        ToolResult<String> notebook = tool.execute(Map.of("path", "notes.ipynb"), context(), progress -> {
+        });
+
+        assertTrue(pdf.isError());
+        assertTrue(pdf.output().contains("不能读取二进制文件"));
+        assertTrue(notebook.isError());
+        assertTrue(notebook.output().contains("不能读取二进制文件"));
+    }
+
+    @Test
+    void exposesReadOnlyConcurrencySafeMetadata() {
+        ReadTool tool = new ReadTool();
+
+        assertTrue(tool.description().contains("image"));
+        assertTrue(tool.description().contains("PNG"));
+        assertTrue(tool.description().contains("JPEG"));
+        assertTrue(tool.isReadOnly(Map.of("path", "notes.txt")));
+        assertTrue(tool.isConcurrencySafe(Map.of("path", "notes.txt")));
+        assertFalse(tool.isDestructive(Map.of("path", "notes.txt")));
+        assertEquals(PermissionBehavior.ALLOW, tool.checkPermissions(Map.of("path", "notes.txt"), context()).behavior());
+    }
+
+    @Test
+    void rendersOnlyPathAndRequestedLineRange() {
+        ReadTool tool = new ReadTool();
+
+        assertEquals(
+            "read AGENTS.md lines 10-30",
+            tool.renderForUser(Map.of("path", "AGENTS.md", "offset", 10, "limit", 21, "content", "ignored"))
+        );
+        assertEquals("read AGENTS.md", tool.renderForUser(Map.of("path", "AGENTS.md")));
+    }
+
+    private ToolUseContext context() {
+        return new ToolUseContext("ses_1", "msg_1", tempDir, Map.of("toolUseId", "toolu_1"));
+    }
+
+    private static byte[] png1x1() {
+        return Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=");
+    }
+}

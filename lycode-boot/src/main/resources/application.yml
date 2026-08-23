@@ -1,0 +1,15 @@
+spring:
+  config:
+    import:
+      - optional:file:${user.home}/.ly-code/login-providers.properties
+      - optional:file:${user.home}/.ly-code/application.yml
+  main:
+    banner-mode: off
+
+lycode:
+  ai:
+    default-provider:
+    default-model:
+    compaction-summary:
+      fallback-policy: fallback_deterministic
+    providers: {}

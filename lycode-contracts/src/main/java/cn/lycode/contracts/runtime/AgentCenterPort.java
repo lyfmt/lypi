@@ -1,0 +1,26 @@
+package cn.lycode.contracts.runtime;
+
+import cn.lycode.contracts.subagent.MailboxCommandResult;
+import cn.lycode.contracts.subagent.SubagentSpawnRequest;
+import cn.lycode.contracts.subagent.SubagentSpawnResult;
+import cn.lycode.contracts.subagent.SubagentWaitRequest;
+import cn.lycode.contracts.subagent.SubagentWaitResult;
+
+public interface AgentCenterPort {
+    /**
+     * 启动一个 child session subagent。
+     *
+     * NOTE: 该方法只返回启动结果，最终结果必须进入 mailbox，不返回延迟 tool_result。
+     */
+    SubagentSpawnResult spawn(SubagentSpawnRequest request);
+
+    /**
+     * 等待当前 parent session 任意 subagent completion。
+     */
+    SubagentWaitResult waitFor(SubagentWaitRequest request);
+
+    /**
+     * 中断运行中的 subagent。
+     */
+    MailboxCommandResult interrupt(String agentId);
+}

@@ -1,0 +1,127 @@
+package cn.lycode.tool;
+
+import cn.lycode.contracts.context.AgentMessage;
+import cn.lycode.contracts.context.ContextSnapshot;
+import cn.lycode.contracts.context.MessageKind;
+import cn.lycode.contracts.context.MessageRole;
+import cn.lycode.contracts.context.ToolResultContentBlock;
+import cn.lycode.contracts.model.TokenUsage;
+import cn.lycode.contracts.runtime.ToolRuntimeInvocation;
+import cn.lycode.contracts.runtime.ToolRuntimePort;
+import cn.lycode.contracts.tool.Tool;
+import cn.lycode.contracts.tool.ToolRegistrySnapshot;
+import cn.lycode.contracts.tool.ToolResult;
+import cn.lycode.contracts.tool.ToolUseRequest;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * 后台记忆沉淀专用工具运行时。
+ *
+ * NOTE: 工具 schema 对模型保持父 runtime 原样可见，避免后台 fork 改变 prompt cache 前缀；
+ * 实际执行仍只允许沉淀白名单工具和受控 memory 写路径。
+ */
+public final class MemoryConsolidationToolRuntime implements ToolRuntimePort {
+    private static final Set<String> ALLOWED_TOOLS = Set.of("read", "grep", "glob", "edit", "write");
+
+    private final ToolRuntimePort delegate;
+    private final MemoryConsolidationWritePolicy writePolicy;
+
+    public MemoryConsolidationToolRuntime(ToolRuntimePort delegate, MemoryConsolidationWritePolicy writePolicy) {
+        this.delegate = java.util.Objects.requireNonNull(delegate, "delegate must not be null");
+        this.writePolicy = java.util.Objects.requireNonNull(writePolicy, "writePolicy must not be null");
+    }
+
+    @Override
+    public void register(Tool<?, ?> tool) {
+        delegate.register(tool);
+    }
+
+    @Override
+    public Optional<Tool<?, ?>> resolve(String nameOrAlias) {
+        return delegate.resolve(nameOrAlias);
+    }
+
+    @Override
+    public ToolRegistrySnapshot snapshot() {
+        return delegate.snapshot();
+    }
+
+    @Override
+    public Path cwd() {
+        return delegate.cwd();
+    }
+
+    @Override
+    public List<ToolResult<?>> execute(List<ToolUseRequest> requests, ContextSnapshot context) {
+        return execute(requests, context, null);
+    }
+
+    @Override
+    public List<ToolResult<?>> execute(
+        List<ToolUseRequest> requests,
+        ContextSnapshot context,
+        ToolRuntimeInvocation invocation
+    ) {
+        if (requests == null || requests.isEmpty()) {
+            return List.of();
+        }
+        List<ToolResult<?>> results = new ArrayList<>(requests.size());
+        for (ToolUseRequest request : requests) {
+            Optional<Tool<?, ?>> resolved = delegate.resolve(request.toolName());
+            String canonicalName = resolved.map(Tool::name).orElse(request.toolName());
+            if (resolved.isEmpty() || !isAllowedTool(canonicalName)) {
+                results.add(errorResult(request, "Memory consolidation denied tool: " + canonicalName));
+                continue;
+            }
+            if (isWriteTool(canonicalName) && !writePolicy.isAllowedWritePath(pathInput(request))) {
+                results.add(errorResult(request, "Memory consolidation denied write path: " + pathInput(request)));
+                continue;
+            }
+            results.add(delegate.execute(List.of(request), context, invocation).getFirst());
+        }
+        return List.copyOf(results);
+    }
+
+    @Override
+    public void clearTurnState(ToolRuntimeInvocation invocation) {
+        delegate.clearTurnState(invocation);
+    }
+
+    private boolean isAllowedTool(String toolName) {
+        return ALLOWED_TOOLS.contains(toolName);
+    }
+
+    private boolean isWriteTool(String toolName) {
+        return "edit".equals(toolName) || "write".equals(toolName);
+    }
+
+    private String pathInput(ToolUseRequest request) {
+        Object value = request.input() == null ? null : request.input().get("path");
+        return value == null ? "" : value.toString();
+    }
+
+    private ToolResult<String> errorResult(ToolUseRequest request, String message) {
+        String toolUseId = request.toolUseId();
+        AgentMessage agentMessage = new AgentMessage(
+            "msg_" + toolUseId,
+            MessageRole.TOOL_RESULT,
+            MessageKind.TOOL_RESULT,
+            List.of(new ToolResultContentBlock(
+                toolUseId,
+                message,
+                true,
+                Map.of("toolName", request.toolName())
+            )),
+            Instant.now(),
+            Optional.<TokenUsage>empty(),
+            Optional.empty()
+        );
+        return new ToolResult<>(message, true, List.of(agentMessage), Optional.empty());
+    }
+}

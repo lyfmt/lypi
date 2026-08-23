@@ -1,0 +1,1890 @@
+package cn.lycode.transport.tui;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import cn.lycode.contracts.agent.SteeringMessage;
+import cn.lycode.contracts.context.ContentBlockKind;
+import cn.lycode.contracts.security.PermissionOption;
+import cn.lycode.contracts.security.PermissionOptionKind;
+import cn.lycode.contracts.event.MessageBlockSnapshot;
+import cn.lycode.contracts.event.MessageEndEvent;
+import cn.lycode.contracts.event.MessageStartEvent;
+import cn.lycode.contracts.model.ApiStyle;
+import cn.lycode.contracts.model.CostProfile;
+import cn.lycode.contracts.model.ModelDescriptor;
+import cn.lycode.contracts.model.ModelSelection;
+import cn.lycode.contracts.model.ThinkingLevel;
+import cn.lycode.contracts.tui.BranchSummaryOffer;
+import cn.lycode.contracts.tui.PermissionPromptView;
+import cn.lycode.contracts.tui.ResumeSessionController;
+import cn.lycode.contracts.tui.SessionBranchTreeView;
+import cn.lycode.contracts.tui.SessionResumeInfo;
+import cn.lycode.contracts.tui.SessionRuntimeState;
+import cn.lycode.contracts.tui.SessionTreeNodeView;
+import cn.lycode.contracts.tui.StatusBarState;
+import cn.lycode.contracts.tui.TuiBlock;
+import cn.lycode.contracts.tui.TuiMessageBlock;
+import cn.lycode.contracts.tui.TuiToolBlock;
+import cn.lycode.contracts.tui.TuiToolState;
+import cn.lycode.contracts.tui.TuiViewModel;
+import cn.lycode.contracts.context.AgentMessage;
+import cn.lycode.contracts.context.MessageKind;
+import cn.lycode.contracts.context.MessageRole;
+import cn.lycode.contracts.context.TextContentBlock;
+import cn.lycode.contracts.session.MessageEntry;
+import cn.lycode.contracts.skill.SkillDescriptor;
+import cn.lycode.contracts.skill.SkillIndex;
+import cn.lycode.contracts.skill.SkillMention;
+import cn.lycode.contracts.skill.SkillSource;
+import java.math.BigDecimal;
+import java.net.URI;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import org.junit.jupiter.api.Test;
+
+class TuiInputLoopTest {
+    private static final String INPUT_BACKGROUND = "\033[48;5;236m";
+    private static final String INPUT_CURSOR = "\033[38;5;81m|\033[39m";
+    private static final String ANSI_RESET = "\033[0m";
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout
+    ) {
+        return testLoop(submitHandler, frameConsumer, layout, null);
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier
+    ) {
+        return testLoop(submitHandler, frameConsumer, layout, viewSupplier, null);
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier
+    ) {
+        return testLoop(submitHandler, frameConsumer, layout, viewSupplier, slashPickerSupplier, null);
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController
+    ) {
+        return testLoop(
+            submitHandler,
+            frameConsumer,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            null
+        );
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer
+    ) {
+        return testLoop(
+            submitHandler,
+            frameConsumer,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            null
+        );
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier
+    ) {
+        return testLoop(
+            submitHandler,
+            frameConsumer,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            skillIndexSupplier,
+            null
+        );
+    }
+
+    private static TuiInputLoop testLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<SlashCommandPicker> slashPickerSupplier,
+        ResumeSessionController resumeController,
+        Consumer<SessionRuntimeState> resumeStateConsumer,
+        Supplier<SkillIndex> skillIndexSupplier,
+        Supplier<ModelPicker> modelPickerSupplier
+    ) {
+        TestRenderRequest renderRequest = new TestRenderRequest(frameConsumer, layout);
+        TuiInputLoop loop = new TuiInputLoop(
+            submitHandler,
+            renderRequest,
+            layout,
+            viewSupplier,
+            slashPickerSupplier,
+            resumeController,
+            resumeStateConsumer,
+            skillIndexSupplier,
+            modelPickerSupplier
+        );
+        renderRequest.bind(loop);
+        return loop;
+    }
+
+    private static TuiInputLoop modelLoop(
+        TuiSubmitHandler submitHandler,
+        Consumer<List<String>> frameConsumer,
+        TuiLayout layout,
+        Supplier<TuiViewModel> viewSupplier,
+        Supplier<ModelPicker> modelPickerSupplier
+    ) {
+        return testLoop(
+            submitHandler,
+            frameConsumer,
+            layout,
+            viewSupplier,
+            () -> new SlashCommandPicker(List.of("/model")),
+            null,
+            null,
+            null,
+            modelPickerSupplier
+        );
+    }
+
+    private static final class TestRenderRequest implements Runnable {
+        private final Consumer<List<String>> frameConsumer;
+        private final TuiLayout layout;
+        private final TuiRenderer renderer = new TuiRenderer();
+        private final TuiTranscriptPartitioner partitioner = new TuiTranscriptPartitioner();
+        private TuiInputLoop loop;
+
+        private TestRenderRequest(Consumer<List<String>> frameConsumer, TuiLayout layout) {
+            this.frameConsumer = frameConsumer;
+            this.layout = layout;
+        }
+
+        private void bind(TuiInputLoop loop) {
+            this.loop = loop;
+        }
+
+        @Override
+        public void run() {
+            TuiViewModel view = loop.viewForRender();
+            TuiTranscriptPartition partition = partitioner.partition(view.blocks());
+            List<String> lines = new ArrayList<>();
+            renderer.renderCommittedBlocks(partition.history(), layout.width()).stream()
+                .map(TerminalLine::text)
+                .forEach(lines::add);
+            lines.addAll(renderer.renderSurface(
+                view,
+                partition.live(),
+                layout,
+                loop.draft(),
+                loop.cursor(),
+                loop.overlayLines(),
+                loop.toolOutputExpanded()
+            ).lines());
+            frameConsumer.accept(List.copyOf(lines));
+        }
+    }
+
+    @Test
+    void enterSubmitsDraftAndRerendersClearedInput() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(20, 4)
+        );
+
+        loop.acceptText("hello");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("hello"), submit.submitted);
+        assertEquals("", loop.draft());
+        assertEquals(inputContent("> |CURSOR|" + INPUT_CURSOR), inputLine(frames.getLast()));
+    }
+
+    @Test
+    void compactRuntimeLineBlocksTypingAndSubmit() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(20, 4),
+            () -> new TuiViewModel(
+                List.of(),
+                new StatusBarState("ses_1", "gpt-5.4-mini", "running", "ASK"),
+                "compacting MANUAL",
+                List.of(),
+                Optional.empty(),
+                Optional.empty()
+            )
+        );
+
+        loop.acceptText("hello");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals("", loop.draft());
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void escapeInterruptsCompactRuntimeLine() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(20, 4),
+            () -> new TuiViewModel(
+                List.of(),
+                new StatusBarState("ses_1", "gpt-5.4-mini", "running", "ASK"),
+                "compacting MANUAL",
+                List.of(),
+                Optional.empty(),
+                Optional.empty()
+            )
+        );
+
+        loop.acceptKey(TerminalKey.ESC);
+
+        assertEquals(1, submit.interrupts);
+        assertEquals(List.of("esc"), submit.interruptReasons);
+    }
+
+    @Test
+    void rendersCursorAtCurrentEditorPosition() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(30, 4)
+        );
+
+        loop.acceptText("alpha beta");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+
+        assertEquals(inputContent("> alpha be|CURSOR|" + INPUT_CURSOR + "ta"), inputLine(frames.getLast()));
+    }
+
+    @Test
+    void otherKeyDoesNotChangeInputOrRenderedProjection() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<List<String>> frames = new ArrayList<>();
+        TuiViewModel view = new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "ready", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(List.copyOf(lines)),
+            new TuiLayout(40, 6),
+            () -> view
+        );
+        loop.acceptText("draft");
+        int cursor = loop.cursor();
+        List<String> beforeOtherKey = frames.getLast();
+
+        loop.acceptKey(TerminalKey.OTHER);
+
+        assertEquals("draft", loop.draft());
+        assertEquals(cursor, loop.cursor());
+        assertEquals(beforeOtherKey, frames.getLast());
+    }
+
+    @Test
+    void backspaceDeletesPreviousCharacterAndRerendersInput() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(30, 4)
+        );
+
+        loop.acceptText("abcd");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.BACKSPACE);
+
+        assertEquals("acd", loop.draft());
+        assertEquals(inputContent("> a|CURSOR|" + INPUT_CURSOR + "cd"), inputLine(frames.getLast()));
+    }
+
+    @Test
+    void pasteWithNewlineKeepsDraftRendersRowsAndSubmitsOriginalText() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(20, 6)
+        );
+
+        loop.acceptPaste("alpha\nbeta");
+
+        assertEquals("alpha\nbeta", loop.draft());
+        assertEquals(List.of(inputContent("> alpha"), inputContent("beta|CURSOR|" + INPUT_CURSOR)), inputLines(frames.getLast()));
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("alpha\nbeta"), submit.submitted);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void modifiedEnterInsertsNewlineInsteadOfSubmitting() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+
+        loop.acceptText("hello");
+        loop.acceptKey(TerminalKey.MODIFIED_ENTER);
+        loop.acceptText("world");
+
+        assertEquals("hello\nworld", loop.draft());
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void ctrlCClearsDraftBeforeInterruptingActiveTool() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+
+        loop.acceptText("draft");
+        loop.acceptKey(TerminalKey.CTRL_C);
+        loop.setToolRunning(true);
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals("", loop.draft());
+        assertEquals(1, submit.interrupts);
+    }
+
+    @Test
+    void ctrlCWithDraftAndPendingSteeringInterruptsTurnBeforeClearingDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        SteeringMessage pending = new SteeringMessage("pending", List.of());
+        submit.pendingSteering.add(pending);
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+        loop.acceptText("draft");
+        loop.setInterruptibleRunning(true);
+
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals(List.of("ctrl-c"), submit.interruptReasons);
+        assertEquals("draft", loop.draft());
+        assertEquals(List.of(pending), submit.pendingSteering);
+    }
+
+    @Test
+    void escapeInterruptsActiveToolWithoutRequiringInputFocus() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+
+        loop.setToolRunning(true);
+        loop.acceptKey(TerminalKey.ESC);
+
+        assertEquals(1, submit.interrupts);
+        assertEquals(List.of("esc"), submit.interruptReasons);
+    }
+
+    @Test
+    void escapeInterruptsActiveToolBeforeClosingSlashOverlay() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 5),
+            null,
+            () -> new SlashCommandPicker(List.of("/model"))
+        );
+
+        loop.acceptText("/");
+        loop.setToolRunning(true);
+        loop.acceptKey(TerminalKey.ESC);
+
+        assertEquals("/", loop.draft());
+        assertEquals(1, submit.interrupts);
+        assertEquals(List.of("esc"), submit.interruptReasons);
+    }
+
+    @Test
+    void ctrlCRequestsExitWhenInputIsEmptyAndNoToolIsRunning() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals(1, submit.exits);
+        assertEquals(true, loop.exitRequested());
+    }
+
+    @Test
+    void ctrlODoesNotExpandHistoricalToolOrChangeDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:1",
+                "msg_1",
+                "toolu_1",
+                "read",
+                TuiToolState.DONE,
+                "src/Large.java:1-20",
+                String.join("\n", java.util.stream.IntStream.rangeClosed(1, 12)
+                    .mapToObj(index -> index + " | line " + index)
+                    .toList()),
+                false
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(80, 30),
+            () -> view
+        );
+
+        loop.acceptText("draft");
+        loop.acceptKey(TerminalKey.CTRL_O);
+        loop.acceptKey(TerminalKey.CTRL_O);
+
+        assertEquals("draft", loop.draft());
+        assertTrue(frames.get(0).contains("tools: read x1 (Ctrl+O details)"));
+        assertTrue(frames.get(1).contains("tools: read x1 (Ctrl+O details)"));
+        assertTrue(!frames.get(1).contains("11 | line 11"));
+        assertTrue(frames.get(2).contains("tools: read x1 (Ctrl+O details)"));
+    }
+
+    @Test
+    void toolOutputToggleAppliesOnlyToRunningToolBlock() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiViewModel view = new TuiViewModel(
+            List.of(
+                new TuiToolBlock(
+                    "tool:read",
+                    "msg_1",
+                    "toolu_read",
+                    "read",
+                    TuiToolState.DONE,
+                    "src/Large.java:1-20",
+                    String.join("\n", java.util.stream.IntStream.rangeClosed(1, 12)
+                        .mapToObj(index -> index + " | line " + index)
+                        .toList()),
+                    false
+                ),
+                new TuiToolBlock(
+                    "tool:bash",
+                    "msg_2",
+                    "toolu_bash",
+                    "bash",
+                    TuiToolState.RUNNING,
+                    "mvn test",
+                    String.join("\n", java.util.stream.IntStream.rangeClosed(1, 7)
+                        .mapToObj(index -> "stdout: line " + index)
+                        .toList()),
+                    true
+                )
+            ),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(80, 40),
+            () -> view
+        );
+
+        loop.acceptKey(TerminalKey.CTRL_O);
+        loop.acceptKey(TerminalKey.CTRL_O);
+
+        assertTrue(frames.get(0).contains("tools: read x1 (Ctrl+O details)"));
+        assertTrue(!frames.get(0).contains("11 | line 11"));
+        assertTrue(frames.get(0).contains("stdout: line 1"));
+        assertTrue(frames.get(1).contains("tools: read x1 (Ctrl+O details)"));
+        assertTrue(!frames.get(1).contains("11 | line 11"));
+        assertTrue(!frames.get(1).contains("stdout: line 1"));
+        assertTrue(frames.get(1).contains("stdout: line 7"));
+    }
+
+    @Test
+    void expandToolsActionLeavesHistoricalToolCollapsed() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiViewModel view = new TuiViewModel(
+            List.of(new TuiToolBlock(
+                "tool:read",
+                "msg_1",
+                "toolu_read",
+                "read",
+                TuiToolState.DONE,
+                "src/Large.java:1-20",
+                String.join("\n", java.util.stream.IntStream.rangeClosed(1, 12)
+                    .mapToObj(index -> index + " | line " + index)
+                    .toList()),
+                false
+            )),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty()
+        );
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(80, 30),
+            () -> view
+        );
+
+        loop.acceptKey(TerminalKey.EXPAND_TOOLS);
+
+        assertTrue(frames.getFirst().contains("tools: read x1 (Ctrl+O details)"));
+        assertTrue(!frames.getFirst().contains("11 | line 11"));
+    }
+
+    @Test
+    void enterSubmitsPermissionDefaultOptionWhenPromptIsOpen() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 4),
+            () -> permissionView("allow_once", "cancel")
+        );
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("perm_toolu_1:toolu_1:allow_once"), submit.permissionOptions);
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void upAndDownSelectPermissionOptionAndEnterSubmitsSelectedOption() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(40, 6),
+            () -> permissionViewWithOptions("allow_once", "escape_cancel")
+        );
+
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.UP);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("perm_toolu_1:toolu_1:remember"), submit.permissionOptions);
+        assertTrue(frames.getFirst().contains("> 允许并记住"));
+        assertTrue(frames.get(2).contains("> 允许并记住"));
+    }
+
+    @Test
+    void permissionPromptTakesPriorityOverSlashOverlayNavigation() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(40, 9),
+            () -> permissionViewWithOptions("allow_once", "escape_cancel"),
+            () -> new SlashCommandPicker(List.of("/model", "/plan"))
+        );
+
+        loop.acceptText("/");
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.TAB);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals("/", loop.draft());
+        assertEquals(List.of("perm_toolu_1:toolu_1:remember"), submit.permissionOptions);
+        assertTrue(frames.getLast().contains("permission toolu_1: Need approval"));
+        assertTrue(!frames.getLast().contains("/model"));
+    }
+
+    @Test
+    void escapeAndCtrlCInterruptPermissionPromptInsteadOfSubmittingPermissionOption() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 4),
+            () -> permissionViewWithOptions("allow_once", "escape_cancel")
+        );
+
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals(List.of(), submit.permissionOptions);
+        assertEquals(0, submit.exits);
+        assertEquals(2, submit.interrupts);
+        assertEquals(List.of("esc", "ctrl-c"), submit.interruptReasons);
+    }
+
+    @Test
+    void pendingSteeringIsProjectedAsLiveSpecialMessageUntilConsumed() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        submit.pendingSteering.add(new SteeringMessage("second", List.of()));
+        TuiEventReducer reducer = new TuiEventReducer();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 6),
+            reducer::view
+        );
+
+        TuiMessageBlock pending = assertInstanceOf(
+            TuiMessageBlock.class,
+            loop.viewForRender().blocks().getLast()
+        );
+        assertEquals("pending-steering:0", pending.blockId());
+        assertEquals("pending-steering:0", pending.messageId());
+        assertEquals("steering", pending.role());
+        assertEquals("second", pending.content());
+        assertTrue(pending.streaming());
+
+        submit.pendingSteering.clear();
+        reducer.reduce(new MessageStartEvent(
+            "ses_1", "msg_user", MessageRole.USER, MessageKind.TEXT, Map.of(), Instant.EPOCH
+        ));
+        reducer.reduce(new MessageEndEvent(
+            "ses_1",
+            "msg_user",
+            MessageRole.USER,
+            MessageKind.TEXT,
+            List.of(new MessageBlockSnapshot("msg_user:text:0", ContentBlockKind.TEXT, "second", Map.of())),
+            Optional.empty(),
+            Optional.empty(),
+            Map.of(),
+            Instant.EPOCH
+        ));
+
+        List<TuiBlock> settledBlocks = loop.viewForRender().blocks();
+        assertEquals(1, settledBlocks.size());
+        TuiMessageBlock settled = assertInstanceOf(TuiMessageBlock.class, settledBlocks.getFirst());
+        assertEquals("user", settled.role());
+        assertEquals("second", settled.content());
+        assertFalse(settled.streaming());
+    }
+
+    @Test
+    void upOnEmptyDraftRecallsAndCancelsAllPendingSteering() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        submit.pendingSteering.add(new SteeringMessage("second", List.of()));
+        submit.pendingSteering.add(new SteeringMessage("third", List.of()));
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("second\nthird", loop.draft());
+        assertEquals(List.of(), submit.pendingSteering);
+    }
+
+    @Test
+    void upKeepsVisualCursorNavigationAheadOfRecallForMultilineDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        SteeringMessage pending = new SteeringMessage("pending", List.of());
+        submit.pendingSteering.add(pending);
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 6));
+        loop.acceptPaste("abcde\nxy\n123456");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("abcde\nxy\n123456", loop.draft());
+        assertEquals(8, loop.cursor());
+        assertEquals(List.of(pending), submit.pendingSteering);
+    }
+
+    @Test
+    void upAndDownNavigateSubmittedHistory() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+
+        loop.acceptText("first");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("second");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("second", loop.draft());
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("first", loop.draft());
+        loop.acceptKey(TerminalKey.DOWN);
+        assertEquals("second", loop.draft());
+        loop.acceptKey(TerminalKey.DOWN);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void upDoesNotReplaceNonEmptyDraftWithHistoryUntilHistoryNavigationStartsFromEmptyInput() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(20, 4));
+
+        loop.acceptText("first");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("draft");
+
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("draft", loop.draft());
+
+        loop.acceptKey(TerminalKey.CTRL_U);
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("first", loop.draft());
+        loop.acceptKey(TerminalKey.DOWN);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void upAndDownMoveCursorInsideMultilineDraftBeforeHistoryNavigation() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(20, 6)
+        );
+
+        loop.acceptText("history");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptPaste("abcde\nxy\n123456");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("abcde\nxy\n123456", loop.draft());
+        assertEquals(8, loop.cursor());
+        assertTrue(frames.getLast().contains(inputContent("xy|CURSOR|" + INPUT_CURSOR)));
+
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals(3, loop.cursor());
+        assertTrue(frames.getLast().contains(inputContent("> abc|CURSOR|" + INPUT_CURSOR + "de")));
+    }
+
+    @Test
+    void upAndDownMoveCursorAcrossSoftWrappedInputRowsBeforeHistoryNavigation() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(8, 6)
+        );
+
+        loop.acceptText("history");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("abcdefghij");
+
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("abcdefghij", loop.draft());
+        assertEquals(5, loop.cursor());
+        assertTrue(frames.getLast().contains(inputContent("> abcde|CURSOR|" + INPUT_CURSOR)));
+
+        loop.acceptKey(TerminalKey.DOWN);
+
+        assertEquals(10, loop.cursor());
+        assertTrue(frames.getLast().contains(inputContent("fghij|CURSOR|" + INPUT_CURSOR)));
+    }
+
+    @Test
+    void slashOverlayShowsCandidatesAndAcceptsSelection() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(40, 9),
+            null,
+            () -> SlashCommandPicker.withTemplates(List.of("review"))
+        );
+
+        loop.acceptText("/");
+
+        assertTrue(frames.getLast().contains("> /model"));
+        assertTrue(frames.getLast().contains("  /login"));
+
+        loop.acceptText("th");
+        assertTrue(frames.getLast().contains("> /thinking"));
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals("/thinking ", loop.draft());
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void loginOverlayMasksAuthKeyAndSubmitsOutsideEditorHistory() {
+        String authKey = "test-secret";
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9)
+        );
+
+        loop.acceptText("ordinary input");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("/login");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptPaste("zen");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptPaste("https://api.example.test/v1");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptPaste(authKey);
+
+        assertEquals("", loop.draft());
+        assertEquals(List.of(
+            "Channel name: zen",
+            "Base URL: https://api.example.test/v1",
+            "Auth key: ***********"
+        ), loop.overlayLines());
+        assertFalse(String.join("\n", loop.overlayLines()).contains(authKey));
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("ordinary input"), submit.submitted);
+        assertEquals(1, submit.providerLogins.size());
+        assertEquals("zen", submit.providerLogins.getFirst().channelName());
+        assertEquals("https://api.example.test/v1", submit.providerLogins.getFirst().baseUrl());
+        assertTrue(authKey.equals(submit.providerLogins.getFirst().authKey()));
+        assertEquals(List.of(), loop.overlayLines());
+        loop.acceptKey(TerminalKey.UP);
+        assertEquals("ordinary input", loop.draft());
+    }
+
+    @Test
+    void escapeAndCtrlCCancelLoginOverlayWithoutInterruptingTheActiveTurn() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9)
+        );
+
+        loop.acceptText("/login");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("zen");
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptText("/login");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("zen");
+        loop.acceptKey(TerminalKey.CTRL_C);
+
+        assertEquals(List.of(), loop.overlayLines());
+        assertEquals(List.of(), submit.providerLogins);
+        assertEquals(0, submit.interrupts);
+        assertEquals(0, submit.exits);
+    }
+
+    @Test
+    void modelSlashOpensPickerAndSubmitsSelectedModel() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(
+                List.of(model("zen", "kimi-k2.6"), model("openai", "gpt-5-mini")),
+                new ModelSelection("openai", "gpt-5-mini", ThinkingLevel.MEDIUM)
+            )
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("> openai/gpt-5-mini", "  zen/kimi-k2.6"), loop.overlayLines());
+        assertEquals(List.of(), submit.submitted);
+
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("/model zen/kimi-k2.6"), submit.submitted);
+        assertEquals(List.of(), loop.overlayLines());
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void exactModelDraftOpensPickerAfterSlashOverlayWasClosed() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(List.of(model("openai", "gpt-5-mini")), null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("> openai/gpt-5-mini"), loop.overlayLines());
+        assertEquals(List.of(), submit.submitted);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void escapeClosesModelPickerWithoutSubmitting() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(List.of(model("openai", "gpt-5-mini")), null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ESC);
+
+        assertEquals(List.of(), loop.overlayLines());
+        assertEquals(List.of(), submit.submitted);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void emptyModelPickerStaysOpenOnEnter() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(List.of(), null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("No models available"), loop.overlayLines());
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("No models available"), loop.overlayLines());
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void modelPickerBlocksTextAndPasteUntilClosed() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            null,
+            () -> new ModelPicker(List.of(model("openai", "gpt-5-mini")), null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("ignored");
+        loop.acceptPaste("also ignored");
+
+        assertEquals("", loop.draft());
+        assertEquals(List.of("> openai/gpt-5-mini"), loop.overlayLines());
+    }
+
+    @Test
+    void permissionPromptTakesPriorityOverOpenModelPicker() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        AtomicReference<TuiViewModel> view = new AtomicReference<>(null);
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 9),
+            () -> view.get() == null
+                ? new TuiViewModel(
+                    List.of(),
+                    new StatusBarState("ses_1", "gpt-5-mini", "ready", "ASK"),
+                    List.of(),
+                    Optional.empty(),
+                    Optional.empty()
+                )
+                : view.get(),
+            () -> new ModelPicker(
+                List.of(model("openai", "gpt-5-mini"), model("zen", "kimi-k2.6")),
+                null
+            )
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+        view.set(permissionViewWithOptions("allow_once", "escape_cancel"));
+
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("perm_toolu_1:toolu_1:remember"), submit.permissionOptions);
+        assertEquals(List.of(), submit.submitted);
+        assertEquals(List.of(), loop.overlayLines());
+    }
+
+    @Test
+    void modelPickerScrollsSelectedModelIntoVisibleWindow() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<ModelDescriptor> models = java.util.stream.IntStream.range(0, 8)
+            .mapToObj(index -> model("provider", "model-%02d".formatted(index)))
+            .toList();
+        TuiInputLoop loop = modelLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 7),
+            null,
+            () -> new ModelPicker(models, null)
+        );
+
+        loop.acceptText("/model");
+        loop.acceptKey(TerminalKey.ENTER);
+        for (int index = 0; index < 5; index++) {
+            loop.acceptKey(TerminalKey.DOWN);
+        }
+
+        assertEquals(3, loop.overlayLines().size());
+        assertTrue(loop.overlayLines().contains("> provider/model-05"));
+        assertFalse(loop.overlayLines().stream().anyMatch(line -> line.contains("provider/model-00")));
+    }
+
+    @Test
+    void slashOverlayUsesArrowKeysAndEscWithoutHistoryNavigation() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 5),
+            null,
+            () -> new SlashCommandPicker(List.of("/model", "/plan", "/compact"))
+        );
+
+        loop.acceptText("first");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("/");
+        loop.acceptKey(TerminalKey.DOWN);
+        loop.acceptKey(TerminalKey.TAB);
+
+        assertEquals("/plan ", loop.draft());
+
+        loop.acceptKey(TerminalKey.CTRL_U);
+        loop.acceptText("/");
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptKey(TerminalKey.UP);
+
+        assertEquals("/", loop.draft());
+    }
+
+    @Test
+    void removedModeCommandIsNotAcceptedAsModelPrefix() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 5),
+            null,
+            () -> new SlashCommandPicker(List.of("/model", "/plan", "/compact"))
+        );
+
+        loop.acceptText("/mode");
+        loop.acceptKey(TerminalKey.TAB);
+
+        assertEquals("/mode", loop.draft());
+        assertEquals(List.of(), submit.submitted);
+    }
+
+    @Test
+    void skillOverlayShowsCandidatesAcceptsSelectionAndSubmitsBinding() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(60, 9),
+            null,
+            () -> new SlashCommandPicker(List.of()),
+            null,
+            null,
+            () -> skills("doc", "Document workflow")
+        );
+
+        loop.acceptText("use $d");
+
+        assertTrue(frames.getLast().contains("> $doc"));
+
+        loop.acceptKey(TerminalKey.TAB);
+        assertEquals("use $doc", loop.draft());
+
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("use $doc"), submit.submitted);
+        assertEquals(List.of(new SkillMention("doc", Path.of("/tmp/doc/SKILL.md"))), submit.skillMentions.getFirst());
+    }
+
+    @Test
+    void skillOverlayOpensWhenOnlyDollarIsTyped() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(60, 9),
+            null,
+            () -> new SlashCommandPicker(List.of()),
+            null,
+            null,
+            () -> skills("doc", "Document workflow")
+        );
+
+        loop.acceptText("$");
+
+        assertTrue(frames.getLast().contains("> $doc"));
+    }
+
+    @Test
+    void escapeClosesSkillOverlayAndSuppressesCurrentTokenBinding() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(60, 7),
+            null,
+            () -> new SlashCommandPicker(List.of()),
+            null,
+            null,
+            () -> skills("doc", "Document workflow")
+        );
+
+        loop.acceptText("$doc");
+        loop.acceptKey(TerminalKey.ESC);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("$doc"), submit.submitted);
+        assertTrue(submit.skillMentions.getFirst().isEmpty());
+    }
+
+    @Test
+    void slashOverlayScrollsSelectedCandidateIntoVisibleWindow() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(40, 9),
+            null,
+            () -> new SlashCommandPicker(List.of(
+                "/model",
+                "/thinking",
+                "/plan",
+                "/permission-mode",
+                "/compact",
+                "/review"
+            ))
+        );
+
+        loop.acceptText("/");
+        for (int i = 0; i < 5; i++) {
+            loop.acceptKey(TerminalKey.DOWN);
+        }
+
+        assertTrue(frames.getLast().contains("> /review"));
+        assertTrue(!frames.getLast().contains("> /model"));
+
+        loop.acceptKey(TerminalKey.TAB);
+
+        assertEquals("/review ", loop.draft());
+    }
+
+    @Test
+    void unknownSlashWithNoOverlayCandidatesSubmitsAsNormalInput() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(40, 5),
+            null,
+            () -> new SlashCommandPicker(List.of("/model"))
+        );
+
+        loop.acceptText("/unknown");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("/unknown"), submit.submitted);
+        assertEquals("", loop.draft());
+    }
+
+    @Test
+    void resumeSlashOpensSessionThenBranchOverlayAndResumesSelectedLeaf() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        ResumeSessionController controller = new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("/tmp/ses_old.jsonl"),
+                    "ses_old",
+                    Path.of("/tmp/project"),
+                    Optional.empty(),
+                    "leaf_old",
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old session",
+                    "old session"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                MessageEntry root = new MessageEntry(
+                    "leaf_old",
+                    null,
+                    new AgentMessage(
+                        "msg_old",
+                        MessageRole.USER,
+                        MessageKind.TEXT,
+                        List.of(new TextContentBlock("old prompt")),
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.empty()
+                    ),
+                    Instant.EPOCH
+                );
+                MessageEntry assistant = new MessageEntry(
+                    "assistant_old",
+                    "leaf_old",
+                    new AgentMessage(
+                        "msg_assistant",
+                        MessageRole.ASSISTANT,
+                        MessageKind.TEXT,
+                        List.of(new TextContentBlock("old answer")),
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.empty()
+                    ),
+                    Instant.EPOCH
+                );
+                return new SessionBranchTreeView(
+                    sessionId,
+                    "assistant_old",
+                    List.of(new SessionTreeNodeView(root, List.of(new SessionTreeNodeView(assistant, List.of()))))
+                );
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+        };
+        TuiRenderState renderState = new TuiRenderState();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(80, 10),
+            renderState::view,
+            () -> new SlashCommandPicker(List.of("/resume")),
+            controller,
+            renderState::configure
+        );
+
+        loop.acceptText("/resume");
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertTrue(frames.getLast().contains("Resume Session (Current Folder)"));
+        assertTrue(frames.getLast().contains("old session"));
+
+        loop.acceptKey(TerminalKey.ENTER);
+        assertTrue(frames.getLast().contains("user: old prompt"));
+        assertTrue(frames.getLast().contains("assistant: old answer"));
+
+        loop.acceptKey(TerminalKey.TAB);
+        assertTrue(frames.getLast().contains("[user]"));
+        assertTrue(frames.getLast().contains("user: old prompt"));
+        assertTrue(!frames.getLast().contains("assistant: old answer"));
+
+        loop.acceptKey(TerminalKey.ENTER);
+        assertEquals(List.of("ses_old:null"), submit.resumes);
+        assertEquals("old prompt", loop.draft());
+    }
+
+    @Test
+    void resumeSelectingUserEntrySwitchesToParentLeafAndRestoresDraftText() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        ResumeSessionController controller = resumeControllerWithTree(
+            "ses_old",
+            new MessageEntry(
+                "user_old",
+                "assistant_parent",
+                new AgentMessage(
+                    "msg_old",
+                    MessageRole.USER,
+                    MessageKind.TEXT,
+                    List.of(new TextContentBlock("edit this again")),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty()
+                ),
+                Instant.EPOCH
+            )
+        );
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(80, 10),
+            null,
+            () -> new SlashCommandPicker(List.of("/resume")),
+            controller
+        );
+
+        loop.acceptText("/resume");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of("ses_old:assistant_parent"), submit.resumes);
+        assertEquals("edit this again", loop.draft());
+    }
+
+    @Test
+    void resumeBranchSummaryOfferWaitsForConfirmationAndResumesSummaryLeafWhenAccepted() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        List<String> summaryResumes = new ArrayList<>();
+        String summaryText = "RAW BRANCH SUMMARY SHOULD STAY HIDDEN";
+        MessageEntry assistant = new MessageEntry(
+            "assistant_old",
+            "user_old",
+            new AgentMessage(
+                "msg_assistant",
+                MessageRole.ASSISTANT,
+                MessageKind.TEXT,
+                List.of(new TextContentBlock("old answer")),
+                Instant.EPOCH,
+                Optional.empty(),
+                Optional.empty()
+            ),
+            Instant.EPOCH
+        );
+        ResumeSessionController controller = new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("/tmp/ses_old.jsonl"),
+                    "ses_old",
+                    Path.of("/tmp/project"),
+                    Optional.empty(),
+                    "assistant_old",
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old session",
+                    "old session"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                return new SessionBranchTreeView(sessionId, "assistant_old", List.of(new SessionTreeNodeView(assistant, List.of())));
+            }
+
+            @Override
+            public Optional<BranchSummaryOffer> branchSummaryOffer(String sessionId, String targetLeafId) {
+                return Optional.of(new BranchSummaryOffer(sessionId, "current_leaf", targetLeafId, "common_leaf", 2));
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+
+            @Override
+            public SessionRuntimeState resumeWithBranchSummary(String sessionId, String targetLeafId) {
+                assertTrue(frames.getLast().contains("Summarizing abandoned branch"));
+                summaryResumes.add(sessionId + ":" + targetLeafId);
+                return runtimeState(
+                    sessionId,
+                    "summary_leaf",
+                    List.of(new AgentMessage(
+                        "summary_msg",
+                        MessageRole.SYSTEM_LOCAL,
+                        MessageKind.SUMMARY,
+                        List.of(new TextContentBlock(summaryText)),
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.empty()
+                    ))
+                );
+            }
+        };
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(80, 10),
+            null,
+            () -> new SlashCommandPicker(List.of("/resume")),
+            controller
+        );
+
+        loop.acceptText("/resume");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+
+        assertEquals(List.of(), submit.resumes);
+        assertTrue(frames.getLast().contains("Summarize abandoned branch before switching?"));
+        assertTrue(frames.getLast().contains("2 entries"));
+
+        loop.acceptText("y");
+
+        assertEquals(List.of("ses_old:assistant_old"), summaryResumes);
+        assertEquals(List.of("ses_old:summary_leaf"), submit.resumes);
+        assertTrue(frames.getLast().contains("Branch summary saved."));
+        assertFalse(frames.getLast().contains(summaryText));
+    }
+
+    @Test
+    void resumeBranchSummaryForUserEntrySummarizesParentLeafAndRestoresDraft() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> offeredTargets = new ArrayList<>();
+        List<String> summaryTargets = new ArrayList<>();
+        MessageEntry userEntry = new MessageEntry(
+            "user_old",
+            "assistant_parent",
+            new AgentMessage(
+                "msg_old",
+                MessageRole.USER,
+                MessageKind.TEXT,
+                List.of(new TextContentBlock("revise this")),
+                Instant.EPOCH,
+                Optional.empty(),
+                Optional.empty()
+            ),
+            Instant.EPOCH
+        );
+        ResumeSessionController controller = new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("/tmp/ses_old.jsonl"),
+                    "ses_old",
+                    Path.of("/tmp/project"),
+                    Optional.empty(),
+                    "user_old",
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old session",
+                    "old session"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                return new SessionBranchTreeView(sessionId, "user_old", List.of(new SessionTreeNodeView(userEntry, List.of())));
+            }
+
+            @Override
+            public Optional<BranchSummaryOffer> branchSummaryOffer(String sessionId, String targetLeafId) {
+                offeredTargets.add(targetLeafId);
+                return Optional.of(new BranchSummaryOffer(sessionId, "current_leaf", targetLeafId, "common_leaf", 1));
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+
+            @Override
+            public SessionRuntimeState resumeWithBranchSummary(String sessionId, String targetLeafId) {
+                summaryTargets.add(targetLeafId);
+                return runtimeState(sessionId, "summary_leaf");
+            }
+        };
+        TuiInputLoop loop = testLoop(
+            submit,
+            ignored -> {
+            },
+            new TuiLayout(80, 10),
+            null,
+            () -> new SlashCommandPicker(List.of("/resume")),
+            controller
+        );
+
+        loop.acceptText("/resume");
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptKey(TerminalKey.ENTER);
+        loop.acceptText("y");
+
+        assertEquals(List.of("assistant_parent"), offeredTargets);
+        assertEquals(List.of("assistant_parent"), summaryTargets);
+        assertEquals(List.of("ses_old:summary_leaf"), submit.resumes);
+        assertEquals("revise this", loop.draft());
+    }
+
+    @Test
+    void resumeControllerAddsResumeToSlashPickerCandidates() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        List<String> frames = new ArrayList<>();
+        TuiInputLoop loop = testLoop(
+            submit,
+            lines -> frames.add(String.join("\n", lines)),
+            new TuiLayout(80, 8),
+            null,
+            () -> new SlashCommandPicker(List.of("/review")),
+            emptyResumeController()
+        );
+
+        loop.acceptText("/r");
+
+        assertTrue(frames.getLast().contains("/resume"));
+        assertTrue(frames.getLast().contains("/review"));
+    }
+
+    @Test
+    void editingKeysMoveCursorDeleteLineUndoAndYank() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(30, 4));
+
+        loop.acceptText("alpha beta gamma");
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptKey(TerminalKey.LEFT);
+        loop.acceptText("!");
+        assertEquals("alpha beta gam!ma", loop.draft());
+
+        loop.acceptKey(TerminalKey.CTRL_U);
+        assertEquals("ma", loop.draft());
+        loop.acceptKey(TerminalKey.CTRL_Y);
+        assertEquals("alpha beta gam!ma", loop.draft());
+        loop.acceptKey(TerminalKey.CTRL_Z);
+        assertEquals("ma", loop.draft());
+    }
+
+    @Test
+    void altYRotatesKillRingAfterYank() {
+        RecordingSubmitHandler submit = new RecordingSubmitHandler();
+        TuiInputLoop loop = testLoop(submit, ignored -> {
+        }, new TuiLayout(30, 4));
+
+        loop.acceptText("alpha beta gamma");
+        loop.acceptKey(TerminalKey.ALT_BACKSPACE);
+        loop.acceptKey(TerminalKey.ALT_BACKSPACE);
+        loop.acceptKey(TerminalKey.CTRL_Y);
+        assertEquals("alpha beta", loop.draft());
+
+        loop.acceptKey(TerminalKey.ALT_Y);
+
+        assertEquals("alpha gamma", loop.draft());
+    }
+
+    private static String inputLine(String frame) {
+        return inputLines(frame).getLast();
+    }
+
+    private static List<String> inputLines(String frame) {
+        return frame.lines()
+            .filter(line -> line.startsWith(INPUT_BACKGROUND))
+            .toList();
+    }
+
+    private static String inputContent(String content) {
+        return INPUT_BACKGROUND + content + ANSI_RESET;
+    }
+
+    private static ModelDescriptor model(String provider, String modelId) {
+        return new ModelDescriptor(
+            provider,
+            modelId,
+            URI.create("https://api.example.test/v1"),
+            ApiStyle.OPENAI_COMPATIBLE,
+            128_000,
+            16_384,
+            true,
+            false,
+            new CostProfile(BigDecimal.ZERO, BigDecimal.ZERO, "USD"),
+            Map.of()
+        );
+    }
+
+    private static ResumeSessionController emptyResumeController() {
+        return new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of();
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                return new SessionBranchTreeView(sessionId, null, List.of());
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+        };
+    }
+
+    private static ResumeSessionController resumeControllerWithTree(String sessionId, cn.lycode.contracts.session.SessionEntry entry) {
+        return new ResumeSessionController() {
+            @Override
+            public List<SessionResumeInfo> sessions() {
+                return List.of(new SessionResumeInfo(
+                    Path.of("/tmp/" + sessionId + ".jsonl"),
+                    sessionId,
+                    Path.of("/tmp/project"),
+                    Optional.empty(),
+                    entry.id(),
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    1,
+                    "old session",
+                    "old session"
+                ));
+            }
+
+            @Override
+            public SessionBranchTreeView tree(String sessionId) {
+                return new SessionBranchTreeView(sessionId, entry.id(), List.of(new SessionTreeNodeView(entry, List.of())));
+            }
+
+            @Override
+            public SessionRuntimeState resume(String sessionId, String leafId) {
+                return runtimeState(sessionId, leafId);
+            }
+        };
+    }
+
+    private static SessionRuntimeState runtimeState(String sessionId, String leafId) {
+        return runtimeState(sessionId, leafId, List.of());
+    }
+
+    private static SessionRuntimeState runtimeState(String sessionId, String leafId, List<AgentMessage> transcript) {
+        return new SessionRuntimeState(
+            sessionId,
+            Path.of("."),
+            leafId,
+            new cn.lycode.contracts.model.ModelSelection("openai", "gpt-5.4", cn.lycode.contracts.model.ThinkingLevel.MEDIUM),
+            cn.lycode.contracts.model.ThinkingLevel.MEDIUM,
+            cn.lycode.contracts.security.AgentMode.EXECUTE,
+            cn.lycode.contracts.security.PermissionMode.ASK,
+            new cn.lycode.contracts.context.ContextBudget(0, 128_000, 100_000, 8_192, 16_384, 0L, 0L, java.math.BigDecimal.ZERO),
+            transcript,
+            false,
+            false,
+            false,
+            false
+        );
+    }
+
+    private static final class RecordingSubmitHandler implements TuiSubmitHandler {
+        private final List<String> submitted = new ArrayList<>();
+        private final List<List<SkillMention>> skillMentions = new ArrayList<>();
+        private final List<SteeringMessage> pendingSteering = new ArrayList<>();
+        private final List<String> permissionOptions = new ArrayList<>();
+        private final List<String> resumes = new ArrayList<>();
+        private final List<String> interruptReasons = new ArrayList<>();
+        private final List<LoginSubmission> providerLogins = new ArrayList<>();
+        private int interrupts;
+        private int exits;
+
+        @Override
+        public void submitUserInput(String input) {
+            submitted.add(input);
+            skillMentions.add(List.of());
+        }
+
+        @Override
+        public void submitUserInput(String input, List<SkillMention> skillMentions) {
+            submitted.add(input);
+            this.skillMentions.add(skillMentions);
+        }
+
+        @Override
+        public void submitProviderLogin(String channelName, String baseUrl, String authKey) {
+            providerLogins.add(new LoginSubmission(channelName, baseUrl, authKey));
+        }
+
+        @Override
+        public List<SteeringMessage> pendingSteeringMessages() {
+            return List.copyOf(pendingSteering);
+        }
+
+        @Override
+        public Optional<SteeringMessage> recallPendingSteering() {
+            if (pendingSteering.isEmpty()) {
+                return Optional.empty();
+            }
+            String userInput = pendingSteering.stream()
+                .map(SteeringMessage::userInput)
+                .collect(java.util.stream.Collectors.joining("\n"));
+            List<SkillMention> mentions = pendingSteering.stream()
+                .flatMap(message -> message.skillMentions().stream())
+                .distinct()
+                .toList();
+            pendingSteering.clear();
+            return Optional.of(new SteeringMessage(userInput, mentions));
+        }
+
+        @Override
+        public void requestInterrupt(String reason) {
+            interrupts++;
+            interruptReasons.add(reason);
+        }
+
+        @Override
+        public void requestExit(String reason) {
+            exits++;
+        }
+
+        @Override
+        public void submitPermissionOption(String requestId, String toolUseId, String optionId) {
+            permissionOptions.add(requestId + ":" + toolUseId + ":" + optionId);
+        }
+
+        @Override
+        public void resumeSession(String sessionId, String leafId) {
+            resumes.add(sessionId + ":" + leafId);
+        }
+
+        private record LoginSubmission(String channelName, String baseUrl, String authKey) {
+            @Override
+            public String toString() {
+                return "LoginSubmission[channelName=" + channelName
+                    + ", baseUrl=" + baseUrl + ", authKey=<redacted>]";
+            }
+        }
+    }
+
+    private static SkillIndex skills(String name, String description) {
+        return new SkillIndex(List.of(new SkillDescriptor(
+            name,
+            description,
+            SkillSource.PROJECT,
+            Path.of("/tmp/" + name + "/SKILL.md"),
+            List.of(),
+            List.of(),
+            "sha256:" + name
+        )), List.of());
+    }
+
+    private static TuiViewModel permissionView(String defaultOptionId, String cancelOptionId) {
+        return new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.of(new PermissionPromptView("perm_toolu_1", "toolu_1", "Need approval", "bash:npm test", defaultOptionId, cancelOptionId)),
+            Optional.empty()
+        );
+    }
+
+    private static TuiViewModel permissionViewWithOptions(String defaultOptionId, String cancelOptionId) {
+        return new TuiViewModel(
+            List.of(),
+            new StatusBarState("ses_1", "gpt-5.4", "execute", "default"),
+            List.of(),
+            Optional.of(new PermissionPromptView(
+                "perm_toolu_1",
+                "toolu_1",
+                "Need approval",
+                "bash:npm test",
+                defaultOptionId,
+                cancelOptionId,
+                List.of(
+                    new PermissionOption("allow_once", PermissionOptionKind.ALLOW_ONCE, "允许一次", "", Optional.empty(), Map.of()),
+                    new PermissionOption("remember", PermissionOptionKind.ALLOW_ONCE, "允许并记住", "", Optional.empty(), Map.of()),
+                    new PermissionOption("escape_cancel", PermissionOptionKind.CANCEL, "取消", "", Optional.empty(), Map.of())
+                ),
+                defaultOptionId
+            )),
+            Optional.empty()
+        );
+    }
+}

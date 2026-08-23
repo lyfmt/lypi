@@ -89,15 +89,15 @@ jobs:
 
       - name: Smoke test boot jar
         run: |
-          java -jar lypi-boot/target/lypi-boot-0.0.1-SNAPSHOT.jar \
-            --lypi.runtime.cwd="${RUNNER_TEMP}/lypi-ci-smoke" \
-            --lypi.runtime.session-id=ci-smoke \
-            --lypi.runtime.transport=headless
+          java -jar lycode-boot/target/lycode-boot-0.0.1-SNAPSHOT.jar \
+            --lycode.runtime.cwd="${RUNNER_TEMP}/lycode-ci-smoke" \
+            --lycode.runtime.session-id=ci-smoke \
+            --lycode.runtime.transport=headless
 
       - name: Upload Maven artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lypi-maven-artifacts
+          name: lycode-maven-artifacts
           path: |
             **/target/*.jar
             !**/target/*.jar.original
